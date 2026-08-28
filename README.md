@@ -1,84 +1,58 @@
-# Goat 4 contour packer
+# goat_packer
 
 *[Русская версия](README.ru.md)*
 
-The optimizer packs the **actual flat-bottom silhouette** of `goat4_v2.stl`, not its bounding box.
-It preserves the outer loop and the keyring hole, pre-rasterizes rotated copies, expands each copy by
-half the requested clearance, and uses bit-parallel collision tests during parallel randomized
-contact/drop searches. Count is the primary objective; compactness only breaks ties.
+Packs a mesh into a slicer 3MF project, keeping the original print settings byte-for-byte.
 
-The search is heuristic (irregular 2D nesting is NP-hard), so a larger restart budget can improve a
-result. The deterministic seed makes a given command reproducible.
+Given a 3MF containing one object, it fits as many copies onto the plate as it can — nesting the
+model's real flat-bottom silhouette (outer contour and holes), not its bounding box — and writes a
+new 3MF with the same profile, filaments, and paint data. Fixed bed exclusions, purge lines, and
+the prime tower are reserved automatically.
 
-## Build and test
+A second tool schedules a day of printing across several printers.
+
+## Build
 
 ```bash
-cd goat_packer
-cargo test --release --all
-python3 tests/test_build_3mf.py -v
 cargo build --release
+cargo test --release --all
 ```
 
-## Pack, slice, and assemble a 3MF
-
-`colored_3mf_packer` is the single packing tool: it slices the source project once to find the
-printer's actual prime/wipe tower footprint (if any), packs copies of the object around every fixed
-and tower keepout, and reassembles the plate as a new 3MF. Projects with a single material/color have
-no prime tower — the probe slice simply won't find one, and packing proceeds without reserving space
-for it.
+## Packing
 
 ```bash
-./target/release/colored_3mf_packer \
-  --source ../Goat\ 4/p1s/goat4_single_pla.3mf \
-  --profile profiles/p1s.json \
-  --output g4_packed.3mf \
-  --work-dir ../Goat\ 4/work \
-  --clearance 0.7 --attempts 16000 --candidates 2400 --seed 20270831
+./target/release/colored_3mf_packer --source in.3mf --profile profiles/p1s.json --output out.3mf
 ```
 
-It writes `OUTPUT.verification.json` alongside the packed 3MF with the object count, both probe and
-final tower bounds (`null` when the project has no tower), and whether a repack was needed because the
-final slice's tower grew past the reserved keepout.
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--source` | — | source 3MF with exactly one object |
+| `--profile` | — | printer profile JSON (`profiles/`) |
+| `--output` | — | packed 3MF to write |
+| `--work-dir` | `<output>.work` | scratch dir for slicer runs |
+| `--clearance` | `0.7` | gap between objects, mm |
+| `--resolution` | `0.25` | raster cell size, mm |
+| `--angle-step` | `2.0` | rotation step, degrees |
+| `--attempts` | `16000` | randomized restarts; more can pack tighter |
+| `--candidates` | `2400` | samples per placement |
+| `--seed` | `20270831` | makes a run reproducible |
 
-## Schedule a day of production across N printers
+Writes `<output>.verification.json` with the object count and prime tower bounds.
 
-`daily_scheduler` takes one or more already-packed multi-object plates (one per printer) and
-benchmarks real slice times per batch size (1..max objects), then optimizes a 24-hour print
-schedule per printer. Each `--printer` reuses the same `PrinterProfile` JSON the packer uses
-(`profiles/p1s.json`, `profiles/snapmaker_u1.json`, ...), so slicer path/kind live in one place:
+## Scheduling
 
 ```bash
 ./target/release/daily_scheduler \
-  --printer "profile=profiles/p1s.json,source=../Goat 4/p1s/goat4_multi_pla.3mf" \
-  --printer "profile=profiles/snapmaker_u1.json,source=../Goat 4/snap/goat4_multi_snap_pla.3mf,prep-min=11,prep-sweep=6:8:10:11:12:15" \
-  --turnaround-min 10 \
+  --printer "profile=profiles/p1s.json,source=packed.3mf" \
   --output-dir schedule_output
 ```
 
-`--printer` fields (comma-separated `key=value`, quote the whole flag since paths may contain
-spaces):
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--printer` | — | repeatable; `profile=`, `source=` required, plus optional `name=`, `prep-min=`, `prep-sweep=a:b:c` |
+| `--output-dir` | `schedule_output` | where JSON/CSV reports go |
+| `--turnaround-min` | `10` | dead time between jobs |
+| `--reuse-benchmarks` | off | reuse prior slice timings instead of re-slicing |
 
-- `profile=<path>` (required) — a `PrinterProfile` JSON; provides `printer_name`, `slicer_path`,
-  `slicer_kind` (`bambu` uses `result.json`, `orca` parses the `.gcode` comment header), and
-  whether `machine_start_gcode` needs blanking for the CLI.
-- `source=<path>` (required) — the packed plate to benchmark, at its maximum object count.
-- `name=<label>` (optional) — overrides `printer_name` for this entry, e.g. to run two plates
-  through the same physical printer model under distinct labels.
-- `prep-min=<minutes>` (optional, default 0) — extra per-job dead time the slicer doesn't account
-  for (filament switching, bed prep).
-- `prep-sweep=<a:b:c:...>` (optional, default `[prep-min]`) — alternate preparation minutes to
-  sweep in `sensitivity.csv` when that number is uncertain.
-
-Add `--reuse-benchmarks` to reuse the slice timings already in `schedule_output/planner_report.json`
-when only `--turnaround-min` or a `prep-sweep` changes — skips re-slicing every batch size.
-
-## Build and verify 3MF (manual/low-level)
-
-```bash
-python3 build_3mf.py TEMPLATE.3mf PLACEMENTS.json OUTPUT.3mf --stl ../Goat\ 4/source/goat4_v2.stl
-python3 verify_outputs.py ../Goat\ 4/source/goat4_v2.stl PLACEMENTS.json OUTPUT.3mf --minimum-gap 0.5
-```
-
-`build_3mf.py` keeps `Metadata/project_settings.config` byte-for-byte, reuses the template's embedded
-mesh, synchronizes object/plate metadata, conditionally updates Bambu-only metadata, and regenerates
-all referenced preview PNGs.
+It slices each batch size to measure real print times, then optimizes a 10:00→10:00 cycle: day jobs
+plus one overnight job.
