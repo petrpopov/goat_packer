@@ -1,0 +1,11 @@
+/target
+schedule_output/
+workbook_work/
+*.work/
+*.3mf
+*.gcode
+*.verification.json
+node_modules/
+.claude/settings.local.json
+__pycache__/
+.DS_Store

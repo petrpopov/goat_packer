@@ -1,0 +1,14 @@
+{
+  "id": "snapmaker_u1",
+  "printer_name": "Snapmaker U1",
+  "slicer_kind": "orca",
+  "slicer_path": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+  "blank_start_gcode_for_cli": true,
+  "no_check_for_final_tower_probe": true,
+  "printable_area": [0.5, 1.0, 270.5, 271.0],
+  "edge_margin_mm": 3.5,
+  "exclusion_rectangles": [],
+  "purge_lines": [[85.0, 1.0, 185.0, 1.0, 0.5]],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5
+}
