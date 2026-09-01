@@ -9,6 +9,9 @@ use std::{
 
 pub mod scheduler;
 pub mod colored_packer;
+pub mod embedded_mesh;
+pub mod plate_preview;
+pub mod assemble;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Point {

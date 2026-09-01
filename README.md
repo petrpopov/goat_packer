@@ -40,6 +40,10 @@ cargo test --release --all
 
 Writes `<output>.verification.json` with the object count and prime tower bounds.
 
+An independent exact-geometry check on any output: `./target/release/verify_outputs <stl>
+<placements.json> <packed.3mf>` (minimum gap, edge margin, purge-line gap, keepouts, transforms,
+ZIP CRC).
+
 ## Scheduling
 
 ```bash

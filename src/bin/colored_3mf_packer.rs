@@ -8,10 +8,12 @@ use std::{
 
 use goat_packer::{
     Footprint, PackOptions, PackResult, Rect, extract_footprint, pack_footprint, validate_result,
+    assemble::{AssembleOptions, assemble_project},
     colored_packer::{
         PrimeTowerBounds, PrinterProfile, detect_slicer_kind_from_printer_model,
         load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
     },
+    embedded_mesh::{embedded_mesh_triangles, write_binary_stl},
     scheduler::object_count_3mf,
 };
 use serde::Serialize;
@@ -201,19 +203,21 @@ fn run() -> AppResult<()> {
 }
 
 fn derive_embedded_stl(source_3mf: &Path, output_stl: &Path) -> AppResult<()> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extract_embedded_stl.py");
-    let output = Command::new("python3")
-        .arg(script)
-        .arg(source_3mf)
-        .arg(output_stl)
-        .output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "failed to derive collision STL from embedded mesh: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
+    // The collision STL is the 3MF's own embedded mesh with the component's transform baked in;
+    // see the call-site comment for why a separately exported STL cannot be trusted.
+    let triangles = embedded_mesh_triangles(source_3mf).map_err(|error| {
+        format!("failed to derive collision STL from embedded mesh: {error}")
+    })?;
+    // The Python exporter refused to write an STL with no triangles; keep that loud failure.
+    if triangles.is_empty() {
+        return Err(
+            "failed to derive collision STL from embedded mesh: embedded mesh has no triangles"
+                .into(),
+        );
     }
+    write_binary_stl(output_stl, &triangles).map_err(|error| {
+        format!("failed to derive collision STL from embedded mesh: {error}")
+    })?;
     Ok(())
 }
 
@@ -288,46 +292,25 @@ fn build_colored_project(
 ) -> AppResult<()> {
     let placements = args.work_dir.join("placements.json");
     fs::write(&placements, serde_json::to_vec_pretty(packed)?)?;
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("build_3mf.py");
-    let mut command = Command::new("python3");
-    // Deliberately NOT --reuse-source-object-instances: that mode (one shared <object>, N build
+    // Deliberately NOT reuse_source_object_instances: that mode (one shared <object>, N build
     // items) reliably reproduces BambuStudio's real CLI "gcode path conflicts found between
     // goat3.obj and goat3.obj" / "found slicing result conflict" error on a real ~20-object dense
     // plate, even though the exact same layout slices cleanly in the default mode used here (N
     // distinct <object> resources sharing one external mesh component, the same pattern already
     // proven for the uncolored Goat 4 packer). Paint attributes live in the untouched shared mesh
     // component either way, so this mode is equally paint-safe.
-    command
-        .arg(script)
-        .arg(&args.source_3mf)
-        .arg(&placements)
-        .arg(&args.output)
-        .arg("--stl")
-        .arg(footprint_stl)
-        .arg("--edge-margin")
-        .arg(profile.edge_margin_mm.to_string());
-    for purge in &profile.purge_lines {
-        // `--flag=value` (not `--flag value`) because argparse misreads a value starting with
-        // `-` (e.g. a negative coordinate) as another option rather than this option's argument.
-        command.arg(format!(
-            "--purge-line={},{},{},{},{}",
-            purge[0], purge[1], purge[2], purge[3], purge[4]
-        ));
-    }
-    for keepout in keepouts {
-        command.arg(format!(
-            "--keepout={},{},{},{}",
-            keepout.min_x, keepout.min_y, keepout.max_x, keepout.max_y
-        ));
-    }
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "3MF assembly failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
+    let options = AssembleOptions {
+        placements: packed.placements.clone(),
+        stl_path: footprint_stl.to_path_buf(),
+        edge_margin: profile.edge_margin_mm,
+        purge_lines: profile.purge_lines.clone(),
+        keepouts: keepouts.to_vec(),
+        duplicate_mesh_per_object: false,
+        reuse_source_object_instances: false,
+        inline_colored_mesh_objects: false,
+    };
+    assemble_project(&args.source_3mf, &args.output, &options)
+        .map_err(|error| format!("3MF assembly failed: {error}"))?;
     Ok(())
 }
 
