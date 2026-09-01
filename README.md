@@ -33,8 +33,9 @@ cargo test --release --all
 | `--clearance` | `0.7` | gap between objects, mm |
 | `--resolution` | `0.25` | raster cell size, mm |
 | `--angle-step` | `2.0` | rotation step, degrees |
-| `--attempts` | `16000` | randomized restarts; more can pack tighter |
-| `--candidates` | `2400` | samples per placement |
+| `--attempts` | `16000` | independent randomized restarts, each packing a full layout |
+| `--candidates` | `2400` | positions sampled per placed object within one restart (search cost scales with attempts × candidates) |
+| `--stall` | `attempts/4` | stop once this many restarts pass without improvement; `0` runs all attempts |
 | `--seed` | `20270831` | makes a run reproducible |
 
 Writes `<output>.verification.json` with the object count and prime tower bounds.

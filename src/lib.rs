@@ -476,8 +476,15 @@ pub struct PackOptions {
     pub resolution: f64,
     pub clearance: f64,
     pub angle_step_deg: f64,
+    /// Number of independent randomized restarts. Each restart packs a full layout from scratch;
+    /// `candidates_per_step` positions are sampled per placed object *within* one restart, so
+    /// total search cost scales with `attempts × candidates_per_step`, not their ratio.
     pub attempts: usize,
     pub candidates_per_step: usize,
+    /// Stop once this many consecutive completed restarts have not improved the best object
+    /// count (0 = run all attempts). Dense plates usually plateau long before `attempts` runs
+    /// out, so this skips the tail of the search at no quality cost.
+    pub stall_attempts: usize,
     pub seed: u64,
 }
 
@@ -495,6 +502,9 @@ pub struct PackResult {
     pub requested_clearance_mm: f64,
     pub angle_step_deg: f64,
     pub attempts: usize,
+    /// How many restarts actually ran: fewer than `attempts` when the stall limit stopped the
+    /// search early.
+    pub attempts_run: usize,
     pub seed: u64,
 }
 
@@ -607,18 +617,36 @@ pub fn pack_footprint(footprint: &Footprint, options: &PackOptions) -> PackResul
         })
         .collect();
     let attempts = options.attempts.max(1);
+    let stall = options.stall_attempts;
     let completed = std::sync::atomic::AtomicUsize::new(0);
     let best_seen = std::sync::atomic::AtomicUsize::new(0);
+    let best_attempt = std::sync::atomic::AtomicUsize::new(0);
+    let since_improvement = std::sync::atomic::AtomicUsize::new(0);
+    let stop_requested = std::sync::atomic::AtomicBool::new(false);
     let progress_interval = (attempts / 20).max(1);
     let best = (0..attempts)
         .into_par_iter()
         .map(|attempt| {
+            if stall > 0 && stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
+                return Vec::new();
+            }
             let result = if attempt % 2 == 0 {
                 drop_attempt(&masks, options, attempt)
             } else {
                 greedy_attempt(&masks, options, attempt)
             };
-            best_seen.fetch_max(result.len(), std::sync::atomic::Ordering::Relaxed);
+            // Object count is the only objective (bbox area is a tiebreak inside
+            // better_layout), so an equal-count restart counts as "no improvement" for the
+            // stall limit. Attempts complete out of order under rayon; a racy reset/increment
+            // pair can only shift the stop by one in-flight restart, which is fine for a
+            // heuristic whose tail is being skipped.
+            if result.len() > best_seen.fetch_max(result.len(), std::sync::atomic::Ordering::Relaxed)
+            {
+                best_attempt.store(attempt, std::sync::atomic::Ordering::Relaxed);
+                since_improvement.store(0, std::sync::atomic::Ordering::Relaxed);
+            } else if stall > 0 {
+                since_improvement.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if done % progress_interval == 0 || done == attempts {
                 eprintln!(
@@ -626,9 +654,26 @@ pub fn pack_footprint(footprint: &Footprint, options: &PackOptions) -> PackResul
                     best_seen.load(std::sync::atomic::Ordering::Relaxed)
                 );
             }
+            if stall > 0
+                && since_improvement.load(std::sync::atomic::Ordering::Relaxed) >= stall
+                && !stop_requested.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                eprintln!(
+                    "pack_footprint: no improvement in the last {stall} attempts; stopping early \
+                     (best so far: {} objects)",
+                    best_seen.load(std::sync::atomic::Ordering::Relaxed)
+                );
+            }
             result
         })
         .reduce(Vec::new, |a, b| better_layout(a, b, &masks));
+    let attempts_run = completed.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!(
+        "pack_footprint: best layout: {} objects (found at attempt {}, {attempts_run}/{attempts} \
+         attempts run)",
+        best.len(),
+        best_attempt.load(std::sync::atomic::Ordering::Relaxed) + 1,
+    );
 
     PackResult {
         placements: best
@@ -643,6 +688,7 @@ pub fn pack_footprint(footprint: &Footprint, options: &PackOptions) -> PackResul
         requested_clearance_mm: options.clearance,
         angle_step_deg: options.angle_step_deg,
         attempts,
+        attempts_run,
         seed: options.seed,
     }
 }

@@ -57,7 +57,10 @@ The whole packing core lives in one file, in pipeline order:
    independent randomized restarts in parallel via rayon. Even attempts use `drop_attempt`
    (gravity-drop + contact scoring), odd use `greedy_attempt` (anchor-relative sampling). Restarts
    are reduced with `better_layout`: **object count is the only real objective; bbox area is a
-   tiebreak.** Progress is printed to stderr.
+   tiebreak.** `candidates_per_step` positions are sampled per placed object *within* one restart,
+   so total cost scales with attempts × candidates, not their ratio. `stall_attempts` stops the
+   search once that many consecutive restarts bring no improvement (the CLI's `--stall`, default
+   `attempts/4`; `0` disables). Progress is printed to stderr.
 4. `validate_result` — an independent re-check of the winning layout (re-rasterizes from scratch,
    pairwise mask overlap, bed bounds, exclusions). Every caller runs this; treat it as the
    contract, not as an optimization.
@@ -101,6 +104,11 @@ Two invariants encoded here as load-bearing decisions:
 - Collision geometry comes from the mesh **embedded in the source 3MF** (`extract_embedded_stl.py`),
   never from a separately supplied STL. A drifted standalone STL silently invalidates every
   collision check while keeping the same bbox — this caused a real near-zero-clearance touch.
+  The component's own transform is baked into that STL, and `build_3mf.py` compensates the baked
+  mesh's bbox center (rotation-aware) in every build-item transform: a placement's (x, y) is where
+  that center lands on the bed. A source component carrying its own translation (Goat 3:
+  (-35.38, +40.12)) otherwise displaces every clone by a rotation-dependent ~54 mm and objects
+  fall off the heated bed ("partly inside, can not be sliced").
 - `build_3mf.py` is called *without* `--reuse-source-object-instances`. The shared-object/N-items
   mode reproducibly triggers BambuStudio's "gcode path conflicts" on dense plates; N distinct
   `<object>` resources sharing one external mesh component slices cleanly and is equally paint-safe.

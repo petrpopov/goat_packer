@@ -21,6 +21,7 @@ fn p1s_search_meets_existing_seventeen_model_baseline() {
         angle_step_deg: 5.0,
         attempts: 1_200,
         candidates_per_step: 1_600,
+        stall_attempts: 0,
         seed: 20_270_826,
     };
     let result = pack_footprint(&footprint, &options);
@@ -43,6 +44,7 @@ fn u1_search_keeps_eighteen_models_with_edge_margin_and_purge_line() {
         angle_step_deg: 5.0,
         attempts: 1_200,
         candidates_per_step: 1_600,
+        stall_attempts: 0,
         seed: 20_270_829,
     };
     let result = pack_footprint(&footprint, &options);

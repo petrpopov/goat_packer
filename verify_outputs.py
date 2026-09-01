@@ -34,6 +34,35 @@ def lower_polygon(stl_path: Path):
     return translate(polygon, -cx, -cy)
 
 
+def stl_bbox_center(stl_path: Path) -> tuple[float, float]:
+    mesh = trimesh.load_mesh(stl_path, process=False)
+    return (
+        (float(mesh.vertices[:, 0].min()) + float(mesh.vertices[:, 0].max())) * 0.5,
+        (float(mesh.vertices[:, 1].min()) + float(mesh.vertices[:, 1].max())) * 0.5,
+    )
+
+
+def parse_transform(text):
+    """Parse a 3MF transform into a 4x3 row-major matrix (last row = translation).
+
+    3MF uses row vectors: p' = p·M, i.e. p'_j = sum_i p_i * M[i][j] + M[3][j].
+    """
+    if not text:
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    values = [float(value) for value in text.split()]
+    if len(values) != 12:
+        raise AssertionError(f"3MF transform is not 12 numbers: {text!r}")
+    return [values[0:3], values[3:6], values[6:9], values[9:12]]
+
+
+def apply_matrix(matrix, point):
+    x, y, z = point
+    return tuple(
+        x * matrix[0][j] + y * matrix[1][j] + z * matrix[2][j] + matrix[3][j]
+        for j in range(3)
+    )
+
+
 def verify(
     stl_path: Path,
     placements_path: Path,
@@ -91,9 +120,13 @@ def verify(
         ]
         if not embedded_vertices:
             raise AssertionError("embedded component mesh has no vertices")
-        embedded_height = max(vertex[2] for vertex in embedded_vertices) - min(
-            vertex[2] for vertex in embedded_vertices
-        )
+        # The component's own transform sits between the embedded mesh and every build item
+        # (world = mesh ∘ component ∘ item). It can carry a translation (Goat 3:
+        # (-35.38, +40.12, -4.3)); ignoring it makes both the XY and Z placement checks lie.
+        component = root.find(".//c:resources/c:object/c:components/c:component", NS)
+        component_matrix = parse_transform(component.get("transform") if component is not None else None)
+        local_vertices = [apply_matrix(component_matrix, vertex) for vertex in embedded_vertices]
+        embedded_height = max(v[2] for v in local_vertices) - min(v[2] for v in local_vertices)
         for index, (item, expected) in enumerate(zip(items, placements)):
             matrix = list(map(float, item.get("transform").split()))
             if len(matrix) != 12:
@@ -101,9 +134,24 @@ def verify(
             angle = math.degrees(math.atan2(matrix[1], matrix[0])) % 360.0
             if abs(((angle - expected["angle_deg"] + 180) % 360) - 180) > 1e-6:
                 raise AssertionError(f"item {index} angle mismatch: {angle} != {expected['angle_deg']}")
-            if abs(matrix[9] - expected["x_mm"]) > 1e-6 or abs(matrix[10] - expected["y_mm"]) > 1e-6:
-                raise AssertionError(f"item {index} XY translation mismatch")
-            transformed_z = [x * matrix[2] + y * matrix[5] + z * matrix[8] + matrix[11] for x, y, z in embedded_vertices]
+            # The item translation places the object-local footprint center (embedded mesh plus
+            # the source component's transform) at (x_mm, y_mm), so the expected translation is
+            # the placement minus the angle-rotated STL bbox center — the same compensation
+            # build_3mf.py applies. Comparing raw matrix[9]/[10] to the placement would only hold
+            # for a component whose own translation is zero.
+            radians = math.radians(expected["angle_deg"])
+            center_x, center_y = stl_bbox_center(stl_path)
+            expected_tx = expected["x_mm"] - (center_x * math.cos(radians) - center_y * math.sin(radians))
+            expected_ty = expected["y_mm"] - (center_x * math.sin(radians) + center_y * math.cos(radians))
+            if abs(matrix[9] - expected_tx) > 1e-6 or abs(matrix[10] - expected_ty) > 1e-6:
+                raise AssertionError(
+                    f"item {index} XY translation mismatch: ({matrix[9]}, {matrix[10]}) != "
+                    f"({expected_tx}, {expected_ty})"
+                )
+            item_matrix = parse_transform(item.get("transform"))
+            transformed_z = [
+                apply_matrix(item_matrix, vertex)[2] for vertex in local_vertices
+            ]
             if abs(min(transformed_z)) > 1e-5 or abs(max(transformed_z) - embedded_height) > 1e-4:
                 raise AssertionError(f"item {index} is not on bed: z={min(transformed_z)}..{max(transformed_z)}")
 

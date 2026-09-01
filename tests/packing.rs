@@ -54,6 +54,7 @@ fn packer_places_four_squares_without_overlap() {
         angle_step_deg: 90.0,
         attempts: 24,
         candidates_per_step: 250,
+        stall_attempts: 0,
         seed: 7,
     };
     let result = pack_footprint(&square, &options);
@@ -72,6 +73,7 @@ fn packer_never_uses_exclusion_area() {
         angle_step_deg: 90.0,
         attempts: 8,
         candidates_per_step: 100,
+        stall_attempts: 0,
         seed: 9,
     };
     let result = pack_footprint(&square, &options);

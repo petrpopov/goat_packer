@@ -7,7 +7,7 @@ use std::{
 };
 
 use goat_packer::{
-    PackOptions, PackResult, Rect, extract_footprint, pack_footprint, validate_result,
+    Footprint, PackOptions, PackResult, Rect, extract_footprint, pack_footprint, validate_result,
     colored_packer::{
         PrimeTowerBounds, PrinterProfile, detect_slicer_kind_from_printer_model,
         load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
@@ -30,6 +30,7 @@ struct Args {
     angle_step: f64,
     attempts: usize,
     candidates: usize,
+    stall: usize,
     seed: u64,
 }
 
@@ -231,11 +232,51 @@ fn pack(
         angle_step_deg: args.angle_step,
         attempts: args.attempts,
         candidates_per_step: args.candidates,
+        stall_attempts: args.stall,
         seed: args.seed,
     };
     let result = pack_footprint(&footprint, &options);
     validate_result(&footprint, &options, &result)?;
+    let bounds = layout_world_bounds(&footprint, &result);
+    eprintln!(
+        "layout: {} objects within x [{:.1}, {:.1}], y [{:.1}, {:.1}] (bed {:.1}..{:.1} x \
+         {:.1}..{:.1}); per-object positions: {}",
+        result.placements.len(),
+        bounds.min_x,
+        bounds.max_x,
+        bounds.min_y,
+        bounds.max_y,
+        options.bed.min_x,
+        options.bed.max_x,
+        options.bed.min_y,
+        options.bed.max_y,
+        args.work_dir.join("placements.json").display(),
+    );
     Ok(result)
+}
+
+/// World-XY bounding box of the packed layout, from the exact footprint loops rotated per
+/// placement. The packer's own bed-fit check works on rasterized masks; this recomputation is
+/// for the operator-facing log line that says where the layout actually sits on the bed.
+fn layout_world_bounds(footprint: &Footprint, result: &PackResult) -> Rect {
+    let mut bounds = Rect::new(
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for placement in &result.placements {
+        let (sin, cos) = placement.angle_deg.to_radians().sin_cos();
+        for point in footprint.loops.iter().flatten() {
+            let x = placement.x_mm + point.x * cos - point.y * sin;
+            let y = placement.y_mm + point.x * sin + point.y * cos;
+            bounds.min_x = bounds.min_x.min(x);
+            bounds.min_y = bounds.min_y.min(y);
+            bounds.max_x = bounds.max_x.max(x);
+            bounds.max_y = bounds.max_y.max(y);
+        }
+    }
+    bounds
 }
 
 fn build_colored_project(
@@ -319,15 +360,30 @@ fn slice_project(
         .arg(&output_dir)
         .arg(&input)
         .output()?;
-    fs::write(
-        work_dir.join(format!("{label}_slice.log")),
-        [&output.stdout[..], &output.stderr[..]].concat(),
-    )?;
+    let log_path = work_dir.join(format!("{label}_slice.log"));
+    fs::write(&log_path, [&output.stdout[..], &output.stderr[..]].concat())?;
     if !output.status.success() {
+        // BambuStudio/Orca print their real diagnosis to stdout (and to result.json in the
+        // output dir), not to stderr — reporting only stderr yielded an empty "slicing failed:"
+        // message on real plates. Surface the most specific source first, plus enough context
+        // to re-run the exact failing command by hand.
+        let report_error = slicer_report_error(&output_dir)
+            .unwrap_or_else(|| "<slicer wrote no result.json>".to_owned());
         return Err(format!(
-            "{} slicing failed: {}",
+            "{} slicing failed ({})\n\
+             slicer report: {report_error}\n\
+             slicer output (tail):\n{}\n\
+             full log: {}\n\
+             output dir: {}\n\
+             rerun manually: {} --slice 1 --outputdir {} {}",
             profile.printer_name,
-            String::from_utf8_lossy(&output.stderr)
+            output.status,
+            output_tail(&output.stdout, &output.stderr, 15),
+            log_path.display(),
+            output_dir.display(),
+            profile.slicer_path,
+            output_dir.display(),
+            input.display(),
         )
         .into());
     }
@@ -337,6 +393,37 @@ fn slice_project(
         .find(|path| path.extension().is_some_and(|extension| extension == "gcode"))
         .ok_or("slicer output did not contain G-code")?;
     Ok(fs::read(gcode)?)
+}
+
+/// Reads the slicer's own `result.json` from the output dir and extracts its `error_string` —
+/// the single most useful line when a slice fails (e.g. "Some objects are located over the
+/// boundary of the heated bed."). Returns `None` when the file or field is absent.
+fn slicer_report_error(output_dir: &Path) -> Option<String> {
+    let report = fs::read_dir(output_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.file_name().is_some_and(|name| name == "result.json"))?;
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(report).ok()?).ok()?;
+    let error = value
+        .get("error_string")
+        .and_then(serde_json::Value::as_str)?
+        .to_owned();
+    (!error.is_empty()).then_some(error)
+}
+
+/// Last `max_lines` non-empty lines of the slicer's combined stdout+stderr, each indented, for
+/// embedding in a failure message. Keeps `[error] ...` lines that BambuStudio logs mid-run.
+fn output_tail(stdout: &[u8], stderr: &[u8], max_lines: usize) -> String {
+    let combined = [stdout, stderr].concat();
+    let text = String::from_utf8_lossy(&combined);
+    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..]
+        .iter()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Rewrites `project` into `output` with CLI-slicing workarounds applied, returning whether a
@@ -497,6 +584,7 @@ fn parse_args() -> AppResult<Args> {
     let mut angle_step = 2.0;
     let mut attempts = 16_000;
     let mut candidates = 2_400;
+    let mut stall = None;
     let mut seed = 20_270_831;
     while let Some(option) = args.next() {
         let value = args
@@ -512,12 +600,17 @@ fn parse_args() -> AppResult<Args> {
             "--angle-step" => angle_step = value.parse()?,
             "--attempts" => attempts = value.parse()?,
             "--candidates" => candidates = value.parse()?,
+            "--stall" => stall = Some(value.parse()?),
             "--seed" => seed = value.parse()?,
             _ => return Err(format!("unknown option: {option}").into()),
         }
     }
     let output = output.ok_or("--output is required")?;
     let work_dir = work_dir.unwrap_or_else(|| output.with_extension("work"));
+    let attempts = attempts.max(1);
+    // Default: give the search a quarter of the restarts to keep improving after the last gain
+    // before declaring it plateaued. 0 explicitly disables early stopping.
+    let stall = stall.unwrap_or((attempts / 4).max(1));
     Ok(Args {
         source_3mf: source_3mf.ok_or("--source is required")?,
         profile_path: profile_path.ok_or("--profile is required")?,
@@ -528,6 +621,7 @@ fn parse_args() -> AppResult<Args> {
         angle_step,
         attempts,
         candidates,
+        stall,
         seed,
     })
 }
@@ -596,6 +690,7 @@ mod tests {
             angle_step: 90.0,
             attempts: 8,
             candidates: 100,
+            stall: 0,
             seed: 1,
         };
 
@@ -611,6 +706,7 @@ mod tests {
             angle_step_deg: args.angle_step,
             attempts: args.attempts,
             candidates_per_step: args.candidates,
+            stall_attempts: args.stall,
             seed: args.seed,
         };
         validate_result(&footprint, &options, &result).unwrap();
@@ -712,6 +808,29 @@ mod tests {
             "flush_volumes_matrix": ["0"],
         });
         assert!(!normalize_flush_volumes_matrix(&mut settings));
+    }
+
+    #[test]
+    fn output_tail_keeps_the_last_non_empty_lines_of_combined_slicer_output() {
+        let stdout = b"trace line 1\ntrace line 2\n\n[error] plate 1: boom\n";
+        let stderr = b"";
+        let tail = output_tail(stdout, stderr, 2);
+        assert_eq!(tail, "  trace line 2\n  [error] plate 1: boom");
+    }
+
+    #[test]
+    fn slicer_report_error_reads_error_string_from_result_json() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(slicer_report_error(dir.path()), None);
+        fs::write(
+            dir.path().join("result.json"),
+            r#"{"error_string":"Some objects are located over the boundary of the heated bed.","return_code":-52}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            slicer_report_error(dir.path()).as_deref(),
+            Some("Some objects are located over the boundary of the heated bed.")
+        );
     }
 
     #[test]

@@ -3,9 +3,14 @@
 
 The packer must collide against the exact geometry that will actually be printed. A
 separately-exported STL for the same model can drift from the 3MF's embedded mesh (different
-export pass, different tool version, manual edits), silently invalidating collision checks that
-assume the two are identical. Deriving the STL directly from the 3MF's own component eliminates
+export pass, different tool version, manual edits), silently invalidating every collision check
+that assumes the two are identical. Deriving the STL directly from the 3MF's own component eliminates
 that class of mismatch.
+
+The component's own transform is baked into the exported vertices, so the STL is the object-local
+geometry a build-item transform actually acts on. A source component carrying a non-zero
+translation (e.g. Goat 3's object_19.model: (-35.38, +40.12)) otherwise makes the raw mesh a
+different geometry than the one placed on the bed.
 """
 
 from __future__ import annotations
@@ -21,6 +26,27 @@ PRODUCTION = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
 NS = {"c": CORE, "p": PRODUCTION}
 
 
+def parse_transform(text: str | None) -> list[list[float]]:
+    """Parse a 3MF transform into a 4x3 row-major matrix (last row = translation).
+
+    3MF uses row vectors: p' = p·M, i.e. p'_j = sum_i p_i * M[i][j] + M[3][j].
+    """
+    if not text:
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    values = [float(value) for value in text.split()]
+    if len(values) != 12:
+        raise ValueError(f"3MF transform is not 12 numbers: {text!r}")
+    return [values[0:3], values[3:6], values[6:9], values[9:12]]
+
+
+def apply_matrix(matrix: list[list[float]], point: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z = point
+    return tuple(
+        x * matrix[0][j] + y * matrix[1][j] + z * matrix[2][j] + matrix[3][j]
+        for j in range(3)
+    )
+
+
 def embedded_mesh_triangles(source_3mf: Path) -> list[tuple[tuple[float, float, float], ...]]:
     with zipfile.ZipFile(source_3mf) as archive:
         core = ET.fromstring(archive.read("3D/3dmodel.model"))
@@ -30,13 +56,18 @@ def embedded_mesh_triangles(source_3mf: Path) -> list[tuple[tuple[float, float, 
             if not source_path:
                 raise ValueError("source component has no production path")
             mesh_root = ET.fromstring(archive.read(source_path.lstrip("/")))
+            component_matrix = parse_transform(component.get("transform"))
         else:
             mesh_root = core
+            component_matrix = parse_transform(None)
         mesh_object = mesh_root.find(".//c:resources/c:object", NS)
         if mesh_object is None or mesh_object.find("c:mesh", NS) is None:
             raise ValueError("3MF has no inline or component mesh to export")
         vertices = [
-            (float(v.get("x")), float(v.get("y")), float(v.get("z")))
+            apply_matrix(
+                component_matrix,
+                (float(v.get("x")), float(v.get("y")), float(v.get("z"))),
+            )
             for v in mesh_object.findall(".//c:vertex", NS)
         ]
         triangles = []

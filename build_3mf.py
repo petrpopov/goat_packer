@@ -45,13 +45,23 @@ def _number(value: float) -> str:
     return f"{value:.10f}".rstrip("0").rstrip(".")
 
 
-def _transform(placement: dict, z_offset: float) -> str:
+def _transform(placement: dict, z_offset: float, footprint_center: tuple[float, float]) -> str:
+    # A placement's (x, y) is where the STL mesh's XY bbox center must land in bed coordinates.
+    # The build item, however, rotates the object's *local* geometry (embedded mesh plus the
+    # source component's own transform — see extract_embedded_stl.py) about the local origin, so
+    # the local footprint center has to be rotated out of the translation. Without this, a source
+    # component carrying its own translation (Goat 3: (-35.38, +40.12)) displaces every object by
+    # a rotation-dependent ~54 mm and objects fall off the heated bed.
     angle = math.radians(float(placement["angle_deg"]))
     c, s = math.cos(angle), math.sin(angle)
+    center_x, center_y = footprint_center
+    translation = [
+        float(placement["x_mm"]) - (center_x * c - center_y * s),
+        float(placement["y_mm"]) - (center_x * s + center_y * c),
+        z_offset,
+    ]
     values = [c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0]
-    return " ".join(_number(v) for v in values) + " " + " ".join(
-        [_number(float(placement["x_mm"])), _number(float(placement["y_mm"])), _number(z_offset)]
-    )
+    return " ".join(_number(v) for v in values) + " " + " ".join(_number(v) for v in translation)
 
 
 def _lower_polygon(stl_path: Path):
@@ -61,7 +71,7 @@ def _lower_polygon(stl_path: Path):
     polygon = unary_union([Polygon(mesh.vertices[face][:, :2]) for face in bottom])
     center_x = (float(mesh.vertices[:, 0].min()) + float(mesh.vertices[:, 0].max())) * 0.5
     center_y = (float(mesh.vertices[:, 1].min()) + float(mesh.vertices[:, 1].max())) * 0.5
-    return translate(polygon, -center_x, -center_y)
+    return translate(polygon, -center_x, -center_y), (center_x, center_y)
 
 
 def _parse_xy_polygon(values: list[str]) -> list[tuple[float, float]]:
@@ -73,8 +83,8 @@ def _parse_xy_polygon(values: list[str]) -> list[tuple[float, float]]:
 
 
 def _placed_polygons(stl_path: Path, placements: list[dict]):
-    base = _lower_polygon(stl_path)
-    return [
+    base, center = _lower_polygon(stl_path)
+    polygons = [
         translate(
             rotate(base, float(p["angle_deg"]), origin=(0.0, 0.0), use_radians=False),
             float(p["x_mm"]),
@@ -82,6 +92,7 @@ def _placed_polygons(stl_path: Path, placements: list[dict]):
         )
         for p in placements
     ]
+    return polygons, center
 
 
 def _draw_preview(
@@ -166,6 +177,7 @@ def _rebuild_core(
     reuse_source_object_instances: bool = False,
     inline_mesh_template: ET.Element | None = None,
     z_offset: float = 3.70000005,
+    footprint_center: tuple[float, float] = (0.0, 0.0),
 ) -> bytes:
     root = ET.fromstring(data)
     resources = root.find("c:resources", NS)
@@ -209,7 +221,7 @@ def _rebuild_core(
         item = ET.SubElement(build, f"{{{CORE}}}item")
         item.set("objectid", object_id)
         item.set(f"{{{PRODUCTION}}}UUID", _stable_uuid("build-item", index))
-        item.set("transform", _transform(placement, z_offset))
+        item.set("transform", _transform(placement, z_offset, footprint_center))
         item.set("printable", "1")
     return _xml(root)
 
@@ -310,6 +322,19 @@ def _duplicate_colored_mesh_parts(entries: dict[str, bytes], core_data: bytes, c
     return paths
 
 
+def _parse_transform(text: str | None) -> list[list[float]]:
+    """Parse a 3MF transform into a 4x3 row-major matrix (last row = translation).
+
+    3MF uses row vectors: p' = p·M, i.e. p'_j = sum_i p_i * M[i][j] + M[3][j].
+    """
+    if not text:
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    values = [float(value) for value in text.split()]
+    if len(values) != 12:
+        raise ValueError(f"3MF transform is not 12 numbers: {text!r}")
+    return [values[0:3], values[3:6], values[6:9], values[9:12]]
+
+
 def _load_inline_mesh_template(entries: dict[str, bytes], core_data: bytes) -> ET.Element:
     root = ET.fromstring(core_data)
     component = root.find(".//c:resources/c:object/c:components/c:component", NS)
@@ -323,6 +348,19 @@ def _load_inline_mesh_template(entries: dict[str, bytes], core_data: bytes) -> E
     mesh_object = mesh_root.find(".//c:resources/c:object", NS)
     if mesh_object is None or mesh_object.find("c:mesh", NS) is None:
         raise ValueError("source component has no inline mesh object")
+    # An inlined mesh replaces the component, so the component's transform — normally applied
+    # between mesh and build item — must be baked into the vertex coordinates to keep the
+    # object-local geometry identical to the component-based modes (see _transform).
+    matrix = _parse_transform(component.get("transform"))
+    for vertex in mesh_object.findall(".//c:vertex", NS):
+        point = (float(vertex.get("x")), float(vertex.get("y")), float(vertex.get("z")))
+        x, y, z = (
+            point[0] * matrix[0][j] + point[1] * matrix[1][j] + point[2] * matrix[2][j] + matrix[3][j]
+            for j in range(3)
+        )
+        vertex.set("x", _number(x))
+        vertex.set("y", _number(y))
+        vertex.set("z", _number(z))
     return mesh_object
 
 
@@ -372,7 +410,7 @@ def build_project(
     exclusions = []
     if len(raw_exclusion) >= 3:
         exclusions.append(_parse_xy_polygon(raw_exclusion))
-    polygons = _placed_polygons(stl_path, placements)
+    polygons, footprint_center = _placed_polygons(stl_path, placements)
     z_offset = _source_z_offset(entries["3D/3dmodel.model"])
 
     component_paths = None
@@ -390,6 +428,7 @@ def build_project(
         reuse_source_object_instances,
         inline_mesh_template,
         z_offset,
+        footprint_center,
     )
     if not reuse_source_object_instances:
         entries["Metadata/model_settings.config"] = _rebuild_model_settings(
