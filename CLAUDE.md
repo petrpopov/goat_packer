@@ -121,6 +121,16 @@ grown tower earns a repack, and only once.
 `filament_colour.len()²` (stale-size artifact of projects trimmed down from multi-color templates;
 Orca's CLI rejects the mismatch outright even though the values are never read).
 
+`--nozzle-clean <spec>` (`src/nozzle_clean.rs`, applied after each `assemble_project`) prepends a
+conditioned nozzle-wipe block to the project's `layer_change_gcode`, keeping the printer-native
+tail (M73/M991, A2L's M201/M1007) intact. The wipe body is profile-owned (`nozzle_clean_gcode`):
+P1/X1 have no `G150.x` firmware macros and need raw G1 moves to the back chute (mirroring their
+own toolchange gcode — coordinates and the `Z{max_layer_z + 3.0}` bed-drop idiom come from it);
+A2/P2/H2 wipe via `G150.3`/`G150.1`. Absent field (Snapmaker) = unsupported, explicit error.
+Validated on a real P1S slice: relative-E stream (no M82 anywhere), so the block's M83 + net-zero
+E-2/E2 retract/prime is safe. `nozzle_clean_inject` is the standalone binary for non-packer
+projects.
+
 ### Layer 4 — scheduler (`src/scheduler.rs`, `src/bin/daily_scheduler.rs`)
 
 `subset_3mf` produces a 3MF with only the first N build items, pruning `3dmodel.model`,

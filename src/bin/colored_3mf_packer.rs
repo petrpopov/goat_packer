@@ -14,6 +14,7 @@ use goat_packer::{
         load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
     },
     embedded_mesh::{embedded_mesh_triangles, write_binary_stl},
+    nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     scheduler::object_count_3mf,
 };
 use serde::Serialize;
@@ -34,6 +35,7 @@ struct Args {
     candidates: usize,
     stall: usize,
     seed: u64,
+    nozzle_clean: Option<NozzleCleanSpec>,
 }
 
 #[derive(Debug, Serialize)]
@@ -311,6 +313,13 @@ fn build_colored_project(
     };
     assemble_project(&args.source_3mf, &args.output, &options)
         .map_err(|error| format!("3MF assembly failed: {error}"))?;
+    // Applied after assembly (both here and on the single repack path): the CLI copies sliced
+    // for probes/final checks derive from this same file, so their timings and tower state
+    // reflect the real, wipe-carrying G-code.
+    if let Some(spec) = &args.nozzle_clean {
+        inject_nozzle_clean(profile, &args.output, &args.output, spec)
+            .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
+    }
     Ok(())
 }
 
@@ -569,6 +578,7 @@ fn parse_args() -> AppResult<Args> {
     let mut candidates = 2_400;
     let mut stall = None;
     let mut seed = 20_270_831;
+    let mut nozzle_clean = None;
     while let Some(option) = args.next() {
         let value = args
             .next()
@@ -585,6 +595,9 @@ fn parse_args() -> AppResult<Args> {
             "--candidates" => candidates = value.parse()?,
             "--stall" => stall = Some(value.parse()?),
             "--seed" => seed = value.parse()?,
+            "--nozzle-clean" => {
+                nozzle_clean = Some(NozzleCleanSpec::parse(&value)?);
+            }
             _ => return Err(format!("unknown option: {option}").into()),
         }
     }
@@ -606,6 +619,7 @@ fn parse_args() -> AppResult<Args> {
         candidates,
         stall,
         seed,
+        nozzle_clean,
     })
 }
 
@@ -655,6 +669,7 @@ mod tests {
             purge_lines: vec![],
             tower_marker_style: "wipe_tower".into(),
             tower_line_width_mm: 0.4,
+            nozzle_clean_gcode: None,
         }
     }
 
@@ -675,6 +690,7 @@ mod tests {
             candidates: 100,
             stall: 0,
             seed: 1,
+            nozzle_clean: None,
         };
 
         let result = pack(&args, &profile, &stl, vec![]).unwrap();

@@ -10,5 +10,6 @@
   "exclusion_rectangles": [],
   "purge_lines": [[105.0, 1.0, 185.0, 1.0, 2.0]],
   "tower_marker_style": "wipe_tower",
-  "tower_line_width_mm": 0.5
+  "tower_line_width_mm": 0.5,
+  "nozzle_clean_gcode": "M400 ; finish all queued moves\nG1 Z{max_layer_z + 3.0} F1200 ; lift 3mm over the tallest printed part (firmware toolchange idiom)\nM83 ; relative extrusion\nG1 E-2.0 F1800 ; retract before travel\nG150.3 ; move toolhead to the trash bin\nG150.1 F16000 ; wipe\nG150.1 F16000 ; wipe\nG150.1 F16000 ; wipe\nG1 E2.0 F1800 ; prime nozzle back to pressure\nG1 Z{layer_z} F1200 ; return to the new layer height"
 }

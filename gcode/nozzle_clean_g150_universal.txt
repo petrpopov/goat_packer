@@ -1,0 +1,36 @@
+; Nozzle-clean layer change G-code for Bambu printers with G150.x firmware macros
+; (P2S / H2C / H2S and friends). Simplified from the community "Auto Nozzle Wipe"
+; (PETG) snippet: the PETG-only gate is removed (works for any filament), M117 is
+; dropped (P1-series screens don't support it) and so is the print-by-object mode.
+; Paste into Printer Settings -> Machine G-Code -> Layer Change G-Code.
+;
+; Cadence (unchanged from the original): after the first layer, every 10th layer,
+; and on the last layer.
+;
+; Knobs:
+;   % 10                                          - wipe stride
+;   add {if layer_z >= 6.59} ... {endif} around   - restrict wiping to a height zone
+;     the wipe body (6.59 = 6.6 - 0.01 epsilon)
+
+; layer num/total_layer_count: {layer_num+1}/[total_layer_count]
+{if (print_sequence == "by layer") && (layer_num > 0)}
+{if (layer_num == 1) || ((layer_num + 1) % 10 == 0) || (layer_num == (total_layer_count - 1))}
+M400 ; finish all queued moves
+G91 ; relative positioning
+G1 Z0.4 F1200 ; Z-hop to clear the print
+M83 ; relative extrusion
+G1 E-2.0 F1800 ; retract to prevent oozing
+G90 ; absolute positioning
+G150.3 ; move toolhead to trash bin area
+G150.1 F8000 ; wipe
+G150.1 F8000 ; wipe
+G150.1 F8000 ; wipe
+G1 E2.0 F1800 ; prime nozzle back to pressure
+G91 ; relative positioning
+G1 Z-0.4 F1200 ; undo Z-hop
+G90 ; absolute positioning
+{endif}
+{endif}
+; update layer progress
+M73 L{layer_num+1}
+M991 S0 P{layer_num} ;notify layer change

@@ -37,12 +37,32 @@ cargo test --release --all
 | `--candidates` | `2400` | positions sampled per placed object within one restart (search cost scales with attempts × candidates) |
 | `--stall` | `attempts/4` | stop once this many restarts pass without improvement; `0` runs all attempts |
 | `--seed` | `20270831` | makes a run reproducible |
+| `--nozzle-clean` | off | inject periodic nozzle wipes into Layer Change G-code: `global,every=10` (whole print) or `from-z=6.6,every=1` (only from a height) |
 
 Writes `<output>.verification.json` with the object count and prime tower bounds.
 
 An independent exact-geometry check on any output: `./target/release/verify_outputs <stl>
 <placements.json> <packed.3mf>` (minimum gap, edge margin, purge-line gap, keepouts, transforms,
 ZIP CRC).
+
+## Nozzle clean
+
+`--nozzle-clean from-z=6.6` injects a periodic nozzle-wipe macro into the packed project's
+Layer Change G-code: every layer from a given height (`from-z=H[,every=N]`) or every N layers
+for the whole print (`global[,every=N]`; `every` defaults to 10 for `global`, 1 for `from-z`).
+The wipe moves come from the printer profile (`nozzle_clean_gcode`): raw G1 moves to the back
+chute on P1/X1 (no G150.x firmware macros there), native `G150.3` + `G150.1` on A2/P2/H2.
+A profile without that field (Snapmaker) fails with an explicit error. Useful wherever white
+prints on top of red: on Goat 3 that zone is z 6.6–8.6 mm, so `from-z=6.6` cleans exactly it.
+
+For projects that did not come out of the packer:
+
+```bash
+./target/release/nozzle_clean_inject --source in.3mf --output out.3mf \
+  --profile profiles/p1s.json --nozzle-clean from-z=6.6
+```
+
+Human-pasteable versions for the Bambu Studio / Orca UI live in `gcode/`.
 
 ## Scheduling
 

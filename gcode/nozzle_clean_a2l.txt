@@ -1,0 +1,36 @@
+; Nozzle-clean layer change G-code for Bambu A2L / A2 (native G150.x firmware macros,
+; used by the machine's own start gcode: G150.3 = move to trash bin, G150.1 = wipe).
+; Paste into Printer Settings -> Machine G-Code -> Layer Change G-Code.
+;
+; Cadence (same as the community "Auto Nozzle Wipe" original): after the first layer,
+; every 10th layer, and on the last layer. Filament-agnostic (no PETG gate).
+;
+; Knobs:
+;   % 10                                          - wipe stride
+;   add {if layer_z >= 6.59} ... {endif} around   - restrict wiping to a height zone
+;     the wipe body (6.59 = 6.6 - 0.01 epsilon)
+;
+; The M201/M1007 lines are the A2L-native layer-change tail; keep them.
+
+;======== layer change ========
+{if (print_sequence == "by layer") && (layer_num > 0)}
+{if (layer_num == 1) || ((layer_num + 1) % 10 == 0) || (layer_num == (total_layer_count - 1))}
+;### START: NOZZLE CLEAN (A2L) ###
+M400 ; finish all queued moves
+G1 Z{max_layer_z + 3.0} F1200 ; lift 3mm over the tallest printed part (firmware toolchange idiom)
+M83 ; relative extrusion
+G1 E-2.0 F1800 ; retract before travel
+G150.3 ; move toolhead to the trash bin
+G150.1 F16000 ; wipe
+G150.1 F16000 ; wipe
+G150.1 F16000 ; wipe
+G1 E2.0 F1800 ; prime nozzle back to pressure
+G1 Z{layer_z} F1200 ; return to the new layer height
+;### END: NOZZLE CLEAN (A2L) ###
+{endif}
+{endif}
+; update layer progress
+M201 N1 Y[curr_y_acceleration_limit]
+M73 L{layer_num+1}
+M991 S0 P{layer_num} ;notify layer change
+M1007 L1

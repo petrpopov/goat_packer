@@ -20,6 +20,12 @@ pub struct PrinterProfile {
     pub purge_lines: Vec<[f64; 5]>,
     pub tower_marker_style: String,
     pub tower_line_width_mm: f64,
+    /// Printer-specific nozzle-clean macro body injected into `layer_change_gcode` by
+    /// `nozzle_clean::inject_nozzle_clean`. P1/X1 machines need raw G1 moves to the back
+    /// chute (no `G150.x` firmware macros); A2/P2/H2 machines wipe through `G150.3`/`G150.1`.
+    /// Absent (e.g. Snapmaker) means nozzle-clean injection is unsupported for this printer.
+    #[serde(default)]
+    pub nozzle_clean_gcode: Option<String>,
 }
 
 impl PrinterProfile {

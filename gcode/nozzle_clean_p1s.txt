@@ -1,0 +1,40 @@
+; Nozzle-clean layer change G-code for Bambu P1S / P1P / X1 (no G150.x firmware macros:
+; the wipe is raw G1 moves to the back chute, mirroring the machine's own toolchange
+; sequence). Paste into Printer Settings -> Machine G-Code -> Layer Change G-Code.
+;
+; Cadence (same as the community "Auto Nozzle Wipe" original): after the first layer,
+; every 10th layer, and on the last layer. The original's PETG-only gate is removed
+; (works for any filament); M117 and the print-by-object mode are dropped.
+;
+; Knobs:
+;   % 10                                          - wipe stride
+;   add {if layer_z >= 6.59} ... {endif} around   - restrict wiping to a height zone
+;     the wipe body (6.59 = 6.6 - 0.01 epsilon)
+;
+; The wipe body is validated end-to-end on a real BambuStudio P1S slice (relative-E
+; stream, Z{max_layer_z + 3.0} bed-drop idiom straight from the firmware toolchange).
+
+; layer num/total_layer_count: {layer_num+1}/[total_layer_count]
+{if (print_sequence == "by layer") && (layer_num > 0)}
+{if (layer_num == 1) || ((layer_num + 1) % 10 == 0) || (layer_num == (total_layer_count - 1))}
+;### START: NOZZLE CLEAN (P1S) ###
+M400 ; finish all queued moves
+G1 Z{max_layer_z + 3.0} F1200 ; drop bed 3mm below the tallest printed part (firmware toolchange idiom)
+M83 ; relative extrusion
+G1 E-2.0 F1800 ; retract before travel
+G1 X70 Y245 F21000 ; head to the back chute area
+G1 Y255 F3000
+G1 X100 F5000 ; wipe mouth
+G1 X70 F15000
+G1 X100 F5000 ; wipe mouth
+G1 X70 F15000
+G1 X60 F15000 ; shake off debris
+G1 X80 F15000
+G1 E2.0 F1800 ; prime nozzle back to pressure
+G1 Z{layer_z} F1200 ; return bed to the new layer height
+;### END: NOZZLE CLEAN (P1S) ###
+{endif}
+{endif}
+; update layer progress
+M73 L{layer_num+1}
+M991 S0 P{layer_num} ;notify layer change

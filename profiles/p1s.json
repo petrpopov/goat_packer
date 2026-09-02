@@ -15,5 +15,6 @@
     [239.5, 1.5, 18.0, 1.5, 0.5]
   ],
   "tower_marker_style": "wipe_tower",
-  "tower_line_width_mm": 0.5
+  "tower_line_width_mm": 0.5,
+  "nozzle_clean_gcode": "M400 ; finish all queued moves\nG1 Z{max_layer_z + 3.0} F1200 ; drop bed 3mm below the tallest printed part (firmware toolchange idiom)\nM83 ; relative extrusion\nG1 E-2.0 F1800 ; retract before travel\nG1 X70 Y245 F21000 ; head to the back chute area\nG1 Y255 F3000\nG1 X100 F5000 ; wipe mouth\nG1 X70 F15000\nG1 X100 F5000 ; wipe mouth\nG1 X70 F15000\nG1 X60 F15000 ; shake off debris\nG1 X80 F15000\nG1 E2.0 F1800 ; prime nozzle back to pressure\nG1 Z{layer_z} F1200 ; return bed to the new layer height"
 }

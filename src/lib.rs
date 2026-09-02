@@ -12,6 +12,7 @@ pub mod colored_packer;
 pub mod embedded_mesh;
 pub mod plate_preview;
 pub mod assemble;
+pub mod nozzle_clean;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Point {
