@@ -129,9 +129,11 @@ toolchange at z 6.8 already runs the machine's own full wipe sequence.)
 ## Human-pasteable snippets
 
 `gcode/` keeps ready-to-paste versions for the Bambu Studio UI (not used by the packer):
-`nozzle_clean_p1s.txt`, `nozzle_clean_a2l.txt`, `nozzle_clean_g150_universal.txt`. All
-three share the original snippet's cadence — after the first layer, every 10th layer,
-and on the last layer — with the PETG gate, M117 and by-object mode removed; only the
-wipe body differs per machine. A height-zone gate (`{if layer_z >= ...}`) can be added
-per the header comment, or left to the packer's `from-z` mode instead. The P1S variant
-is slice-verified: 43-layer project → 6 wipes at z 0.4/2.0/4.0/6.0/8.0/8.6.
+`nozzle_clean_p1s.txt`, `nozzle_clean_a2l.txt`, `nozzle_clean_g150_universal.txt` — all
+three share the original snippet's cadence (after the first layer, every 10th layer,
+and on the last layer) with the PETG gate, M117 and by-object mode removed; only the
+wipe body differs per machine. `nozzle_clean_p1s_fromz.txt` is the height-zone variant
+(from z 6.6 every 2nd layer — what the Goat 3 files carry). A height-zone gate
+(`{if layer_z >= ...}`) can be added to any of them per the header comment, or left to
+the packer's `from-z` mode instead. Both P1S variants are slice-verified: 43-layer
+project → 6 wipes at z 0.4/2.0/4.0/6.0/8.0/8.6 (cadence) or 5 at z 6.8–8.4 (zone).

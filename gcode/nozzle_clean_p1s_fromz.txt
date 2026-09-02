@@ -1,0 +1,40 @@
+; Nozzle-clean layer change G-code for Bambu P1S / P1P / X1 - HEIGHT-ZONE variant:
+; wipe every 2nd layer at/above z 6.6 mm, nothing below. This is exactly what
+; `nozzle_clean_inject --nozzle-clean from-z=6.6,every=2` produces; on the Goat 3
+; project (43 layers, white-on-red section at z 6.6-8.6) it gives 5 wipes at
+; z 6.8/7.2/7.6/8.0/8.4, ~+13 s. The first white layer needs no extra wipe - the
+; red->white toolchange there already runs the machine's own full wipe sequence.
+;
+; Cadence twin of nozzle_clean_p1s.txt (same wipe body); only the conditions differ.
+; Knobs:
+;   % 2             - wipe stride (every 2nd layer)
+;   layer_z >= 6.59 - zone start (6.6 - 0.01 float epsilon)
+;
+; Slice-verified on the real Goat 3 P1S project via BambuStudio CLI.
+
+; layer num/total_layer_count: {layer_num+1}/[total_layer_count]
+{if layer_num > 0}
+{if (layer_num + 1) % 2 == 0}
+{if layer_z >= 6.59}
+;### START: NOZZLE CLEAN (P1S) ###
+M400 ; finish all queued moves
+G1 Z{max_layer_z + 3.0} F1200 ; drop bed 3mm below the tallest printed part (firmware toolchange idiom)
+M83 ; relative extrusion
+G1 E-2.0 F1800 ; retract before travel
+G1 X70 Y245 F21000 ; head to the back chute area
+G1 Y255 F3000
+G1 X100 F5000 ; wipe mouth
+G1 X70 F15000
+G1 X100 F5000 ; wipe mouth
+G1 X70 F15000
+G1 X60 F15000 ; shake off debris
+G1 X80 F15000
+G1 E2.0 F1800 ; prime nozzle back to pressure
+G1 Z{layer_z} F1200 ; return bed to the new layer height
+;### END: NOZZLE CLEAN (P1S) ###
+{endif}
+{endif}
+{endif}
+; update layer progress
+M73 L{layer_num+1}
+M991 S0 P{layer_num} ;notify layer change
