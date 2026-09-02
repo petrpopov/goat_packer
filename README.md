@@ -49,15 +49,21 @@ ZIP CRC).
 ```bash
 ./target/release/daily_scheduler \
   --printer "profile=profiles/p1s.json,source=packed.3mf" \
-  --output-dir schedule_output
+  --output-schedule schedule.csv
 ```
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--printer` | — | repeatable; `profile=`, `source=` required, plus optional `name=`, `prep-min=`, `prep-sweep=a:b:c` |
-| `--output-dir` | `schedule_output` | where JSON/CSV reports go |
+| `--printer` | — | repeatable; `profile=`, `source=` required, plus optional `name=`, `prep-min=`, `prep-sweep=a:b:c`, `plates-3mf=<path>` |
+| `--output-schedule` | — | required; path to write the resolved per-printer job sequence as CSV |
+| `--output-report` | off | optional path for the full benchmarks/sensitivity/schedule JSON dump |
 | `--turnaround-min` | `10` | dead time between jobs |
-| `--reuse-benchmarks` | off | reuse prior slice timings instead of re-slicing |
+| `--reuse-benchmarks` | off | reuse prior slice timings from `--output-report` instead of re-slicing |
 
-It slices each batch size to measure real print times, then optimizes a 10:00→10:00 cycle: day jobs
-plus one overnight job.
+It slices each batch size to measure real print times (in a scratch temp dir that's cleaned up
+automatically), then optimizes a 10:00→10:00 cycle: day jobs plus one overnight job.
+
+Give a `--printer` a `plates-3mf=<path>` to also get that printer's resolved schedule as one
+multi-plate 3MF: one `<plate>` per distinct batch size in the schedule, each trimmed from `source`
+by dropping objects from one edge of the existing dense layout (same convention as the internal
+per-batch benchmarking) rather than re-packing from scratch.

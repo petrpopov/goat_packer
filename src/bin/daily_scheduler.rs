@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     error::Error,
     ffi::OsStr,
     fs,
@@ -10,8 +11,9 @@ use std::{
 use goat_packer::{
     colored_packer::{PrinterProfile, load_printer_profile},
     scheduler::{
-        BatchTiming, OptimizedSchedule, ScheduleConfig, SliceEstimate, object_count_3mf,
-        optimize_schedule, parse_bambu_result, parse_orca_gcode, plate_count_3mf, subset_3mf,
+        BatchTiming, OptimizedSchedule, PlateSpec, ScheduleConfig, SliceEstimate,
+        build_schedule_plates_3mf, object_count_3mf, optimize_schedule, parse_bambu_result,
+        parse_orca_gcode, plate_count_3mf, subset_3mf,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -25,12 +27,14 @@ struct PrinterInput {
     source: PathBuf,
     preparation_minutes: u64,
     preparation_sweep_minutes: Vec<u64>,
+    plates_output: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 struct Args {
     printers: Vec<PrinterInput>,
-    output_dir: PathBuf,
+    output_schedule: PathBuf,
+    output_report: Option<PathBuf>,
     turnaround_minutes: u64,
     reuse_benchmarks: bool,
 }
@@ -89,12 +93,12 @@ fn main() {
 
 fn run() -> AppResult<()> {
     let args = parse_args()?;
-    fs::create_dir_all(&args.output_dir)?;
-    let work_dir = args.output_dir.join("benchmark_work");
-    if work_dir.exists() {
-        fs::remove_dir_all(&work_dir)?;
-    }
-    fs::create_dir_all(&work_dir)?;
+    // Slicing benchmarks and intermediate subset .3mf copies are scratch: nothing outside this
+    // process needs them once the schedule is computed, so they live in a TempDir that cleans
+    // itself up (including on early return via `?`) instead of a directory the caller has to
+    // remember to delete.
+    let work_dir_guard = tempfile::tempdir()?;
+    let work_dir = work_dir_guard.path();
 
     let mut counts = Vec::with_capacity(args.printers.len());
     for printer in &args.printers {
@@ -115,8 +119,10 @@ fn run() -> AppResult<()> {
     }
 
     let mut benchmarks = if args.reuse_benchmarks {
-        let previous: PlannerReport =
-            serde_json::from_slice(&fs::read(args.output_dir.join("planner_report.json"))?)?;
+        let report_path = args.output_report.as_deref().ok_or(
+            "--reuse-benchmarks requires --output-report <path> to read prior benchmarks from",
+        )?;
+        let previous: PlannerReport = serde_json::from_slice(&fs::read(report_path)?)?;
         println!("Reusing {} prior benchmark rows", previous.benchmarks.len());
         previous.benchmarks
     } else {
@@ -135,7 +141,7 @@ fn run() -> AppResult<()> {
                 printer.profile.blank_start_gcode_for_cli,
                 printer.preparation_minutes * 60,
                 &hash,
-                &work_dir,
+                work_dir,
             )?);
         }
     }
@@ -200,9 +206,63 @@ fn run() -> AppResult<()> {
         sensitivity,
         combined_objects_per_day,
     };
-    write_outputs(&args.output_dir, &report)?;
+    write_schedule_csv(&args.output_schedule, &report)?;
+    if let Some(report_path) = &args.output_report {
+        fs::write(report_path, serde_json::to_vec_pretty(&report)?)?;
+    }
+    for printer in &args.printers {
+        let Some(plates_output) = &printer.plates_output else {
+            continue;
+        };
+        let analysis = printers_out_by_name(&report, &printer.profile.printer_name)?;
+        let specs = plate_specs_for_schedule(&analysis.variable_batch_schedule);
+        println!(
+            "{}: writing {} plate(s) to {}",
+            printer.profile.printer_name,
+            specs.len(),
+            plates_output.display()
+        );
+        let bed = printer.profile.printable_bed();
+        build_schedule_plates_3mf(
+            &printer.source,
+            plates_output,
+            &specs,
+            bed.max_x - bed.min_x,
+            bed.max_y - bed.min_y,
+            printer.profile.blank_start_gcode_for_cli,
+        )?;
+    }
     print_summary(&report);
     Ok(())
+}
+
+/// Every distinct batch size in `schedule`'s job sequence, in first-appearance order, turned into
+/// one [`PlateSpec`] each — a batch size that recurs (e.g. two identical day jobs) becomes one
+/// plate, not one per run, since it's the same physical layout either way. Labeled `"N pcs"` to
+/// match BambuStudio's own plate-name convention for multi-plate projects.
+fn plate_specs_for_schedule(schedule: &OptimizedSchedule) -> Vec<PlateSpec> {
+    let mut seen = HashSet::new();
+    let mut specs = Vec::new();
+    for job in &schedule.jobs {
+        if seen.insert(job.batch_size) {
+            specs.push(PlateSpec {
+                label: format!("{} pcs", job.batch_size),
+                object_count: job.batch_size,
+            });
+        }
+    }
+    specs
+}
+
+fn printers_out_by_name<'a>(
+    report: &'a PlannerReport,
+    name: &str,
+) -> AppResult<&'a PrinterAnalysis> {
+    report
+        .printers
+        .iter()
+        .find(|printer| printer.printer == name)
+        .ok_or_else(|| format!("no schedule computed for printer {name}").into())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -371,32 +431,16 @@ fn standard_config(turnaround_minutes: u64) -> ScheduleConfig {
     }
 }
 
-fn write_outputs(output_dir: &Path, report: &PlannerReport) -> AppResult<()> {
-    fs::write(
-        output_dir.join("planner_report.json"),
-        serde_json::to_vec_pretty(report)?,
-    )?;
-    let mut benchmark = fs::File::create(output_dir.join("benchmarks.csv"))?;
-    writeln!(
-        benchmark,
-        "printer,batch_size,model_seconds,slicer_total_seconds,preparation_seconds,job_seconds,filament_grams,units_per_job_hour,source_sha256"
-    )?;
-    for row in &report.benchmarks {
-        writeln!(
-            benchmark,
-            "{},{},{},{},{},{},{:.4},{:.6},{}",
-            row.printer,
-            row.batch_size,
-            row.model_seconds,
-            row.slicer_total_seconds,
-            row.preparation_seconds,
-            row.job_seconds,
-            row.filament_grams,
-            row.units_per_job_hour,
-            row.source_sha256
-        )?;
+/// Writes just the one artifact daily_scheduler's caller actually wants day to day: the resolved
+/// per-printer job sequence. Benchmarks/sensitivity are only written when `--output-report` is
+/// given (see `run`) — most invocations don't need that level of detail.
+fn write_schedule_csv(path: &Path, report: &PlannerReport) -> AppResult<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
-    let mut schedule = fs::File::create(output_dir.join("schedule.csv"))?;
+    let mut schedule = fs::File::create(path)?;
     writeln!(
         schedule,
         "printer,sequence,batch_size,start_seconds,end_seconds,start_clock,end_clock,slicer_seconds,preparation_seconds,filament_grams,cumulative_objects,overnight"
@@ -420,24 +464,6 @@ fn write_outputs(output_dir: &Path, report: &PlannerReport) -> AppResult<()> {
                 job.overnight
             )?;
         }
-    }
-    let mut sensitivity = fs::File::create(output_dir.join("sensitivity.csv"))?;
-    writeln!(
-        sensitivity,
-        "printer,turnaround_minutes,preparation_minutes,total_objects,jobs,completion_seconds,batch_sequence"
-    )?;
-    for row in &report.sensitivity {
-        writeln!(
-            sensitivity,
-            "{},{},{},{},{},{},{}",
-            row.printer,
-            row.turnaround_minutes,
-            row.preparation_minutes,
-            row.total_objects,
-            row.jobs,
-            row.completion_seconds,
-            row.batch_sequence
-        )?;
     }
     Ok(())
 }
@@ -515,15 +541,18 @@ fn slugify(name: &str) -> String {
 /// PrinterProfile json>` and `source=<path to a packed .3mf for that printer>`. Optional:
 /// `name=<override>` (defaults to the profile's `printer_name`, letting two `--printer` entries
 /// share one profile with distinct labels/sources), `prep-min=<u64>` (default 0; extra per-job
-/// dead time the slicer doesn't account for, e.g. multi-material filament switching), and
-/// `prep-sweep=<a:b:c:...>` (default `[prep-min]`; alternate preparation minutes to sweep in
-/// sensitivity.csv when that number is uncertain).
+/// dead time the slicer doesn't account for, e.g. multi-material filament switching),
+/// `prep-sweep=<a:b:c:...>` (default `[prep-min]`; alternate preparation minutes to sweep in the
+/// optional `--output-report`'s sensitivity table when that number is uncertain), and
+/// `plates-3mf=<path>` (writes this printer's resolved schedule as one multi-plate .3mf: one
+/// plate per distinct batch size, trimmed from `source`).
 fn parse_printer_spec(spec: &str) -> AppResult<PrinterInput> {
     let mut profile_path = None;
     let mut source = None;
     let mut name_override = None;
     let mut preparation_minutes = 0u64;
     let mut preparation_sweep = None;
+    let mut plates_output = None;
     for field in spec.split(',') {
         let (key, value) = field
             .split_once('=')
@@ -542,6 +571,7 @@ fn parse_printer_spec(spec: &str) -> AppResult<PrinterInput> {
                         .map_err(|_| format!("bad prep-sweep value: {value}"))?,
                 )
             }
+            "plates-3mf" => plates_output = Some(PathBuf::from(value)),
             other => return Err(format!("unknown --printer field: {other}").into()),
         }
     }
@@ -557,12 +587,14 @@ fn parse_printer_spec(spec: &str) -> AppResult<PrinterInput> {
         source,
         preparation_minutes,
         preparation_sweep_minutes,
+        plates_output,
     })
 }
 
 fn parse_args() -> AppResult<Args> {
     let mut printers = Vec::new();
-    let mut output_dir = PathBuf::from("schedule_output");
+    let mut output_schedule = None;
+    let mut output_report = None;
     let mut turnaround_minutes = 10u64;
     let mut reuse_benchmarks = false;
     let cli: Vec<String> = std::env::args().skip(1).collect();
@@ -578,7 +610,8 @@ fn parse_args() -> AppResult<Args> {
         }
         match cli[index].as_str() {
             "--printer" => printers.push(parse_printer_spec(&cli[index + 1])?),
-            "--output-dir" => output_dir = PathBuf::from(&cli[index + 1]),
+            "--output-schedule" => output_schedule = Some(PathBuf::from(&cli[index + 1])),
+            "--output-report" => output_report = Some(PathBuf::from(&cli[index + 1])),
             "--turnaround-min" => turnaround_minutes = cli[index + 1].parse()?,
             option => return Err(format!("unknown option: {option}").into()),
         }
@@ -589,6 +622,8 @@ fn parse_args() -> AppResult<Args> {
             "at least one --printer profile=<profile.json>,source=<packed.3mf> is required".into(),
         );
     }
+    let output_schedule =
+        output_schedule.ok_or("--output-schedule <path to schedule.csv> is required")?;
     for printer in &printers {
         if !printer.source.exists() {
             return Err(format!("source does not exist: {}", printer.source.display()).into());
@@ -603,7 +638,8 @@ fn parse_args() -> AppResult<Args> {
     }
     Ok(Args {
         printers,
-        output_dir,
+        output_schedule,
+        output_report,
         turnaround_minutes,
         reuse_benchmarks,
     })

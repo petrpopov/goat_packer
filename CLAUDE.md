@@ -135,9 +135,25 @@ assumed to be one dense plate and a multi-plate file would silently undercount b
 maximize objects, then exactly one overnight job starts at 23:00 and must finish by 10:00 next day.
 Ties break toward fewer jobs, then earlier completion.
 
-Outputs land in `--output-dir`: `planner_report.json`, `benchmarks.csv`, `schedule.csv`,
-`sensitivity.csv`. `--reuse-benchmarks` re-reads `planner_report.json` to skip re-slicing when only
-turnaround/prep assumptions changed.
+Per-batch-size benchmarking slices happen in a `tempfile::tempdir()` that's cleaned up on drop —
+nothing scratch survives the run. `--output-schedule <path>` (required) writes just the resolved
+per-printer job sequence as CSV; `--output-report <path>` (optional) additionally dumps the full
+benchmarks/sensitivity/schedule JSON, and doubles as the source `--reuse-benchmarks` re-reads to
+skip re-slicing when only turnaround/prep assumptions changed.
+
+`build_schedule_plates_3mf` turns one printer's resolved schedule into a single multi-plate 3MF
+(`--printer ...,plates-3mf=<path>`): one `<plate>` per distinct batch size, each a fresh set of
+object/build-item clones (own ids/UUIDs, same shared mesh component and packed transform) trimmed
+from `source` the same "first N" way as `subset_3mf`. Plates cannot share build items — BambuStudio
+never lets one object instance belong to two plates — so every plate after the first also needs its
+build items' XY translated into BambuStudio's own plate grid slot
+(`PartPlateList::compute_shape_position` in the BambuStudio/OrcaSlicer source: `cols =
+round(sqrt(plate_count))`, each slot offset by `bed_size * (1 + 1/5)`). This is load-bearing, not
+cosmetic: BambuStudio assigns an object to a plate at slice time purely by testing its bounding box
+against that grid (`PartPlate::intersect_instance`), never by reading `<plate>/<model_instance>` — a
+plate left at the source's original (plate-1) coordinates slices as "Nothing to be sliced" even
+though its XML bookkeeping is otherwise correct. Confirmed against a real multi-plate BambuStudio
+project and by slicing every plate of a generated file end-to-end with the real BambuStudio CLI.
 
 ### Layer 5 — 3MF assembly & verification
 

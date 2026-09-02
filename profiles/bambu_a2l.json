@@ -1,0 +1,14 @@
+{
+  "id": "bambu_a2l",
+  "printer_name": "Bambu Lab A2L",
+  "slicer_kind": "bambu",
+  "slicer_path": "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
+  "blank_start_gcode_for_cli": false,
+  "no_check_for_final_tower_probe": true,
+  "printable_area": [0.0, 0.0, 330.0, 320.0],
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "purge_lines": [[105.0, 1.0, 185.0, 1.0, 2.0]],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5
+}
