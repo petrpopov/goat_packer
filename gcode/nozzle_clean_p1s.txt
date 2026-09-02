@@ -11,8 +11,12 @@
 ;   add {if layer_z >= 6.59} ... {endif} around   - restrict wiping to a height zone
 ;     the wipe body (6.59 = 6.6 - 0.01 epsilon)
 ;
-; The wipe body is validated end-to-end on a real BambuStudio P1S slice (relative-E
-; stream, Z{max_layer_z + 3.0} bed-drop idiom straight from the firmware toolchange).
+; The wipe path is the P1S firmware's own toolchange wipe, verbatim coordinates:
+; the passes run at Y265, over the back edge where the wiper tab ("rocker") actually
+; sits. (An earlier draft wiped at Y255 - 10mm short - which clipped the tab's tip with
+; a knock on every pass; field-tested and corrected 2026-09-02. The forum-confirmed
+; P1P coordinates use Y265 as well.) Slice-validated: relative-E stream, the
+; Z{max_layer_z + 3.0} bed-drop idiom straight from the firmware toolchange.
 
 ; layer num/total_layer_count: {layer_num+1}/[total_layer_count]
 {if (print_sequence == "by layer") && (layer_num > 0)}
@@ -22,15 +26,27 @@ M400 ; finish all queued moves
 G1 Z{max_layer_z + 3.0} F1200 ; drop bed 3mm below the tallest printed part (firmware toolchange idiom)
 M83 ; relative extrusion
 G1 E-2.0 F1800 ; retract before travel
-G1 X70 Y245 F21000 ; head to the back chute area
-G1 Y255 F3000
-G1 X100 F5000 ; wipe mouth
-G1 X70 F15000
-G1 X100 F5000 ; wipe mouth
-G1 X70 F15000
-G1 X60 F15000 ; shake off debris
-G1 X80 F15000
+G1 X70 F21000 ; to the chute approach column (firmware toolchange path)
+G1 Y245
+G1 Y265 F3000 ; over the back edge, into the wiper zone
+G1 X90 F3000 ; scrape onto the wiper tab
+G1 Y255 F4000
+G1 X105 F5000
+G1 Y265 F5000
+G1 X70 F10000 ; wipe passes across the tab
+G1 X100 F5000
+G1 X70 F10000
+G1 X100 F5000
+G1 X70 F10000
+G1 X80 F15000 ; flick the rocker to shed debris
+G1 X60
+G1 X80
+G1 X60
+G1 X80
+G1 X100 F5000
+G1 X165 F15000 ; final wipe on the right-side scraper
 G1 E2.0 F1800 ; prime nozzle back to pressure
+G1 Y256 ; move Y aside, prevent collision (firmware trailer)
 G1 Z{layer_z} F1200 ; return bed to the new layer height
 ;### END: NOZZLE CLEAN (P1S) ###
 {endif}

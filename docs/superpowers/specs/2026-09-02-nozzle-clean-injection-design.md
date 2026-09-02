@@ -52,22 +52,38 @@ New optional field, machine-specific wipe *body* (no conditions — those are co
   hard error with an explanation ("profile X has no nozzle_clean_gcode; Snapmaker is
   not supported").
 
-P1S validated body (from the machine's own firmware patterns):
+P1S validated body — the firmware's own toolchange wipe, verbatim coordinates
+(field-corrected 2026-09-02: the first draft wiped at Y255, 10 mm short of the wiper
+tab, which clipped the tab's tip with a knock on every pass; the passes must run at
+**Y265**, over the back edge, exactly where the firmware and the forum-confirmed P1P
+snippet put them):
 
 ```
 M400 ; finish all queued moves
 G1 Z{max_layer_z + 3.0} F1200 ; drop bed 3mm below the tallest printed part (firmware toolchange idiom)
 M83 ; relative extrusion
 G1 E-2.0 F1800 ; retract before travel
-G1 X70 Y245 F21000 ; head to the back chute area
-G1 Y255 F3000
-G1 X100 F5000 ; wipe mouth
-G1 X70 F15000
-G1 X100 F5000 ; wipe mouth
-G1 X70 F15000
-G1 X60 F15000 ; shake off debris
-G1 X80 F15000
+G1 X70 F21000 ; to the chute approach column (firmware toolchange path)
+G1 Y245
+G1 Y265 F3000 ; over the back edge, into the wiper zone
+G1 X90 F3000 ; scrape onto the wiper tab
+G1 Y255 F4000
+G1 X105 F5000
+G1 Y265 F5000
+G1 X70 F10000 ; wipe passes across the tab
+G1 X100 F5000
+G1 X70 F10000
+G1 X100 F5000
+G1 X70 F10000
+G1 X80 F15000 ; flick the rocker to shed debris
+G1 X60
+G1 X80
+G1 X60
+G1 X80
+G1 X100 F5000
+G1 X165 F15000 ; final wipe on the right-side scraper
 G1 E2.0 F1800 ; prime nozzle back to pressure
+G1 Y256 ; move Y aside, prevent collision (firmware trailer)
 G1 Z{layer_z} F1200 ; return bed to the new layer height
 ```
 
