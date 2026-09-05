@@ -1,0 +1,111 @@
+package com.goatpacker.web.pack
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.goatpacker.web.awaitJobCompletion
+import com.goatpacker.web.FakeBins
+import java.nio.file.Files
+import java.nio.file.Path
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.http.MediaType
+import org.springframework.mock.web.MockMultipartFile
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+
+/** Полный жизненный цикл pack-джоба на фейковом пакере: 202 → поллинг → артефакты → DELETE. */
+@SpringBootTest
+@AutoConfigureMockMvc
+class PackJobFlowTest(
+    @Autowired private val mockMvc: MockMvc,
+) {
+    companion object {
+        private val tmpRoot: Path = Files.createTempDirectory("goat-pack-flow")
+
+        @JvmStatic
+        @DynamicPropertySource
+        fun properties(registry: DynamicPropertyRegistry) {
+            registry.add("app.packer-bin") { FakeBins.install(tmpRoot, "fake-packer.sh") }
+            registry.add("app.scheduler-bin") { FakeBins.install(tmpRoot, "fake-scheduler.sh") }
+            registry.add("app.profiles-dir") { "../../profiles" }
+            registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
+        }
+    }
+
+    private val json = ObjectMapper()
+
+    private fun uploadGoat(): String {
+        val create = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake 3mf bytes".toByteArray()))
+                .param("profileId", "bambu_a2l"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        assertTrue(jobId.isNotBlank(), "jobId не должен быть пустым")
+
+        return jobId
+    }
+
+    @Test
+    fun `полный цикл — загрузка, успех, артефакты, скачивание, удаление`() {
+        val jobId = uploadGoat()
+
+        val body = mockMvc.awaitJobCompletion(jobId)
+
+        assertEquals("pack", body["kind"].asText())
+        assertEquals("SUCCEEDED", body["status"].asText())
+        assertEquals(100, body["progressPercent"].asInt())
+        assertEquals(30, body["pack"]["objectCount"].asInt())
+        assertEquals("bambu_a2l", body["pack"]["profileId"].asText())
+        assertEquals(0.7, body["pack"]["clearanceMm"].asDouble(), 1e-9)
+        assertTrue(body.hasNonNull("phaseMessage"), "phaseMessage должен содержать последнюю строку вывода")
+        assertNotNull(body["createdAt"])
+        assertNotNull(body["finishedAt"])
+
+        val artifacts = body["artifacts"]
+        val names = (0 until artifacts.size()).map { artifacts[it]["name"].asText() }
+        assertTrue(names.containsAll(listOf("packed.3mf", "verification.json", "log.txt")), "артефакты: $names")
+        val packedEntry = (0 until artifacts.size()).map { artifacts[it] }
+            .first { it["name"].asText() == "packed.3mf" }
+        assertTrue(packedEntry["sizeBytes"].asLong() > 0)
+        assertEquals("/api/jobs/$jobId/artifacts/packed.3mf", packedEntry["downloadUrl"].asText())
+
+        // Скачивание отдаёт ровно те байты, что написал фейковый пакер.
+        val downloaded = mockMvc.perform(get("/api/jobs/$jobId/artifacts/packed.3mf"))
+            .andExpect(status().isOk)
+            .andReturn()
+        val bytes = downloaded.response.contentAsByteArray
+        assertEquals("fake packed 3mf content for tests\n", String(bytes))
+        assertTrue(
+            downloaded.response.getHeader("Content-Disposition")!!.contains("attachment"),
+            "ожидается Content-Disposition: attachment",
+        )
+
+        // Имя не из white-list — 404.
+        mockMvc.perform(get("/api/jobs/$jobId/artifacts/secret.txt"))
+            .andExpect(status().isNotFound)
+
+        // Удаление: 204, после чего статус 404.
+        mockMvc.perform(delete("/api/jobs/$jobId")).andExpect(status().isNoContent)
+        mockMvc.perform(get("/api/jobs/$jobId")).andExpect(status().isNotFound)
+        mockMvc.perform(get("/api/jobs/$jobId/artifacts/packed.3mf")).andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `статус неизвестной джобы — 404`() {
+        mockMvc.perform(get("/api/jobs/no-such-job")).andExpect(status().isNotFound)
+        mockMvc.perform(delete("/api/jobs/no-such-job")).andExpect(status().isNotFound)
+    }
+}

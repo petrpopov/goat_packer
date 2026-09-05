@@ -1,0 +1,17 @@
+spring:
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 210MB
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: ${PORT:19190}
+
+app:
+  packer-bin: ${GOAT_PACKER_BIN:../../target/release/colored_3mf_packer}
+  scheduler-bin: ${GOAT_SCHEDULER_BIN:../../target/release/daily_scheduler}
+  profiles-dir: ${GOAT_PROFILES_DIR:../../profiles}
+  jobs-root: ${GOAT_JOBS_ROOT:${java.io.tmpdir}/goat-packer-web/jobs}
+  job-ttl-hours: 12

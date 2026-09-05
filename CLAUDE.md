@@ -141,29 +141,52 @@ are restored by string replacement after serialization.
 The source must be **single-plate** — `plate_count_3mf` guards this, because build-item order is
 assumed to be one dense plate and a multi-plate file would silently undercount batches.
 
-`optimize_schedule` is a DP over end-second: day jobs (10:00→23:00, each followed by a turnaround)
-maximize objects, then exactly one overnight job starts at 23:00 and must finish by 10:00 next day.
+`optimize_schedule` is a DP over end-second: day jobs (default 10:00→23:00, each followed by a turnaround)
+maximize objects, then exactly one overnight job starts at 23:00 and must finish by 10:00 next day. The
+windows are CLI options (`--day-start/--night-start/--horizon-end HH:MM`, hours may exceed 24 = next day).
 Ties break toward fewer jobs, then earlier completion.
 
-Per-batch-size benchmarking slices happen in a `tempfile::tempdir()` that's cleaned up on drop —
+Per-batch-size benchmarking has two modes (`--bench-mode adaptive|full`, default adaptive). Full slices
+every size 1..=N. Adaptive slices only `1`, the full plate, and three interior sizes, then refines — one
+more slice wherever a piecewise-linear fit (`BatchCurve`) disagrees most with a least-squares affine fit,
+normalized by the full-plate time — until the disagreement drops under 2% or the budget (max(6, N/3)
+slices) runs out; the remaining sizes are interpolated and marked `origin: "interpolated"` in the report.
+Print time vs batch size is near-affine in practice (goat1 A2L: 5 slices for a 30-object plate, 0.0%
+deviation). `--reuse-benchmarks` still skips slicing entirely by re-reading a prior report.
+
+Per-batch slicing happens in a `tempfile::tempdir()` that's cleaned up on drop —
 nothing scratch survives the run. `--output-schedule <path>` (required) writes just the resolved
 per-printer job sequence as CSV; `--output-report <path>` (optional) additionally dumps the full
 benchmarks/sensitivity/schedule JSON, and doubles as the source `--reuse-benchmarks` re-reads to
 skip re-slicing when only turnaround/prep assumptions changed.
 
 `build_schedule_plates_3mf` turns one printer's resolved schedule into a single multi-plate 3MF
-(`--printer ...,plates-3mf=<path>`): one `<plate>` per distinct batch size, each a fresh set of
-object/build-item clones (own ids/UUIDs, same shared mesh component and packed transform) trimmed
-from `source` the same "first N" way as `subset_3mf`. Plates cannot share build items — BambuStudio
-never lets one object instance belong to two plates — so every plate after the first also needs its
-build items' XY translated into BambuStudio's own plate grid slot
-(`PartPlateList::compute_shape_position` in the BambuStudio/OrcaSlicer source: `cols =
-round(sqrt(plate_count))`, each slot offset by `bed_size * (1 + 1/5)`). This is load-bearing, not
-cosmetic: BambuStudio assigns an object to a plate at slice time purely by testing its bounding box
-against that grid (`PartPlate::intersect_instance`), never by reading `<plate>/<model_instance>` — a
-plate left at the source's original (plate-1) coordinates slices as "Nothing to be sliced" even
-though its XML bookkeeping is otherwise correct. Confirmed against a real multi-plate BambuStudio
-project and by slicing every plate of a generated file end-to-end with the real BambuStudio CLI.
+(`--printer ...,plates-3mf=<path>`): one `<plate>` per distinct batch size (labeled "N pcs @ HH:MM"),
+each a fresh set of object/build-item clones (own ids/UUIDs, same shared mesh component and packed
+transform) trimmed from `source` the same "first N" way as `subset_3mf`. Plates cannot share build items —
+BambuStudio never lets one object instance belong to two plates — so every plate after the first also needs
+its build items' XY translated into BambuStudio's own plate grid slot. Two measured BambuStudio behaviors
+are load-bearing here (both cost real debugging on 2026-09-06, both locked by
+`tests/scheduler_plate_grid.rs`):
+
+- the grid is `cols = ceil(sqrt(plate_count))`, row-major, rows downward, each slot offset by
+  `bed_size * (1 + 1/5)` — NOT `round(sqrt(n))`: round stacks a 2-plate file vertically while
+  BambuStudio looks for plate 2 to the right, and every plate-2 object then lands outside any
+  PartPlate slot (BambuStudio assigns objects to plates purely by bbox-vs-grid at slice time,
+  `PartPlate::intersect_instance`, never by reading `<plate>/<model_instance>`).
+- `wipe_tower_x`/`wipe_tower_y` in project_settings.config are one-entry-per-plate arrays, and each
+  entry is used **verbatim** in that plate's G-code (the CLI shifts a plate's objects back to
+  plate-local coordinates when slicing, but does not shift the tower entry). A plate without its own
+  entry gets an auto-placed tower — which lands on packed objects and fails with a false
+  "gcode path conflicts" — and shifting the entry with the grid slot puts the tower outside the bed
+  ("gcode outside of the printable area"). Every plate therefore gets the SAME entry as the source.
+
+### Layer 4.5 — web application (`webapp/`)
+
+`webapp/backend` (Kotlin + Spring Boot 3.4, port 19190) and `webapp/frontend` (Vite + React 18 + TS,
+port 3007) wrap the two release binaries into a UI: upload a single-object 3MF → packed 3MF (phase 1),
+then schedule → multi-plate 3MF + CSV/XLSX (phase 2). No DB: jobs live in memory, files under
+`${java.io.tmpdir}/goat-packer-web/`, TTL-cleaned. See `webapp/README.md`.
 
 ### Layer 5 — 3MF assembly & verification
 

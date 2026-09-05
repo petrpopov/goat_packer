@@ -1,0 +1,198 @@
+:root {
+  font-family: 'IBM Plex Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+  --font-ui: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+
+  /* ── Surface scale — light (graphite-blue, slightly warm) ── */
+  --bg: oklch(0.975 0.005 255);
+  --bg-chrome: oklch(0.955 0.007 255);
+  --panel: oklch(1 0 0);
+  --panel-2: oklch(0.955 0.008 255);
+  --row: oklch(1 0 0);
+  --row-alt: oklch(0.98 0.005 255);
+  --row-hover: oklch(0.94 0.01 255);
+  --border: oklch(0.885 0.012 255);
+  --border-strong: oklch(0.81 0.016 255);
+
+  /* ── Text ── */
+  --fg: oklch(0.23 0.014 260);
+  --fg-muted: oklch(0.45 0.016 258);
+  --fg-dim: oklch(0.58 0.014 258);
+  --fg-placeholder: oklch(0.45 0.016 258);
+
+  /* ── Accents — warm gold primary + cyan secondary ── */
+  --accent: oklch(0.635 0.16 52);
+  --accent-hi: oklch(0.7 0.155 57);
+  --accent-lo: oklch(0.585 0.165 47);
+  --accent-ink: oklch(0.99 0.012 95);
+  --accent-soft: oklch(0.635 0.16 52 / 0.14);
+  --accent-edge-hi: oklch(0.9 0.085 75 / 0.5);
+  --accent-glow: oklch(0.635 0.16 52 / 0.3);
+
+  --accent-2: oklch(0.55 0.12 225);
+  --accent-2-soft: oklch(0.55 0.12 225 / 0.12);
+
+  --ok: oklch(0.52 0.15 150);
+  --ok-soft: oklch(0.52 0.15 150 / 0.12);
+  --warn: oklch(0.58 0.15 82);
+  --warn-soft: oklch(0.58 0.15 82 / 0.14);
+  --crit: oklch(0.55 0.2 29);
+  --crit-soft: oklch(0.55 0.2 29 / 0.12);
+
+  --shadow-lg: 0 16px 48px oklch(0 0 0 / 0.12), 0 2px 8px oklch(0 0 0 / 0.08);
+  --shadow-sm: 0 1px 0 oklch(0 0 0 / 0.02) inset, 0 1px 2px oklch(0 0 0 / 0.06);
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  /* ── Aliases ── */
+  --bg-page: var(--bg);
+  --bg-card: var(--panel);
+  --bg-elev: var(--panel-2);
+  --bg-hover: var(--row-hover);
+  --text: var(--fg);
+  --text-muted: var(--fg-muted);
+  --text-placeholder: var(--fg-placeholder);
+  --primary: var(--accent);
+  --primary-contrast: var(--accent-ink);
+  --danger: var(--crit);
+  --danger-contrast: oklch(0.985 0.003 60);
+  --color-success: var(--ok);
+  --color-success-bg: var(--ok-soft);
+  --color-warning: var(--warn);
+  --color-warning-bg: var(--warn-soft);
+  --color-danger: var(--crit);
+  --color-danger-bg: var(--crit-soft);
+  --color-muted: var(--fg-muted);
+  --surface-alt: var(--panel-2);
+  --bg-muted: var(--panel-2);
+  --overlay-bg: oklch(0 0 0 / 0.5);
+  --border-subtle: var(--border);
+  --separator-bg: var(--border);
+  --shadow-border: 0 0 0 1px var(--border);
+  --shadow-border-light: 0 0 0 1px var(--row-hover);
+  --shadow-card: 0 0 0 1px var(--border), 0 1px 2px oklch(0 0 0 / 0.04);
+  --shadow-modal: var(--shadow-lg);
+  --shadow-focus: 0 0 0 3px var(--accent-soft);
+  --shadow-toast: 0 0 0 1px oklch(0 0 0 / 0.08), 0 8px 16px oklch(0 0 0 / 0.18);
+
+  /* ── Toast surfaces ── */
+  --toast-fg: var(--accent-ink);
+  --toast-info-bg: oklch(0.16 0 0);
+  --toast-error-bg: var(--crit);
+  --toast-error-fg: oklch(0.985 0.003 60);
+
+  color: var(--text);
+
+  /* единая высота строки таблиц */
+  --row-h: 44px;
+
+  --z-toast: 1200;
+}
+
+:root[data-theme='dark'] {
+  /* ── Surface scale — graphite-blue (primary theme) ── */
+  --bg: oklch(0.153 0.012 260);
+  --bg-chrome: oklch(0.135 0.012 260);
+  --panel: oklch(0.2 0.013 264);
+  --panel-2: oklch(0.235 0.015 264);
+  --row: oklch(0.185 0.013 262);
+  --row-alt: oklch(0.2 0.013 262);
+  --row-hover: oklch(0.255 0.018 262);
+  --border: oklch(0.282 0.019 254);
+  --border-strong: oklch(0.36 0.022 254);
+
+  /* ── Text ── */
+  --fg: oklch(0.944 0.01 252);
+  --fg-muted: oklch(0.71 0.022 258);
+  --fg-dim: oklch(0.62 0.018 258);
+  --fg-placeholder: oklch(0.75 0.02 258);
+
+  /* ── Accents — warm gold primary + cyan secondary ── */
+  --accent: oklch(0.78 0.155 54);
+  --accent-hi: oklch(0.835 0.135 58);
+  --accent-lo: oklch(0.735 0.16 49);
+  --accent-ink: oklch(0.155 0.012 260);
+  --accent-soft: oklch(0.78 0.155 54 / 0.16);
+  --accent-edge-hi: oklch(0.95 0.06 80 / 0.55);
+  --accent-glow: oklch(0.78 0.155 54 / 0.35);
+
+  --accent-2: oklch(0.78 0.115 210);
+  --accent-2-soft: oklch(0.78 0.115 210 / 0.16);
+
+  --ok: oklch(0.74 0.12 150);
+  --ok-soft: oklch(0.74 0.12 150 / 0.16);
+  --warn: oklch(0.704 0.134 82);
+  --warn-soft: oklch(0.704 0.134 82 / 0.16);
+  --crit: oklch(0.683 0.191 29);
+  --crit-soft: oklch(0.683 0.191 29 / 0.18);
+
+  --shadow-lg: 0 16px 48px oklch(0 0 0 / 0.4), 0 2px 8px oklch(0 0 0 / 0.25);
+  --shadow-sm: 0 1px 0 oklch(1 0 0 / 0.03) inset, 0 1px 2px oklch(0 0 0 / 0.25);
+
+  /* Aliases re-bound to dark */
+  --bg-page: var(--bg);
+  --bg-card: var(--panel);
+  --bg-elev: var(--panel-2);
+  --bg-hover: var(--row-hover);
+  --text: var(--fg);
+  --text-muted: var(--fg-muted);
+  --text-placeholder: var(--fg-placeholder);
+  --primary: var(--accent);
+  --primary-contrast: var(--accent-ink);
+  --danger: var(--crit);
+  --danger-contrast: oklch(0.985 0.003 60);
+  --color-success: var(--ok);
+  --color-success-bg: var(--ok-soft);
+  --color-warning: var(--warn);
+  --color-warning-bg: var(--warn-soft);
+  --color-danger: var(--crit);
+  --color-danger-bg: var(--crit-soft);
+  --color-muted: var(--fg-muted);
+  --surface-alt: var(--panel-2);
+  --bg-muted: var(--panel-2);
+  --overlay-bg: oklch(0 0 0 / 0.55);
+  --border-subtle: var(--border);
+  --separator-bg: var(--border);
+  --shadow-border: 0 0 0 1px var(--border);
+  --shadow-border-light: 0 0 0 1px var(--row-hover);
+  --shadow-card: 0 0 0 1px var(--border), 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-modal: var(--shadow-lg);
+  --shadow-focus: 0 0 0 3px var(--accent-soft);
+
+  /* ── Toast surfaces (dark overrides) ── */
+  --toast-fg: var(--fg);
+  --toast-info-bg: oklch(0.22 0 0);
+  --toast-error-bg: oklch(0.44 0.19 25);
+  --toast-error-fg: oklch(0.985 0.003 60);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-placeholder);
+  opacity: 1;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background: var(--bg-page);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: 'liga' 1;
+  font-variant-numeric: tabular-nums;
+}
