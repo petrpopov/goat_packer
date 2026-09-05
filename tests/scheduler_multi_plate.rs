@@ -56,11 +56,11 @@ fn plates_are_disjoint_and_land_in_bambustudios_own_plate_grid() {
         "object ids must not repeat across plates"
     );
 
-    // BambuStudio places plate i's objects in a `round(sqrt(plate_count))`-column grid, each slot
-    // offset by bed_size * 1.2 (PartPlateList::compute_shape_position) — it assigns an object to a
-    // plate purely by testing its bounding box against that grid at slice time, never by reading
-    // <plate>/<model_instance>. cols = round(sqrt(3)) = 2, so plate 1 sits at the grid origin,
-    // plate 2 shifts by (bed*1.2, 0), and plate 3 wraps to (0, -bed*1.2).
+    // BambuStudio places plate i's objects in a `ceil(sqrt(plate_count))`-column row-major grid,
+    // each slot offset by bed_size * 1.2 — it assigns an object to a plate purely by testing its
+    // bounding box against that grid at slice time, never by reading <plate>/<model_instance>.
+    // cols = ceil(sqrt(3)) = 2, so plate 1 sits at the grid origin, plate 2 shifts by (bed*1.2, 0),
+    // and plate 3 wraps to (0, -bed*1.2).
     let plate_x = |item: &&Element| -> f64 {
         item.attributes["transform"]
             .split_whitespace()
@@ -78,7 +78,7 @@ fn plates_are_disjoint_and_land_in_bambustudios_own_plate_grid() {
             .unwrap()
     };
     let stride = BED_WIDTH_MM * 1.2;
-    // cols = round(sqrt(3)) = 2: plate 0 -> (row 0, col 0), plate 1 -> (row 0, col 1),
+    // cols = ceil(sqrt(3)) = 2: plate 0 -> (row 0, col 0), plate 1 -> (row 0, col 1),
     // plate 2 -> (row 1, col 0).
     let grid = [(0usize, 0usize), (0, 1), (1, 0)];
     let mut cursor = 0;

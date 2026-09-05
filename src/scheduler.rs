@@ -48,6 +48,114 @@ impl BatchTiming {
     }
 }
 
+/// Piecewise-linear fit of one per-batch-size quantity (slicer seconds, filament grams, model
+/// seconds) over the batch sizes that were actually sliced. Print time versus batch size is very
+/// close to affine (fixed startup + tower flush, plus a near-constant per-object cost), so a
+/// handful of measured sizes with linear interpolation in between stays within a few percent of
+/// the real value while cutting the benchmark sweep from `N` slices to ~5 — the exact trade the
+/// adaptive benchmark mode in `daily_scheduler` makes. Interpolation is bounded by the measured
+/// neighbors on both sides, so an interpolated batch can never overshoot the measured envelope.
+#[derive(Clone, Debug)]
+pub struct BatchCurve {
+    points: Vec<(usize, f64)>,
+}
+
+impl BatchCurve {
+    /// `measured` may arrive in any order and contain duplicate counts (the last one wins);
+    /// it must contain at least one point.
+    pub fn new(measured: &[(usize, f64)]) -> SchedulerResult<Self> {
+        if measured.is_empty() {
+            return Err("batch curve needs at least one measured point".into());
+        }
+        let mut points: Vec<(usize, f64)> = measured.to_vec();
+        points.sort_by_key(|(count, _)| *count);
+        points.dedup_by_key(|(count, _)| *count);
+        Ok(Self { points })
+    }
+
+    pub fn value(&self, count: usize) -> f64 {
+        let &(min_count, min_value) = &self.points[0];
+        let &(max_count, max_value) = &self.points[self.points.len() - 1];
+        if count <= min_count {
+            return min_value;
+        }
+        if count >= max_count {
+            return max_value;
+        }
+        for window in self.points.windows(2) {
+            let (low_count, low_value) = window[0];
+            let (high_count, high_value) = window[1];
+            if (low_count..=high_count).contains(&count) {
+                let span = (high_count - low_count) as f64;
+                let share = (count - low_count) as f64 / span;
+                return low_value + (high_value - low_value) * share;
+            }
+        }
+        unreachable!("count is between the first and last measured points")
+    }
+}
+
+/// Ordinary least-squares line `y = slope * count + intercept` over the measured points. Used as
+/// the "what would a smooth affine model predict" second opinion when deciding whether the
+/// piecewise-linear fit needs another measured point.
+pub fn least_squares_line(points: &[(usize, f64)]) -> (f64, f64) {
+    let n = points.len() as f64;
+    let sum_x: f64 = points.iter().map(|(count, _)| *count as f64).sum();
+    let sum_y: f64 = points.iter().map(|(_, value)| value).sum();
+    let sum_xy: f64 = points
+        .iter()
+        .map(|(count, value)| *count as f64 * value)
+        .sum();
+    let sum_xx: f64 = points
+        .iter()
+        .map(|(count, _)| (*count as f64) * (*count as f64))
+        .sum();
+    let denominator = n * sum_xx - sum_x * sum_x;
+    if denominator.abs() < f64::EPSILON {
+        return (0.0, sum_y / n.max(1.0));
+    }
+    let slope = (n * sum_xy - sum_x * sum_y) / denominator;
+    let intercept = (sum_y - slope * sum_x) / n;
+    (slope, intercept)
+}
+
+/// Where the adaptive benchmark should slice next: the unmeasured interior batch size where the
+/// piecewise-linear fit and the least-squares affine fit disagree most, relative to the affine
+/// prediction at the full plate (normalizing by the *largest* time, not the per-point value, so
+/// the search targets the biggest absolute error — the one that could actually flip a schedule
+/// decision — instead of small relative wiggles at short batches). Returns `None` when every size
+/// is already measured; the caller stops refining once the returned deviation drops under its
+/// tolerance or its slice budget runs out — with genuinely affine data both fits agree and the
+/// loop stops after the initial samples.
+pub fn next_refinement_count(
+    measured_counts: &[usize],
+    max_count: usize,
+    curve: &BatchCurve,
+    line: (f64, f64),
+) -> Option<(usize, f64)> {
+    let known: HashSet<usize> = measured_counts.iter().copied().collect();
+    let (slope, intercept) = line;
+    let scale = slope * max_count as f64 + intercept;
+    if scale <= 0.0 {
+        return None;
+    }
+    let mut worst: Option<(usize, f64)> = None;
+    for count in 1..=max_count {
+        if known.contains(&count) {
+            continue;
+        }
+        let affine = slope * count as f64 + intercept;
+        if affine <= 0.0 {
+            continue;
+        }
+        let deviation = (curve.value(count) - affine).abs() / scale;
+        if worst.is_none_or(|(_, current)| deviation > current) {
+            worst = Some((count, deviation));
+        }
+    }
+    worst
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct ScheduleConfig {
     pub day_start_seconds: u64,
@@ -535,11 +643,17 @@ pub fn build_schedule_plates_3mf(
     // intersect_instance) — it never consults <plate>/<model_instance> for this at slice time. A
     // plate whose objects sit at the source's original (plate-1) coordinates therefore slices as
     // "nothing to be sliced" for every plate but the first, however correct the XML bookkeeping
-    // is. BambuStudio lays plates out in a grid with `cols = round(sqrt(plate_count))` and each
-    // slot offset by `bed_size * 1.2` (`LOGICAL_PART_PLATE_GAP = 1/5` in PartPlate.cpp); replicate
-    // that exactly so every plate's objects land in the slot BambuStudio itself will look for them
-    // in.
-    let cols = (plates.len() as f64).sqrt().round().max(1.0) as usize;
+    // is. BambuStudio lays plates out in a row-major grid, each slot offset by `bed_size * 1.2`
+    // (`LOGICAL_PART_PLATE_GAP = 1/5` in PartPlate.cpp), rows extending downward (negative Y).
+    //
+    // The column count is `ceil(sqrt(plate_count))` — NOT round(). Measured 2026-09-06 from real
+    // BambuStudio-saved multi-plate projects (256x256 bed, stride exactly 307.2): 2 plates sit
+    // side by side (cols=2), 3 plates wrap to a 2nd row (cols=2), 11 and 12 plates use cols=4.
+    // round(sqrt(2))=1 stacks plate 2 *below* plate 1 while BambuStudio looks for it to the
+    // *right* — every plate-2 object then lands outside any PartPlate slot and the GUI shows them
+    // "flown off the plate" (a real 2-plate schedule file hit exactly this). The earlier
+    // end-to-end check (2026-09-02) passed only because round and ceil agree at 3 plates.
+    let cols = ((plates.len() as f64).sqrt().ceil() as usize).max(1);
     let stride_x = bed_width_mm * 1.2;
     let stride_y = bed_depth_mm * 1.2;
 
@@ -580,11 +694,8 @@ pub fn build_schedule_plates_3mf(
                     .attributes
                     .get("transform")
                     .ok_or("build item missing transform")?;
-                let offset = offset_transform_xy(
-                    transform,
-                    col as f64 * stride_x,
-                    -(row as f64) * stride_y,
-                )?;
+                let offset =
+                    offset_transform_xy(transform, col as f64 * stride_x, -(row as f64) * stride_y)?;
                 item.attributes.insert("transform".to_owned(), offset);
             }
             new_items.push(item);
@@ -718,14 +829,64 @@ pub fn build_schedule_plates_3mf(
         entries[sequence_index].2 = serde_json::to_vec(&serde_json::Value::Object(map))?;
     }
 
-    if blank_start_gcode {
+    // One pass over project_settings.config: the optional start-gcode blanking (CLI workaround,
+    // same as subset_3mf) and the mandatory per-plate wipe-tower entries.
+    {
         let settings_index = entry_index(&entries, "Metadata/project_settings.config")?;
         let mut settings: serde_json::Value = serde_json::from_slice(&entries[settings_index].2)?;
-        settings["machine_start_gcode"] = serde_json::Value::String(String::new());
+        patch_wipe_tower_per_plate(&mut settings, plates.len());
+        if blank_start_gcode {
+            settings["machine_start_gcode"] = serde_json::Value::String(String::new());
+        }
         entries[settings_index].2 = serde_json::to_vec(&settings)?;
     }
 
     write_zip_entries(output, entries)
+}
+
+/// `wipe_tower_x`/`wipe_tower_y` in project_settings.config are parallel arrays holding ONE
+/// tower position per plate (a real BambuStudio 3-plate AMS project carries three entries, and
+/// its plate-2 G-code places the tower exactly at the second entry's coordinates). Two
+/// measured semantics matter here:
+///
+/// 1. A plate without its own entry gets an auto-placed tower — for a packed plate that means
+///    a tower dropped on top of objects, and BambuStudio refuses the slice with a false "gcode
+///    path conflicts found between WipeTower and <mesh>" (reproduced 2026-09-06: A2L 30-object
+///    2-plate schedule, plate 1 clean, plate 2 exit 155).
+/// 2. Entries are bed coordinates used **verbatim** in that plate's G-code: the CLI shifts a
+///    plate's objects back to plate-local coordinates when slicing it, but the tower entry is
+///    not shifted with the plate's grid slot. Shifting the entry (like the build items) put the
+///    tower at x=627 on a 330 mm bed and the slice died with "gcode outside of the printable
+///    area" (same repro).
+///
+/// So every plate gets the SAME entry as the source: each plate's G-code then reproduces the
+/// exact object/tower geometry the packer validated on plate 1. Absent keys (single-material
+/// project, no tower) are left alone.
+fn patch_wipe_tower_per_plate(settings: &mut serde_json::Value, plate_count: usize) {
+    let Some(base_x) = settings
+        .get("wipe_tower_x")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let Some(base_y) = settings
+        .get("wipe_tower_y")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    settings["wipe_tower_x"] = serde_json::Value::Array(
+        std::iter::repeat_n(serde_json::Value::String(base_x), plate_count).collect(),
+    );
+    settings["wipe_tower_y"] = serde_json::Value::Array(
+        std::iter::repeat_n(serde_json::Value::String(base_y), plate_count).collect(),
+    );
 }
 
 pub fn object_count_3mf(source: &Path) -> SchedulerResult<usize> {
