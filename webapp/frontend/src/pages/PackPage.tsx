@@ -172,7 +172,7 @@ export default function PackPage() {
                     className="input"
                     type="number"
                     min={0}
-                    step={0.1}
+                    step="any"
                     value={fromZ}
                     onChange={(event) => setFromZ(event.target.value)}
                     disabled={jobActive}
@@ -200,8 +200,8 @@ export default function PackPage() {
                 <input
                   className="input"
                   type="number"
-                  min={0}
-                  step={0.05}
+                  min={0.05}
+                  step="any"
                   value={clearance}
                   onChange={(event) => setClearance(event.target.value)}
                   disabled={jobActive}
@@ -211,8 +211,8 @@ export default function PackPage() {
                 <input
                   className="input"
                   type="number"
-                  min={0.01}
-                  step={0.05}
+                  min={0.05}
+                  step="any"
                   value={resolution}
                   onChange={(event) => setResolution(event.target.value)}
                   disabled={jobActive}
