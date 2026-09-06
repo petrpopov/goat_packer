@@ -46,12 +46,13 @@ class PackService(
             throw BadRequestException("Файл должен иметь расширение .3mf, получено: «$fileName»")
         }
         val profileId = form.profileId!!.trim()
-        profileService.require(profileId)
+        val profile = profileService.require(profileId)
         val nozzleClean = form.nozzleClean?.trim() ?: ""
-        validateNozzleClean(nozzleClean)
+        validateNozzleClean(nozzleClean, profile)
 
         val params = PackParams(
             profileId = profileId,
+            profilePath = profile.file,
             clearance = form.clearance ?: 0.7,
             resolution = form.resolution ?: 0.25,
             attempts = form.attempts ?: 2000,
@@ -82,9 +83,20 @@ class PackService(
         return JobCreatedDto(job.id)
     }
 
-    private fun validateNozzleClean(spec: String) {
+    /**
+     * Формат спеки проверяется регуляркой; активная чистка дополнительно требует, чтобы профиль
+     * принтера реально содержит код чистки (nozzle_clean_gcode) — у A2L и U1 его нет, и вместо
+     * ошибки от Rust-бинарника на пятой минуте слайсинга пользователь получает понятные 400.
+     */
+    private fun validateNozzleClean(spec: String, profile: ProfileService.ResolvedProfile) {
         if (spec.isEmpty() || spec.equals("off", ignoreCase = true)) {
             return
+        }
+        if (!profile.dto.supportsNozzleClean) {
+            throw BadRequestException(
+                "Принтер «${profile.dto.name}» не поддерживает чистку сопла — " +
+                    "в профиле нет кода очистки",
+            )
         }
         if (!NOZZLE_CLEAN_SPEC.matches(spec)) {
             throw BadRequestException(

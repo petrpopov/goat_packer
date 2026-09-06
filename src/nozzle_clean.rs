@@ -2,9 +2,11 @@
 //!
 //! The wipe *body* is printer-specific and lives in the printer profile (`nozzle_clean_gcode`):
 //! P1/X1 machines have no `G150.x` firmware macros and need raw G1 moves to the back chute,
-//! while A2/P2/H2 machines wipe through `G150.3`/`G150.1`. The *conditions* (how often, from
-//! what height) are slicer-template logic and composed here, machine-independent. Both halves
-//! were validated on a real BambuStudio CLI slice of a P1S project — see
+//! while A2/P2/H2 are *expected* to wipe through `G150.3`/`G150.1` — but no A2L wipe sequence
+//! has been validated on hardware yet, so the A2L profile carries no `nozzle_clean_gcode` at
+//! all (2026-09-06): absent field = unsupported, explicit error. The *conditions* (how often,
+//! from what height) are slicer-template logic and composed here, machine-independent. Both
+//! halves were validated on a real BambuStudio CLI slice of a P1S project — see
 //! `docs/superpowers/specs/2026-09-02-nozzle-clean-injection-design.md` for the firmware
 //! evidence behind each move.
 

@@ -104,6 +104,24 @@ class PackJobFlowTest(
     }
 
     @Test
+    fun `профиль с id не совпадающим с именем файла (bambu_p1s в p1s json) проходит весь цикл`() {
+        // Регрессия: разрешение профиля по пути {id}.json ломалось на bambu_p1s —
+        // «Неизвестный профиль принтера». Идентификатор живёт внутри json, а не в имени файла.
+        val create = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake 3mf bytes".toByteArray()))
+                .param("profileId", "bambu_p1s"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        val body = mockMvc.awaitJobCompletion(jobId)
+        assertEquals("SUCCEEDED", body["status"].asText())
+        assertEquals("bambu_p1s", body["pack"]["profileId"].asText())
+    }
+
+    @Test
     fun `статус неизвестной джобы — 404`() {
         mockMvc.perform(get("/api/jobs/no-such-job")).andExpect(status().isNotFound)
         mockMvc.perform(delete("/api/jobs/no-such-job")).andExpect(status().isNotFound)

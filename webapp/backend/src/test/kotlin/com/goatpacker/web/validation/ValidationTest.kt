@@ -68,10 +68,23 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(goat)
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "bambu_p1s")
                 .param("nozzleClean", "абракадабра"),
         )
             .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `pack с nozzleClean на принтере без кода чистки (a2l, u1) — 400`() {
+        for (profileId in listOf("bambu_a2l", "snapmaker_u1")) {
+            mockMvc.perform(
+                multipart("/api/pack/jobs")
+                    .file(goat)
+                    .param("profileId", profileId)
+                    .param("nozzleClean", "global"),
+            )
+                .andExpect(status().isBadRequest)
+        }
     }
 
     @Test

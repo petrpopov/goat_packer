@@ -37,7 +37,7 @@ class ScheduleService(
 
     fun create(form: ScheduleJobForm): JobCreatedDto {
         val profileId = form.profileId!!.trim()
-        profileService.require(profileId)
+        val profile = profileService.require(profileId)
 
         val source = resolveSource(form)
         val dayStart = form.dayStart?.trim() ?: "10:00"
@@ -47,6 +47,7 @@ class ScheduleService(
 
         val params = ScheduleParams(
             profileId = profileId,
+            profilePath = profile.file,
             source = source,
             dayStart = dayStart,
             nightStart = nightStart,

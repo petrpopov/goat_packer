@@ -40,7 +40,7 @@ class ProfilesIntegrationTest(
     }
 
     @Test
-    fun `bambu_a2l содержит размеры стола и поддержку чистки сопла`() {
+    fun `bambu_a2l — размеры стола, чистки сопла нет (код не подтверждён железом)`() {
         val body = mockMvc.perform(get("/api/profiles"))
             .andExpect(status().isOk)
             .andReturn()
@@ -56,7 +56,25 @@ class ProfilesIntegrationTest(
         assertEquals(330.0, a2l["bedWidthMm"].asDouble(), 1e-9)
         assertEquals(320.0, a2l["bedDepthMm"].asDouble(), 1e-9)
         assertEquals(0.0, a2l["edgeMarginMm"].asDouble(), 1e-9)
-        assertTrue(a2l["supportsNozzleClean"].asBoolean(), "у a2l есть nozzle_clean_gcode")
+        assertFalse(a2l["supportsNozzleClean"].asBoolean(), "у a2l нет nozzle_clean_gcode")
+    }
+
+    @Test
+    fun `bambu_p1s — id не совпадает с именем файла p1s json, но профиль разрешается`() {
+        val body = mockMvc.perform(get("/api/profiles"))
+            .andExpect(status().isOk)
+            .andReturn()
+            .response
+            .contentAsString
+
+        val profiles = json.readTree(body)
+        val p1s = (0 until profiles.size()).map { profiles[it] }
+            .first { it["id"].asText() == "bambu_p1s" }
+
+        assertEquals("Bambu Lab P1S", p1s["name"].asText())
+        assertEquals(256.0, p1s["bedWidthMm"].asDouble(), 1e-9)
+        assertEquals(256.0, p1s["bedDepthMm"].asDouble(), 1e-9)
+        assertTrue(p1s["supportsNozzleClean"].asBoolean(), "у p1s есть nozzle_clean_gcode")
     }
 
     @Test

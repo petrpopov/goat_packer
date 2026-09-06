@@ -134,7 +134,10 @@ export default function PackPage() {
               </select>
             </Field>
 
-            <Field label="Чистка сопла">
+            <Field
+              label="Чистка сопла"
+              hint={nozzleCleanAvailable ? undefined : 'Принтер без кода очистки — чистка недоступна'}
+            >
               <select
                 className="input"
                 value={cleanMode}

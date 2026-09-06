@@ -18,6 +18,8 @@ import java.time.OffsetDateTime
 /** Параметры pack-джоба — транслируются в CLI-аргументы colored_3mf_packer один в один. */
 data class PackParams(
     val profileId: String,
+    /** Путь к json профиля, разрешённый ProfileService (id профиля ≠ имя файла). */
+    val profilePath: Path,
     val clearance: Double,
     val resolution: Double,
     val attempts: Long,
@@ -38,6 +40,8 @@ sealed interface ScheduleSource {
 /** Параметры schedule-джоба — транслируются в CLI-аргументы daily_scheduler один в один. */
 data class ScheduleParams(
     val profileId: String,
+    /** Путь к json профиля, разрешённый ProfileService (id профиля ≠ имя файла). */
+    val profilePath: Path,
     val source: ScheduleSource,
     val dayStart: String,
     val nightStart: String,
@@ -75,7 +79,7 @@ class JobRunner(
             add("--source")
             add("input.3mf")
             add("--profile")
-            add(properties.profilesDirPath.resolve("${params.profileId}.json").toString())
+            add(params.profilePath.toString())
             add("--output")
             add("packed.3mf")
             add("--work-dir")
@@ -110,7 +114,7 @@ class JobRunner(
             // ВАЖНО: аргумент после --printer — одна строка с запятыми.
             add("--printer")
             add(
-                "profile=${properties.profilesDirPath.resolve("${params.profileId}.json")}," +
+                "profile=${params.profilePath}," +
                     "source=$source," +
                     "prep-min=${params.prepMin}," +
                     "plates-3mf=plates.3mf",
