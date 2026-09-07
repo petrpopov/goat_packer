@@ -55,9 +55,16 @@ class PackService(
             profilePath = profile.file,
             clearance = form.clearance ?: 0.7,
             resolution = form.resolution ?: 0.25,
-            attempts = form.attempts ?: 2000,
-            candidates = form.candidates ?: 1000,
-            seed = form.seed ?: 20270831,
+            // Дефолт = «Сильному» уровню ползунка UI (консольные 4800/2400, валидированы на
+            // козочках): поиск останавливается сам при плато, так что потолок почти бесплатен,
+            // а слабый дефолт стабильно недоупаковывал на 1 объект.
+            attempts = form.attempts ?: 4800,
+            candidates = form.candidates ?: 2400,
+            // Seed без значения — случайный на прогон: результат поиска сильно зависит от
+            // seed (goat1 P1S: seed 20270831 ни разу не находит 18 даже за 4800 полных
+            // попыток, другой seed находит на 387-й), поэтому «повторить запуск» — это
+            // легитимный способ улучшить плотность. Закреплённый seed = воспроизводимость.
+            seed = form.seed ?: kotlin.random.Random.nextLong(0, Long.MAX_VALUE),
             nozzleClean = nozzleClean,
         )
 

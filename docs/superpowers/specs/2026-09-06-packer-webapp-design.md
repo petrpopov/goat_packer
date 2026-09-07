@@ -34,6 +34,10 @@
 - `GET /api/profiles` — список профилей из `profiles/`: id, name, slicerKind, bedSize.
 - `POST /api/pack/jobs` — multipart `file` + поля `profileId, clearance, resolution, attempts,
   candidates, seed, nozzleClean` → `{jobId}`. Валидация: .3mf, ≤200 МБ, числовые поля.
+  Дефолты: attempts 4800 / candidates 2400 («Сильный» уровень ползунка усилия в UI:
+  Быстро 500/400, Стандарт 2000/1000, Сильно 4800/2400, Максимум 12000/2400); seed без
+  значения — случайный на прогон (результат поиска сильно зависит от seed, повторный запуск
+  может упаковать плотнее; закреплённый seed даёт воспроизводимость).
 - `GET /api/jobs/{id}` — статус: `RUNNING/SUCCEEDED/FAILED` + `phase, progressPercent,
   phaseMessage, error, artifacts[{name, sizeBytes, downloadUrl}], pack: {objectCount,
   bedBounds, profileId}` / `schedule: {jobs[], totalObjects, totalFilamentGrams,

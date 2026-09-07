@@ -12,6 +12,18 @@ import { useUiStore } from '@/store/useUiStore';
 
 type NozzleCleanMode = 'off' | 'global' | 'from-z';
 
+/**
+ * Уровни усилия поиска: один ползунок вместо двух числовых полей (попытки/кандидаты).
+ * «Сильно» — консольный уровень, валидированный на козочках (4800/2400); поиск всё равно
+ * останавливается сам, когда долго нет улучшений, так что завышенный потолок почти бесплатен.
+ */
+const EFFORT_LEVELS = [
+  { label: 'Быстро', attempts: 500, candidates: 400 },
+  { label: 'Стандарт', attempts: 2000, candidates: 1000 },
+  { label: 'Сильно', attempts: 4800, candidates: 2400 },
+  { label: 'Максимум', attempts: 12000, candidates: 2400 },
+] as const;
+
 /** nozzleClean → "", "global", "global,every=N", "from-z=H", "from-z=H,every=N". */
 function buildNozzleClean(mode: NozzleCleanMode, fromZ: string, globalEvery: string, fromZEvery: string): string {
   if (mode === 'off') return '';
@@ -33,9 +45,8 @@ export default function PackPage() {
   const [profileId, setProfileId] = useState('');
   const [clearance, setClearance] = useState('0.7');
   const [resolution, setResolution] = useState('0.25');
-  const [attempts, setAttempts] = useState('2000');
-  const [candidates, setCandidates] = useState('1000');
-  const [seed, setSeed] = useState('20270831');
+  const [effort, setEffort] = useState(EFFORT_LEVELS.length - 2);
+  const [seed, setSeed] = useState('');
   const [cleanMode, setCleanMode] = useState<NozzleCleanMode>('off');
   const [globalEvery, setGlobalEvery] = useState('10');
   const [fromZ, setFromZ] = useState('');
@@ -84,9 +95,11 @@ export default function PackPage() {
     form.append('profileId', profileId);
     form.append('clearance', clearance);
     form.append('resolution', resolution);
-    form.append('attempts', attempts);
-    form.append('candidates', candidates);
-    form.append('seed', seed);
+    form.append('attempts', String(EFFORT_LEVELS[effort].attempts));
+    form.append('candidates', String(EFFORT_LEVELS[effort].candidates));
+    // Пустой seed = случайный на прогон (бэкенд подставит): повторный запуск может упаковать
+    // плотнее — результат сильно зависит от seed. Заполненный = воспроизводимость.
+    if (seed.trim() !== '') form.append('seed', seed.trim());
     form.append('nozzleClean', buildNozzleClean(cleanMode, fromZ, globalEvery, fromZEvery));
 
     startMutation.mutate(form);
@@ -221,33 +234,37 @@ export default function PackPage() {
                   disabled={jobActive}
                 />
               </Field>
-              <Field label="Попытки">
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={attempts}
-                  onChange={(event) => setAttempts(event.target.value)}
-                  disabled={jobActive}
-                />
+              <Field
+                label="Усилие поиска"
+                hint={`${EFFORT_LEVELS[effort].attempts} попыток · ${EFFORT_LEVELS[effort].candidates} кандидатов на шаг`}
+              >
+                <div className="effort-slider">
+                  <input
+                    className="effort-range"
+                    type="range"
+                    min={0}
+                    max={EFFORT_LEVELS.length - 1}
+                    step={1}
+                    value={effort}
+                    onChange={(event) => setEffort(Number(event.target.value))}
+                    disabled={jobActive}
+                    aria-label="Усилие поиска"
+                  />
+                  <div className="effort-labels">
+                    {EFFORT_LEVELS.map((level, index) => (
+                      <span key={level.label} className={index === effort ? 'effort-label active' : 'effort-label'}>
+                        {level.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </Field>
-              <Field label="Кандидатов на шаг">
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={candidates}
-                  onChange={(event) => setCandidates(event.target.value)}
-                  disabled={jobActive}
-                />
-              </Field>
-              <Field label="Seed">
+              <Field label="Seed" hint="пусто — случайный на прогон; повторный запуск может упаковать плотнее">
                 <input
                   className="input mono"
                   type="number"
                   step={1}
+                  placeholder="случайный"
                   value={seed}
                   onChange={(event) => setSeed(event.target.value)}
                   disabled={jobActive}
