@@ -76,6 +76,7 @@ fn base_options(stl: &Path) -> AssembleOptions {
         duplicate_mesh_per_object: false,
         reuse_source_object_instances: false,
         inline_colored_mesh_objects: false,
+        footprint_override: None,
     }
 }
 

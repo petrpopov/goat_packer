@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
-import { fetchProfiles, startPackJob } from '@/api/services';
+import { detectProfile, fetchProfiles, startPackJob } from '@/api/services';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import JobCard from '@/components/JobCard';
@@ -46,8 +46,10 @@ export default function PackPage() {
   const [clearance, setClearance] = useState('0.7');
   const [resolution, setResolution] = useState('0.25');
   const [effort, setEffort] = useState(EFFORT_LEVELS.length - 2);
-  const [seed, setSeed] = useState('');
+  const [seed, setSeed] = useState('20270831');
   const [cleanMode, setCleanMode] = useState<NozzleCleanMode>('off');
+  const [layout, setLayout] = useState<'search' | 'grid'>('search');
+  const [edgeMargin, setEdgeMargin] = useState('');
   const [globalEvery, setGlobalEvery] = useState('10');
   const [fromZ, setFromZ] = useState('');
   const [fromZEvery, setFromZEvery] = useState('1');
@@ -64,6 +66,24 @@ export default function PackPage() {
       );
     }
   }, [profilesQuery.isError, profilesQuery.error]);
+
+  // Автоопределение профиля: printer_model внутри 3MF сопоставляется с профилями на бэкенде.
+  // Подставляем, только если пользователь ещё не выбрал профиль руками.
+  const detectMutation = useMutation({
+    mutationFn: detectProfile,
+    onSuccess: (response) => {
+      if (response.profileId !== null && profileId === '') {
+        setProfileId(response.profileId);
+      }
+    },
+  });
+
+  const handleFileChange = (next: File | null) => {
+    setFile(next);
+    if (next !== null) {
+      detectMutation.mutate(next);
+    }
+  };
 
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? null;
@@ -97,10 +117,14 @@ export default function PackPage() {
     form.append('resolution', resolution);
     form.append('attempts', String(EFFORT_LEVELS[effort].attempts));
     form.append('candidates', String(EFFORT_LEVELS[effort].candidates));
-    // Пустой seed = случайный на прогон (бэкенд подставит): повторный запуск может упаковать
-    // плотнее — результат сильно зависит от seed. Заполненный = воспроизводимость.
+    // Seed по умолчанию закреплён (20270831 — проверенный на козочках): раскладка — лотерея
+    // по seed, стабильный дефолт даёт один и тот же результат без крутки ручек. Пустое поле
+    // = случайный на прогон (бэкенд подставит) — осознанная крутилка, если хочется иначе.
     if (seed.trim() !== '') form.append('seed', seed.trim());
     form.append('nozzleClean', buildNozzleClean(cleanMode, fromZ, globalEvery, fromZEvery));
+    form.append('layout', layout);
+    // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки).
+    if (edgeMargin.trim() !== '') form.append('edgeMargin', edgeMargin.trim());
 
     startMutation.mutate(form);
   };
@@ -128,7 +152,7 @@ export default function PackPage() {
 
       <form className="stack" onSubmit={handleSubmit}>
         <section className="card">
-          <FileDrop file={file} onFileChange={setFile} disabled={jobActive} />
+          <FileDrop file={file} onFileChange={handleFileChange} disabled={jobActive} />
 
           <div className="form-grid">
             <Field label="Профиль принтера">
@@ -144,6 +168,21 @@ export default function PackPage() {
                     {profile.name} · {profile.bedWidthMm}×{profile.bedDepthMm} мм
                   </option>
                 ))}
+              </select>
+            </Field>
+
+            <Field
+              label="Раскладка"
+              hint={layout === 'grid' ? 'Ровная сетка, без поиска — быстро' : 'Плотный подбор с поворотами и нависаниями'}
+            >
+              <select
+                className="input"
+                value={layout}
+                onChange={(event) => setLayout(event.target.value as 'search' | 'grid')}
+                disabled={jobActive}
+              >
+                <option value="search">Подбор (плотнее)</option>
+                <option value="grid">Сетка (быстро, равномерно)</option>
               </select>
             </Field>
 
@@ -259,7 +298,22 @@ export default function PackPage() {
                   </div>
                 </div>
               </Field>
-              <Field label="Seed" hint="пусто — случайный на прогон; повторный запуск может упаковать плотнее">
+              <Field
+                label="Отступ от края, мм"
+                hint={selectedProfile ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)` : 'пусто — дефолт профиля'}
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="any"
+                  placeholder={selectedProfile ? String(selectedProfile.edgeMarginMm) : ''}
+                  value={edgeMargin}
+                  onChange={(event) => setEdgeMargin(event.target.value)}
+                  disabled={jobActive}
+                />
+              </Field>
+              <Field label="Seed" hint="стабильный по умолчанию — одинаковый результат; очисти для случайного на прогон">
                 <input
                   className="input mono"
                   type="number"

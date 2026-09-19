@@ -7,8 +7,10 @@ import com.goatpacker.web.dto.ProfileDto
 import com.goatpacker.web.exception.BadRequestException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.web.multipart.MultipartFile
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.zip.ZipInputStream
 
 /**
  * Каталог принтеров: при каждом запросе читаются все json-файлы из {profiles-dir} (их три,
@@ -33,6 +35,46 @@ class ProfileService(
     data class ResolvedProfile(val dto: ProfileDto, val file: Path)
 
     fun list(): List<ProfileDto> = loadAll().map { it.dto }
+
+    /**
+     * Определяет профиль по содержимому загруженного 3MF: из Metadata/project_settings.config
+     * берётся printer_model и сопоставляется с printer_name профилей (точное совпадение, затем
+     * вхождение в обе стороны). Null = определить не удалось, пусть выбирает руками.
+     */
+    fun detectFrom3mf(file: MultipartFile): String? {
+        val printerModel = readPrinterModel(file) ?: return null
+        val profiles = loadAll()
+        profiles
+            .find { it.dto.name.equals(printerModel, ignoreCase = true) }
+            ?.let { return it.dto.id }
+        profiles
+            .find {
+                it.dto.name.isNotBlank() && (
+                    it.dto.name.contains(printerModel, ignoreCase = true) ||
+                        printerModel.contains(it.dto.name, ignoreCase = true)
+                )
+            }
+            ?.let { return it.dto.id }
+        return null
+    }
+
+    private fun readPrinterModel(file: MultipartFile): String? = try {
+        ZipInputStream(file.inputStream).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (entry.name.equals("Metadata/project_settings.config", ignoreCase = true)) {
+                    val node = objectMapper.readTree(zip.readBytes())
+                    val model = node.path("printer_model").asText("").trim()
+                    return model.ifEmpty { null }
+                }
+                entry = zip.nextEntry
+            }
+            null
+        }
+    } catch (ex: Exception) {
+        log.warn("Не удалось прочитать printer_model из {}: {}", file.originalFilename, ex.message)
+        null
+    }
 
     fun exists(profileId: String): Boolean = findById(profileId) != null
 

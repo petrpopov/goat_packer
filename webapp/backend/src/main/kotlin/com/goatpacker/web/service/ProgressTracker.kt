@@ -17,11 +17,11 @@ data class ProgressEvent(
  *  - "probing prime tower position" → probe, 5
  *  - "packing (N attempts..." → packing, 10
  *  - "pack_footprint: X/N attempts..." → packing, 10 + 60·X/N (N может быть меньше X при раннем
- *    стопе — кламп 0..100)
+ *    стопе — кламп 0..100); ПОСЛЕ начала repack-прохода та же строка → repacking, 40 + 30·X/N
  *  - "best layout:" → assembling, 72
  *  - "assembling 3MF" → assembling, 75
- *  - "slicing final plate" → slicing, 80
- *  - "repack" в любой форме ("re-packing", "repacked") → repacking, 40
+ *  - "slicing final plate" / "slicing repacked plate" → slicing, 80
+ *  - "repack" в любой форме ("re-packing", "repacking once") → repacking, 40
  *  - "wrote" + путь .3mf → cleanup, 95
  *
  * Планировщик:
@@ -44,24 +44,38 @@ object ProgressRules {
      * Возвращает (фаза, процент 0..100) или null, если строка не распознана.
      *
      * [lastSampleTotal] — последний знаменатель j из строк "slicing sample i/j" (состояние трекера);
-     * используется правилом "refining".
+     * используется правилом "refining". [inRepack] — уже начался ли repack-проход пакера: те же
+     * строки pack_footprint тогда относятся ко второй упаковке и маппятся в фазу repacking.
      */
-    fun parse(kind: JobKind, line: String, lastSampleTotal: Int? = null): Pair<JobPhase, Int>? {
+    fun parse(
+        kind: JobKind,
+        line: String,
+        lastSampleTotal: Int? = null,
+        inRepack: Boolean = false,
+    ): Pair<JobPhase, Int>? {
         val lower = line.lowercase()
 
         return when (kind) {
-            JobKind.PACK -> parsePacker(lower, line)
+            JobKind.PACK -> parsePacker(lower, line, inRepack)
             JobKind.SCHEDULE -> parseScheduler(lower, line, lastSampleTotal)
         }
     }
 
-    private fun parsePacker(lower: String, line: String): Pair<JobPhase, Int>? {
+    private fun parsePacker(lower: String, line: String, inRepack: Boolean): Pair<JobPhase, Int>? {
+        // "slicing repacked plate" — это уже слайсинг результата перепаковки, а не сама
+        // перепаковка; проверяем до правила "repack", которое матчила бы слово "repacked".
+        if (lower.startsWith("slicing repacked plate")) {
+            return JobPhase.SLICING to 80
+        }
         PACK_FOOTPRINT_ATTEMPTS.find(line)?.let { match ->
             val done = match.groupValues[1].toLong()
             val total = match.groupValues[2].toLong().coerceAtLeast(1)
-            val percent = 10.0 + 60.0 * done / total
 
-            return JobPhase.PACKING to percent.toInt().coerceIn(0, 100)
+            return if (inRepack) {
+                JobPhase.REPACKING to (40.0 + 30.0 * done / total).toInt().coerceIn(0, 100)
+            } else {
+                JobPhase.PACKING to (10.0 + 60.0 * done / total).toInt().coerceIn(0, 100)
+            }
         }
         // "repack" проверяем раньше "packing (": строки вроде "re-packing (2000 attempts..."
         // иначе были бы распознаны как старт первой упаковки.
@@ -138,24 +152,34 @@ class ProgressTracker(private val kind: JobKind) {
     var percent: Int = 0
         private set
 
-    /** Последнее значимое сообщение (строка вывода «как есть»). */
+    /** Последнее значимое сообщение (строка вывода «как есть», с префиксом внутри repack). */
     var message: String? = null
         private set
 
     /** Последний j из строк "slicing sample i/j" — для правила "refining". */
     private var lastSampleTotal: Int? = null
 
+    /** Начался ли repack-проход пакера (один максимум): строки pack_footprint тогда его прогресс. */
+    private var inRepack: Boolean = false
+
     /**
      * Обрабатывает очередную строку вывода. Возвращает событие для статусной сводки: фаза/процент
      * могут остаться прежними (строка не распознана или нарушила монотонность), но сообщение —
-     * всегда последняя значимая строка вывода «как есть».
+     * всегда последняя значимая строка вывода (внутри repack — с префиксом «Перепаковка:»).
      */
     fun onLine(line: String): ProgressEvent {
         if (line.isBlank()) {
             return ProgressEvent(phase, percent, message.orEmpty())
         }
 
-        val parsed = ProgressRules.parse(kind, line, lastSampleTotal)
+        if (kind == JobKind.PACK) {
+            val lower = line.lowercase()
+            if ("repack" in lower || "re-pack" in lower) {
+                inRepack = true
+            }
+        }
+
+        val parsed = ProgressRules.parse(kind, line, lastSampleTotal, inRepack)
         if (kind == JobKind.SCHEDULE) {
             ProgressRules.SLICING_SAMPLE.find(line)?.groupValues?.get(2)?.toIntOrNull()
                 ?.let { lastSampleTotal = it }
@@ -171,8 +195,16 @@ class ProgressTracker(private val kind: JobKind) {
             }
         }
 
-        message = line
+        message = if (inRepack && kind == JobKind.PACK && PACK_FOOTPRINT_ATTEMPTS_RE.containsMatchIn(line)) {
+            "Перепаковка: $line"
+        } else {
+            line
+        }
 
-        return ProgressEvent(phase, percent, line)
+        return ProgressEvent(phase, percent, message ?: line)
+    }
+
+    private companion object {
+        private val PACK_FOOTPRINT_ATTEMPTS_RE = Regex("""pack_footprint:\s*(\d+)/(\d+)\s+attempts""")
     }
 }

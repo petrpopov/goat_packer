@@ -18,12 +18,14 @@ fn p1s_profile_contains_blind_corner_and_purge_u_line() {
 fn u1_profile_has_edge_margin_and_cli_workaround() {
     let profile = load_printer_profile(std::path::Path::new("profiles/snapmaker_u1.json")).unwrap();
     assert_eq!(profile.printer_name, "Snapmaker U1");
-    assert_eq!(profile.edge_margin_mm, 3.5);
+    // 4.0 (было 3.5): Orca Snapmaker при spiral lifting требует зазор строго больше 3.5 мм,
+    // и пакер с margin=3.5 упирался в границу точно по порогу предупреждения.
+    assert_eq!(profile.edge_margin_mm, 4.0);
     assert_eq!(profile.purge_lines.len(), 1);
     assert!(profile.blank_start_gcode_for_cli);
     assert!(profile.no_check_for_final_tower_probe);
     let usable = profile.usable_bed().unwrap();
-    assert_eq!((usable.min_x, usable.min_y, usable.max_x, usable.max_y), (4.0, 4.5, 267.0, 267.5));
+    assert_eq!((usable.min_x, usable.min_y, usable.max_x, usable.max_y), (4.5, 5.0, 266.5, 267.0));
 }
 
 #[test]

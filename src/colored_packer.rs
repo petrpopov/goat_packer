@@ -43,7 +43,14 @@ impl PrinterProfile {
         self.printable_bed().inset(self.edge_margin_mm)
     }
 
-    pub fn fixed_keepouts(&self) -> ColoredPackerResult<Vec<Rect>> {
+    /// Fixed keepout rectangles: bed exclusion corners plus purge-line strips. The purge
+    /// strips grow by `purge_tip_overshoot_mm` — how far the slicer's real first layer
+    /// extends past the mesh outline at thin tips (Arachne/miter, measured up to ~1.7 mm on
+    /// a P1S goat's legs) — because the prime line is machine start gcode: nothing routes it
+    /// around objects, so a goat whose mesh clears the line can still print its leg tips
+    /// straight through it. The measured overshoot from the probe slice comes in here; pass
+    /// 0.0 when no probe data exists.
+    pub fn fixed_keepouts(&self, purge_tip_overshoot_mm: f64) -> ColoredPackerResult<Vec<Rect>> {
         let mut keepouts: Vec<Rect> = self
             .exclusion_rectangles
             .iter()
@@ -56,7 +63,10 @@ impl PrinterProfile {
             .collect();
         for line in &self.purge_lines {
             let keepout = axis_aligned_line_keepout(line[0], line[1], line[2], line[3], line[4])?;
-            keepouts.push(expand_rect(keepout, SLICER_KEEPOUT_SAFETY_MM));
+            keepouts.push(expand_rect(
+                keepout,
+                PURGE_LINE_KEEPOUT_SAFETY_MM + purge_tip_overshoot_mm,
+            ));
         }
         Ok(keepouts)
     }
@@ -83,6 +93,18 @@ fn expand_rect(rect: Rect, margin: f64) -> Rect {
 /// reserves. Isolated single-object measurements and reduced-attempt tuning runs both understate
 /// what a fully packed, maximally-dense real plate needs.
 const SLICER_KEEPOUT_SAFETY_MM: f64 = 4.0;
+
+/// Purge-line keepout grows by half the line width already; the line's coordinates come
+/// straight from the printer profile, so the base margin only needs to absorb raster
+/// quantization. A 4 mm blanket here pushed the keepout 0.25 mm into the usable bed and
+/// dropped the four cells of the bottom row that sit above the purge line. The real
+/// standoff comes from `fixed_keepouts`' tip-overshoot parameter, measured per model.
+const PURGE_LINE_KEEPOUT_SAFETY_MM: f64 = 0.5;
+
+/// The tower bounds are re-measured from the final slice and a repack is forced when they
+/// grow, so the reserve just covers probe-vs-final measurement noise — 4 mm here used to
+/// throw away grid cells whose patch cleared the actual tower by a wide margin.
+const TOWER_KEEPOUT_SAFETY_MM: f64 = 1.0;
 
 pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> {
     let bytes = fs::read(path)
@@ -116,6 +138,7 @@ pub fn parse_prime_tower_bounds(
     let mut x = 0.0;
     let mut y = 0.0;
     let mut active = false;
+    let mut nozzle_wipe = false;
     let mut line_width = fallback_line_width_mm;
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
@@ -147,6 +170,18 @@ pub fn parse_prime_tower_bounds(
             active = true;
             continue;
         }
+        // OrcaSlicer's IDEX tool change (Snapmaker U1) empties and wipes the nozzle at a
+        // garbage point far away from the tower between `;WIPE_START` and `;WIPE_END`, still
+        // inside the WIPE_TOWER section. Those moves are not the tower: counting them made
+        // the "tower bounds" half the plate wide on a real project.
+        if line.contains(";WIPE_START") {
+            nozzle_wipe = true;
+            continue;
+        }
+        if line.contains(";WIPE_END") {
+            nozzle_wipe = false;
+            continue;
+        }
         if !(line.starts_with("G0") || line.starts_with("G1")) {
             continue;
         }
@@ -167,7 +202,11 @@ pub fn parse_prime_tower_bounds(
                 y += value;
             }
         }
-        if active && (parsed_x.is_some() || parsed_y.is_some()) && gcode_axis(line, 'E').is_some() {
+        if active
+            && !nozzle_wipe
+            && (parsed_x.is_some() || parsed_y.is_some())
+            && gcode_axis(line, 'E').is_some()
+        {
             min_x = min_x.min(x);
             min_y = min_y.min(y);
             max_x = max_x.max(x);
@@ -180,7 +219,7 @@ pub fn parse_prime_tower_bounds(
         return None;
     }
     let centerline = Rect::new(min_x, min_y, max_x, max_y);
-    let expansion = max_width * 0.5 + clearance_mm + SLICER_KEEPOUT_SAFETY_MM;
+    let expansion = max_width * 0.5 + clearance_mm + TOWER_KEEPOUT_SAFETY_MM;
     Some(PrimeTowerBounds {
         centerline,
         keepout: Rect::new(
@@ -224,4 +263,92 @@ pub fn detect_slicer_kind_from_printer_model(printer_model: &str) -> Option<&'st
         .iter()
         .find(|(needle, _)| printer_model.contains(needle))
         .map(|(_, kind)| *kind)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Footprint, Point, placement_is_allowed, rasterize_footprint};
+
+    /// The real P1S profile geometry: the purge line hugs the front edge (y=1.0..1.5,
+    /// x 18..240) and one exclusion corner sits front-left.
+    fn p1s_profile() -> PrinterProfile {
+        PrinterProfile {
+            id: "bambu_p1s".to_owned(),
+            printer_name: "Bambu Lab P1S".to_owned(),
+            slicer_kind: "bambu".to_owned(),
+            slicer_path: String::new(),
+            blank_start_gcode_for_cli: false,
+            no_check_for_final_tower_probe: false,
+            printable_area: [0.0, 0.0, 256.0, 256.0],
+            edge_margin_mm: 0.0,
+            exclusion_rectangles: vec![[0.0, 0.0, 18.0, 28.0]],
+            purge_lines: vec![
+                [18.0, 1.0, 240.0, 1.0, 0.5],
+                [240.0, 1.0, 240.0, 11.0, 0.5],
+                [239.5, 11.0, 239.5, 1.5, 0.5],
+                [239.5, 1.5, 18.0, 1.5, 0.5],
+            ],
+            tower_marker_style: "wipe_tower".to_owned(),
+            tower_line_width_mm: 0.5,
+            nozzle_clean_gcode: None,
+        }
+    }
+
+    /// Regression (goat3_v4 P1S, 2026-09-14): the bottom-row goats' silhouettes cleared the
+    /// bare purge-line keepout (top y=1.75) with the mesh at y≈2.6, but the slicer prints
+    /// thin leg tips up to 1.66 mm past the outline — straight through the prime line at
+    /// y∈[1.0,1.5]. Only the purge strips may grow by the measured overshoot; the bed
+    /// exclusion corner keeps its own validated safety.
+    #[test]
+    fn purge_keepouts_grow_by_the_measured_tip_overshoot_and_only_them() {
+        let profile = p1s_profile();
+        let bare = profile.fixed_keepouts(0.0).unwrap();
+        let widened = profile.fixed_keepouts(1.66).unwrap();
+        assert_eq!(bare.len(), 5, "1 corner + 4 purge strips");
+        // The exclusion corner is index 0 and must not move with the purge overshoot.
+        assert_eq!(bare[0], widened[0]);
+        for (bare_rect, widened_rect) in bare.iter().zip(widened.iter()).skip(1) {
+            assert!((widened_rect.min_y - (bare_rect.min_y - 1.66)).abs() < 1e-9);
+            assert!((widened_rect.max_y - (bare_rect.max_y + 1.66)).abs() < 1e-9);
+        }
+        // Bare bottom line keepout: y=1 line, width 0.5 -> ±0.25, +0.5 safety -> top 1.75.
+        assert!((bare[1].max_y - 1.75).abs() < 1e-9);
+    }
+
+    /// The exact position the broken plate used — a 63x53 goat with its mesh bottom at
+    /// y≈2.7, printing tips down to ~1.06 — must be rejected once the keepout carries the
+    /// measured overshoot, and would still be legal with the bare one (that was the bug).
+    #[test]
+    fn widened_purge_keepout_rejects_the_position_that_printed_through_the_line() {
+        let profile = p1s_profile();
+        let keepouts = profile.fixed_keepouts(1.66).unwrap();
+        let mut loops = vec![
+            Point { x: -31.5, y: -26.5 },
+            Point { x: 31.5, y: -26.5 },
+            Point { x: 31.5, y: 26.5 },
+            Point { x: -31.5, y: 26.5 },
+            Point { x: -31.5, y: -26.5 },
+        ];
+        let footprint = Footprint {
+            body_loops: vec![loops.clone()],
+            bed_loops: None,
+            loops: vec![loops.clone()],
+            width: 63.0,
+            height: 53.0,
+            min_z: 0.0,
+            max_z: 0.0,
+            triangle_count: 0,
+        };
+        let mask = rasterize_footprint(&footprint, 0.0, 0.25, 0.7);
+        let bed = Rect::new(0.0, 0.0, 256.0, 256.0);
+        // Mesh bottom at y≈2.75 (center 29.5): legal against the bare keepout, illegal
+        // against the widened one — the printed layer would reach y≈1.1.
+        assert!(placement_is_allowed(&mask, 500, 118, bed, &keepouts_bare()));
+        assert!(!placement_is_allowed(&mask, 500, 118, bed, &keepouts));
+    }
+
+    fn keepouts_bare() -> Vec<Rect> {
+        p1s_profile().fixed_keepouts(0.0).unwrap()
+    }
 }

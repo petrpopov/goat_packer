@@ -127,6 +127,28 @@ pub fn write_binary_stl(path: &Path, triangles: &[[(f64, f64, f64); 3]]) -> io::
 /// recovered from the same STL the packer collided against. The strict length validation mirrors
 /// `extract_footprint` so a truncated or padded file fails loudly instead of shifting every
 /// placement by a bogus center.
+/// XYZ bounding-box center of a binary STL — the point to push through a build item's full
+/// 3x4 transform when the bed position of the model center is needed, not just XY.
+pub fn stl_center_3d(path: &Path) -> io::Result<(f64, f64, f64)> {
+    let (x, y) = stl_xy_center(path)?;
+    let data = fs::read(path)?;
+    let triangle_count = u32::from_le_bytes(data[80..84].try_into().expect("four bytes")) as usize;
+    let mut min_z = f64::INFINITY;
+    let mut max_z = f64::NEG_INFINITY;
+    for index in 0..triangle_count {
+        let base = 84 + index * 50 + 12;
+        for vertex_index in 0..3u16 {
+            let offset = base + usize::from(vertex_index) * 12 + 8;
+            let z = f64::from(f32::from_le_bytes(
+                data[offset..offset + 4].try_into().expect("four bytes"),
+            ));
+            min_z = min_z.min(z);
+            max_z = max_z.max(z);
+        }
+    }
+    Ok((x, y, (min_z + max_z) * 0.5))
+}
+
 pub fn stl_xy_center(path: &Path) -> io::Result<(f64, f64)> {
     let data = fs::read(path)?;
     if data.len() < 84 {

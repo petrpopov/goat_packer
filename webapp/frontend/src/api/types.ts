@@ -12,6 +12,11 @@ export interface PrinterProfile {
   supportsNozzleClean: boolean;
 }
 
+/** Ответ /api/profiles/detect. */
+export interface DetectProfileResponse {
+  profileId: string | null;
+}
+
 export type JobKind = 'pack' | 'schedule';
 
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';

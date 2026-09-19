@@ -29,6 +29,14 @@ data class PackJobForm(
     val candidates: Long? = null,
     @field:Min(value = 0, message = "seed должен быть в диапазоне 0..2^63-1")
     val seed: Long? = null,
+    @field:DecimalMin(value = "0.0", message = "edgeMargin должен быть в диапазоне 0..20 мм")
+    @field:DecimalMax(value = "20", message = "edgeMargin должен быть в диапазоне 0..20 мм")
+    val edgeMargin: Double? = null,
+    @field:Pattern(
+        regexp = """^(search|grid)$""",
+        message = "layout допустим search или grid",
+    )
+    val layout: String? = null,
     val nozzleClean: String? = null,
 )
 
@@ -64,4 +72,9 @@ data class ScheduleJobForm(
         message = "benchMode допустим adaptive или full",
     )
     val benchMode: String? = null,
+)
+
+/** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось. */
+data class DetectProfileDto(
+    val profileId: String?,
 )

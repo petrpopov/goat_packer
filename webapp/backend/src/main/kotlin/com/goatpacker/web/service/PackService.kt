@@ -65,6 +65,8 @@ class PackService(
             // попыток, другой seed находит на 387-й), поэтому «повторить запуск» — это
             // легитимный способ улучшить плотность. Закреплённый seed = воспроизводимость.
             seed = form.seed ?: kotlin.random.Random.nextLong(0, Long.MAX_VALUE),
+            edgeMargin = form.edgeMargin,
+            layout = form.layout ?: "search",
             nozzleClean = nozzleClean,
         )
 

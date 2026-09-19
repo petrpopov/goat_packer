@@ -93,7 +93,8 @@ class ProfilesIntegrationTest(
         assertEquals("orca", u1["slicerKind"].asText())
         assertEquals(270.0, u1["bedWidthMm"].asDouble(), 1e-9)
         assertEquals(270.0, u1["bedDepthMm"].asDouble(), 1e-9)
-        assertEquals(3.5, u1["edgeMarginMm"].asDouble(), 1e-9)
+        // 4.0, не 3.5: Orca Snapmaker при spiral lifting требует зазор СТРОГО больше 3.5 мм.
+        assertEquals(4.0, u1["edgeMarginMm"].asDouble(), 1e-9)
         assertFalse(u1["supportsNozzleClean"].asBoolean(), "у u1 нет nozzle_clean_gcode")
     }
 }

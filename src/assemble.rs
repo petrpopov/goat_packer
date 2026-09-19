@@ -27,7 +27,8 @@ use sha1::{Digest, Sha1};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
-    PackedPlacement, Point, Rect, embedded_mesh, extract_footprint, plate_preview, polygon_area,
+    Footprint, PackedPlacement, Point, Rect, embedded_mesh, extract_footprint, plate_preview,
+    polygon_area,
 };
 
 const CORE_MODEL_ENTRY: &str = "3D/3dmodel.model";
@@ -36,6 +37,14 @@ const PROJECT_SETTINGS_ENTRY: &str = "Metadata/project_settings.config";
 const CUT_INFORMATION_ENTRY: &str = "Metadata/cut_information.xml";
 const PLATE_JSON_ENTRY: &str = "Metadata/plate_1.json";
 const RELATIONSHIPS_ENTRY: &str = "3D/_rels/3dmodel.model.rels";
+const LAYER_HEIGHTS_ENTRY: &str = "Metadata/layer_heights_profile.txt";
+
+/// The packed clones take object ids 2, 3, … — the source's resources keep id 1 and each
+/// clone follows. `rebuild_core`, `rewrite_settings_object` and the layer-heights rewrite all
+/// derive their ids from this so the metadata and the model can never disagree.
+fn clone_object_id(index: usize) -> usize {
+    index + 2
+}
 
 /// Everything the assembler needs besides the template itself.
 #[derive(Clone, Debug)]
@@ -55,6 +64,11 @@ pub struct AssembleOptions {
     pub duplicate_mesh_per_object: bool,
     pub reuse_source_object_instances: bool,
     pub inline_colored_mesh_objects: bool,
+    /// The footprint the placements were packed against, when it differs from the mesh
+    /// projection (the probe slice's first layer — body plus supports plus brim). The preview
+    /// polygons must show what was packed, or the plate thumbnails lie about collisions.
+    /// `None` derives the projection from `stl_path` as before.
+    pub footprint_override: Option<Footprint>,
 }
 
 /// Clones `options.placements` into `template` and writes the packed project to `output`.
@@ -76,9 +90,16 @@ pub fn assemble_project(
     let core = entry_bytes(&entries, CORE_MODEL_ENTRY)?.to_vec();
     // Contract 3: the collision STL is the embedded mesh with the component's transform baked
     // in, so its XY bbox center is exactly the point every build-item translation must
-    // compensate (`placement − R(angle)·c_stl`).
-    let footprint = extract_footprint(&options.stl_path)
-        .map_err(|error| format!("cannot extract the footprint from {:?}: {error}", options.stl_path))?;
+    // compensate (`placement − R(angle)·c_stl`). When the caller packed against the probe
+    // slice's first layer (supports and brim included), that patch replaces the projection —
+    // and its loops are already centered on the same bbox center, so the placement math is
+    // unchanged.
+    let footprint = match &options.footprint_override {
+        Some(footprint) => footprint.clone(),
+        None => extract_footprint(&options.stl_path).map_err(|error| {
+            format!("cannot extract the footprint from {:?}: {error}", options.stl_path)
+        })?,
+    };
     // Canonical rings keep the assembled bytes deterministic across runs (spec acceptance 6).
     let loops: Vec<Vec<Point>> = footprint.loops.iter().map(|ring| canonical_ring(ring)).collect();
     let footprint_center = embedded_mesh::stl_xy_center(&options.stl_path)
@@ -131,6 +152,16 @@ pub fn assemble_project(
             z_offset,
         )?;
         set_entry(&mut entries, MODEL_SETTINGS_ENTRY, rebuilt);
+    }
+    // OrcaSlicer refuses to slice a prime tower "unless all objects have the same variable
+    // layer height": the copied entry still points only at the source's ordinal, so every
+    // clone slices without the source's layer-height table. Re-point the table at every
+    // clone's ordinal so all objects carry identical variable heights again.
+    if let Some(profile) = entry(&entries, LAYER_HEIGHTS_ENTRY)
+        && !options.reuse_source_object_instances
+    {
+        let rebuilt = rebuild_layer_heights_profile(profile, options.placements.len());
+        set_entry(&mut entries, LAYER_HEIGHTS_ENTRY, rebuilt);
     }
     // Contract 6: cut_information.xml and plate_1.json are rewritten only when the template
     // already carries them — Snapmaker projects lack them and Bambu-only metadata must never
@@ -673,6 +704,47 @@ fn locate_core_layout(events: &[Event<'static>]) -> Result<CoreLayout, String> {
 }
 
 /// The source build item's z translation (transform value 11) — see `assemble_project`.
+/// The source build item's transform applied to a mesh-bbox center: where the model's
+/// geometric center actually sits on the bed in the source (and therefore probe) slice.
+/// A probe-derived first-layer patch must be centered on this point — the assembler places
+/// clones by that same center, and centering the patch on the contact strip instead shifts
+/// the whole reserved area when the model is not prism-shaped (a lying animal's strip center
+/// sits well below its bbox center).
+pub fn source_model_center(core: &[u8], center: (f64, f64, f64)) -> Result<(f64, f64), String> {
+    let missing = || "3MF source build item has no transform".to_owned();
+    let events = parse_events(core, CORE_MODEL_ENTRY)?;
+    let (root_start, root_end) = root_span(&events)?;
+    let build = child_spans(&events, root_start, root_end)
+        .into_iter()
+        .find(|&span| element_is(&events[span.0], "build"))
+        .ok_or_else(missing)?;
+    let item = child_spans(&events, build.0, build.1)
+        .into_iter()
+        .find(|&span| element_is(&events[span.0], "item"))
+        .ok_or_else(missing)?;
+    let (Event::Start(start) | Event::Empty(start)) = &events[item.0] else {
+        unreachable!("item span starts with an element");
+    };
+    let transform = attribute_value(start, "transform")?.ok_or_else(missing)?;
+    let values: Vec<f64> = transform
+        .split_whitespace()
+        .map(|token| {
+            token
+                .parse::<f64>()
+                .map_err(|_| "3MF source transform is not a 3x4 matrix".to_owned())
+        })
+        .collect::<Result<_, _>>()?;
+    if values.len() != 12 {
+        return Err("3MF source transform is not a 3x4 matrix".to_owned());
+    }
+    // 3MF matrices are column-major 3x4: [m00 m10 m20 m01 m11 m21 m02 m12 m22 tx ty tz].
+    let (x, y, z) = center;
+    Ok((
+        values[0] * x + values[3] * y + values[6] * z + values[9],
+        values[1] * x + values[4] * y + values[7] * z + values[10],
+    ))
+}
+
 fn source_z_offset(core: &[u8]) -> Result<f64, String> {
     let missing = || "3MF source build item has no transform".to_owned();
     let events = parse_events(core, CORE_MODEL_ENTRY)?;
@@ -740,7 +812,7 @@ fn rebuild_core(
                 None => events[template_span.0..template_span.1].to_vec(),
             };
             if let Event::Start(start) | Event::Empty(start) = &mut object_events[0] {
-                set_attribute(start, "id", &(index + 2).to_string())?;
+                set_attribute(start, "id", &clone_object_id(index).to_string())?;
                 let kind = if inline { "inline-resource" } else { "resource" };
                 set_attribute(start, "p:UUID", &stable_uuid(kind, index))?;
             }
@@ -1019,9 +1091,36 @@ fn rebuild_model_settings(
 /// Sets the clone's `id` and gives every direct `part` a deterministic uuid — BambuStudio
 /// matches model_settings objects to core resources by these ids, so the object id numbering
 /// must stay exactly `index + 2`.
+/// Duplicates the template's `object_id=<id>|<table>` lines across every packed clone id.
+/// Lines without that prefix pass through untouched.
+/// Duplicates the template's `object_id=<n>|<table>` lines across every packed clone.
+/// The `object_id` here is the 1-based ordinal of the object in the model's object list —
+/// OrcaSlicer indexes this file by `object index + 1` (`bbs_3mf.cpp`), not by the 3MF
+/// object id used elsewhere in the archive. Lines without that prefix pass through.
+fn rebuild_layer_heights_profile(data: &[u8], clone_count: usize) -> Vec<u8> {
+    let text = String::from_utf8_lossy(data);
+    let mut lines: Vec<String> = Vec::new();
+    for line in text.lines() {
+        match line
+            .split_once("object_id=")
+            .and_then(|(_, rest)| rest.split_once('|'))
+        {
+            Some((_, table)) => {
+                for ordinal in 1..=clone_count {
+                    lines.push(format!("object_id={ordinal}|{table}"));
+                }
+            }
+            None => lines.push(line.to_owned()),
+        }
+    }
+    let mut out = lines.join("\n").into_bytes();
+    out.push(b'\n');
+    out
+}
+
 fn rewrite_settings_object(clone: &mut [Event<'static>], index: usize) -> Result<(), String> {
     if let Event::Start(start) | Event::Empty(start) = &mut clone[0] {
-        set_attribute(start, "id", &(index + 2).to_string())?;
+        set_attribute(start, "id", &clone_object_id(index).to_string())?;
     }
     if matches!(clone[0], Event::Start(_)) {
         let part_spans: Vec<(usize, usize)> = child_spans(clone, 0, clone.len())
@@ -1284,6 +1383,7 @@ mod tests {
             duplicate_mesh_per_object: false,
             reuse_source_object_instances: false,
             inline_colored_mesh_objects: false,
+            footprint_override: None,
         }
     }
 
@@ -1467,6 +1567,72 @@ mod tests {
     /// Symmetric regression for `<assemble>` with pre-existing assemble_items (the real Goat 3
     /// template has two, one carrying an extra volume_id): the new items replace them inside
     /// the element with exactly one closing tag.
+    /// OrcaSlicer aborts a prime-tower slice with "all objects have the same variable layer
+    /// height" when the copied profile still points only at the source's ordinal: the clones
+    /// slice without their layer-height table and the tables then differ. The rewritten ids
+    /// are 1-based ordinals (object index + 1 in `bbs_3mf.cpp`), not the 3MF object ids the
+    /// clones carry in the model itself.
+    #[test]
+    fn layer_heights_profile_is_duplicated_for_every_clone_id() {
+        let rebuilt = rebuild_layer_heights_profile(b"object_id=2|0.000000;0.250000;0.460000\n", 3);
+        let text = String::from_utf8(rebuilt).unwrap();
+        assert_eq!(
+            text,
+            "object_id=1|0.000000;0.250000;0.460000\n\
+             object_id=2|0.000000;0.250000;0.460000\n\
+             object_id=3|0.000000;0.250000;0.460000\n"
+        );
+
+        // Pass-through for lines without an object_id mapping, and end-to-end: an assembled
+        // archive carries one line per placement, and a template without the entry never
+        // grows one.
+        let passthrough = rebuild_layer_heights_profile(b"not a profile line", 2);
+        assert_eq!(
+            String::from_utf8(passthrough).unwrap(),
+            "not a profile line\n"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = synthetic_template(dir.path(), false);
+        let stl = baked_stl(dir.path(), &source);
+        let with_profile = dir.path().join("with_profile.3mf");
+        let mut entries = vec![
+            ("3D/3dmodel.model", SYNTHETIC_CORE.to_owned()),
+            ("3D/Objects/mesh.model", SYNTHETIC_MESH_PART.to_owned()),
+            (
+                "Metadata/project_settings.config",
+                serde_json::json!({
+                    "printer_model": "Synthetic Printer",
+                    "printable_area": ["0x0", "200x0", "200x200", "0x200"],
+                })
+                .to_string(),
+            ),
+            (
+                "Metadata/model_settings.config",
+                SYNTHETIC_MODEL_SETTINGS.to_owned(),
+            ),
+            (
+                "Metadata/layer_heights_profile.txt",
+                "object_id=1|0.0;0.2\n".to_owned(),
+            ),
+        ];
+        write_zip(&with_profile, &entries);
+
+        let output = dir.path().join("packed.3mf");
+        assemble_project(&with_profile, &output, &base_options(&stl)).unwrap();
+
+        let profile = String::from_utf8(read_entry(
+            &output,
+            "Metadata/layer_heights_profile.txt",
+        ))
+        .unwrap();
+        assert_eq!(profile, "object_id=1|0.0;0.2\nobject_id=2|0.0;0.2\n");
+        let plain = dir.path().join("packed_plain.3mf");
+        assemble_project(&source, &plain, &base_options(&stl)).unwrap();
+        assert!(!has_entry(&plain, "Metadata/layer_heights_profile.txt"));
+        entries.clear();
+    }
+
     #[test]
     fn assemble_with_existing_items_rebuilds_items_in_place() {
         let model_settings = r#"<config><object id="2"/><plate/><assemble><assemble_item object_id="2" instance_id="0" transform="1 0 0 0 1 0 0 0 1 0 0 9" offset="0 0 0"/><assemble_item object_id="2" volume_id="0" transform="1 0 0 0 1 0 0 0 1 5 5 -4.3"/></assemble></config>"#;

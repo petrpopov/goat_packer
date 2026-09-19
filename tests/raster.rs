@@ -6,6 +6,8 @@ fn rectangle(width: f64, height: f64) -> Footprint {
     let x = width / 2.0;
     let y = height / 2.0;
     Footprint {
+        body_loops: Vec::new(),
+        bed_loops: None,
         loops: vec![vec![
             Point { x: -x, y: -y },
             Point { x, y: -y },
@@ -59,3 +61,4 @@ fn placement_obeys_bed_and_exclusion_rectangles() {
     assert!(!placement_is_allowed(&mask, 4, 4, bed, &[exclusion]));
     assert!(!placement_is_allowed(&mask, 1, 20, bed, &[exclusion]));
 }
+

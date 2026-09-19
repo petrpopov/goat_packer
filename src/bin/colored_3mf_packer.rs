@@ -7,13 +7,15 @@ use std::{
 };
 
 use goat_packer::{
-    Footprint, PackOptions, PackResult, Rect, extract_footprint, pack_footprint, validate_result,
-    assemble::{AssembleOptions, assemble_project},
+    Footprint, PackOptions, PackResult, Point, Rect, extract_footprint, first_layer_footprint,
+    grid_layout, loops_touch_rect, pack_footprint, patch_overshoot_mm, patch_within_silhouette,
+    union_loops, validate_result,
+    assemble::{AssembleOptions, assemble_project, source_model_center},
     colored_packer::{
         PrimeTowerBounds, PrinterProfile, detect_slicer_kind_from_printer_model,
         load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
     },
-    embedded_mesh::{embedded_mesh_triangles, write_binary_stl},
+    embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     scheduler::object_count_3mf,
 };
@@ -34,8 +36,21 @@ struct Args {
     attempts: usize,
     candidates: usize,
     stall: usize,
+    max_objects: usize,
     seed: u64,
+    /// Overrides the profile's edge margin (Snapmaker Orca's spiral lifting warns unless the
+    /// gap is strictly above 3.5 mm, which a 3.5 margin hits exactly).
+    edge_margin: Option<f64>,
+    /// `search` runs the full randomized packing; `grid` places the deterministic grid only
+    /// and skips the search — faster, perfectly uniform, a bit sparser.
+    layout: LayoutMode,
     nozzle_clean: Option<NozzleCleanSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LayoutMode {
+    Search,
+    Grid,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,7 +116,10 @@ fn main() {
 
 fn run() -> AppResult<()> {
     let args = parse_args()?;
-    let profile = load_printer_profile(&args.profile_path)?;
+    let mut profile = load_printer_profile(&args.profile_path)?;
+    if let Some(edge_margin) = args.edge_margin {
+        profile.edge_margin_mm = edge_margin;
+    }
     validate_source_printer(&args.source_3mf, &profile)?;
     fs::create_dir_all(&args.work_dir)?;
     let source_count = object_count_3mf(&args.source_3mf)?;
@@ -134,14 +152,131 @@ fn run() -> AppResult<()> {
         ),
     }
 
-    let mut keepouts = profile.fixed_keepouts()?;
+    // The probe slice already shows the object exactly as it prints — body, tree supports,
+    // brim. Packing against that first-layer patch stops supports from touching neighbouring
+    // bodies, which the pure mesh projection could not promise (tree supports wander several
+    // mm past the silhouette on a real lying-animal plate).
+    let silhouette = extract_footprint(&footprint_stl)?;
+    // Where the model's bbox center sits in the probe slice: the embedded mesh's center put
+    // through the source build item's transform. The layer-1 patch must be centered exactly
+    // there to stay in the assembler's placement frame.
+    let model_world_center = model_center_on_bed(&args.source_3mf, &footprint_stl);
+    let (mut footprint, lock_orientation, purge_tip_overshoot) =
+        match first_layer_footprint(&probe_gcode, model_world_center) {
+        Some(patch) => {
+            eprintln!(
+                "probe slice's first layer: patch {:.1}x{:.1} mm, mesh silhouette {:.1}x{:.1} mm",
+                patch.width, patch.height, silhouette.width, silhouette.height
+            );
+            // Arc-fitted probes parse differently from straight-line ones (the patch is
+            // rebuilt from flattened G2/G3 sweeps); the count tells the operator which kind
+            // of gcode the patch below came from when a layout surprises them.
+            let arc_moves = probe_gcode
+                .split(|&byte| byte == b'\n')
+                .filter(|line| line.starts_with(b"G2 ") || line.starts_with(b"G3 "))
+                .count();
+            if arc_moves > 0 {
+                eprintln!(
+                    "probe gcode carries {arc_moves} G2/G3 arc moves; the patch flattens them"
+                );
+            }
+            // Supports and brim legitimately add a few mm, but a patch far larger than the
+            // silhouette means foreign extrusions (prime tower, purge line) leaked into the
+            // parsed first layer — every clone would reserve them and the layout would come
+            // out sparse with no other error. This caught the Bambu dialect bug where the
+            // tower inflated a 54 mm goat to a 97.5 mm patch.
+            const FOREIGN_EXTRUSION_EXCESS_MM: f64 = 15.0;
+            if patch.width > silhouette.width + FOREIGN_EXTRUSION_EXCESS_MM
+                || patch.height > silhouette.height + FOREIGN_EXTRUSION_EXCESS_MM
+            {
+                eprintln!(
+                    "WARNING: first-layer patch {:.1}x{:.1} mm exceeds the mesh silhouette \
+                     {:.1}x{:.1} mm by more than {FOREIGN_EXTRUSION_EXCESS_MM} mm — foreign \
+                     extrusions (prime tower / purge line) probably leaked into the patch; \
+                     expecting a sparse layout",
+                    patch.width, patch.height, silhouette.width, silhouette.height
+                );
+            }
+            // A patch that stays inside the mesh outline carries no supports or brim beyond
+            // the model, so the silhouette is the honest footprint — and it unlocks
+            // rotations, which tile much denser than one locked orientation (a flat goat
+            // plate: 31 with rotations, 28 locked). Supports past the outline keep the patch
+            // and the lock: the slicer rebuilds them in table coordinates. The 2.0 mm
+            // tolerance absorbs wall-bead artifacts (miter on sharp tips ~1 mm; arachne
+            // slivers along a curved belly up to ~1.6 mm, 2.45 mm² total on the P1S goat);
+            // real supports wander 3-5 mm past the outline with hundreds of mm².
+            if patch_within_silhouette(&patch, &silhouette, args.resolution, 2.0) {
+                eprintln!(
+                    "patch fits inside the mesh silhouette (+2.0 mm) — no supports or brim \
+                     reach past the model; packing the silhouette with rotations allowed"
+                );
+                // Within tolerance is not within: Arachne thin-tip lines print past the mesh
+                // outline (measured up to 1.66 mm on a P1S goat's legs), and the prime line
+                // is machine start gcode — nothing routes it around objects, so a goat whose
+                // silhouette cleared the purge-line keepout printed its leg tips straight
+                // through the line. The measured overshoot widens the PURGE-LINE keepout
+                // only: the tower and exclusion corner keep their own validated safeties,
+                // and object-vs-object clearance is untouched.
+                let overshoot = patch_overshoot_mm(&patch, &silhouette, args.resolution);
+                if overshoot > 0.0 {
+                    eprintln!(
+                        "first layer overshoots the mesh silhouette by up to {:.1} mm at thin \
+                         tips; the purge-line keepout keeps that standoff",
+                        overshoot
+                    );
+                }
+                (silhouette.clone(), false, overshoot)
+            } else {
+                // How far the patch actually sticks out separates the two realities this
+                // branch exists for: real supports/brim wander whole millimetres, while a
+                // fraction of a millimetre is a parse artifact (a stray chord, a mitered
+                // tip) worth a second look before accepting the locked-orientation layout.
+                let overshoot = patch_overshoot_mm(&patch, &silhouette, args.resolution);
+                eprintln!(
+                    "patch reaches past the mesh silhouette by up to {overshoot:.1} mm \
+                     (supports/brim) — packing the patch ∪ silhouette, orientation locked to \
+                     the sliced one"
+                );
+                // Collisions must respect BOTH truths: the printed patch (supports/brim
+                // beyond the outline) AND the mesh body where layer 1 prints nothing (a
+                // lying animal's raised horns; on P1S the patch is inset ~0.4 mm per side,
+                // so a bare-patch layout glued 24 goat pairs by up to 1.7 mm²). The body
+                // zone is the mesh outline — walls and walls' strips are all inset
+                // representations of the same body.
+                let mut combined = patch.clone();
+                combined.loops = union_loops(&patch, &silhouette);
+                combined.body_loops = silhouette.loops.clone();
+                // The patch is the measured print (tips included), so purge checks run
+                // against its real extent already — no extra overshoot.
+                (combined, true, 0.0)
+            }
+        }
+        None => {
+            eprintln!(
+                "probe slice's first layer has no object extrusions; packing against the mesh \
+                 silhouette ({:.1}x{:.1} mm)",
+                silhouette.width, silhouette.height
+            );
+            // No probe data to measure the tip overshoot from; the base 0.5 mm purge safety
+            // applies, as it always did in this degraded path.
+            (silhouette.clone(), false, 0.0)
+        }
+    };
+    let mut keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
     if let Some(tower) = probe_tower {
         keepouts.push(tower.keepout);
     }
+    // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
+    // silhouette: the slicer's bed-collision warning measures the full model extent, which
+    // hangs below the printed patch on a lying animal (its tail), silently eating the edge
+    // margin — the manual 3.5/4.0 mm gap complaint.
+    if lock_orientation {
+        footprint.bed_loops = Some(union_loops(&footprint, &silhouette));
+    }
     eprintln!("packing ({} attempts, seed {})...", args.attempts, args.seed);
-    let mut packed = pack(&args, &profile, &footprint_stl, keepouts.clone())?;
+    let mut packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
     eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
-    build_colored_project(&args, &profile, &footprint_stl, &packed, &keepouts)?;
+    build_colored_project(&args, &profile, &footprint_stl, &footprint, &packed, &keepouts)?;
     eprintln!("slicing final plate ({} objects)...", packed.placements.len());
     let mut final_gcode = slice_project(
         &profile,
@@ -157,29 +292,49 @@ fn run() -> AppResult<()> {
     if evaluate_final_tower(probe_tower, final_tower, reserved_tower_keepout)?
         == TowerOutcome::RepackRequired
     {
-        println!("final tower outgrew probe keepout; repacking once");
-        keepouts.pop();
-        keepouts.push(final_tower.unwrap().keepout);
-        eprintln!("re-packing ({} attempts, seed {})...", args.attempts, args.seed);
-        packed = pack(&args, &profile, &footprint_stl, keepouts.clone())?;
-        eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
-        build_colored_project(&args, &profile, &footprint_stl, &packed, &keepouts)?;
-        eprintln!("slicing repacked plate ({} objects)...", packed.placements.len());
-        final_gcode = slice_project(
-            &profile,
-            &args.output,
-            packed.placements.len(),
-            &args.work_dir,
-            "final_repacked",
-        )?;
-        final_tower =
-            parse_prime_tower_bounds(&final_gcode, profile.tower_line_width_mm, args.clearance);
-        if evaluate_final_tower(probe_tower, final_tower, keepouts.last().copied())?
-            == TowerOutcome::RepackRequired
-        {
-            return Err("prime tower changed again after the permitted re-pack".into());
+        let grown_keepout = final_tower.unwrap().keepout;
+        // The probe tower is sized by ONE object's colour changes; a full plate's tower
+        // grows. But only growth that physically reaches a placement invalidates the layout:
+        // repacking on bare keepout arithmetic cost a real object (29 → 28) on plates where
+        // the grown strip hit nothing at all. The final slice already ran clean on this
+        // exact file, so an untouched layout is already validated.
+        let collision = packed.placements.iter().enumerate().find(|(_, placement)| {
+            loops_touch_rect(&placement_world_loops(&footprint, placement), grown_keepout)
+        });
+        if let Some((index, _)) = collision {
+            println!(
+                "final tower outgrew the probe keepout and reaches placement {index}; \
+                 repacking once"
+            );
+            keepouts.pop();
+            keepouts.push(grown_keepout);
+            eprintln!("re-packing ({} attempts, seed {})...", args.attempts, args.seed);
+            packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
+            eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
+            build_colored_project(&args, &profile, &footprint_stl, &footprint, &packed, &keepouts)?;
+            eprintln!("slicing repacked plate ({} objects)...", packed.placements.len());
+            final_gcode = slice_project(
+                &profile,
+                &args.output,
+                packed.placements.len(),
+                &args.work_dir,
+                "final_repacked",
+            )?;
+            final_tower =
+                parse_prime_tower_bounds(&final_gcode, profile.tower_line_width_mm, args.clearance);
+            if evaluate_final_tower(probe_tower, final_tower, keepouts.last().copied())?
+                == TowerOutcome::RepackRequired
+            {
+                return Err("prime tower changed again after the permitted re-pack".into());
+            }
+            repacked = true;
+        } else {
+            println!(
+                "final tower outgrew the probe keepout (y up to {:.1} mm) but reaches no \
+                 placement; keeping the layout",
+                grown_keepout.max_y
+            );
         }
-        repacked = true;
     }
 
     let report = ColoredPackReport {
@@ -204,6 +359,48 @@ fn run() -> AppResult<()> {
     Ok(())
 }
 
+/// The footprint loops of one placement in bed coordinates — rotated by the placement's
+/// angle, then translated to its position. For checking a placed object against a
+/// bed-space rect such as a grown tower keepout.
+fn placement_world_loops(
+    footprint: &Footprint,
+    placement: &goat_packer::PackedPlacement,
+) -> Vec<Vec<Point>> {
+    let radians = placement.angle_deg.to_radians();
+    let (sin, cos) = radians.sin_cos();
+    footprint
+        .loops
+        .iter()
+        .map(|loop_| {
+            loop_
+                .iter()
+                .map(|p| Point {
+                    x: p.x * cos - p.y * sin + placement.x_mm,
+                    y: p.x * sin + p.y * cos + placement.y_mm,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The source model's bbox center in bed coordinates: the baked STL's center transformed by
+/// the source 3MF's build item. Falls back to None (patch centers itself) when the archive
+/// cannot be read — the probe slice still packs, just with the strip-center caveat.
+fn model_center_on_bed(source_3mf: &Path, baked_stl: &Path) -> Option<(f64, f64)> {
+    let (cx, cy, cz) = stl_center_3d(baked_stl).ok()?;
+    let core = read_core_entry(source_3mf).ok()?;
+    source_model_center(&core, (cx, cy, cz)).ok()
+}
+
+fn read_core_entry(source_3mf: &Path) -> AppResult<Vec<u8>> {
+    let file = fs::File::open(source_3mf)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut entry = archive.by_name("3D/3dmodel.model")?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut entry, &mut bytes)?;
+    Ok(bytes)
+}
+
 fn derive_embedded_stl(source_3mf: &Path, output_stl: &Path) -> AppResult<()> {
     // The collision STL is the 3MF's own embedded mesh with the component's transform baked in;
     // see the call-site comment for why a separately exported STL cannot be trusted.
@@ -226,10 +423,10 @@ fn derive_embedded_stl(source_3mf: &Path, output_stl: &Path) -> AppResult<()> {
 fn pack(
     args: &Args,
     profile: &PrinterProfile,
-    footprint_stl: &Path,
+    footprint: &Footprint,
+    lock_orientation: bool,
     exclusions: Vec<Rect>,
 ) -> AppResult<PackResult> {
-    let footprint = extract_footprint(footprint_stl)?;
     let options = PackOptions {
         bed: profile.usable_bed()?,
         exclusions,
@@ -238,10 +435,36 @@ fn pack(
         angle_step_deg: args.angle_step,
         attempts: args.attempts,
         candidates_per_step: args.candidates,
+        max_objects: args.max_objects,
+        // The probe-derived patch is only valid at the orientation it was sliced at; rotating
+        // it would let the slicer's rebuilt tree supports wander outside the reserved area.
+        lock_orientation,
         stall_attempts: args.stall,
         seed: args.seed,
     };
-    let result = pack_footprint(&footprint, &options);
+    // The deterministic grid runs first as a floor score: small models tile as densely as
+    // their bounding boxes allow, and the randomized search only wins when it beats that.
+    // Taking the grid on a tie keeps the layout reproducible. `--layout grid` stops right
+    // here — no randomized search at all.
+    let grid = grid_layout(&footprint, &options);
+    let result = match args.layout {
+        LayoutMode::Grid => {
+            eprintln!("grid layout: {} objects (randomized search skipped)", grid.placements.len());
+            grid
+        }
+        LayoutMode::Search => {
+            eprintln!(
+                "grid baseline: {} objects; randomized search needs more to win",
+                grid.placements.len()
+            );
+            let random = pack_footprint(&footprint, &options);
+            if random.placements.len() > grid.placements.len() {
+                random
+            } else {
+                grid
+            }
+        }
+    };
     validate_result(&footprint, &options, &result)?;
     let bounds = layout_world_bounds(&footprint, &result);
     eprintln!(
@@ -289,6 +512,7 @@ fn build_colored_project(
     args: &Args,
     profile: &PrinterProfile,
     footprint_stl: &Path,
+    footprint: &Footprint,
     packed: &PackResult,
     keepouts: &[Rect],
 ) -> AppResult<()> {
@@ -310,6 +534,7 @@ fn build_colored_project(
         duplicate_mesh_per_object: false,
         reuse_source_object_instances: false,
         inline_colored_mesh_objects: false,
+        footprint_override: Some(footprint.clone()),
     };
     assemble_project(&args.source_3mf, &args.output, &options)
         .map_err(|error| format!("3MF assembly failed: {error}"))?;
@@ -577,6 +802,9 @@ fn parse_args() -> AppResult<Args> {
     let mut attempts = 16_000;
     let mut candidates = 2_400;
     let mut stall = None;
+    let mut max_objects = 0usize;
+    let mut edge_margin: Option<f64> = None;
+    let mut layout = LayoutMode::Search;
     let mut seed = 20_270_831;
     let mut nozzle_clean = None;
     while let Some(option) = args.next() {
@@ -594,6 +822,15 @@ fn parse_args() -> AppResult<Args> {
             "--attempts" => attempts = value.parse()?,
             "--candidates" => candidates = value.parse()?,
             "--stall" => stall = Some(value.parse()?),
+            "--max-objects" => max_objects = value.parse()?,
+            "--edge-margin" => edge_margin = Some(value.parse()?),
+            "--layout" => {
+                layout = match value.as_str() {
+                    "search" => LayoutMode::Search,
+                    "grid" => LayoutMode::Grid,
+                    other => return Err(format!("unknown layout mode: {other}").into()),
+                };
+            }
             "--seed" => seed = value.parse()?,
             "--nozzle-clean" => {
                 nozzle_clean = Some(NozzleCleanSpec::parse(&value)?);
@@ -606,7 +843,10 @@ fn parse_args() -> AppResult<Args> {
     let attempts = attempts.max(1);
     // Default: give the search a quarter of the restarts to keep improving after the last gain
     // before declaring it plateaued. 0 explicitly disables early stopping.
-    let stall = stall.unwrap_or((attempts / 4).max(1));
+    // No implicit early stop: on a dense P1S goat plate the 20-object layout first appeared
+    // past attempt 1600, and a hidden attempts/4 stall cap consistently truncated the search
+    // at 19. `--stall` remains for deliberately fast, lower-density runs.
+    let stall = stall.unwrap_or(0);
     Ok(Args {
         source_3mf: source_3mf.ok_or("--source is required")?,
         profile_path: profile_path.ok_or("--profile is required")?,
@@ -618,7 +858,10 @@ fn parse_args() -> AppResult<Args> {
         attempts,
         candidates,
         stall,
+        max_objects,
         seed,
+        edge_margin,
+        layout,
         nozzle_clean,
     })
 }
@@ -689,11 +932,15 @@ mod tests {
             attempts: 8,
             candidates: 100,
             stall: 0,
+            max_objects: 0,
             seed: 1,
+            edge_margin: None,
+            layout: LayoutMode::Search,
             nozzle_clean: None,
         };
 
-        let result = pack(&args, &profile, &stl, vec![]).unwrap();
+        let footprint = extract_footprint(&stl).unwrap();
+        let result = pack(&args, &profile, &footprint, false, vec![]).unwrap();
         assert!(!result.placements.is_empty());
 
         let footprint = extract_footprint(&stl).unwrap();
@@ -705,7 +952,9 @@ mod tests {
             angle_step_deg: args.angle_step,
             attempts: args.attempts,
             candidates_per_step: args.candidates,
-            stall_attempts: args.stall,
+            max_objects: 0,
+        lock_orientation: false,
+        stall_attempts: args.stall,
             seed: args.seed,
         };
         validate_result(&footprint, &options, &result).unwrap();
@@ -714,8 +963,7 @@ mod tests {
     #[test]
     fn validate_source_printer_rejects_slicer_kind_mismatch() {
         let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
-        let source =
-            Path::new("../Goat 4/p1s/goat4_p1s_contour_packed_purge_safe_faster.3mf");
+        let source = Path::new("../Goat 4/p1s/goat4_single_pla.3mf");
         validate_source_printer(source, &profile).unwrap();
 
         let mut mismatched = profile.clone();

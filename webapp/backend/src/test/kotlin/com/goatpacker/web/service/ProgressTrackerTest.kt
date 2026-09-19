@@ -76,9 +76,31 @@ class ProgressTrackerTest {
             JobPhase.REPACKING to 40,
             ProgressRules.parse(JobKind.PACK, "re-packing (2000 attempts, seed 20270831)..."),
         )
+    }
+
+    @Test
+    fun `пакер slicing repacked plate — это слайсинг, не repacking`() {
         assertEquals(
-            JobPhase.REPACKING to 40,
-            ProgressRules.parse(JobKind.PACK, "slicing repacked plate (30 objects)..."),
+            JobPhase.SLICING to 80,
+            ProgressRules.parse(JobKind.PACK, "slicing repacked plate (28 objects)..."),
+        )
+    }
+
+    @Test
+    fun `pack_footprint после начала repack — фаза repacking с прогрессом 40-70`() {
+        // 40 + 30 * 480 / 4800 = 43
+        assertEquals(
+            JobPhase.REPACKING to 43,
+            ProgressRules.parse(
+                JobKind.PACK,
+                "pack_footprint: 480/4800 attempts, best so far: 28 objects",
+                inRepack = true,
+            ),
+        )
+        // Без состояния repack та же строка — прогресс первой упаковки.
+        assertEquals(
+            JobPhase.PACKING to 16,
+            ProgressRules.parse(JobKind.PACK, "pack_footprint: 480/4800 attempts, best so far: 28 objects"),
         )
     }
 
@@ -174,6 +196,26 @@ class ProgressTrackerTest {
 
         assertEquals(JobPhase.REPACKING, event.phase)
         assertEquals(40, event.progressPercent)
+    }
+
+    @Test
+    fun `repack-проход — фаза repacking, растущий процент и префикс сообщения`() {
+        val tracker = ProgressTracker(JobKind.PACK)
+        tracker.onLine("packing (4800 attempts, seed 20270831)...")
+        tracker.onLine("pack_footprint: 480/4800 attempts, best so far: 29 objects") // 16
+
+        val start = tracker.onLine("final tower outgrew probe keepout and reaches placement 7; repacking once")
+        assertEquals(JobPhase.REPACKING to 40, start.phase to start.progressPercent)
+
+        // Прогресс второй упаковки: 40 + 30·X/N, процент растёт внутри repacking.
+        val mid = tracker.onLine("pack_footprint: 480/4800 attempts, best so far: 28 objects")
+        assertEquals(JobPhase.REPACKING, mid.phase)
+        assertEquals(43, mid.progressPercent)
+        assertEquals("Перепаковка: pack_footprint: 480/4800 attempts, best so far: 28 objects", mid.phaseMessage)
+
+        // Слайс перепакованной пластины — снова слайсинг с продвижением вперёд.
+        val slicing = tracker.onLine("slicing repacked plate (28 objects)...")
+        assertEquals(JobPhase.SLICING to 80, slicing.phase to slicing.progressPercent)
     }
 
     @Test

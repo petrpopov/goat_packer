@@ -25,6 +25,10 @@ data class PackParams(
     val attempts: Long,
     val candidates: Long,
     val seed: Long,
+    /** Override отступа от края стола; null = дефолт профиля. */
+    val edgeMargin: Double?,
+    /** search = полный рандом-поиск, grid = только детерминированная сетка (быстро). */
+    val layout: String,
     val nozzleClean: String,
 )
 
@@ -94,6 +98,12 @@ class JobRunner(
             add(params.candidates.toString())
             add("--seed")
             add(params.seed.toString())
+            params.edgeMargin?.let {
+                add("--edge-margin")
+                add(it.toString())
+            }
+            add("--layout")
+            add(params.layout)
             if (params.nozzleClean.isNotBlank() && !params.nozzleClean.equals("off", ignoreCase = true)) {
                 add("--nozzle-clean")
                 add(params.nozzleClean)
