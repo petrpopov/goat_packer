@@ -52,3 +52,23 @@ steps:
       - /var/run/docker.sock:/var/run/docker.sock
     commands:
       - sh deploy/prune-images.sh 3
+
+  # Dokploy (mbp15) переключает стек на эту версию; его API доступен на main как 127.0.0.1:13000 через
+  # туннель CI, поэтому вызовы идут контейнерами в сети хоста. Затем smoke против нового стека.
+  - name: deploy
+    image: docker:29-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DOKPLOY_TOKEN:
+        from_secret: dokploy_token
+      COMPOSE_ID: 9extEhTelEZyZ7NbPJS1y
+    commands:
+      - self=$(grep -o '/containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -1 | cut -d/ -f3) && test -n "$self"
+      - >-
+        docker run --rm --network host --volumes-from "$self" -w "$CI_WORKSPACE"
+        -e DOKPLOY_TOKEN -e COMPOSE_ID -e CI_COMMIT_TAG alpine:3.22
+        sh -c 'apk add -q curl jq && sh deploy/dokploy-deploy.sh'
+      - >-
+        docker run --rm --network host --volumes-from "$self" -w "$CI_WORKSPACE" python:3.13-alpine
+        python deploy/smoke.py --url http://127.0.0.1:18088 --public-origin https://127.0.0.1:18088 --files-via http://127.0.0.1:18089
