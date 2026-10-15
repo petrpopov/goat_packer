@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: goat
       POSTGRES_USER: goat
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Run configure.py first}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set in Dokploy env or deploy/.env}
     volumes: [postgres-data:/var/lib/postgresql/data]
     mem_limit: 384m
     command: [postgres, -c, shared_buffers=64MB, -c, max_connections=30, -c, work_mem=2MB]
@@ -25,13 +25,15 @@ services:
     command: [mini, -dir=/data]
     environment:
       AWS_ACCESS_KEY_ID: goat-storage
-      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Run configure.py first}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?set in Dokploy env or deploy/.env}
       S3_BUCKET: goat
     volumes: [object-data:/data]
     mem_limit: 512m
   api:
     <<: *runtime
-    build: {context: .., dockerfile: deploy/Dockerfile.backend, target: api}
+    # Образы собирает CI прямо в Docker этой машины (deploy/build-images.sh), реестра нет.
+    image: goat-packer-api:${GOAT_VERSION:?set GOAT_VERSION (e.g. v0.1.0)}
+    pull_policy: never
     environment: &app-env
       DATABASE_URL: jdbc:postgresql://postgres:5432/goat
       DATABASE_USER: goat
@@ -67,7 +69,8 @@ services:
       retries: 20
   worker:
     <<: *runtime
-    build: {context: .., dockerfile: deploy/Dockerfile.backend, target: worker}
+    image: goat-packer-worker:${GOAT_VERSION:?set GOAT_VERSION (e.g. v0.1.0)}
+    pull_policy: never
     environment:
       <<: *app-env
       ADMIN_LOGIN: ''
@@ -78,8 +81,9 @@ services:
       EXECUTION_MEMORY_MIB: ${EXECUTION_MEMORY_MIB:-4096}
       WORKER_CPUS: ${WORKER_CPUS:-2}
       WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-4096}
-      RUNNER_BAMBU_IMAGE: ${RUNNER_BAMBU_IMAGE:-goat-runner-bambu:2.8.2.61}
-      RUNNER_ORCA_IMAGE: ${RUNNER_ORCA_IMAGE:-goat-runner-orca:2.4.2}
+      # Runner той же версии, что и приложение: в нём бинарники упаковщика этого релиза.
+      RUNNER_BAMBU_IMAGE: goat-packer-runner-bambu:${GOAT_VERSION}
+      RUNNER_ORCA_IMAGE: goat-packer-runner-orca:${GOAT_VERSION}
       HOST_WORK_ROOT: ${SCRATCH_ROOT:-/srv/goat/scratch}
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
@@ -97,22 +101,13 @@ services:
     depends_on: {api: {condition: service_healthy}}
   gateway:
     <<: *runtime
-    build: {context: .., dockerfile: deploy/Dockerfile.frontend}
+    image: goat-packer-gateway:${GOAT_VERSION:?set GOAT_VERSION (e.g. v0.1.0)}
+    pull_policy: never
     ports:
       - '${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8088}:80'
       - '${BIND_ADDRESS:-127.0.0.1}:${OBJECT_PORT:-8091}:81'
     mem_limit: 64m
     depends_on: {api: {condition: service_healthy}}
-  runner-bambu:
-    profiles: [images]
-    platform: linux/amd64
-    image: ${RUNNER_BAMBU_IMAGE:-goat-runner-bambu:2.8.2.61}
-    build: {context: .., dockerfile: deploy/Dockerfile.runner, args: {SLICER: bambu}}
-  runner-orca:
-    profiles: [images]
-    platform: linux/amd64
-    image: ${RUNNER_ORCA_IMAGE:-goat-runner-orca:2.4.2}
-    build: {context: .., dockerfile: deploy/Dockerfile.runner, args: {SLICER: orca}}
 volumes:
   postgres-data:
   object-data:
