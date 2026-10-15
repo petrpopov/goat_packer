@@ -61,7 +61,7 @@ steps:
       SLICER_CACHE: /var/lib/ci/goat_packer/slicers
     commands:
       - apk add -q curl
-      - sh deploy/build-images.sh "branch-$(echo "$CI_COMMIT_BRANCH" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-100)"
+      - sh deploy/build-images.sh "branch-$(printf '%s' "$CI_COMMIT_BRANCH" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-100)"
       - sh deploy/prune-images.sh 3
 
   # Кэш сборки Rust растёт с каждой версией зависимостей: чистим, если больше 10 ГБ (диск main 50 ГБ).
