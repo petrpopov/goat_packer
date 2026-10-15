@@ -1,0 +1,54 @@
+# Выпуск по метке v*: образы goat-packer-*:<метка> прямо в Docker на main (реестра нет — их запускает
+# Dokploy на этой же машине), архив CLI под Linux x86_64 и черновик GitHub Release. Ждёт успешного check.
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+depends_on:
+  - check
+
+labels:
+  platform: linux/amd64
+  host: main
+
+steps:
+  - name: images
+    image: docker:29-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/ci/goat_packer/slicers:/var/lib/ci/goat_packer/slicers
+    environment:
+      APT_MIRROR: http://mirror.yandex.ru
+      SLICER_CACHE: /var/lib/ci/goat_packer/slicers
+    commands:
+      - apk add -q curl
+      - sh deploy/build-images.sh "$CI_COMMIT_TAG"
+
+  - name: cli archive
+    image: rust:1.94.0-bookworm
+    volumes:
+      - /var/lib/ci/goat_packer/cargo-registry:/usr/local/cargo/registry
+      - /var/lib/ci/goat_packer/target:/woodpecker/src/github.com/petrpopov/goat_packer/target
+    environment:
+      CARGO_BUILD_JOBS: "3"
+    commands:
+      - cargo build --release --locked --bins
+      - mkdir -p dist
+      - tar czf "dist/goat-packer-$CI_COMMIT_TAG-linux-x86_64.tar.gz" -C target/release colored_3mf_packer daily_scheduler verify_outputs
+
+  - name: github release (draft)
+    image: alpine:3.22
+    environment:
+      GH_TOKEN:
+        from_secret: github_token
+    commands:
+      - apk add -q github-cli
+      - gh release view "$CI_COMMIT_TAG" -R "$CI_REPO" >/dev/null 2>&1 || gh release create "$CI_COMMIT_TAG" -R "$CI_REPO" --draft --title "$CI_COMMIT_TAG" --generate-notes
+      - gh release upload "$CI_COMMIT_TAG" -R "$CI_REPO" --clobber dist/goat-packer-*.tar.gz
+
+  - name: prune old images
+    image: docker:29-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - sh deploy/prune-images.sh 3

@@ -1,0 +1,47 @@
+# Проверки goat_packer на main: Rust, backend (Testcontainers через docker socket хоста), frontend.
+# Тег тоже проверяется: release.yaml ждёт успешного check.
+when:
+  - event: [push, pull_request, manual, tag]
+
+labels:
+  platform: linux/amd64
+  host: main
+
+steps:
+  - name: rust
+    image: rust:1.94.0-bookworm
+    volumes:
+      - /var/lib/ci/goat_packer/cargo-registry:/usr/local/cargo/registry
+      - /var/lib/ci/goat_packer/target:/woodpecker/src/github.com/petrpopov/goat_packer/target
+    environment:
+      CARGO_BUILD_JOBS: "3"
+    commands:
+      - cargo test --release --all --locked
+
+  - name: backend
+    image: eclipse-temurin:21-jdk-jammy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/ci/goat_packer/gradle:/root/.gradle
+    commands:
+      - cd webapp/backend && ./gradlew --no-daemon test
+
+  - name: frontend
+    image: oven/bun:1.3.14
+    commands:
+      - cd webapp/frontend
+      - bun install --frozen-lockfile
+      - bun test tests
+      - bun run typecheck
+      - bun run lint
+      - bun run build
+
+  # Кэш сборки Rust растёт с каждой версией зависимостей: чистим, если больше 10 ГБ (диск main 50 ГБ).
+  - name: cleanup target cache
+    image: rust:1.94.0-bookworm
+    volumes:
+      - /var/lib/ci/goat_packer/target:/woodpecker/src/github.com/petrpopov/goat_packer/target
+    when:
+      - status: [success, failure]
+    commands:
+      - 'size=$(du -sm target | cut -f1); echo "кэш target: $size МБ"; if [ "$size" -gt 10000 ]; then find target -mindepth 1 -delete; echo "кэш очищен"; fi'
