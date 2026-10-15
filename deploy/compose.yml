@@ -106,6 +106,9 @@ services:
     ports:
       - '${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8088}:80'
       - '${BIND_ADDRESS:-127.0.0.1}:${OBJECT_PORT:-8091}:81'
+    environment:
+      # https за Pangolin/traefik, которые снимают TLS до gateway; пусто — прямой http.
+      GOAT_PUBLIC_SCHEME: ${GOAT_PUBLIC_SCHEME:-}
     mem_limit: 64m
     depends_on: {api: {condition: service_healthy}}
 volumes:

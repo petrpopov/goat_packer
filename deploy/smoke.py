@@ -2,15 +2,17 @@
 """Real HTTP/S3/native pack+schedule check. Uses repository fixture, no external user files.
 Creates guest tasks and deletes them after success; does not touch existing jobs or volumes.
 """
-import argparse, hashlib, http.cookiejar, json, pathlib, time, urllib.request, urllib.error, uuid
+import argparse, hashlib, http.cookiejar, json, pathlib, time, urllib.parse, urllib.request, urllib.error, uuid
 
 class Client:
-    def __init__(self, origin):
-        self.origin=origin.rstrip('/');self.jar=http.cookiejar.CookieJar()
+    def __init__(self, origin, public_origin=None, files_via=None):
+        # public_origin: Origin, который видит backend за TLS-прокси; files_via: локальный порт файлов.
+        self.origin=origin.rstrip('/');self.public=(public_origin or origin).rstrip('/');self.files_via=files_via
+        self.jar=http.cookiejar.CookieJar()
         self.http=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
         self.call('GET','/auth/csrf');self.call('POST','/auth/guest')
     def call(self, method, path, data=None, headers=None):
-        h={'Origin':self.origin}
+        h={'Origin':self.public}
         if method not in ('GET','HEAD'):
             h['X-XSRF-TOKEN']=next(c.value for c in self.jar if c.name=='XSRF-TOKEN')
         if data is not None:
@@ -20,7 +22,10 @@ class Client:
         request=urllib.request.Request(self.origin+'/api/v2'+path,data=data,method=method,headers=h)
         try:
             with self.http.open(request,timeout=120) as response:
-                body=response.read();return json.loads(body) if body else None
+                body=response.read()
+            # За TLS-прокси cookies помечены Secure, а smoke ходит на локальный http: снимаем флаг.
+            for c in self.jar:c.secure=False
+            return json.loads(body) if body else None
         except urllib.error.HTTPError as e:raise RuntimeError(f'{method} {path}: HTTP{e.code} {e.read().decode()[:500]}') from e
     def upload(self, path):
         c=self.call('POST','/challenges');nonce=0
@@ -44,14 +49,20 @@ class Client:
         for a in job['artifacts']:
             if not a['name'].endswith('.3mf'):continue
             d=self.call('POST',f'/jobs/{job["jobId"]}/artifacts/{a["id"]}/download')
-            with urllib.request.urlopen(d['url'],timeout=60) as response:
+            url=d['url'];headers={}
+            if self.files_via:
+                # Подпись SigV4 покрывает Host и путь, не схему: идём на локальный порт с исходным Host.
+                parts=urllib.parse.urlsplit(url);headers['Host']=parts.netloc
+                url=self.files_via.rstrip('/')+parts.path+('?'+parts.query if parts.query else '')
+            with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=60) as response:
                 data=response.read();assert len(data)==a['sizeBytes'] and data[:2]==b'PK'
         print('S3 signed 3MF download verified',flush=True)
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--url',default='http://127.0.0.1:8088');p.add_argument('--timeout',type=int,default=900)
+    p.add_argument('--public-origin');p.add_argument('--files-via')
     p.add_argument('--pack-only',action='store_true');p.add_argument('--keep',action='store_true',help='retain completed tasks for UI inspection')
-    args=p.parse_args();client=Client(args.url)
+    args=p.parse_args();client=Client(args.url,args.public_origin,args.files_via)
     file=client.upload(pathlib.Path(__file__).resolve().parents[1]/'tests/fixtures/native-p1s.3mf')
     created=client.job({'kind':'PACK','fileId':file['fileId'],'profileId':file['profileId'],'attempts':50,'resolution':0.5})
     print('Created pack',created['jobId'],flush=True)
