@@ -9,3 +9,5 @@ for repo in goat-packer-api goat-packer-worker goat-packer-gateway goat-packer-r
     while read -r tag; do docker image rm "$repo:$tag" >/dev/null 2>&1 && echo "removed $repo:$tag" || true; done
 done
 docker image prune -f --filter label=goat-packer=1 >/dev/null
+# Кэш сборок BuildKit (слои и кэши Gradle/Cargo/bun) растёт без предела: держим не больше 8 GB, старое — вон.
+docker builder prune -f --max-used-space 8gb >/dev/null
