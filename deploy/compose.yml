@@ -1,0 +1,118 @@
+name: goat-packer
+x-runtime: &runtime
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: '10m', max-file: '3'}
+services:
+  postgres:
+    <<: *runtime
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: goat
+      POSTGRES_USER: goat
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Run configure.py first}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    mem_limit: 384m
+    command: [postgres, -c, shared_buffers=64MB, -c, max_connections=30, -c, work_mem=2MB]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U goat -d goat']
+      interval: 5s
+      retries: 20
+  storage:
+    <<: *runtime
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    command: [mini, -dir=/data]
+    environment:
+      AWS_ACCESS_KEY_ID: goat-storage
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Run configure.py first}
+      S3_BUCKET: goat
+    volumes: [object-data:/data]
+    mem_limit: 512m
+  api:
+    <<: *runtime
+    build: {context: .., dockerfile: deploy/Dockerfile.backend, target: api}
+    environment: &app-env
+      DATABASE_URL: jdbc:postgresql://postgres:5432/goat
+      DATABASE_USER: goat
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      S3_ENDPOINT: http://storage:8333
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:8091}
+      S3_ACCESS_KEY: goat-storage
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: goat
+      PRODUCTION_MODE: ${PRODUCTION_MODE:-true}
+      REQUIRE_CHALLENGE: ${REQUIRE_CHALLENGE:-true}
+      WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-4096}
+      JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-1800}
+      GLOBAL_COMPUTE_SECONDS: ${GLOBAL_COMPUTE_SECONDS:-72000}
+      MAX_QUEUE: ${MAX_QUEUE:-20}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set a strong bootstrap password}
+      MAX_PARALLEL: ${MAX_PARALLEL:-1}
+      STORAGE_LIMIT_BYTES: ${STORAGE_LIMIT_BYTES:-10737418240}
+      TRUSTED_PROXY_PATTERN: '172\.(1[6-9]|2[0-9]|3[01])\..*|10\..*|192\.168\..*'
+    mem_limit: 768m
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=256m,uid=1000,gid=1000']
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    depends_on:
+      postgres: {condition: service_healthy}
+      storage: {condition: service_started}
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://localhost:19190/api/v2/health || exit 1']
+      interval: 10s
+      retries: 20
+  worker:
+    <<: *runtime
+    build: {context: .., dockerfile: deploy/Dockerfile.backend, target: worker}
+    environment:
+      <<: *app-env
+      ADMIN_LOGIN: ''
+      ADMIN_PASSWORD: ''
+      WORKER_ID: ${WORKER_ID:-node-1}
+      WORKER_ENABLED: 'true'
+      EXECUTION_CPU_BUDGET: ${EXECUTION_CPU_BUDGET:-2}
+      EXECUTION_MEMORY_MIB: ${EXECUTION_MEMORY_MIB:-4096}
+      WORKER_CPUS: ${WORKER_CPUS:-2}
+      WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-4096}
+      RUNNER_BAMBU_IMAGE: ${RUNNER_BAMBU_IMAGE:-goat-runner-bambu:2.8.2.61}
+      RUNNER_ORCA_IMAGE: ${RUNNER_ORCA_IMAGE:-goat-runner-orca:2.4.2}
+      HOST_WORK_ROOT: ${SCRATCH_ROOT:-/srv/goat/scratch}
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${SCRATCH_ROOT:-/srv/goat/scratch}:/scratch
+    mem_limit: 512m
+    stop_grace_period: 60s
+    healthcheck:
+      test: [CMD-SHELL, 'test -n "$$(find /scratch/$$WORKER_ID -name ready -mmin -1 -print -quit 2>/dev/null)"']
+      interval: 10s
+      retries: 12
+      start_period: 30s
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=128m']
+    security_opt: [no-new-privileges:true]
+    depends_on: {api: {condition: service_healthy}}
+  gateway:
+    <<: *runtime
+    build: {context: .., dockerfile: deploy/Dockerfile.frontend}
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8088}:80'
+      - '${BIND_ADDRESS:-127.0.0.1}:${OBJECT_PORT:-8091}:81'
+    mem_limit: 64m
+    depends_on: {api: {condition: service_healthy}}
+  runner-bambu:
+    profiles: [images]
+    platform: linux/amd64
+    image: ${RUNNER_BAMBU_IMAGE:-goat-runner-bambu:2.8.2.61}
+    build: {context: .., dockerfile: deploy/Dockerfile.runner, args: {SLICER: bambu}}
+  runner-orca:
+    profiles: [images]
+    platform: linux/amd64
+    image: ${RUNNER_ORCA_IMAGE:-goat-runner-orca:2.4.2}
+    build: {context: .., dockerfile: deploy/Dockerfile.runner, args: {SLICER: orca}}
+volumes:
+  postgres-data:
+  object-data:

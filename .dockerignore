@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/build
+**/.gradle
+**/.kotlin
+**/dist
+target
+.v2c
+*.log
+deploy/.env

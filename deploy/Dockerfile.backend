@@ -1,0 +1,21 @@
+FROM eclipse-temurin:21-jdk-jammy AS build
+WORKDIR /src
+COPY webapp/backend/gradlew webapp/backend/settings.gradle.kts webapp/backend/build.gradle.kts webapp/backend/gradle.properties ./
+COPY webapp/backend/gradle ./gradle
+COPY webapp/backend/src ./src
+RUN ./gradlew --no-daemon bootJar -x test
+
+FROM eclipse-temurin:21-jre-jammy AS api
+RUN useradd -u 1000 -m goat && apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /src/build/libs/*-1.0.0.jar /app/app.jar
+COPY profiles /app/profiles
+USER 1000:1000
+ENV SPRING_PROFILES_ACTIVE=server GOAT_PROFILES_DIR=/app/profiles JAVA_TOOL_OPTIONS="-Xmx256m"
+ENTRYPOINT ["java","-jar","/app/app.jar"]
+
+# Dedicated trusted worker only. Never mount the Docker socket into the API service.
+FROM api AS worker
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io && rm -rf /var/lib/apt/lists/*
+ENV SPRING_MAIN_WEB_APPLICATION_TYPE=none WORKER_ENABLED=true GOAT_JOBS_ROOT=/scratch
