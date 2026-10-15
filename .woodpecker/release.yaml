@@ -59,15 +59,15 @@ steps:
     image: docker:29-cli
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # DOKPLOY_TOKEN лежит на main в файле root 600 (не секрет Woodpecker: заводится без UI).
+      - /var/lib/ci/goat_packer/secrets:/secrets:ro
     environment:
-      DOKPLOY_TOKEN:
-        from_secret: dokploy_token
       COMPOSE_ID: 9extEhTelEZyZ7NbPJS1y
     commands:
       - self=$(grep -o '/containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -1 | cut -d/ -f3) && test -n "$self"
       - >-
         docker run --rm --network host --volumes-from "$self" -w "$CI_WORKSPACE"
-        -e DOKPLOY_TOKEN -e COMPOSE_ID -e CI_COMMIT_TAG alpine:3.22
+        --env-file /secrets/dokploy.env -e COMPOSE_ID -e CI_COMMIT_TAG alpine:3.22
         sh -c 'apk add -q curl jq && sh deploy/dokploy-deploy.sh'
       - >-
         docker run --rm --network host --volumes-from "$self" -w "$CI_WORKSPACE" python:3.13-alpine
