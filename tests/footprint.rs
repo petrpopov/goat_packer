@@ -49,8 +49,13 @@ fn overhanging_upper_geometry_widens_the_footprint_beyond_the_resting_strip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("overhang.stl");
     // Narrow base at z=0: a 2 x 10 strip.
-    let mut tris: Vec<[[f32; 3]; 3]> =
-        square([[10., 10., 0.], [12., 10., 0.], [12., 20., 0.], [10., 20., 0.]]).to_vec();
+    let mut tris: Vec<[[f32; 3]; 3]> = square([
+        [10., 10., 0.],
+        [12., 10., 0.],
+        [12., 20., 0.],
+        [10., 20., 0.],
+    ])
+    .to_vec();
     // Wide head at z=8 leaning past the strip on both sides: 10 x 2 slab.
     tris.extend_from_slice(&square([
         [7., 14., 8.],
@@ -64,18 +69,17 @@ fn overhanging_upper_geometry_widens_the_footprint_beyond_the_resting_strip() {
 
     // The silhouette is the union: 2x10 strip + 10x2 slab - 2x2 where the head sits over the
     // strip = 36 mm2; a resting-strip-only footprint would have reported 20.
-    let area: f64 = fp
-        .loops
-        .iter()
-        .map(|loop_| polygon_area(loop_).abs())
-        .sum();
+    let area: f64 = fp.loops.iter().map(|loop_| polygon_area(loop_).abs()).sum();
     assert!((area - 36.0).abs() < 1e-6, "area {area}");
     assert!((fp.width - 10.0).abs() < 1e-6);
 }
 
 #[test]
 fn goat4_real_footprint_has_expected_dimensions_and_closed_loops() {
-    let path = std::path::Path::new("../Goat 4/source/goat4_v2.stl");
+    let path = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/goat4_v2.stl"
+    ));
     let fp = extract_footprint(path).unwrap();
     assert_eq!(fp.triangle_count, 15_624);
     assert!((fp.width - 57.950_335).abs() < 0.001);
@@ -111,11 +115,7 @@ fn corner_touching_bottom_patches_yield_both_loops() {
 
     // Whether the union keeps one self-touching outline or two separate polygons is up to
     // the overlay library; even-odd rasterization is correct either way.
-    let area: f64 = fp
-        .loops
-        .iter()
-        .map(|loop_| polygon_area(loop_).abs())
-        .sum();
+    let area: f64 = fp.loops.iter().map(|loop_| polygon_area(loop_).abs()).sum();
     assert!((area - 200.0).abs() < 1e-6, "area {area}");
 }
 
@@ -135,11 +135,7 @@ fn t_junction_and_overlapping_coplanar_triangles_still_yield_outline() {
 
     let fp = extract_footprint(&path).unwrap();
 
-    let area: f64 = fp
-        .loops
-        .iter()
-        .map(|loop_| polygon_area(loop_).abs())
-        .sum();
+    let area: f64 = fp.loops.iter().map(|loop_| polygon_area(loop_).abs()).sum();
     assert!((area - 106.0).abs() < 1e-6, "area {area}");
 }
 
@@ -160,11 +156,7 @@ fn mixed_winding_bottom_triangles_keep_full_area() {
 
     let fp = extract_footprint(&path).unwrap();
 
-    let area: f64 = fp
-        .loops
-        .iter()
-        .map(|loop_| polygon_area(loop_).abs())
-        .sum();
+    let area: f64 = fp.loops.iter().map(|loop_| polygon_area(loop_).abs()).sum();
     assert!((area - 200.0).abs() < 1e-6, "area {area}");
 }
 
@@ -231,7 +223,8 @@ G1 X210.250 Y110.250 E4.5480
 ;TYPE:Outer wall
 G1 X210.250 Y110.250 E4.5480
 ";
-    let patch = first_layer_footprint(gcode, Some((215.25, 115.25))).expect("layer-1 extrusions exist");
+    let patch =
+        first_layer_footprint(gcode, Some((215.25, 115.25))).expect("layer-1 extrusions exist");
 
     // Body bbox center is (215.25, 115.25); the patch's loops are centered on it.
     let area: f64 = patch.loops.iter().map(|l| polygon_area(l).abs()).sum();
@@ -256,9 +249,17 @@ G1 X210.250 Y110.250 E4.5480
     assert!((min_x + 15.0).abs() < 1.5, "min_x {min_x}");
     assert!((max_x - 5.3).abs() < 1.5, "max_x {max_x}");
     // The patch bbox spans the support's far edge to the body's near edge: ~20 mm wide.
-    assert!(patch.width > 19.0 && patch.width < 21.5, "width {}", patch.width);
+    assert!(
+        patch.width > 19.0 && patch.width < 21.5,
+        "width {}",
+        patch.width
+    );
     // The support block sits below-left of the body, so the patch is ~20 mm tall too.
-    assert!(patch.height > 19.0 && patch.height < 21.5, "height {}", patch.height);
+    assert!(
+        patch.height > 19.0 && patch.height < 21.5,
+        "height {}",
+        patch.height
+    );
 }
 
 #[test]
@@ -298,7 +299,8 @@ G1 X60.250 Y60.250 E4.5480
 G1 X75.000 Y70.000 F30000
 G1 X77.000 Y62.000 E0.0182
 ";
-    let patch = first_layer_footprint(gcode, Some((65.25, 65.25))).expect("layer-1 extrusions exist");
+    let patch =
+        first_layer_footprint(gcode, Some((65.25, 65.25))).expect("layer-1 extrusions exist");
 
     let max_x = patch
         .loops
@@ -308,7 +310,10 @@ G1 X77.000 Y62.000 E0.0182
         .fold(f64::NEG_INFINITY, f64::max);
     // The spike's far end sits 11.75 mm right of the center; its 0.25 mm strip edge reaches
     // ~12.0. Without the spike the patch stops at +5.25.
-    assert!(max_x > 11.0, "thin tip line missing from patch: max_x {max_x}");
+    assert!(
+        max_x > 11.0,
+        "thin tip line missing from patch: max_x {max_x}"
+    );
 }
 
 /// Bambu Studio's `enable_arc_fitting` draws whole walls as G2/G3 sweeps with an I/J centre.
@@ -331,8 +336,16 @@ G1 X1.000 Y1.000 E0.9
 ";
     let patch = first_layer_footprint(gcode, Some((5.0, 0.0))).expect("arc walls are ink");
     // Circle d=10 plus the 0.5 line width; both extents are the diameter.
-    assert!(patch.width > 9.5 && patch.width < 12.0, "width {}", patch.width);
-    assert!(patch.height > 9.5 && patch.height < 12.0, "height {}", patch.height);
+    assert!(
+        patch.width > 9.5 && patch.width < 12.0,
+        "width {}",
+        patch.width
+    );
+    assert!(
+        patch.height > 9.5 && patch.height < 12.0,
+        "height {}",
+        patch.height
+    );
 }
 
 #[test]
@@ -433,7 +446,8 @@ G1 X55.250 Y65.250 E2.2740
 G1 X200.000 Y200.000 F30000
 G1 X210.000 Y200.000 E4.5480
 ";
-    let patch = first_layer_footprint(gcode, Some((65.25, 65.25))).expect("layer-1 object extrusions exist");
+    let patch = first_layer_footprint(gcode, Some((65.25, 65.25)))
+        .expect("layer-1 object extrusions exist");
 
     let min_x = patch
         .loops
@@ -466,8 +480,16 @@ G1 X210.000 Y200.000 E4.5480
     assert!(max_x > 4.0 && max_x < 6.5, "max_x {max_x}");
     assert!(min_y > -6.5 && min_y < -4.0, "min_y {min_y}");
     assert!(max_y > 4.0 && max_y < 6.5, "max_y {max_y}");
-    assert!(patch.width > 19.0 && patch.width < 22.0, "width {}", patch.width);
-    assert!(patch.height > 9.5 && patch.height < 11.5, "height {}", patch.height);
+    assert!(
+        patch.width > 19.0 && patch.width < 22.0,
+        "width {}",
+        patch.width
+    );
+    assert!(
+        patch.height > 9.5 && patch.height < 11.5,
+        "height {}",
+        patch.height
+    );
 }
 
 #[test]
@@ -491,10 +513,7 @@ G1 X60.250 Y60.250 E0.1137
 }
 
 fn closed_loop(points: &[(f64, f64)]) -> Vec<Point> {
-    let mut loop_: Vec<Point> = points
-        .iter()
-        .map(|(x, y)| Point { x: *x, y: *y })
-        .collect();
+    let mut loop_: Vec<Point> = points.iter().map(|(x, y)| Point { x: *x, y: *y }).collect();
     loop_.push(loop_[0]);
     loop_
 }
@@ -550,12 +569,7 @@ fn patch_within_silhouette_separates_prismatic_from_supported_models() {
 #[test]
 fn patch_within_silhouette_ignores_silhouette_holes() {
     let holed_silhouette = loops_footprint(vec![
-        closed_loop(&[
-            (-10.0, -10.0),
-            (10.0, -10.0),
-            (10.0, 10.0),
-            (-10.0, 10.0),
-        ]),
+        closed_loop(&[(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)]),
         closed_loop(&[(2.0, 2.0), (6.0, 2.0), (6.0, 6.0), (2.0, 6.0)]),
     ]);
     // The patch covers the hole (exterior-only ring): contained.
@@ -565,7 +579,12 @@ fn patch_within_silhouette_ignores_silhouette_holes() {
         (9.7, 9.7),
         (-9.7, 9.7),
     ])]);
-    assert!(patch_within_silhouette(&covering, &holed_silhouette, 0.25, 1.2));
+    assert!(patch_within_silhouette(
+        &covering,
+        &holed_silhouette,
+        0.25,
+        1.2
+    ));
 }
 
 #[test]
@@ -588,5 +607,8 @@ fn loops_touch_rect_detects_real_overlaps_only() {
     // Touching only a loop vertex region (no rect sample inside the loops).
     assert!(loops_touch_rect(&square, Rect::new(29.5, 29.5, 30.5, 30.5)));
     // A strip adjacent to the edge but not overlapping it.
-    assert!(!loops_touch_rect(&square, Rect::new(30.2, 12.0, 36.0, 28.0)));
+    assert!(!loops_touch_rect(
+        &square,
+        Rect::new(30.2, 12.0, 36.0, 28.0)
+    ));
 }

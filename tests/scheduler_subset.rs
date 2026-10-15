@@ -5,8 +5,10 @@ use zip::ZipArchive;
 
 #[test]
 fn subset_keeps_core_and_model_settings_referentially_consistent() {
-    let source =
-        std::path::Path::new("../Goat 4/p1s/goat4_p1s_contour_packed_purge_safe_faster.3mf");
+    let source = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packed.3mf"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("two_objects.3mf");
 
@@ -61,9 +63,10 @@ fn subset_keeps_core_and_model_settings_referentially_consistent() {
 
 #[test]
 fn u1_benchmark_copy_only_blanks_start_gcode() {
-    let source = std::path::Path::new(
-        "../Goat 4/snap/goat4_snapmaker_u1_contour_packed_purge_safe_faster.3mf",
-    );
+    let source = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packed_snap.3mf"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("u1_cli.3mf");
     subset_3mf(source, &output, 19, true).unwrap();

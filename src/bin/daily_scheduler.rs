@@ -535,13 +535,12 @@ fn slice_one_count(
     subset_3mf(source, &subset, count, blank_start_gcode)?;
     let slice_dir = work_dir.join(format!("{slug}_{count}_slice"));
     fs::create_dir_all(&slice_dir)?;
-    let output = Command::new(slicer)
+    let output = goat_packer::process_output::bounded_output(Command::new(slicer)
         .arg("--slice")
         .arg("1")
         .arg("--outputdir")
         .arg(&slice_dir)
-        .arg(&subset)
-        .output()?;
+        .arg(&subset))?;
     fs::write(
         work_dir.join(format!("{slug}_{count}.log")),
         [&output.stdout[..], &output.stderr[..]].concat(),
@@ -550,7 +549,7 @@ fn slice_one_count(
         return Err(format!(
             "{printer} slicer failed for {count} objects with status {}: {}",
             output.status,
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&[output.stdout, output.stderr].concat())
         )
         .into());
     }

@@ -20,12 +20,22 @@ const BED_DEPTH_MM: f64 = 256.0;
 fn two_plates_lay_out_horizontally() {
     let output = build_two_plate_file();
 
-    let items = build_items(&output);
+    let items = build_items(output.path());
     assert_eq!(items.len(), 3, "2 + 1 objects across two plates");
 
     let stride = BED_WIDTH_MM * 1.2;
-    assert_translation(&items[0], 10.0, 20.0, "plate 1 item 1 stays at the origin slot");
-    assert_translation(&items[1], 30.0, 40.0, "plate 1 item 2 stays at the origin slot");
+    assert_translation(
+        &items[0],
+        10.0,
+        20.0,
+        "plate 1 item 1 stays at the origin slot",
+    );
+    assert_translation(
+        &items[1],
+        30.0,
+        40.0,
+        "plate 1 item 2 stays at the origin slot",
+    );
     assert_translation(
         &items[2],
         10.0 + stride,
@@ -37,7 +47,7 @@ fn two_plates_lay_out_horizontally() {
     // tower entry is used verbatim per plate, not shifted with the plate's grid slot), or
     // BambuStudio auto-places plate 2's tower on top of packed objects. See
     // patch_wipe_tower_per_plate for both measured failure modes.
-    let settings = read_project_settings(&output);
+    let settings = read_project_settings(output.path());
     assert_eq!(
         settings["wipe_tower_x"],
         serde_json::json!(["230.962", "230.962"]),
@@ -66,7 +76,7 @@ fn five_plates_wrap_into_a_three_column_grid() {
         })
         .collect();
     build_schedule_plates_3mf(
-        &source,
+        source.path(),
         &output,
         &plates,
         BED_WIDTH_MM,
@@ -81,10 +91,10 @@ fn five_plates_wrap_into_a_three_column_grid() {
     // Source items sit at x = 10, 30, 50, ... (item i at (10 + 20i, 20 + 20i)); plate p keeps
     // the first N of them, so its first item is always the source's item 0 at (10, 20).
     let expected = [
-        (0.0, 0.0),          // plate 1: (row 0, col 0)
-        (stride_x, 0.0),     // plate 2: (row 0, col 1)
+        (0.0, 0.0),            // plate 1: (row 0, col 0)
+        (stride_x, 0.0),       // plate 2: (row 0, col 1)
         (2.0 * stride_x, 0.0), // plate 3: (row 0, col 2)
-        (0.0, -stride_y),    // plate 4: (row 1, col 0)
+        (0.0, -stride_y),      // plate 4: (row 1, col 0)
         (stride_x, -stride_y), // plate 5: (row 1, col 1)
     ];
     let mut cursor = 0usize;
@@ -101,18 +111,24 @@ fn five_plates_wrap_into_a_three_column_grid() {
     }
 }
 
-fn build_two_plate_file() -> std::path::PathBuf {
+fn build_two_plate_file() -> tempfile::NamedTempFile {
     let source = synthetic_source_3mf(2);
     let dir = tempfile::tempdir().unwrap();
     // Keep the tempdir alive by returning a file inside it: copy out instead, so the returned
     // path outlives this function.
     let temp_output = dir.path().join("two_plates.3mf");
     let plates = [
-        PlateSpec { label: "2 pcs".to_owned(), object_count: 2 },
-        PlateSpec { label: "1 pc".to_owned(), object_count: 1 },
+        PlateSpec {
+            label: "2 pcs".to_owned(),
+            object_count: 2,
+        },
+        PlateSpec {
+            label: "1 pc".to_owned(),
+            object_count: 1,
+        },
     ];
     build_schedule_plates_3mf(
-        &source,
+        source.path(),
         &temp_output,
         &plates,
         BED_WIDTH_MM,
@@ -120,8 +136,8 @@ fn build_two_plate_file() -> std::path::PathBuf {
         false,
     )
     .unwrap();
-    let output = std::env::temp_dir().join("scheduler_plate_grid_two_plates.3mf");
-    std::fs::copy(&temp_output, &output).unwrap();
+    let output = tempfile::NamedTempFile::new().unwrap();
+    std::fs::copy(&temp_output, output.path()).unwrap();
     output
 }
 
@@ -129,7 +145,7 @@ fn build_two_plate_file() -> std::path::PathBuf {
 /// `build_schedule_plates_3mf` reads (core model objects/build items, model_settings objects,
 /// one plate, one assemble with an assemble_item per object). Item i sits at
 /// (10 + 20i, 20 + 20i) with identity rotation.
-fn synthetic_source_3mf(object_count: usize) -> std::path::PathBuf {
+fn synthetic_source_3mf(object_count: usize) -> tempfile::NamedTempFile {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("synthetic_packed.3mf");
 
@@ -155,7 +171,9 @@ fn synthetic_source_3mf(object_count: usize) -> std::path::PathBuf {
         config_objects.push_str(&format!(
             "<object id=\"{id}\"><metadata key=\"name\" value=\"obj {id}\"/></object>"
         ));
-        assemble_items.push_str(&format!("<assemble_item object_id=\"{id}\" partserialnum=\"1\"/>"));
+        assemble_items.push_str(&format!(
+            "<assemble_item object_id=\"{id}\" partserialnum=\"1\"/>"
+        ));
         instances.push_str(&format!(
             "<model_instance><metadata key=\"object_id\" value=\"{id}\"/>\
              <metadata key=\"instance_id\" value=\"0\"/>\
@@ -180,32 +198,40 @@ fn synthetic_source_3mf(object_count: usize) -> std::path::PathBuf {
 
     let file = std::fs::File::create(&path).unwrap();
     let mut writer = zip::ZipWriter::new(file);
-    let options =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
     writer.start_file("3D/3dmodel.model", options).unwrap();
     std::io::Write::write_all(&mut writer, core.as_bytes()).unwrap();
-    writer.start_file("Metadata/model_settings.config", options).unwrap();
+    writer
+        .start_file("Metadata/model_settings.config", options)
+        .unwrap();
     std::io::Write::write_all(&mut writer, model_settings.as_bytes()).unwrap();
     let project_settings = serde_json::json!({
         "wipe_tower_x": ["230.962"],
         "wipe_tower_y": ["160"],
         "machine_start_gcode": "G28 ; keep",
     });
-    writer.start_file("Metadata/project_settings.config", options).unwrap();
+    writer
+        .start_file("Metadata/project_settings.config", options)
+        .unwrap();
     std::io::Write::write_all(&mut writer, project_settings.to_string().as_bytes()).unwrap();
     writer.finish().unwrap();
 
-    let keep = std::env::temp_dir().join(format!("scheduler_plate_grid_source_{object_count}.3mf"));
-    std::fs::copy(&path, &keep).unwrap();
+    let keep = tempfile::NamedTempFile::new().unwrap();
+    std::fs::copy(&path, keep.path()).unwrap();
     keep
 }
 
-fn build_items(output: &std::path::PathBuf) -> Vec<Element> {
+fn build_items(output: &std::path::Path) -> Vec<Element> {
     let mut zip = ZipArchive::new(std::fs::File::open(output).unwrap()).unwrap();
     let mut data = Vec::new();
-    zip.by_name("3D/3dmodel.model").unwrap().read_to_end(&mut data).unwrap();
+    zip.by_name("3D/3dmodel.model")
+        .unwrap()
+        .read_to_end(&mut data)
+        .unwrap();
     let core = Element::parse(data.as_slice()).unwrap();
-    core.get_child("build").unwrap()
+    core.get_child("build")
+        .unwrap()
         .children
         .iter()
         .filter_map(xmltree::XMLNode::as_element)
@@ -231,7 +257,7 @@ fn assert_translation(item: &Element, expected_x: f64, expected_y: f64, context:
     );
 }
 
-fn read_project_settings(output: &std::path::PathBuf) -> serde_json::Value {
+fn read_project_settings(output: &std::path::Path) -> serde_json::Value {
     let mut zip = ZipArchive::new(std::fs::File::open(output).unwrap()).unwrap();
     let mut data = Vec::new();
     zip.by_name("Metadata/project_settings.config")

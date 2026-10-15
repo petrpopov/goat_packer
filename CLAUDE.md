@@ -1,223 +1,48 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## What this is
-
-A 2D irregular-nesting packer for FDM 3D printing. It packs the **actual flat-bottom silhouette**
-of a mesh (outer loop + inner holes), not its bounding box, then reassembles a real slicer 3MF
-project from the resulting layout. A second tool benchmarks slice times per batch size and
-optimizes a 24-hour multi-printer production schedule.
-
-Rust edition 2024. No async, no framework — plain `std` +
-`rayon`/`serde`/`zip`/`xmltree`/`quick-xml`/`geo`/`tiny-skia`/`sha1`.
+2D irregular-nesting packer for FDM printing: packs the real flat-bottom silhouette of a mesh (not its bbox) and rebuilds a slicer 3MF project from the layout. Second tool benchmarks slice times and schedules a 24h multi-printer run. Rust 2024, plain `std` + rayon/serde/zip/quick-xml/geo/tiny-skia; webapp in `webapp/` (Kotlin + React, см. `webapp/README.md`).
 
 ## Commands
 
 ```bash
 cargo build --release
-cargo test --release --all            # release matters: packing tests are slow in debug
-cargo test --release --test packing   # one integration test file
-cargo test --release colored_pack     # by name substring
+cargo test --release --all     # release is required: packing tests are slow in debug
+cargo test --release colored_pack   # by name substring
 ```
 
-The `.mjs` workbook builder needs `@oai/artifact-tool`.
+Tests must stay self-contained: generated temp data or `tests/fixtures/` only; no sibling-dir paths, symlinks, env-gated no-op tests, shared `/tmp` names. The packer and tests never call a slicer or network; the production colored-3MF pipeline does (slicer path comes from the printer profile).
 
-### External test fixtures
+## Packing core (`src/lib.rs`, `src/packing_search.rs`)
 
-Several tests read `../Goat 3/**` and `../Goat 4/**` (STLs and several 3MFs) relative to the
-repo root — those directories are **not** part of this repo and are currently absent. Affected:
-`tests/footprint.rs`, `tests/quality.rs`, `tests/scheduler_plates.rs`, `tests/scheduler_subset.rs`,
-`tests/assemble_fixtures.rs`, and two `#[cfg(test)]` cases inside `src/bin/colored_3mf_packer.rs`.
-Everything else is self-contained (synthetic STLs via `tempfile`). Expect those to fail without
-the asset directory; don't "fix" them by rewriting paths.
+- Search is deterministic; `seed`/`candidates`/`stall` are compatibility fields, not random controls. More effort extends a prefix, never discards an earlier winner. Rayon only parallelizes independent angle families.
+- `validate_result` must stay independent of the search's no-fit maps (it re-rasterizes). `verify_outputs` is a further independent check (`geo`, exact geometry) sharing no packing code: use it as second opinion on any layout change.
+- Heuristic at finite resolution, not an optimality proof. Tradeoffs: `docs/packing-search.md`.
 
-The end-to-end binaries additionally shell out to real slicer CLIs
-(`/Applications/BambuStudio.app/...`, `/Applications/OrcaSlicer.app/...`) — paths come from the
-printer profile, not from code.
+## Printer profiles / slicer quirks (`src/colored_packer.rs`)
 
-## Architecture
+- `PrinterProfile` (`profiles/*.json`) is the only source of printer geometry; never hardcode it. New printer = new JSON, not a code branch.
+- `SLICER_KEEPOUT_SAFETY_MM = 4.0` is empirical (false "gcode path conflicts" on dense plates). Don't lower it from a single-object test.
+- `slicer_kind` is inferred from `printer_model`, not 3MF `Application` metadata (Orca forks still say BambuStudio).
+- No prime tower (`parse_prime_tower_bounds` -> `None`) is legitimate, not an error.
 
-### Layer 1 — geometry & packing (`src/lib.rs`)
+## `colored_3mf_packer` (`src/bin/colored_3mf_packer.rs`) invariants
 
-The whole packing core lives in one file, in pipeline order:
+- Collision geometry comes from the mesh embedded in the source 3MF (`embedded_mesh`), never a separate STL (a drifted STL silently invalidated collisions). Its bbox center must be compensated (rotation-aware) in every build-item transform in `assemble`; otherwise clones with a source translation fall off the bed.
+- `assemble` uses the default mesh mode, never `reuse_source_object_instances` (triggers "gcode path conflicts"). `project_settings.config` is copied byte-for-byte; `paint_color` lives in the mesh, so coloring survives.
+- `evaluate_final_tower`: a tower appearing/disappearing only in the final slice is a hard error; only a grown tower earns one repack.
+- `prepare_cli_copy` resizes `flush_volumes_matrix` to `filament_colour.len()^2` and optionally blanks `machine_start_gcode`; Orca CLI rejects mismatches.
+- `--nozzle-clean` (`src/nozzle_clean.rs`): wipe body is profile-owned (`nozzle_clean_gcode`); absent field = unsupported, explicit error (A2L has no hardware-validated sequence). Details: `docs/superpowers/specs/2026-09-02-nozzle-clean-injection-design.md`.
 
-1. `extract_footprint` — reads a **binary** STL, keeps only triangles whose three vertices sit at
-   min-Z (within tolerance), finds odd-count edges (the boundary), and walks them into closed
-   loops. Coordinates are snapped to a 1e-5 mm integer grid (`Key`) so vertex welding is exact.
-   The result is centered on the mesh's XY bbox center. Loops are sorted by descending |area|, so
-   `loops[0]` is the outer contour and the rest are holes.
-2. `rasterize_footprint` — rotates the loops, point-in-polygon-samples them onto a pixel grid, and
-   produces two masks: `physical` (exact silhouette) and `clearance` (dilated by `clearance/2`,
-   round structuring element). Collision always uses `clearance`; bed-fit checks use
-   `physical_bounds`.
-3. `pack_footprint` — pre-rasterizes one `RasterMask` per rotation step, then runs `attempts`
-   independent randomized restarts in parallel via rayon. Even attempts use `drop_attempt`
-   (gravity-drop + contact scoring), odd use `greedy_attempt` (anchor-relative sampling). Restarts
-   are reduced with `better_layout`: **object count is the only real objective; bbox area is a
-   tiebreak.** `candidates_per_step` positions are sampled per placed object *within* one restart,
-   so total cost scales with attempts × candidates, not their ratio. `stall_attempts` stops the
-   search once that many consecutive restarts bring no improvement (the CLI's `--stall`, default
-   `attempts/4`; `0` disables). Progress is printed to stderr.
-4. `validate_result` — an independent re-check of the winning layout (re-rasterizes from scratch,
-   pairwise mask overlap, bed bounds, exclusions). Every caller runs this; treat it as the
-   contract, not as an optimization.
+## Scheduler (`src/scheduler.rs`, `src/bin/daily_scheduler.rs`)
 
-Collision is bit-parallel: `BitGrid` stores the occupied plate as `u64` words and shifts a mask's
-rows into place, so a placement test is a handful of word ANDs. Grids are allocated with a `margin`
-border so masks with negative `min_x/min_y` can be tested without bounds gymnastics.
-
-The search is heuristic (irregular nesting is NP-hard). More `--attempts` can improve the result;
-the seed makes any given command reproducible.
-
-### Layer 2 — printer profiles & prime tower (`src/colored_packer.rs`)
-
-`PrinterProfile` (JSON in `profiles/`) is the single source of truth for bed size, edge margin,
-bed exclusion rectangles, purge lines, slicer path, and slicer kind. Both binaries load it — never
-hardcode printer geometry.
-
-`SLICER_KEEPOUT_SAFETY_MM = 4.0` is an empirically measured pad applied to *every* keepout. The
-long comment above it records why (BambuStudio/Orca CLI raise false "gcode path conflicts" on dense
-plates well beyond the geometric margin). Don't lower it based on an isolated single-object test —
-that's exactly the measurement that understated it before.
-
-`parse_prime_tower_bounds` walks G-code between `WIPE_TOWER_START`/`WIPE_TOWER_END` markers. It
-returns `None` when there is no tower — a legitimate case (single-material project), not an error.
-
-`slicer_kind` is inferred from `printer_model`, never from the 3MF's `Application` metadata:
-OrcaSlicer forks (including Snapmaker's) still emit `Application: BambuStudio-x.y.z`.
-
-### Layer 3 — `colored_3mf_packer` (`src/bin/colored_3mf_packer.rs`)
-
-The one packing entry point. Flow:
-
-```
-validate printer match → extract embedded mesh to STL → probe-slice (1 object) to find the tower
-→ pack around fixed keepouts + tower keepout → the assemble module builds the plate
-→ final slice → evaluate_final_tower → (at most one repack) → write OUTPUT.verification.json
-```
-
-Two invariants encoded here as load-bearing decisions:
-
-- Collision geometry comes from the mesh **embedded in the source 3MF** (`embedded_mesh`),
-  never from a separately supplied STL. A drifted standalone STL silently invalidates every
-  collision check while keeping the same bbox — this caused a real near-zero-clearance touch.
-  The component's own transform is baked into that STL, and `assemble` compensates the baked
-  mesh's bbox center (rotation-aware) in every build-item transform: a placement's (x, y) is where
-  that center lands on the bed. A source component carrying its own translation (Goat 3:
-  (-35.38, +40.12)) otherwise displaces every clone by a rotation-dependent ~54 mm and objects
-  fall off the heated bed ("partly inside, can not be sliced").
-- `assemble` runs with the default mesh mode, never `reuse_source_object_instances`. The
-  shared-object/N-items mode reproducibly triggers BambuStudio's "gcode path conflicts" on dense
-  plates; N distinct `<object>` resources sharing one external mesh component slices cleanly and
-  is equally paint-safe.
-
-`evaluate_final_tower` is the tower state machine: a tower that appears only in the final slice, or
-disappears only in the final slice, is a hard error (packing reserved the wrong space). Only a
-grown tower earns a repack, and only once.
-
-`prepare_cli_copy` applies CLI-only workarounds to `Metadata/project_settings.config`: blanking
-`machine_start_gcode` when the profile asks, and resizing `flush_volumes_matrix` to
-`filament_colour.len()²` (stale-size artifact of projects trimmed down from multi-color templates;
-Orca's CLI rejects the mismatch outright even though the values are never read).
-
-`--nozzle-clean <spec>` (`src/nozzle_clean.rs`, applied after each `assemble_project`) prepends a
-conditioned nozzle-wipe block to the project's `layer_change_gcode`, keeping the printer-native
-tail (M73/M991, A2L's M201/M1007) intact. The wipe body is profile-owned (`nozzle_clean_gcode`):
-P1/X1 have no `G150.x` firmware macros and need raw G1 moves to the back chute (mirroring their
-own toolchange gcode — coordinates and the `Z{max_layer_z + 3.0}` bed-drop idiom come from it).
-A2/P2/H2 would wipe via `G150.3`/`G150.1`, but no A2L sequence is hardware-validated, so the A2L
-profile carries no field. Absent field (A2L, Snapmaker) = unsupported, explicit error.
-Validated on a real P1S slice: relative-E stream (no M82 anywhere), so the block's M83 + net-zero
-E-2/E2 retract/prime is safe. `nozzle_clean_inject` is the standalone binary for non-packer
-projects.
-
-### Layer 4 — scheduler (`src/scheduler.rs`, `src/bin/daily_scheduler.rs`)
-
-`subset_3mf` produces a 3MF with only the first N build items, pruning `3dmodel.model`,
-`model_settings.config`, `cut_information.xml`, and `plate_1.json` consistently. Note
-`emit_core_xml`: xmltree drops the namespace prefixes 3MF requires, so `p:UUID`/`p:path`/`xml:lang`
-are restored by string replacement after serialization.
-
-The source must be **single-plate** — `plate_count_3mf` guards this, because build-item order is
-assumed to be one dense plate and a multi-plate file would silently undercount batches.
-
-`optimize_schedule` is a DP over end-second: day jobs (default 10:00→23:00, each followed by a turnaround)
-maximize objects, then exactly one overnight job starts at 23:00 and must finish by 10:00 next day. The
-windows are CLI options (`--day-start/--night-start/--horizon-end HH:MM`, hours may exceed 24 = next day).
-Ties break toward fewer jobs, then earlier completion.
-
-Per-batch-size benchmarking has two modes (`--bench-mode adaptive|full`, default adaptive). Full slices
-every size 1..=N. Adaptive slices only `1`, the full plate, and three interior sizes, then refines — one
-more slice wherever a piecewise-linear fit (`BatchCurve`) disagrees most with a least-squares affine fit,
-normalized by the full-plate time — until the disagreement drops under 2% or the budget (max(6, N/3)
-slices) runs out; the remaining sizes are interpolated and marked `origin: "interpolated"` in the report.
-Print time vs batch size is near-affine in practice (goat1 A2L: 5 slices for a 30-object plate, 0.0%
-deviation). `--reuse-benchmarks` still skips slicing entirely by re-reading a prior report.
-
-Per-batch slicing happens in a `tempfile::tempdir()` that's cleaned up on drop —
-nothing scratch survives the run. `--output-schedule <path>` (required) writes just the resolved
-per-printer job sequence as CSV; `--output-report <path>` (optional) additionally dumps the full
-benchmarks/sensitivity/schedule JSON, and doubles as the source `--reuse-benchmarks` re-reads to
-skip re-slicing when only turnaround/prep assumptions changed.
-
-`build_schedule_plates_3mf` turns one printer's resolved schedule into a single multi-plate 3MF
-(`--printer ...,plates-3mf=<path>`): one `<plate>` per distinct batch size (labeled "N pcs @ HH:MM"),
-each a fresh set of object/build-item clones (own ids/UUIDs, same shared mesh component and packed
-transform) trimmed from `source` the same "first N" way as `subset_3mf`. Plates cannot share build items —
-BambuStudio never lets one object instance belong to two plates — so every plate after the first also needs
-its build items' XY translated into BambuStudio's own plate grid slot. Two measured BambuStudio behaviors
-are load-bearing here (both cost real debugging on 2026-09-06, both locked by
-`tests/scheduler_plate_grid.rs`):
-
-- the grid is `cols = ceil(sqrt(plate_count))`, row-major, rows downward, each slot offset by
-  `bed_size * (1 + 1/5)` — NOT `round(sqrt(n))`: round stacks a 2-plate file vertically while
-  BambuStudio looks for plate 2 to the right, and every plate-2 object then lands outside any
-  PartPlate slot (BambuStudio assigns objects to plates purely by bbox-vs-grid at slice time,
-  `PartPlate::intersect_instance`, never by reading `<plate>/<model_instance>`).
-- `wipe_tower_x`/`wipe_tower_y` in project_settings.config are one-entry-per-plate arrays, and each
-  entry is used **verbatim** in that plate's G-code (the CLI shifts a plate's objects back to
-  plate-local coordinates when slicing, but does not shift the tower entry). A plate without its own
-  entry gets an auto-placed tower — which lands on packed objects and fails with a false
-  "gcode path conflicts" — and shifting the entry with the grid slot puts the tower outside the bed
-  ("gcode outside of the printable area"). Every plate therefore gets the SAME entry as the source.
-
-### Layer 4.5 — web application (`webapp/`)
-
-`webapp/backend` (Kotlin + Spring Boot 3.4, port 19190) and `webapp/frontend` (Vite + React 18 + TS,
-port 3007) wrap the two release binaries into a UI: upload a single-object 3MF → packed 3MF (phase 1),
-then schedule → multi-plate 3MF + CSV/XLSX (phase 2). No DB: jobs live in memory, files under
-`${java.io.tmpdir}/goat-packer-web/`, TTL-cleaned. See `webapp/README.md`.
-
-### Layer 5 — 3MF assembly & verification
-
-- `src/embedded_mesh.rs` — derives the collision STL from the source 3MF: parses the core model
-  with quick-xml, resolves the component's `p:path` and transform, and bakes that transform into
-  the vertices (f64 math, LE f32 packing). Also exposes the mesh's XY bbox center — the exact
-  point every build-item translation must compensate.
-- `src/assemble.rs` — rebuilds the packed 3MF from the source template via a quick-xml event
-  round-trip: untouched XML bytes round-trip verbatim, so attribute order, quoting, and the
-  prefixed attributes xmltree cannot represent (`p:UUID`, `p:path`) all survive. Four mutually
-  exclusive mesh strategies: default (N objects → one shared component), `duplicate_mesh_per_object`,
-  `reuse_source_object_instances`, `inline_colored_mesh_objects`. Object/instance identities are
-  deterministic uuid5s (sha1-based, stable across runs), floats print through the same
-  `_number`-compatible formatting as the original artifacts, and extracted footprint rings go
-  through `canonical_ring` (fixed start vertex + direction) so re-runs are byte-identical.
-  `Metadata/project_settings.config` is copied byte-for-byte; paint (`paint_color`) attributes
-  live in the untouched mesh part, so every mode preserves coloring; preview PNGs render in
-  `src/plate_preview.rs` (tiny-skia).
-- `src/bin/verify_outputs.rs` — independent exact-geometry check (`geo`, not the rasterized
-  masks): minimum gap, edge margin, purge-line gap, keepouts, per-item transforms, ZIP CRC, and
-  object/instance cardinality; same CLI as the old Python verifier
-  (`verify_outputs <stl> <placements> <project> [--minimum-gap F] [--edge-margin F] ...`).
-  Use it as a second opinion on any layout change; it shares no packing code with the Rust packer.
-- `build_schedule_workbook.mjs` — turns `planner_report.json` into a formatted `.xlsx`.
+- Source must be single-plate (`plate_count_3mf` guard); build-item order is assumed to be one dense plate.
+- xmltree drops namespace prefixes; `emit_core_xml` restores `p:UUID`/`p:path`/`xml:lang` by string replacement. `assemble.rs` avoids this by quick-xml round-trip, so keep new 3MF edits there.
+- Multi-plate 3MF (`build_schedule_plates_3mf`), both locked by `tests/scheduler_plate_grid.rs`: plate grid is `cols = ceil(sqrt(n))` (not round), row-major, slot offset `bed_size * 1.2`; `wipe_tower_x/y` entries are used verbatim per plate, so every plate gets the SAME entry as the source (shifting it puts the tower off-bed, omitting it auto-places it onto objects).
+- Benchmark `adaptive` (default) slices few sizes and interpolates (`origin: "interpolated"`); `--reuse-benchmarks` re-reads a prior `--output-report`.
 
 ## Conventions
 
-- Comments in this codebase explain *why a thing must not change* (empirical slicer quirks,
-  reproduced failures). Preserve and extend them rather than trimming; several encode bugs that
-  cost real print time to find.
-- New printers are added as a JSON profile in `profiles/`, not as code branches.
-- Binaries hand-roll argument parsing (no clap); follow the existing `while let Some(option)` shape.
-- Design docs and implementation plans live in `docs/superpowers/{specs,plans}/`, dated.
+- Comments explain why something must not change (empirical slicer quirks); preserve and extend them.
+- Binaries hand-roll arg parsing (no clap); follow the `while let Some(option)` shape.
+- Design docs/plans: `docs/superpowers/{specs,plans}/`, dated.
+- `build_schedule_workbook.mjs` needs `@oai/artifact-tool`.

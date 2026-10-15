@@ -9,3 +9,16 @@ node_modules/
 .claude/settings.local.json
 __pycache__/
 .DS_Store
+
+# Self-contained integration archives
+!tests/fixtures/*.3mf
+
+# Private deployment config and local scratch
+deploy/.env
+deploy/sizing.json
+
+# Verified upstream binaries (downloaded at build time, not Git)
+deploy/vendor/
+
+# Local tool state
+.v2c/

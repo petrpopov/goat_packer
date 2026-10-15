@@ -41,7 +41,7 @@ struct Args {
     /// Overrides the profile's edge margin (Snapmaker Orca's spiral lifting warns unless the
     /// gap is strictly above 3.5 mm, which a 3.5 margin hits exactly).
     edge_margin: Option<f64>,
-    /// `search` runs the full randomized packing; `grid` places the deterministic grid only
+    /// `search` runs the full deterministic packing; `grid` places the deterministic grid only
     /// and skips the search — faster, perfectly uniform, a bit sparser.
     layout: LayoutMode,
     nozzle_clean: Option<NozzleCleanSpec>,
@@ -225,7 +225,12 @@ fn run() -> AppResult<()> {
                         overshoot
                     );
                 }
-                (silhouette.clone(), false, overshoot)
+                // Bed bounds still measure the printed patch: the overshoot at thin tips is
+                // real ink past the silhouette, and a silhouette that clears the bed edge can
+                // print outside it (see the bed_loops note after the match).
+                let mut footprint = silhouette.clone();
+                footprint.bed_loops = Some(union_loops(&patch, &silhouette));
+                (footprint, false, overshoot)
             } else {
                 // How far the patch actually sticks out separates the two realities this
                 // branch exists for: real supports/brim wander whole millimetres, while a
@@ -269,9 +274,15 @@ fn run() -> AppResult<()> {
     // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
     // silhouette: the slicer's bed-collision warning measures the full model extent, which
     // hangs below the printed patch on a lying animal (its tail), silently eating the edge
-    // margin — the manual 3.5/4.0 mm gap complaint.
-    if lock_orientation {
-        footprint.bed_loops = Some(union_loops(&footprint, &silhouette));
+    // margin — the manual 3.5/4.0 mm gap complaint. Every branch above has already set
+    // bed_loops to that union: with rotations allowed the patch carries the measured tip
+    // overshoot (~2 mm of Arachne miter past the silhouette at thin tips), and a layout
+    // whose silhouette clears the bed edge can still print outside it — BambuStudio then
+    // refuses the whole final slice with "too close to exclusion area" / "no object fully
+    // inside it" (a real 17-object P1S goat plate died at mesh x=0.06 and x=255.7 on a
+    // 256 mm bed this way).
+    if footprint.bed_loops.is_none() {
+        footprint.bed_loops = Some(footprint.loops.clone());
     }
     eprintln!("packing ({} attempts, seed {})...", args.attempts, args.seed);
     let mut packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
@@ -443,23 +454,23 @@ fn pack(
         seed: args.seed,
     };
     // The deterministic grid runs first as a floor score: small models tile as densely as
-    // their bounding boxes allow, and the randomized search only wins when it beats that.
+    // their bounding boxes allow, and the deterministic search only wins when it beats that.
     // Taking the grid on a tie keeps the layout reproducible. `--layout grid` stops right
-    // here — no randomized search at all.
+    // here — no deterministic search at all.
     let grid = grid_layout(&footprint, &options);
     let result = match args.layout {
         LayoutMode::Grid => {
-            eprintln!("grid layout: {} objects (randomized search skipped)", grid.placements.len());
+            eprintln!("grid layout: {} objects (deterministic search skipped)", grid.placements.len());
             grid
         }
         LayoutMode::Search => {
             eprintln!(
-                "grid baseline: {} objects; randomized search needs more to win",
+                "grid baseline: {} objects; deterministic search needs more to win",
                 grid.placements.len()
             );
-            let random = pack_footprint(&footprint, &options);
-            if random.placements.len() > grid.placements.len() {
-                random
+            let searched = pack_footprint(&footprint, &options);
+            if searched.placements.len() > grid.placements.len() {
+                searched
             } else {
                 grid
             }
@@ -544,6 +555,13 @@ fn build_colored_project(
     if let Some(spec) = &args.nozzle_clean {
         inject_nozzle_clean(profile, &args.output, &args.output, spec)
             .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
+        // Loud on purpose: an invisible injection once read as "the checkbox does nothing" —
+        // the job log must state plainly that the wipe macro reached the output file.
+        eprintln!(
+            "nozzle clean injected into layer_change_gcode ({}) of {}",
+            spec.describe(),
+            args.output.display()
+        );
     }
     Ok(())
 }
@@ -570,13 +588,12 @@ fn slice_project(
     if profile.no_check_for_final_tower_probe && label.starts_with("final") {
         command.arg("--no-check");
     }
-    let output = command
+    let output = goat_packer::process_output::bounded_output(command
         .arg("--slice")
         .arg("1")
         .arg("--outputdir")
         .arg(&output_dir)
-        .arg(&input)
-        .output()?;
+        .arg(&input))?;
     let log_path = work_dir.join(format!("{label}_slice.log"));
     fs::write(&log_path, [&output.stdout[..], &output.stderr[..]].concat())?;
     if !output.status.success() {
@@ -841,11 +858,7 @@ fn parse_args() -> AppResult<Args> {
     let output = output.ok_or("--output is required")?;
     let work_dir = work_dir.unwrap_or_else(|| output.with_extension("work"));
     let attempts = attempts.max(1);
-    // Default: give the search a quarter of the restarts to keep improving after the last gain
-    // before declaring it plateaued. 0 explicitly disables early stopping.
-    // No implicit early stop: on a dense P1S goat plate the 20-object layout first appeared
-    // past attempt 1600, and a hidden attempts/4 stall cap consistently truncated the search
-    // at 19. `--stall` remains for deliberately fast, lower-density runs.
+    // Compatibility option: the deterministic finite portfolio does not stop on random stalls.
     let stall = stall.unwrap_or(0);
     Ok(Args {
         source_3mf: source_3mf.ok_or("--source is required")?,
@@ -963,7 +976,7 @@ mod tests {
     #[test]
     fn validate_source_printer_rejects_slicer_kind_mismatch() {
         let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
-        let source = Path::new("../Goat 4/p1s/goat4_single_pla.3mf");
+        let source = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bambu.3mf"));
         validate_source_printer(source, &profile).unwrap();
 
         let mut mismatched = profile.clone();

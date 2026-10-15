@@ -5,7 +5,7 @@
 Packs a mesh into a slicer 3MF project, keeping the original print settings byte-for-byte.
 
 Given a 3MF containing one object, it fits as many copies onto the plate as it can — nesting the
-model's real flat-bottom silhouette (outer contour and holes), not its bounding box — and writes a
+model's whole-model XY silhouette (outer contour and holes), not its bounding box — and writes a
 new 3MF with the same profile, filaments, and paint data. Fixed bed exclusions, purge lines, and
 the prime tower are reserved automatically.
 
@@ -17,6 +17,18 @@ A second tool schedules a day of printing across several printers.
 cargo build --release
 cargo test --release --all
 ```
+
+Tests are self-contained: real regression contours/STL and small synthetic 3MFs live in
+`tests/fixtures/`. No sibling asset directories, symlinks, network, or installed slicer are
+needed for the Rust test suite. With dependencies cached, use `cargo test --offline --release --all`.
+
+The packer canonicalizes XY rotation/translation and searches deterministic no-fit maps,
+including mixed orientations. Thread count and seed do not change the result. Geometry is
+rasterized at `--resolution`; this remains a heuristic, not a proof of globally optimal packing.
+Probe footprints with orientation-dependent supports stay locked to their original orientation.
+See [algorithm, limitations and reproducible benchmarks](docs/packing-search.md).
+The packing core is local-only; the existing colored-3MF workflow still uses the local slicer
+configured in the printer profile for probing/final slicing.
 
 ## Packing
 
@@ -33,10 +45,10 @@ cargo test --release --all
 | `--clearance` | `0.7` | gap between objects, mm |
 | `--resolution` | `0.25` | raster cell size, mm |
 | `--angle-step` | `2.0` | rotation step, degrees |
-| `--attempts` | `16000` | independent randomized restarts, each packing a full layout |
-| `--candidates` | `2400` | positions sampled per placed object within one restart (search cost scales with attempts × candidates) |
-| `--stall` | `attempts/4` | stop once this many restarts pass without improvement; `0` runs all attempts |
-| `--seed` | `20270831` | makes a run reproducible |
+| `--attempts` | `16000` | deterministic search effort; stops when the finite strategy portfolio is exhausted |
+| `--candidates` | `2400` | compatibility flag; free positions are now scanned exhaustively |
+| `--stall` | `0` | compatibility flag; no scheduling-dependent early stopping |
+| `--seed` | `20270831` | compatibility/report field; results no longer depend on randomness |
 | `--nozzle-clean` | off | inject periodic nozzle wipes into Layer Change G-code: `global,every=10` (whole print) or `from-z=6.6,every=1` (only from a height) |
 
 Writes `<output>.verification.json` with the object count and prime tower bounds.

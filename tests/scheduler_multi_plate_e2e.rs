@@ -1,30 +1,28 @@
 use goat_packer::scheduler::{PlateSpec, build_schedule_plates_3mf};
 
-/// Opt-in e2e: builds a multi-plate 3MF from a real packed source, then the operator slices
-/// every plate with the real BambuStudio CLI (`--slice N`); verified 2026-09-02 (Goat 3 P1S,
-/// plates 20/15/8 — all Success, exact object counts in the G-code headers). Runs only when MULTIPLATE_E2E_SOURCE points at a packed single-plate 3MF;
-/// otherwise it is a no-op so the suite stays green without external assets.
+/// End-to-end multi-plate archive creation, with local fixtures and no external slicer.
 #[test]
-fn build_multi_plate_file_for_manual_slicing() {
-    let Ok(source) = std::env::var("MULTIPLATE_E2E_SOURCE") else {
-        return;
-    };
-    let output = std::env::var("MULTIPLATE_E2E_OUTPUT").unwrap_or_else(|_| {
-        "/tmp/multiplate_e2e/goat3_plates.3mf".to_owned()
-    });
+fn build_multi_plate_file_and_count_plates() {
+    let source = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packed.3mf"
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("three_plates.3mf");
     let plates = [
-        PlateSpec { label: "20 pcs".to_owned(), object_count: 20 },
-        PlateSpec { label: "15 pcs".to_owned(), object_count: 15 },
-        PlateSpec { label: "8 pcs".to_owned(), object_count: 8 },
+        PlateSpec {
+            label: "20 pcs".to_owned(),
+            object_count: 20,
+        },
+        PlateSpec {
+            label: "15 pcs".to_owned(),
+            object_count: 15,
+        },
+        PlateSpec {
+            label: "8 pcs".to_owned(),
+            object_count: 8,
+        },
     ];
-    build_schedule_plates_3mf(
-        std::path::Path::new(&source),
-        std::path::Path::new(&output),
-        &plates,
-        256.0,
-        256.0,
-        false,
-    )
-    .unwrap();
-    println!("wrote {output}");
+    build_schedule_plates_3mf(source, &output, &plates, 256.0, 256.0, false).unwrap();
+    assert_eq!(goat_packer::scheduler::plate_count_3mf(&output).unwrap(), 3);
 }

@@ -84,6 +84,16 @@ impl NozzleCleanSpec {
             Self::Global { every } | Self::FromZ { every, .. } => every,
         }
     }
+
+    /// Human-readable cadence for operator-facing log lines.
+    pub fn describe(&self) -> String {
+        match *self {
+            Self::Global { every } => format!("every {every} layers, whole print"),
+            Self::FromZ { z_mm, every } => {
+                format!("every {every} layers from z {z_mm} mm")
+            }
+        }
+    }
 }
 
 /// Millimeters with trailing zeros trimmed (`6.590` → `6.59`, `7.000` → `7`) so composed

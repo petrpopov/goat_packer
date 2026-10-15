@@ -9,9 +9,10 @@ const BED_DEPTH_MM: f64 = 256.0;
 
 #[test]
 fn plates_are_disjoint_and_land_in_bambustudios_own_plate_grid() {
-    let source = std::path::Path::new(
-        "../Goat 4/p1s/goat4_p1s_contour_packed_purge_safe_faster.3mf",
-    );
+    let source = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packed.3mf"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("schedule_plates.3mf");
 
@@ -147,9 +148,10 @@ fn plates_are_disjoint_and_land_in_bambustudios_own_plate_grid() {
 
 #[test]
 fn rejects_a_plate_larger_than_the_source() {
-    let source = std::path::Path::new(
-        "../Goat 4/p1s/goat4_p1s_contour_packed_purge_safe_faster.3mf",
-    );
+    let source = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packed.3mf"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("too_big.3mf");
     let plates = [PlateSpec {

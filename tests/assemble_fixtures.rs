@@ -1,8 +1,4 @@
-//! Fixture-dependent assembly tests, ported from the former `tests/test_build_3mf.py`.
-//!
-//! Like `tests/quality.rs`, these read external assets under `../Goat 3/` and `../Goat 4/`
-//! (relative to the repo root). That directory is not part of this repo; when it is absent the
-//! tests fail at runtime — that is the documented convention, they must merely compile.
+//! Self-contained assembly contracts using small synthetic colored 3MF fixtures.
 
 use std::{
     fs::File,
@@ -11,7 +7,7 @@ use std::{
     process::Command,
 };
 
-use goat_packer::{PackedPlacement, Rect, assemble::assemble_project, assemble::AssembleOptions};
+use goat_packer::{PackedPlacement, Rect, assemble::AssembleOptions, assemble::assemble_project};
 use quick_xml::{Reader, events::Event};
 use serde_json::json;
 use zip::ZipArchive;
@@ -19,8 +15,16 @@ use zip::ZipArchive;
 /// The Python suite's shared two-placement layout (its `placements_file` helper).
 fn fixture_placements() -> Vec<PackedPlacement> {
     vec![
-        PackedPlacement { x_mm: 60.0, y_mm: 70.0, angle_deg: 0.0 },
-        PackedPlacement { x_mm: 150.0, y_mm: 160.0, angle_deg: 90.0 },
+        PackedPlacement {
+            x_mm: 60.0,
+            y_mm: 70.0,
+            angle_deg: 0.0,
+        },
+        PackedPlacement {
+            x_mm: 150.0,
+            y_mm: 160.0,
+            angle_deg: 90.0,
+        },
     ]
 }
 
@@ -46,24 +50,11 @@ fn write_placements_file(directory: &Path) -> PathBuf {
     path
 }
 
-/// Mirrors `build_project`'s own fallback when no `--stl` is passed: `goat4_v2.stl` next to the
-/// template, else `../source/goat4_v2.stl` relative to it.
-fn resolved_goat4_stl(source: &Path) -> PathBuf {
-    let candidates = [
-        source.parent().unwrap().join("goat4_v2.stl"),
-        source
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("source")
-            .join("goat4_v2.stl"),
-    ];
-    candidates
-        .iter()
-        .find(|candidate| candidate.exists())
-        .cloned()
-        .unwrap_or_else(|| candidates[0].clone())
+fn resolved_fixture_stl(_source: &Path) -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/square.stl"
+    ))
 }
 
 fn base_options(stl: &Path) -> AssembleOptions {
@@ -175,7 +166,9 @@ impl Doc {
     fn attribute_values(&self, element: &str, attribute: &str) -> Vec<String> {
         let mut values = Vec::new();
         for event in &self.events {
-            let (Event::Start(start) | Event::Empty(start)) = event else { continue };
+            let (Event::Start(start) | Event::Empty(start)) = event else {
+                continue;
+            };
             if start.local_name().into_inner() != element {
                 continue;
             }
@@ -191,8 +184,8 @@ impl Doc {
 }
 
 fn stack_ends_with(stack: &[String], suffix: &[&str]) -> bool {
-    stack.len() == suffix.len()
-        && stack
+    stack.len() == suffix.len() + 1
+        && stack[1..]
             .iter()
             .zip(suffix)
             .all(|(entry, expected)| entry.as_str() == *expected)
@@ -274,8 +267,14 @@ fn assert_common_integrity(source: &Path, output: &Path, stl: &Path) {
     assert_eq!(core.count_under(&["resources"], "object"), 2);
     assert_eq!(core.count_under(&["build"], "item"), 2);
     let transforms = core.attribute_values("item", "transform");
-    assert_transform_matches(&transforms[0], expected_item_transform(&fixture_placements()[0], center, z_offset));
-    assert_transform_matches(&transforms[1], expected_item_transform(&fixture_placements()[1], center, z_offset));
+    assert_transform_matches(
+        &transforms[0],
+        expected_item_transform(&fixture_placements()[0], center, z_offset),
+    );
+    assert_transform_matches(
+        &transforms[1],
+        expected_item_transform(&fixture_placements()[1], center, z_offset),
+    );
 
     let settings = Doc::parse(&read_entry(&mut built, "Metadata/model_settings.config"));
     assert_eq!(settings.count_top_level("object"), 2);
@@ -319,10 +318,13 @@ fn component_paths(core: &Doc) -> Vec<String> {
 /// Port of `test_bambu_build_updates_optional_bambu_metadata`.
 #[test]
 fn bambu_build_updates_optional_bambu_metadata() {
-    let source = Path::new("../Goat 4/p1s/goat4_p1s_contour_packed_purge_safe_faster.3mf");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/bambu.3mf"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("bambu.3mf");
-    let stl = resolved_goat4_stl(source);
+    let stl = resolved_fixture_stl(source);
     assemble_project(source, &output, &base_options(&stl)).unwrap();
     assert_common_integrity(source, &output, &stl);
 
@@ -341,10 +343,13 @@ fn bambu_build_updates_optional_bambu_metadata() {
 /// Port of `test_snap_build_preserves_optional_metadata_presence`.
 #[test]
 fn snap_build_preserves_optional_metadata_presence() {
-    let source = Path::new("../Goat 4/snap/goat4_snapmaker_u1_contour_packed_purge_safe_faster.3mf");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/snap.3mf"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("snap.3mf");
-    let stl = resolved_goat4_stl(source);
+    let stl = resolved_fixture_stl(source);
     assemble_project(source, &output, &base_options(&stl)).unwrap();
     assert_common_integrity(source, &output, &stl);
 
@@ -364,8 +369,14 @@ fn snap_build_preserves_optional_metadata_presence() {
 /// Port of `test_colored_source_mesh_is_reused_without_touching_paint_attributes`.
 #[test]
 fn colored_source_mesh_is_reused_without_touching_paint_attributes() {
-    let source = Path::new("../Goat 3/p1s/goat3_fast_max.3mf");
-    let stl = Path::new("../Goat 3/source/goat3.stl");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/colored_bambu.3mf"
+    ));
+    let stl = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/square.stl"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("colored.3mf");
     assemble_project(source, &output, &base_options(stl)).unwrap();
@@ -388,7 +399,9 @@ fn colored_source_mesh_is_reused_without_touching_paint_attributes() {
     let source_mesh = read_entry(&mut original, source_path);
     assert_eq!(source_mesh, read_entry(&mut built, source_path));
     assert!(
-        source_mesh.windows(b"paint_color".len()).any(|window| window == b"paint_color"),
+        source_mesh
+            .windows(b"paint_color".len())
+            .any(|window| window == b"paint_color"),
         "the source mesh part carries paint attributes"
     );
 }
@@ -396,8 +409,14 @@ fn colored_source_mesh_is_reused_without_touching_paint_attributes() {
 /// Port of `test_preview_accepts_custom_keepout_with_y_axis_flip`.
 #[test]
 fn preview_accepts_custom_keepout_with_y_axis_flip() {
-    let source = Path::new("../Goat 3/p1s/goat3_fast_max.3mf");
-    let stl = Path::new("../Goat 3/source/goat3.stl");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/colored_bambu.3mf"
+    ));
+    let stl = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/square.stl"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("keepout_preview.3mf");
     let mut options = base_options(stl);
@@ -411,8 +430,14 @@ fn preview_accepts_custom_keepout_with_y_axis_flip() {
 /// Port of `test_colored_clone_can_duplicate_mesh_part_per_object`.
 #[test]
 fn colored_clone_can_duplicate_mesh_part_per_object() {
-    let source = Path::new("../Goat 3/snap/goat3_snap.3mf");
-    let stl = Path::new("../Goat 3/source/goat3.stl");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/colored_snap.3mf"
+    ));
+    let stl = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/square.stl"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("duplicate_mesh.3mf");
     let mut options = base_options(stl);
@@ -423,7 +448,10 @@ fn colored_clone_can_duplicate_mesh_part_per_object() {
     let core = Doc::parse(&read_entry(&mut built, "3D/3dmodel.model"));
     let paths = component_paths(&core);
     assert_eq!(paths.len(), 2);
-    assert_ne!(paths[0], paths[1], "each object must reference its own mesh part");
+    assert_ne!(
+        paths[0], paths[1],
+        "each object must reference its own mesh part"
+    );
     assert!(
         read_entry(&mut built, &paths[0])
             .windows(b"paint_color".len())
@@ -431,14 +459,23 @@ fn colored_clone_can_duplicate_mesh_part_per_object() {
         "the duplicated mesh part keeps the paint attributes"
     );
     // Contract 2: the duplicate is a byte copy of the source mesh part.
-    assert_eq!(read_entry(&mut built, &paths[0]), read_entry(&mut built, &paths[1]));
+    assert_eq!(
+        read_entry(&mut built, &paths[0]),
+        read_entry(&mut built, &paths[1])
+    );
 }
 
 /// Port of `test_colored_clone_can_use_standard_3mf_instances`.
 #[test]
 fn colored_clone_can_use_standard_3mf_instances() {
-    let source = Path::new("../Goat 3/snap/goat3_snap.3mf");
-    let stl = Path::new("../Goat 3/source/goat3.stl");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/colored_snap.3mf"
+    ));
+    let stl = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/square.stl"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("instances.3mf");
     let mut options = base_options(stl);
@@ -448,7 +485,11 @@ fn colored_clone_can_use_standard_3mf_instances() {
     {
         let mut built = open_archive(&output);
         let core = Doc::parse(&read_entry(&mut built, "3D/3dmodel.model"));
-        assert_eq!(core.count_under(&["resources"], "object"), 1, "one shared resource");
+        assert_eq!(
+            core.count_under(&["resources"], "object"),
+            1,
+            "one shared resource"
+        );
         let object_ids = core.attribute_values("item", "objectid");
         assert_eq!(object_ids, vec!["2", "2"]);
         let settings = Doc::parse(&read_entry(&mut built, "Metadata/model_settings.config"));
@@ -481,8 +522,14 @@ fn colored_clone_can_use_standard_3mf_instances() {
 /// Port of `test_colored_clone_preserves_source_z_offset`.
 #[test]
 fn colored_clone_preserves_source_z_offset() {
-    let source = Path::new("../Goat 3/snap/goat3_snap.3mf");
-    let stl = Path::new("../Goat 3/source/goat3.stl");
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/colored_snap.3mf"
+    ));
+    let stl = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/square.stl"
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("source_z.3mf");
     let mut options = base_options(stl);
@@ -505,6 +552,9 @@ fn colored_clone_preserves_source_z_offset() {
         .collect();
     assert_eq!(z_values.len(), 2);
     for z in z_values {
-        assert!((z - 4.30000019).abs() < 1e-6, "item z offset {z} != 4.30000019");
+        assert!(
+            (z - 4.30000019).abs() < 1e-6,
+            "item z offset {z} != 4.30000019"
+        );
     }
 }

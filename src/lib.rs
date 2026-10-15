@@ -1,15 +1,17 @@
 use geo::{Coord, LineString, Polygon, algorithm::bool_ops::unary_union};
-use rand::{Rng, SeedableRng, rngs::SmallRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, io, path::Path};
 
-pub mod scheduler;
+mod packing_search;
+
+pub mod assemble;
 pub mod colored_packer;
 pub mod embedded_mesh;
-pub mod plate_preview;
-pub mod assemble;
 pub mod nozzle_clean;
+pub mod plate_preview;
+pub mod scheduler;
+pub mod process_output;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Point {
@@ -77,6 +79,12 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
             let offset = base + vertex_index * 12;
             for axis in 0..3 {
                 vertex[axis] = read_f32(&data[offset + axis * 4..offset + axis * 4 + 4]);
+                if !vertex[axis].is_finite() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "STL contains non-finite coordinates",
+                    ));
+                }
                 mins[axis] = mins[axis].min(f64::from(vertex[axis]));
                 maxs[axis] = maxs[axis].max(f64::from(vertex[axis]));
             }
@@ -112,10 +120,7 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
         if ordered[0] == ordered[1] || ordered[1] == ordered[2] {
             continue;
         }
-        projections.push(Polygon::new(
-            LineString::from(ordered.to_vec()),
-            Vec::new(),
-        ));
+        projections.push(Polygon::new(LineString::from(ordered.to_vec()), Vec::new()));
     }
     if projections.is_empty() {
         return Err(io::Error::new(
@@ -123,7 +128,10 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
             format!(
                 "no footprint could be built: all {} triangles project to degenerate (zero-area) \
                  XY shapes (z range {:.3}..{:.3}, z tolerance {:.1e})",
-                triangles.len(), mins[2], maxs[2], z_tolerance
+                triangles.len(),
+                mins[2],
+                maxs[2],
+                z_tolerance
             ),
         ));
     }
@@ -169,6 +177,12 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
     // square is already below a 0.4 mm nozzle) is dropped.
     const MIN_LOOP_AREA_MM2: f64 = 0.01;
     loops.retain(|loop_| polygon_area(loop_).abs() >= MIN_LOOP_AREA_MM2);
+    if loops.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "STL has no printable footprint after removing degenerate rings",
+        ));
+    }
 
     loops.sort_by(|a, b| polygon_area(b).abs().total_cmp(&polygon_area(a).abs()));
     Ok(Footprint {
@@ -296,12 +310,7 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
                                 let angle = start_angle + sweep * (step as f64) / (steps as f64);
                                 let to_x = center_x + radius * angle.cos();
                                 let to_y = center_y + radius * angle.sin();
-                                sink.record(
-                                    (from_x, from_y),
-                                    (to_x, to_y),
-                                    line_width,
-                                    is_body,
-                                );
+                                sink.record((from_x, from_y), (to_x, to_y), line_width, is_body);
                                 from_x = to_x;
                                 from_y = to_y;
                             }
@@ -360,7 +369,10 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
             Some((min_x, min_y, max_x, max_y)) => ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5),
             // No body extrusions in layer 1 (a supports-only layer): fall back to the patch's
             // own bbox center and let the caller's clearance absorb the small mismatch.
-            None => ((patch_min_x + patch_max_x) * 0.5, (patch_min_y + patch_max_y) * 0.5),
+            None => (
+                (patch_min_x + patch_max_x) * 0.5,
+                (patch_min_y + patch_max_y) * 0.5,
+            ),
         },
     };
     let full_polygons: Vec<&Polygon> = sink.strips.iter().map(|(polygon, _)| polygon).collect();
@@ -432,11 +444,26 @@ fn strip_polygon(x0: f64, y0: f64, x1: f64, y1: f64, width: f64) -> Polygon {
     let px = -dy * half;
     let py = dx * half;
     let corners = [
-        Coord { x: x0 + px, y: y0 + py },
-        Coord { x: x1 + px, y: y1 + py },
-        Coord { x: x1 - px, y: y1 - py },
-        Coord { x: x0 - px, y: y0 - py },
-        Coord { x: x0 + px, y: y0 + py },
+        Coord {
+            x: x0 + px,
+            y: y0 + py,
+        },
+        Coord {
+            x: x1 + px,
+            y: y1 + py,
+        },
+        Coord {
+            x: x1 - px,
+            y: y1 - py,
+        },
+        Coord {
+            x: x0 - px,
+            y: y0 - py,
+        },
+        Coord {
+            x: x0 + px,
+            y: y0 + py,
+        },
     ];
     Polygon::new(LineString::from(corners.to_vec()), Vec::new())
 }
@@ -470,8 +497,12 @@ fn grow_bounds(
     x1: f64,
     y1: f64,
 ) -> (f64, f64, f64, f64) {
-    let (min_x, min_y, max_x, max_y) =
-        bounds.unwrap_or((f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
+    let (min_x, min_y, max_x, max_y) = bounds.unwrap_or((
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ));
     (
         min_x.min(x0).min(x1),
         min_y.min(y0).min(y1),
@@ -573,28 +604,68 @@ pub struct PixelMask {
 }
 
 impl PixelMask {
-    fn from_pixels(pixels: &HashSet<(i32, i32)>) -> Self {
-        let min_x = pixels.iter().map(|p| p.0).min().unwrap_or(0);
-        let max_x = pixels.iter().map(|p| p.0).max().unwrap_or(0);
-        let min_y = pixels.iter().map(|p| p.1).min().unwrap_or(0);
-        let max_y = pixels.iter().map(|p| p.1).max().unwrap_or(0);
+    /// Packs span rows into bit rows, trimmed to the pixels' tight bounds. An empty raster
+    /// becomes a 1x1 mask with no pixels set (it collides with nothing).
+    fn from_spans(raster: &SpanRaster) -> Self {
+        let mut min_x = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut first_row = None;
+        let mut last_row = 0usize;
+        let mut pixel_count = 0usize;
+        for (index, row) in raster.rows.iter().enumerate() {
+            if row.is_empty() {
+                continue;
+            }
+            first_row.get_or_insert(index);
+            last_row = index;
+            min_x = min_x.min(row[0].0);
+            max_x = max_x.max(row[row.len() - 1].1 - 1);
+            pixel_count += row.iter().map(|&(a, b)| (b - a) as usize).sum::<usize>();
+        }
+        let Some(first_row) = first_row else {
+            return Self {
+                min_x: 0,
+                min_y: 0,
+                width: 1,
+                height: 1,
+                pixel_count: 0,
+                rows: vec![vec![0u64]],
+            };
+        };
         let width = (max_x - min_x + 1) as usize;
-        let height = (max_y - min_y + 1) as usize;
+        let height = last_row - first_row + 1;
         let words = width.div_ceil(64);
         let mut rows = vec![vec![0u64; words]; height];
-        for &(x, y) in pixels {
-            let local_x = (x - min_x) as usize;
-            let local_y = (y - min_y) as usize;
-            rows[local_y][local_x / 64] |= 1u64 << (local_x % 64);
+        for (local_y, row) in raster.rows[first_row..=last_row].iter().enumerate() {
+            for &(start, end) in row {
+                set_bit_range(
+                    &mut rows[local_y],
+                    (start - min_x) as usize,
+                    (end - min_x) as usize,
+                );
+            }
         }
         Self {
             min_x,
-            min_y,
+            min_y: raster.min_y + first_row as i32,
             width,
             height,
-            pixel_count: pixels.len(),
+            pixel_count,
             rows,
         }
+    }
+
+    /// Row `local_y` as half-open spans of set bits, in mask-local columns.
+    fn row_spans(&self, local_y: usize) -> Vec<(i32, i32)> {
+        let row = &self.rows[local_y];
+        let mut spans = Vec::new();
+        let mut x = 0usize;
+        while let Some(start) = next_bit(row, x, true, self.width) {
+            let end = next_bit(row, start, false, self.width).unwrap_or(self.width);
+            spans.push((start as i32, end as i32));
+            x = end;
+        }
+        spans
     }
 
     pub fn contains_local(&self, x: i32, y: i32) -> bool {
@@ -629,6 +700,223 @@ impl PixelMask {
     }
 }
 
+/// First bit at or after `from` equal to `value`, below `limit`. Bits past `limit` in the
+/// last word are zero, so a search for a clear bit there reports `limit` as `None`.
+fn next_bit(row: &[u64], from: usize, value: bool, limit: usize) -> Option<usize> {
+    if from >= limit {
+        return None;
+    }
+    let load = |index: usize| if value { row[index] } else { !row[index] };
+    let mut index = from / 64;
+    let mut word = load(index) & (!0u64 << (from % 64));
+    loop {
+        if word != 0 {
+            let position = index * 64 + word.trailing_zeros() as usize;
+            return (position < limit).then_some(position);
+        }
+        index += 1;
+        if index >= row.len() {
+            return None;
+        }
+        word = load(index);
+    }
+}
+
+/// Sets bits `[start, end)` of a bit row.
+fn set_bit_range(row: &mut [u64], start: usize, end: usize) {
+    if start >= end {
+        return;
+    }
+    let (first, last) = (start / 64, (end - 1) / 64);
+    let low = !0u64 << (start % 64);
+    let high = !0u64 >> (63 - (end - 1) % 64);
+    if first == last {
+        row[first] |= low & high;
+        return;
+    }
+    row[first] |= low;
+    for word in &mut row[first + 1..last] {
+        *word = !0;
+    }
+    row[last] |= high;
+}
+
+/// The 64 bits `[start, start + 64)` of a bit row; positions outside the row read as clear.
+fn bits_at(row: &[u64], start: i64) -> u64 {
+    let word_at = |index: i64| -> u64 {
+        if index < 0 || index as usize >= row.len() {
+            0
+        } else {
+            row[index as usize]
+        }
+    };
+    let index = start.div_euclid(64);
+    let shift = start.rem_euclid(64) as u32;
+    if shift == 0 {
+        word_at(index)
+    } else {
+        (word_at(index) >> shift) | (word_at(index + 1) << (64 - shift))
+    }
+}
+
+/// A raster as sorted, disjoint, half-open column spans per row (`rows[0]` is row `min_y`).
+/// Every mask is built through spans: scanline fill and span dilation cost O(rows × edges)
+/// instead of the O(pixels × edges) point-in-polygon sampling they replaced — an identical
+/// pixel set (the scanline uses the exact crossing formula of `point_in_loops`), without
+/// a hash allocation and point-in-polygon evaluation per pixel.
+#[derive(Clone, Debug, Default)]
+struct SpanRaster {
+    min_y: i32,
+    rows: Vec<Vec<(i32, i32)>>,
+}
+
+impl SpanRaster {
+    /// Pixels whose centres `((ix + 0.5) * res, (iy + 0.5) * res)` fall inside `loops` under
+    /// the even-odd rule, restricted to `ix ∈ [min_ix, max_ix]`, `iy ∈ [min_iy, max_iy]` —
+    /// exactly the set the per-pixel `point_in_loops` sampling produced.
+    fn scanline(
+        loops: &[Vec<Point>],
+        resolution: f64,
+        (min_ix, max_ix, min_iy, max_iy): (i32, i32, i32, i32),
+    ) -> Self {
+        let mut rows = Vec::with_capacity((max_iy - min_iy + 1).max(0) as usize);
+        let mut crossings: Vec<f64> = Vec::new();
+        for iy in min_iy..=max_iy {
+            let y = (f64::from(iy) + 0.5) * resolution;
+            crossings.clear();
+            for loop_ in loops {
+                for edge in loop_.windows(2) {
+                    let (a, b) = (edge[0], edge[1]);
+                    if (a.y > y) != (b.y > y) {
+                        crossings.push((b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x);
+                    }
+                }
+            }
+            crossings.sort_unstable_by(f64::total_cmp);
+            // A centre x is inside iff an odd number of crossings c satisfy x < c, i.e. an
+            // odd number satisfy c <= x: x ∈ [c[2k], c[2k+1]).
+            let mut row: Vec<(i32, i32)> = Vec::new();
+            for pair in crossings.chunks_exact(2) {
+                let first = first_centre_at_or_after(pair[0], resolution).max(min_ix);
+                let end = first_centre_at_or_after(pair[1], resolution).min(max_ix + 1);
+                if first < end {
+                    push_span(&mut row, first, end);
+                }
+            }
+            rows.push(row);
+        }
+        Self {
+            min_y: min_iy,
+            rows,
+        }
+    }
+
+    fn row(&self, y: i32) -> &[(i32, i32)] {
+        let index = y - self.min_y;
+        if index < 0 || index as usize >= self.rows.len() {
+            &[]
+        } else {
+            &self.rows[index as usize]
+        }
+    }
+
+    fn max_y(&self) -> i32 {
+        self.min_y + self.rows.len() as i32
+    }
+
+    fn union(&self, other: &SpanRaster) -> SpanRaster {
+        if self.rows.is_empty() {
+            return other.clone();
+        }
+        if other.rows.is_empty() {
+            return self.clone();
+        }
+        let min_y = self.min_y.min(other.min_y);
+        let max_y = self.max_y().max(other.max_y());
+        let rows = (min_y..max_y)
+            .map(|y| {
+                let mut spans: Vec<(i32, i32)> =
+                    self.row(y).iter().chain(other.row(y)).copied().collect();
+                merge_spans(&mut spans);
+                spans
+            })
+            .collect();
+        SpanRaster { min_y, rows }
+    }
+
+    /// Dilation by the discrete disc `dx² + dy² <= radius²` — the structuring element the
+    /// per-pixel dilation used: row `y` of the result is the union over `dy` of row `y + dy`
+    /// widened by `isqrt(radius² - dy²)` on both sides.
+    fn dilate(&self, radius: i32) -> SpanRaster {
+        if radius <= 0 || self.rows.is_empty() {
+            return self.clone();
+        }
+        let widths: Vec<i32> = (-radius..=radius)
+            .map(|dy| {
+                let mut w = (f64::from(radius * radius - dy * dy)).sqrt() as i32;
+                while w * w + dy * dy > radius * radius {
+                    w -= 1;
+                }
+                while (w + 1) * (w + 1) + dy * dy <= radius * radius {
+                    w += 1;
+                }
+                w
+            })
+            .collect();
+        let min_y = self.min_y - radius;
+        let max_y = self.max_y() + radius;
+        let rows = (min_y..max_y)
+            .map(|y| {
+                let mut spans: Vec<(i32, i32)> = Vec::new();
+                for (offset, &w) in widths.iter().enumerate() {
+                    let dy = offset as i32 - radius;
+                    spans.extend(self.row(y + dy).iter().map(|&(a, b)| (a - w, b + w)));
+                }
+                merge_spans(&mut spans);
+                spans
+            })
+            .collect();
+        SpanRaster { min_y, rows }
+    }
+}
+
+/// Smallest `ix` whose pixel centre `(ix + 0.5) * resolution` is `>= c`, evaluated with the
+/// same float expression the per-pixel test uses so boundary pixels match bit for bit.
+fn first_centre_at_or_after(c: f64, resolution: f64) -> i32 {
+    let mut ix = (c / resolution - 0.5).ceil() as i32;
+    while (f64::from(ix - 1) + 0.5) * resolution >= c {
+        ix -= 1;
+    }
+    while (f64::from(ix) + 0.5) * resolution < c {
+        ix += 1;
+    }
+    ix
+}
+
+/// Appends `[start, end)` to a row built left to right, merging with the previous span.
+fn push_span(row: &mut Vec<(i32, i32)>, start: i32, end: i32) {
+    if let Some(last) = row.last_mut()
+        && start <= last.1
+    {
+        last.1 = last.1.max(end);
+        return;
+    }
+    row.push((start, end));
+}
+
+/// Sorts spans and merges overlapping or adjacent ones in place.
+fn merge_spans(spans: &mut Vec<(i32, i32)>) {
+    if spans.len() <= 1 {
+        return;
+    }
+    spans.sort_unstable();
+    let mut merged: Vec<(i32, i32)> = Vec::with_capacity(spans.len());
+    for &(start, end) in spans.iter() {
+        push_span(&mut merged, start, end);
+    }
+    *spans = merged;
+}
+
 #[derive(Clone, Debug)]
 pub struct RasterMask {
     pub angle_deg: f64,
@@ -654,7 +942,9 @@ pub fn rasterize_footprint(
     resolution: f64,
     clearance: f64,
 ) -> RasterMask {
-    assert!(resolution > 0.0);
+    assert!(resolution.is_finite() && resolution > 0.0);
+    assert!(angle_deg.is_finite());
+    assert!(clearance.is_finite() && clearance >= 0.0);
     let radians = angle_deg.to_radians();
     let (sin, cos) = radians.sin_cos();
     let rotated: Vec<Vec<Point>> = footprint
@@ -683,41 +973,32 @@ pub fn rasterize_footprint(
         bounds.max_y = bounds.max_y.max(point.y);
     }
 
-    let min_ix = (bounds.min_x / resolution - 0.5).floor() as i32;
-    let max_ix = (bounds.max_x / resolution - 0.5).ceil() as i32;
-    let min_iy = (bounds.min_y / resolution - 0.5).floor() as i32;
-    let max_iy = (bounds.max_y / resolution - 0.5).ceil() as i32;
-    let mut physical_pixels = HashSet::new();
-    for iy in min_iy..=max_iy {
-        let y = (f64::from(iy) + 0.5) * resolution;
-        for ix in min_ix..=max_ix {
-            let x = (f64::from(ix) + 0.5) * resolution;
-            if point_in_loops(Point { x, y }, &rotated) {
-                physical_pixels.insert((ix, iy));
-            }
-        }
+    let pixel_range = |bounds: &Rect| {
+        (
+            (bounds.min_x / resolution - 0.5).floor() as i32,
+            (bounds.max_x / resolution - 0.5).ceil() as i32,
+            (bounds.min_y / resolution - 0.5).floor() as i32,
+            (bounds.max_y / resolution - 0.5).ceil() as i32,
+        )
+    };
+    let range = pixel_range(&bounds);
+    let mut physical_pixels = SpanRaster::scanline(&rotated, resolution, range);
+    if physical_pixels.rows.iter().all(Vec::is_empty) {
+        let min_x = (bounds.min_x / resolution).floor() as i32;
+        let max_x = (bounds.max_x / resolution).ceil() as i32;
+        let min_y = (bounds.min_y / resolution).floor() as i32;
+        let max_y = (bounds.max_y / resolution).ceil() as i32;
+        physical_pixels = SpanRaster {
+            min_y,
+            rows: vec![vec![(min_x, max_x.max(min_x + 1))]; (max_y - min_y).max(1) as usize],
+        };
     }
 
     let radius = (clearance * 0.5 / resolution).ceil() as i32;
-    let dilate = |pixels: &HashSet<(i32, i32)>| {
-        let mut grown = pixels.clone();
-        if radius > 0 {
-            for &(x, y) in pixels {
-                for dy in -radius..=radius {
-                    for dx in -radius..=radius {
-                        if dx * dx + dy * dy <= radius * radius {
-                            grown.insert((x + dx, y + dy));
-                        }
-                    }
-                }
-            }
-        }
-        grown
-    };
-    let clearance_pixels = dilate(&physical_pixels);
+    let clearance_pixels = physical_pixels.dilate(radius);
 
-    let body_pixels: HashSet<(i32, i32)> = if footprint.body_loops.is_empty() {
-        physical_pixels.clone()
+    let body_clearance_pixels = if footprint.body_loops.is_empty() {
+        clearance_pixels.clone()
     } else {
         let rotated_body: Vec<Vec<Point>> = footprint
             .body_loops
@@ -732,23 +1013,13 @@ pub fn rasterize_footprint(
                     .collect()
             })
             .collect();
-        let mut body = HashSet::new();
-        for iy in min_iy..=max_iy {
-            let y = (f64::from(iy) + 0.5) * resolution;
-            for ix in min_ix..=max_ix {
-                let x = (f64::from(ix) + 0.5) * resolution;
-                if point_in_loops(Point { x, y }, &rotated_body) {
-                    body.insert((ix, iy));
-                }
-            }
-        }
-        if body.is_empty() {
-            physical_pixels.clone()
+        let body = SpanRaster::scanline(&rotated_body, resolution, range);
+        if body.rows.iter().all(Vec::is_empty) {
+            clearance_pixels.clone()
         } else {
-            body
+            body.dilate(radius)
         }
     };
-    let body_clearance_pixels = dilate(&body_pixels);
 
     let (bed_physical_pixels, bed_physical_bounds) = match &footprint.bed_loops {
         None => (physical_pixels.clone(), bounds),
@@ -777,35 +1048,24 @@ pub fn rasterize_footprint(
                 bed_bounds.max_x = bed_bounds.max_x.max(point.x);
                 bed_bounds.max_y = bed_bounds.max_y.max(point.y);
             }
-            let bed_min_ix = (bed_bounds.min_x / resolution - 0.5).floor() as i32;
-            let bed_max_ix = (bed_bounds.max_x / resolution - 0.5).ceil() as i32;
-            let bed_min_iy = (bed_bounds.min_y / resolution - 0.5).floor() as i32;
-            let bed_max_iy = (bed_bounds.max_y / resolution - 0.5).ceil() as i32;
-            let mut pixels = physical_pixels.clone();
-            for iy in bed_min_iy..=bed_max_iy {
-                let y = (f64::from(iy) + 0.5) * resolution;
-                for ix in bed_min_ix..=bed_max_ix {
-                    let x = (f64::from(ix) + 0.5) * resolution;
-                    if pixels.contains(&(ix, iy))
-                        || point_in_loops(Point { x, y }, &rotated_bed)
-                    {
-                        pixels.insert((ix, iy));
-                    }
-                }
-            }
-            (pixels, bed_bounds)
+            let bed_only = SpanRaster::scanline(&rotated_bed, resolution, pixel_range(&bed_bounds));
+            bed_bounds.min_x = bed_bounds.min_x.min(bounds.min_x);
+            bed_bounds.min_y = bed_bounds.min_y.min(bounds.min_y);
+            bed_bounds.max_x = bed_bounds.max_x.max(bounds.max_x);
+            bed_bounds.max_y = bed_bounds.max_y.max(bounds.max_y);
+            (physical_pixels.union(&bed_only), bed_bounds)
         }
     };
-    let bed_clearance_pixels = dilate(&bed_physical_pixels);
+    let bed_clearance_pixels = bed_physical_pixels.dilate(radius);
 
     RasterMask {
         angle_deg,
         resolution,
-        physical: PixelMask::from_pixels(&physical_pixels),
-        clearance: PixelMask::from_pixels(&clearance_pixels),
-        body_clearance: PixelMask::from_pixels(&body_clearance_pixels),
-        bed_physical: PixelMask::from_pixels(&bed_physical_pixels),
-        bed_clearance: PixelMask::from_pixels(&bed_clearance_pixels),
+        physical: PixelMask::from_spans(&physical_pixels),
+        clearance: PixelMask::from_spans(&clearance_pixels),
+        body_clearance: PixelMask::from_spans(&body_clearance_pixels),
+        bed_physical: PixelMask::from_spans(&bed_physical_pixels),
+        bed_clearance: PixelMask::from_spans(&bed_clearance_pixels),
         bed_physical_bounds,
         physical_bounds: bounds,
     }
@@ -832,39 +1092,6 @@ pub fn point_in_footprint(loops: &[Vec<Point>], x: f64, y: f64) -> bool {
     point_in_loops(Point { x, y }, loops)
 }
 
-/// Occupancy of an in-progress layout under the two-zone rule: a body keeps clearance from
-/// anything foreign, while support structures may touch other supports. Placement collides
-/// when its full patch (dilated) meets a placed body, or its own body meets any placed full
-/// patch — symmetric, so support-on-support contact passes while body-on-anything fails.
-struct TwoZoneOccupancy {
-    bodies: BitGrid,
-    fulls: BitGrid,
-}
-
-impl TwoZoneOccupancy {
-    fn new(width: usize, height: usize) -> Self {
-        Self {
-            bodies: BitGrid::new(width, height),
-            fulls: BitGrid::new(width, height),
-        }
-    }
-
-    fn collides(&self, mask: &RasterMask, x: i32, y: i32) -> bool {
-        self.bodies.collides(&mask.clearance, x, y)
-            || self.fulls.collides(&mask.body_clearance, x, y)
-    }
-
-    fn add(&mut self, mask: &RasterMask, x: i32, y: i32) {
-        self.bodies.add(&mask.body_clearance, x, y);
-        self.fulls.add(&mask.clearance, x, y);
-    }
-
-    /// Full-patch contact, used for the greedy heuristic's "hug your neighbours" score.
-    fn full_touches(&self, mask: &RasterMask, x: i32, y: i32) -> bool {
-        self.fulls.collides(&mask.clearance, x, y)
-    }
-}
-
 pub fn masks_overlap(a: &PixelMask, a_x: i32, a_y: i32, b: &PixelMask, b_x: i32, b_y: i32) -> bool {
     let a_min_x = a.min_x + a_x;
     let a_min_y = a.min_y + a_y;
@@ -877,14 +1104,21 @@ pub fn masks_overlap(a: &PixelMask, a_x: i32, a_y: i32, b: &PixelMask, b_x: i32,
     if a_max_x <= b_min_x || b_max_x <= a_min_x || a_max_y <= b_min_y || b_max_y <= a_min_y {
         return false;
     }
-    let (small, sx, sy, other, ox, oy) = if a.pixel_count <= b.pixel_count {
-        (a, a_x, a_y, b, b_x, b_y)
-    } else {
-        (b, b_x, b_y, a, a_x, a_y)
-    };
-    small
-        .pixels()
-        .any(|(x, y)| other.contains_local(x + sx - ox, y + sy - oy))
+    // Word-parallel: for each shared row, compare every word of `a` against the 64 bits of
+    // `b` that sit under it.
+    let first_row = a_min_y.max(b_min_y);
+    let last_row = a_max_y.min(b_max_y);
+    let offset = i64::from(a_min_x - b_min_x);
+    for y in first_row..last_row {
+        let a_row = &a.rows[(y - a_min_y) as usize];
+        let b_row = &b.rows[(y - b_min_y) as usize];
+        for (index, &word) in a_row.iter().enumerate() {
+            if word != 0 && word & bits_at(b_row, offset + index as i64 * 64) != 0 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub fn placement_is_allowed(
@@ -904,12 +1138,43 @@ pub fn placement_is_allowed(
     {
         return false;
     }
-    !mask.bed_clearance.pixels().any(|(x, y)| {
-        let world_x = center_x + (f64::from(x) + 0.5) * mask.resolution;
-        let world_y = center_y + (f64::from(y) + 0.5) * mask.resolution;
-        exclusions.iter().any(|r| {
-            world_x >= r.min_x && world_x <= r.max_x && world_y >= r.min_y && world_y <= r.max_y
+    !bounds_hit_exclusion(bounds, center_x, center_y, 0.0, exclusions)
+        && !mask.bed_clearance.pixels().any(|(x, y)| {
+            let wx = center_x + (f64::from(x) + 0.5) * mask.resolution;
+            let wy = center_y + (f64::from(y) + 0.5) * mask.resolution;
+            exclusions
+                .iter()
+                .any(|r| wx >= r.min_x && wx <= r.max_x && wy >= r.min_y && wy <= r.max_y)
         })
+}
+
+/// BambuStudio's plate validation rejects an object whose AXIS-ALIGNED bounding box comes
+/// near a bed exclusion area — the silhouette is irrelevant there. A rotated goat can hold
+/// its silhouette 6 mm off the exclusion corner while its bbox still covers the zone, and
+/// the final slice then dies with "too close to exclusion area" after minutes of packing
+/// (a real 17-object P1S magnet plate, twice). Exclusion feasibility therefore measures the
+/// placement's rotated bbox — the patch ∪ silhouette extent, `bed_physical_bounds` — padded
+/// by the same clearance the pixel-based check used. Bed bounds stay silhouette-accurate;
+/// only exclusion checks take the bbox semantics. `x_px`/`y_px` are bed pixel coordinates
+/// (origin at `bed.min`, the coordinate space of the packing loops).
+fn aabb_hits_exclusion(options: &PackOptions, mask: &RasterMask, x_px: i32, y_px: i32) -> bool {
+    let origin_x = options.bed.min_x + f64::from(x_px) * options.resolution;
+    let origin_y = options.bed.min_y + f64::from(y_px) * options.resolution;
+    bounds_hit_exclusion(
+        mask.bed_physical_bounds,
+        origin_x,
+        origin_y,
+        options.clearance,
+        &options.exclusions,
+    )
+}
+
+fn bounds_hit_exclusion(bounds: Rect, x: f64, y: f64, pad: f64, exclusions: &[Rect]) -> bool {
+    exclusions.iter().any(|r| {
+        x + bounds.min_x - pad < r.max_x
+            && x + bounds.max_x + pad > r.min_x
+            && y + bounds.min_y - pad < r.max_y
+            && y + bounds.max_y + pad > r.min_y
     })
 }
 
@@ -920,14 +1185,12 @@ pub struct PackOptions {
     pub resolution: f64,
     pub clearance: f64,
     pub angle_step_deg: f64,
-    /// Number of independent randomized restarts. Each restart packs a full layout from scratch;
-    /// `candidates_per_step` positions are sampled per placed object *within* one restart, so
-    /// total search cost scales with `attempts × candidates_per_step`, not their ratio.
+    /// Deterministic search effort. All orientation pairs get a baseline pass; higher values
+    /// explore additional sweep directions and starting orientations, up to the finite portfolio.
     pub attempts: usize,
+    /// Compatibility field for older clients; free centers are now searched exhaustively.
     pub candidates_per_step: usize,
-    /// Stop once this many consecutive completed restarts have not improved the best object
-    /// count (0 = run all attempts). Dense plates usually plateau long before `attempts` runs
-    /// out, so this skips the tail of the search at no quality cost.
+    /// Compatibility field. The finite deterministic portfolio does not use racy stall stopping.
     pub stall_attempts: usize,
     /// Hard cap on objects per layout (0 = unlimited). The search itself stops when the bed
     /// is full; a cap is only for deliberately sparse plates or bounded slicing time.
@@ -936,6 +1199,7 @@ pub struct PackOptions {
     /// so a footprint measured at one orientation silently stops matching the printed patch
     /// once the model rotates; a locked orientation keeps every clone identical to the probe.
     pub lock_orientation: bool,
+    /// Retained in reports for compatibility; geometry, not a random seed, determines layouts.
     pub seed: u64,
 }
 
@@ -953,8 +1217,7 @@ pub struct PackResult {
     pub requested_clearance_mm: f64,
     pub angle_step_deg: f64,
     pub attempts: usize,
-    /// How many restarts actually ran: fewer than `attempts` when the stall limit stopped the
-    /// search early.
+    /// Number of deterministic sweep layouts evaluated (including the mandatory angle pass).
     pub attempts_run: usize,
     pub seed: u64,
 }
@@ -966,226 +1229,93 @@ struct GridPlacement {
     y: i32,
 }
 
-#[derive(Clone)]
-struct BitGrid {
-    width: usize,
-    height: usize,
-    words_per_row: usize,
-    rows: Vec<u64>,
-}
-
-impl BitGrid {
-    fn new(width: usize, height: usize) -> Self {
-        let words_per_row = width.div_ceil(64);
-        Self {
-            width,
-            height,
-            words_per_row,
-            rows: vec![0; words_per_row * height],
-        }
+fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), String> {
+    let valid_rect = |r: &Rect| {
+        [r.min_x, r.min_y, r.max_x, r.max_y]
+            .iter()
+            .all(|v| v.is_finite())
+            && r.min_x < r.max_x
+            && r.min_y < r.max_y
+    };
+    if !options.resolution.is_finite()
+        || options.resolution <= 0.0
+        || !options.clearance.is_finite()
+        || options.clearance < 0.0
+        || !options.angle_step_deg.is_finite()
+        || options.angle_step_deg <= 0.0
+        || options.angle_step_deg > 360.0
+        || !valid_rect(&options.bed)
+        || options.exclusions.iter().any(|r| !valid_rect(r))
+    {
+        return Err(
+            "invalid packing resolution, clearance, angle step or bed/exclusion bounds".to_owned(),
+        );
     }
-
-    fn collides(&self, mask: &PixelMask, center_x: i32, center_y: i32) -> bool {
-        let start_x = center_x + mask.min_x;
-        let start_y = center_y + mask.min_y;
-        if start_x < 0
-            || start_y < 0
-            || start_x + mask.width as i32 > self.width as i32
-            || start_y + mask.height as i32 > self.height as i32
-        {
-            return true;
-        }
-        let destination_word = start_x as usize / 64;
-        let shift = start_x as usize % 64;
-        for (source_row_index, source_row) in mask.rows.iter().enumerate() {
-            let destination_row = (start_y as usize + source_row_index) * self.words_per_row;
-            for (source_word_index, &source) in source_row.iter().enumerate() {
-                if source == 0 {
-                    continue;
-                }
-                let target = destination_row + destination_word + source_word_index;
-                if self.rows[target] & (source << shift) != 0 {
-                    return true;
-                }
-                if shift != 0 {
-                    let high = source >> (64 - shift);
-                    if high != 0 && self.rows[target + 1] & high != 0 {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+    if footprint.loops.is_empty()
+        || footprint
+            .loops
+            .iter()
+            .chain(&footprint.body_loops)
+            .chain(footprint.bed_loops.iter().flatten())
+            .any(|l| {
+                l.len() < 4
+                    || l.first() != l.last()
+                    || l.iter().any(|p| !p.x.is_finite() || !p.y.is_finite())
+            })
+    {
+        return Err("footprint must contain finite, closed polygon rings".to_owned());
     }
-
-    fn add(&mut self, mask: &PixelMask, center_x: i32, center_y: i32) {
-        let start_x = center_x + mask.min_x;
-        let start_y = center_y + mask.min_y;
-        debug_assert!(start_x >= 0 && start_y >= 0);
-        let destination_word = start_x as usize / 64;
-        let shift = start_x as usize % 64;
-        for (source_row_index, source_row) in mask.rows.iter().enumerate() {
-            let destination_row = (start_y as usize + source_row_index) * self.words_per_row;
-            for (source_word_index, &source) in source_row.iter().enumerate() {
-                if source == 0 {
-                    continue;
-                }
-                let target = destination_row + destination_word + source_word_index;
-                self.rows[target] |= source << shift;
-                if shift != 0 {
-                    let high = source >> (64 - shift);
-                    if high != 0 {
-                        self.rows[target + 1] |= high;
-                    }
-                }
-            }
-        }
+    if footprint
+        .loops
+        .iter()
+        .all(|l| polygon_area(l).abs() < 1e-12)
+    {
+        return Err("footprint has zero area".to_owned());
     }
-
-    fn fill_rect(&mut self, min_x: i32, min_y: i32, max_x: i32, max_y: i32) {
-        for y in min_y.max(0)..max_y.min(self.height as i32) {
-            for x in min_x.max(0)..max_x.min(self.width as i32) {
-                let index = y as usize * self.words_per_row + x as usize / 64;
-                self.rows[index] |= 1u64 << (x as usize % 64);
-            }
-        }
-    }
+    Ok(())
 }
 
 pub fn pack_footprint(footprint: &Footprint, options: &PackOptions) -> PackResult {
-    assert!(options.resolution > 0.0);
-    assert!(options.angle_step_deg > 0.0 && options.angle_step_deg <= 360.0);
-    let angle_count = if options.lock_orientation {
-        1
-    } else {
-        (360.0 / options.angle_step_deg).round() as usize
-    };
-    let masks: Vec<RasterMask> = (0..angle_count)
-        .into_par_iter()
-        .map(|index| {
-            rasterize_footprint(
-                footprint,
-                index as f64 * options.angle_step_deg,
-                options.resolution,
-                options.clearance,
-            )
-        })
-        .collect();
-    let attempts = options.attempts.max(1);
-    let stall = options.stall_attempts;
-    let completed = std::sync::atomic::AtomicUsize::new(0);
-    let best_seen = std::sync::atomic::AtomicUsize::new(0);
-    let best_attempt = std::sync::atomic::AtomicUsize::new(0);
-    let since_improvement = std::sync::atomic::AtomicUsize::new(0);
-    let stop_requested = std::sync::atomic::AtomicBool::new(false);
-    let progress_interval = (attempts / 20).max(1);
-    let best = (0..attempts)
-        .into_par_iter()
-        .map(|attempt| {
-            if stall > 0 && stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
-                return Vec::new();
-            }
-            let result = if attempt % 2 == 0 {
-                drop_attempt(&masks, options, attempt)
-            } else {
-                greedy_attempt(&masks, options, attempt)
-            };
-            // Object count is the only objective (bbox area is a tiebreak inside
-            // better_layout), so an equal-count restart counts as "no improvement" for the
-            // stall limit. Attempts complete out of order under rayon; a racy reset/increment
-            // pair can only shift the stop by one in-flight restart, which is fine for a
-            // heuristic whose tail is being skipped.
-            if result.len() > best_seen.fetch_max(result.len(), std::sync::atomic::Ordering::Relaxed)
-            {
-                best_attempt.store(attempt, std::sync::atomic::Ordering::Relaxed);
-                since_improvement.store(0, std::sync::atomic::Ordering::Relaxed);
-            } else if stall > 0 {
-                since_improvement.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if done % progress_interval == 0 || done == attempts {
-                eprintln!(
-                    "pack_footprint: {done}/{attempts} attempts, best so far: {} objects",
-                    best_seen.load(std::sync::atomic::Ordering::Relaxed)
-                );
-            }
-            if stall > 0
-                && since_improvement.load(std::sync::atomic::Ordering::Relaxed) >= stall
-                && !stop_requested.swap(true, std::sync::atomic::Ordering::Relaxed)
-            {
-                eprintln!(
-                    "pack_footprint: no improvement in the last {stall} attempts; stopping early \
-                     (best so far: {} objects)",
-                    best_seen.load(std::sync::atomic::Ordering::Relaxed)
-                );
-            }
-            result
-        })
-        .reduce(Vec::new, |a, b| better_layout(a, b, &masks));
-    let attempts_run = completed.load(std::sync::atomic::Ordering::Relaxed);
-    eprintln!(
-        "pack_footprint: best layout: {} objects (found at attempt {}, {attempts_run}/{attempts} \
-         attempts run)",
-        best.len(),
-        best_attempt.load(std::sync::atomic::Ordering::Relaxed) + 1,
+    assert!(options.resolution.is_finite() && options.resolution > 0.0);
+    assert!(
+        options.angle_step_deg.is_finite()
+            && options.angle_step_deg > 0.0
+            && options.angle_step_deg <= 360.0
     );
-
-    PackResult {
-        placements: best
-            .iter()
-            .map(|p| PackedPlacement {
-                x_mm: options.bed.min_x + f64::from(p.x) * options.resolution,
-                y_mm: options.bed.min_y + f64::from(p.y) * options.resolution,
-                angle_deg: masks[p.mask].angle_deg,
-            })
-            .collect(),
-        resolution_mm: options.resolution,
-        requested_clearance_mm: options.clearance,
-        angle_step_deg: options.angle_step_deg,
-        attempts,
-        attempts_run,
-        seed: options.seed,
-    }
+    check_pack_input(footprint, options).expect("invalid packing input");
+    packing_search::search(footprint, options)
 }
 
-/// Deterministic rectangular-grid baseline: tiles the bed row by row with the footprint's
-/// clearance-rasterized bounding box, nudging one pixel at a time around exclusions. Tries the
-/// silhouette both ways up when it is not square and keeps the orientation that fits more
-/// objects. Small models without intricate silhouettes pack at least as densely as a grid of
-/// their boxes — callers run this first and keep whichever of grid/random search holds more
-/// objects, which also makes results reproducible whenever the grid wins.
+/// Deterministic rectangular-grid baseline in the same canonical frame as the search.
+/// Uses two-zone pitches and checks every placed neighbour (including distant islands).
+/// The physical extent must stay on the bed; clearance is only between foreign structures.
 pub fn grid_layout(footprint: &Footprint, options: &PackOptions) -> PackResult {
+    check_pack_input(footprint, options).expect("invalid packing input");
+    let frame = packing_search::Frame::new(footprint, options.lock_orientation);
+    let mut result = grid_layout_inner(&frame.footprint, options);
+    result.placements = result
+        .placements
+        .iter()
+        .map(|p| frame.to_input(p))
+        .collect();
+    result
+}
+
+fn grid_layout_inner(footprint: &Footprint, options: &PackOptions) -> PackResult {
     assert!(options.resolution > 0.0);
     let mut best: Vec<GridPlacement> = Vec::new();
     let mut best_angle = 0.0f64;
-    let orientations: &[f64] = if options.lock_orientation || (footprint.width - footprint.height).abs() < 1e-9 {
-        &[0.0]
-    } else {
-        &[0.0, 90.0]
-    };
+    let orientations: &[f64] =
+        if options.lock_orientation || (footprint.width - footprint.height).abs() < 1e-9 {
+            &[0.0]
+        } else {
+            &[0.0, 90.0]
+        };
     for &angle in orientations {
         let mask = rasterize_footprint(footprint, angle, options.resolution, options.clearance);
-        let bed_width_pixels =
-            ((options.bed.max_x - options.bed.min_x) / options.resolution).ceil() as usize;
-        let bed_height_pixels =
-            ((options.bed.max_y - options.bed.min_y) / options.resolution).ceil() as usize;
-        let margin = [
-            mask.bed_clearance.min_x.unsigned_abs(),
-            (mask.bed_clearance.min_x + mask.bed_clearance.width as i32).unsigned_abs(),
-            mask.bed_clearance.min_y.unsigned_abs(),
-            (mask.bed_clearance.min_y + mask.bed_clearance.height as i32).unsigned_abs(),
-        ]
-        .into_iter()
-        .max()
-        .unwrap_or(0) as i32;
-        let grid_width = bed_width_pixels + 2 * margin as usize;
-        let grid_height = bed_height_pixels + 2 * margin as usize;
-        let excluded = exclusion_grid(options, grid_width, grid_height, margin);
-
         // The lattice pitch per axis is the SMALLEST whole-pixel shift where two copies of
-        // the mask satisfy the two-zone rule — not the full bounding box. Identical cells on
-        // that pitch cannot conflict anywhere on the lattice, but supports of neighbouring
-        // cells may legally interlock, which is where the density comes from.
+        // the mask satisfy the two-zone rule — not the full bounding box. Distant lattice
+        // neighbours can still conflict for disconnected shapes; every cell is checked below.
         let pair_collides = |dx: i32, dy: i32| {
             masks_overlap(&mask.clearance, 0, 0, &mask.body_clearance, dx, dy)
                 || masks_overlap(&mask.body_clearance, 0, 0, &mask.clearance, dx, dy)
@@ -1203,26 +1333,35 @@ pub fn grid_layout(footprint: &Footprint, options: &PackOptions) -> PackResult {
         }
 
         let mut placed: Vec<GridPlacement> = Vec::new();
-        let mut y = -mask.bed_clearance.min_y;
-        while y + mask.bed_clearance.min_y + mask.bed_clearance.height as i32
-            <= bed_height_pixels as i32
-        {
-            let mut x = -mask.bed_clearance.min_x;
-            while x + mask.bed_clearance.min_x + mask.bed_clearance.width as i32
-                <= bed_width_pixels as i32
-            {
+        let min_x = (-mask.bed_physical_bounds.min_x / options.resolution - 1e-9).ceil() as i32;
+        let min_y = (-mask.bed_physical_bounds.min_y / options.resolution - 1e-9).ceil() as i32;
+        let max_x = ((options.bed.max_x - options.bed.min_x - mask.bed_physical_bounds.max_x)
+            / options.resolution
+            + 1e-9)
+            .floor() as i32;
+        let max_y = ((options.bed.max_y - options.bed.min_y - mask.bed_physical_bounds.max_y)
+            / options.resolution
+            + 1e-9)
+            .floor() as i32;
+        let mut y = min_y;
+        while y <= max_y {
+            let mut x = min_x;
+            while x <= max_x {
                 // Bed membership follows the patch+silhouette extent; the dilated mask may
                 // poke past the bed edge, the physical model may not.
                 let on_bed = mask.bed_physical_bounds.min_x + f64::from(x) * options.resolution
-                    >= -f64::EPSILON
+                    >= -1e-7
                     && mask.bed_physical_bounds.max_x + f64::from(x) * options.resolution
-                        <= options.bed.max_x - options.bed.min_x + f64::EPSILON
-                    && mask.bed_physical_bounds.min_y + f64::from(y) * options.resolution
-                        >= -f64::EPSILON
+                        <= options.bed.max_x - options.bed.min_x + 1e-7
+                    && mask.bed_physical_bounds.min_y + f64::from(y) * options.resolution >= -1e-7
                     && mask.bed_physical_bounds.max_y + f64::from(y) * options.resolution
-                        <= options.bed.max_y - options.bed.min_y + f64::EPSILON;
-                let (grid_x, grid_y) = (x + margin, y + margin);
-                if on_bed && !excluded.collides(&mask.bed_clearance, grid_x, grid_y) {
+                        <= options.bed.max_y - options.bed.min_y + 1e-7;
+                // Exclusions follow the placement's bbox (see aabb_hits_exclusion); bed
+                // bounds stay on the patch+silhouette extent above.
+                if on_bed
+                    && !aabb_hits_exclusion(options, &mask, x, y)
+                    && !placed.iter().any(|p| pair_collides(x - p.x, y - p.y))
+                {
                     placed.push(GridPlacement { mask: 0, x, y });
                 }
                 x += pitch_x;
@@ -1256,155 +1395,6 @@ pub fn grid_layout(footprint: &Footprint, options: &PackOptions) -> PackResult {
         attempts_run: 1,
         seed: options.seed,
     }
-}
-
-fn grid_dimensions_and_margin(masks: &[RasterMask], options: &PackOptions) -> (usize, usize, i32) {
-    let bed_width_pixels =
-        ((options.bed.max_x - options.bed.min_x) / options.resolution).ceil() as usize;
-    let bed_height_pixels =
-        ((options.bed.max_y - options.bed.min_y) / options.resolution).ceil() as usize;
-    let margin = masks
-        .iter()
-        .map(|m| {
-            m.clearance
-                .min_x
-                .unsigned_abs()
-                .max((m.clearance.min_x + m.clearance.width as i32).unsigned_abs())
-                .max(m.clearance.min_y.unsigned_abs())
-                .max((m.clearance.min_y + m.clearance.height as i32).unsigned_abs())
-        })
-        .max()
-        .unwrap_or(8) as i32
-        + 4;
-    (bed_width_pixels, bed_height_pixels, margin)
-}
-
-fn exclusion_grid(options: &PackOptions, width: usize, height: usize, margin: i32) -> BitGrid {
-    let mut excluded = BitGrid::new(width, height);
-    for rect in &options.exclusions {
-        let min_x = ((rect.min_x - options.bed.min_x) / options.resolution).floor() as i32 + margin;
-        let min_y = ((rect.min_y - options.bed.min_y) / options.resolution).floor() as i32 + margin;
-        let max_x = ((rect.max_x - options.bed.min_x) / options.resolution).ceil() as i32 + margin;
-        let max_y = ((rect.max_y - options.bed.min_y) / options.resolution).ceil() as i32 + margin;
-        excluded.fill_rect(min_x, min_y, max_x, max_y);
-    }
-    excluded
-}
-
-fn drop_attempt(masks: &[RasterMask], options: &PackOptions, attempt: usize) -> Vec<GridPlacement> {
-    let (bed_width_pixels, bed_height_pixels, margin) = grid_dimensions_and_margin(masks, options);
-    let grid_width = bed_width_pixels + 2 * margin as usize;
-    let grid_height = bed_height_pixels + 2 * margin as usize;
-    let mut occupied = TwoZoneOccupancy::new(grid_width, grid_height);
-    let excluded = exclusion_grid(options, grid_width, grid_height, margin);
-    let mut rng = SmallRng::seed_from_u64(
-        options.seed.wrapping_add(0xd1b5_4a32_d192_ed03)
-            ^ (attempt as u64).wrapping_mul(0x94d0_49bb_1331_11eb),
-    );
-    let mut placed: Vec<GridPlacement> = Vec::new();
-    loop {
-        let mut candidates: Vec<(i64, GridPlacement)> = Vec::new();
-        let samples = (options.candidates_per_step / 4).max(120);
-        for _ in 0..samples {
-            let mask_index = rng.random_range(0..masks.len());
-            let mask = &masks[mask_index];
-            let min_x = ((-mask.bed_physical_bounds.min_x) / options.resolution).ceil() as i32;
-            let max_x = ((options.bed.max_x - options.bed.min_x - mask.bed_physical_bounds.max_x)
-                / options.resolution)
-                .floor() as i32;
-            let min_y = ((-mask.bed_physical_bounds.min_y) / options.resolution).ceil() as i32;
-            let max_y = ((options.bed.max_y - options.bed.min_y - mask.bed_physical_bounds.max_y)
-                / options.resolution)
-                .floor() as i32;
-            if min_x > max_x || min_y > max_y {
-                continue;
-            }
-            let x = if rng.random_bool(0.25) {
-                let step = rng.random_range(0..=4).min(max_x - min_x);
-                if rng.random_bool(0.5) {
-                    min_x + step
-                } else {
-                    max_x - step
-                }
-            } else {
-                rng.random_range(min_x..=max_x)
-            };
-            let from_top = rng.random_bool(0.12);
-            let y_iter: Box<dyn Iterator<Item = i32>> = if from_top {
-                Box::new((min_y..=max_y).rev())
-            } else {
-                Box::new(min_y..=max_y)
-            };
-            let mut found = None;
-            for y in y_iter {
-                let gx = x + margin;
-                let gy = y + margin;
-                if !occupied.collides(mask, gx, gy)
-                    && !excluded.collides(&mask.bed_clearance, gx, gy)
-                {
-                    found = Some(y);
-                    break;
-                }
-            }
-            let Some(y) = found else { continue };
-            let gx = x + margin;
-            let gy = y + margin;
-            let contact = [
-                (-1, 0),
-                (1, 0),
-                (0, -1),
-                (0, 1),
-                (-1, -1),
-                (1, 1),
-                (-1, 1),
-                (1, -1),
-            ]
-            .into_iter()
-            .filter(|&(dx, dy)| occupied.full_touches(mask, gx + dx, gy + dy))
-            .count() as i64;
-            let new_top = placed
-                .iter()
-                .map(|p| f64::from(p.y) + masks[p.mask].physical_bounds.max_y / options.resolution)
-                .chain(std::iter::once(
-                    f64::from(y) + mask.physical_bounds.max_y / options.resolution,
-                ))
-                .fold(f64::NEG_INFINITY, f64::max);
-            let edge = i64::from((x - min_x).min(max_x - x));
-            let score = -(new_top * 1_000_000.0) as i64 + contact * 50_000 - edge * 20
-                + rng.random_range(0..20_000i64);
-            candidates.push((
-                score,
-                GridPlacement {
-                    mask: mask_index,
-                    x,
-                    y,
-                },
-            ));
-        }
-        if candidates.is_empty() {
-            break;
-        }
-        candidates.sort_unstable_by_key(|candidate| std::cmp::Reverse(candidate.0));
-        let choice_limit = candidates.len().min(12);
-        let choice = if placed.len() < 3 {
-            rng.random_range(0..choice_limit)
-        } else if rng.random_bool(0.75) {
-            0
-        } else {
-            rng.random_range(0..choice_limit)
-        };
-        let candidate = candidates[choice].1;
-        occupied.add(
-            &masks[candidate.mask],
-            candidate.x + margin,
-            candidate.y + margin,
-        );
-        placed.push(candidate);
-        if placed.len() >= 128 {
-            break;
-        }
-    }
-    placed
 }
 
 fn better_layout(
@@ -1453,210 +1443,100 @@ fn layout_bbox_area(layout: &[GridPlacement], masks: &[RasterMask]) -> f64 {
     (bounds.max_x - bounds.min_x) * (bounds.max_y - bounds.min_y)
 }
 
-fn greedy_attempt(
-    masks: &[RasterMask],
-    options: &PackOptions,
-    attempt: usize,
-) -> Vec<GridPlacement> {
-    let (bed_width_pixels, bed_height_pixels, margin) = grid_dimensions_and_margin(masks, options);
-    let mut occupied = TwoZoneOccupancy::new(
-        bed_width_pixels + 2 * margin as usize,
-        bed_height_pixels + 2 * margin as usize,
-    );
-    let excluded = exclusion_grid(
-        options,
-        bed_width_pixels + 2 * margin as usize,
-        bed_height_pixels + 2 * margin as usize,
-        margin,
-    );
-    let mut rng = SmallRng::seed_from_u64(
-        options.seed ^ (attempt as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15),
-    );
-    let mut placed: Vec<GridPlacement> = Vec::new();
-    loop {
-        let mut best: Option<(i64, GridPlacement)> = None;
-        let samples = options.candidates_per_step.max(32);
-        for _ in 0..samples {
-            let mask_index = rng.random_range(0..masks.len());
-            let mask = &masks[mask_index];
-            let min_x = ((-mask.bed_physical_bounds.min_x) / options.resolution).ceil() as i32;
-            let max_x = (((options.bed.max_x - options.bed.min_x) - mask.bed_physical_bounds.max_x)
-                / options.resolution)
-                .floor() as i32;
-            let min_y = ((-mask.bed_physical_bounds.min_y) / options.resolution).ceil() as i32;
-            let max_y = (((options.bed.max_y - options.bed.min_y) - mask.bed_physical_bounds.max_y)
-                / options.resolution)
-                .floor() as i32;
-            if min_x > max_x || min_y > max_y {
-                continue;
-            }
-            let (x, y) =
-                sample_position(&mut rng, mask, masks, &placed, min_x, max_x, min_y, max_y);
-            let grid_x = x + margin;
-            let grid_y = y + margin;
-            if occupied.collides(mask, grid_x, grid_y)
-                || excluded.collides(&mask.bed_clearance, grid_x, grid_y)
-            {
-                continue;
-            }
-            let contact = [
-                (-1, 0),
-                (1, 0),
-                (0, -1),
-                (0, 1),
-                (-1, -1),
-                (1, 1),
-                (-1, 1),
-                (1, -1),
-            ]
-            .into_iter()
-            .filter(|&(dx, dy)| occupied.full_touches(mask, grid_x + dx, grid_y + dy))
-            .count() as i64;
-            let center_dx = i64::from(x - (bed_width_pixels as i32 / 2));
-            let center_dy = i64::from(y - (bed_height_pixels as i32 / 2));
-            let border_distance =
-                i64::from((x - min_x).min(max_x - x).min(y - min_y).min(max_y - y));
-            let noise = rng.random_range(0..10_000i64);
-            let score = contact * 10_000_000
-                - border_distance * 2_000
-                - (center_dx.abs() + center_dy.abs())
-                + noise;
-            let candidate = GridPlacement {
-                mask: mask_index,
-                x,
-                y,
-            };
-            if best
-                .as_ref()
-                .is_none_or(|(best_score, _)| score > *best_score)
-            {
-                best = Some((score, candidate));
-            }
-        }
-        let Some((_, candidate)) = best else {
-            break;
-        };
-        occupied.add(
-            &masks[candidate.mask],
-            candidate.x + margin,
-            candidate.y + margin,
-        );
-        placed.push(candidate);
-        if placed.len() >= 128 {
-            break;
-        }
-    }
-    placed
-}
-
-#[allow(clippy::too_many_arguments)]
-fn sample_position(
-    rng: &mut SmallRng,
-    candidate: &RasterMask,
-    masks: &[RasterMask],
-    placed: &[GridPlacement],
-    min_x: i32,
-    max_x: i32,
-    min_y: i32,
-    max_y: i32,
-) -> (i32, i32) {
-    if placed.is_empty() || rng.random_bool(0.45) {
-        if rng.random_bool(0.35) {
-            match rng.random_range(0..4) {
-                0 => (
-                    min_x + rng.random_range(0..=3).min(max_x - min_x),
-                    rng.random_range(min_y..=max_y),
-                ),
-                1 => (
-                    max_x - rng.random_range(0..=3).min(max_x - min_x),
-                    rng.random_range(min_y..=max_y),
-                ),
-                2 => (
-                    rng.random_range(min_x..=max_x),
-                    min_y + rng.random_range(0..=3).min(max_y - min_y),
-                ),
-                _ => (
-                    rng.random_range(min_x..=max_x),
-                    max_y - rng.random_range(0..=3).min(max_y - min_y),
-                ),
-            }
-        } else {
-            (
-                rng.random_range(min_x..=max_x),
-                rng.random_range(min_y..=max_y),
-            )
-        }
-    } else {
-        let anchor = placed[rng.random_range(0..placed.len())];
-        let anchor_mask = &masks[anchor.mask];
-        let intrusion = rng.random_range(-12..=40);
-        let (x, y) = match rng.random_range(0..4) {
-            0 => (
-                anchor.x + anchor_mask.clearance.min_x
-                    - (candidate.clearance.min_x + candidate.clearance.width as i32)
-                    + intrusion,
-                anchor.y
-                    + rng.random_range(
-                        -(candidate.clearance.height as i32)..=anchor_mask.clearance.height as i32,
-                    ),
-            ),
-            1 => (
-                anchor.x + anchor_mask.clearance.min_x + anchor_mask.clearance.width as i32
-                    - candidate.clearance.min_x
-                    - intrusion,
-                anchor.y
-                    + rng.random_range(
-                        -(candidate.clearance.height as i32)..=anchor_mask.clearance.height as i32,
-                    ),
-            ),
-            2 => (
-                anchor.x
-                    + rng.random_range(
-                        -(candidate.clearance.width as i32)..=anchor_mask.clearance.width as i32,
-                    ),
-                anchor.y + anchor_mask.clearance.min_y
-                    - (candidate.clearance.min_y + candidate.clearance.height as i32)
-                    + intrusion,
-            ),
-            _ => (
-                anchor.x
-                    + rng.random_range(
-                        -(candidate.clearance.width as i32)..=anchor_mask.clearance.width as i32,
-                    ),
-                anchor.y + anchor_mask.clearance.min_y + anchor_mask.clearance.height as i32
-                    - candidate.clearance.min_y
-                    - intrusion,
-            ),
-        };
-        (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
-    }
-}
-
 pub fn validate_result(
     footprint: &Footprint,
     options: &PackOptions,
     result: &PackResult,
 ) -> Result<(), String> {
-    let masks: Vec<RasterMask> = result
+    check_pack_input(footprint, options)?;
+    if options.max_objects > 0 && result.placements.len() > options.max_objects {
+        return Err("layout exceeds max_objects".to_owned());
+    }
+    if result
+        .placements
+        .iter()
+        .any(|p| !p.x_mm.is_finite() || !p.y_mm.is_finite() || !p.angle_deg.is_finite())
+    {
+        return Err("layout contains non-finite placement coordinates".to_owned());
+    }
+    if options.lock_orientation
+        && result
+            .placements
+            .iter()
+            .any(|p| p.angle_deg.rem_euclid(360.0).abs() > 1e-7)
+    {
+        return Err("layout violates locked orientation".to_owned());
+    }
+    let frame = packing_search::Frame::new(footprint, options.lock_orientation);
+    let footprint = &frame.footprint;
+    let mut canonical_result = result.clone();
+    canonical_result.placements = result
+        .placements
+        .iter()
+        .map(|p| frame.to_canonical(p))
+        .collect();
+    let result = &canonical_result;
+    // Keep the fractional phase of imported/manual placements. Rounding every centre
+    // independently can turn a real overlap into two merely touching raster masks.
+    let centers: Vec<_> = result
         .placements
         .iter()
         .map(|p| {
-            rasterize_footprint(
-                footprint,
-                p.angle_deg,
-                options.resolution,
-                options.clearance,
+            (
+                ((p.x_mm - options.bed.min_x) / options.resolution).round() as i32,
+                ((p.y_mm - options.bed.min_y) / options.resolution).round() as i32,
             )
         })
         .collect();
-    for (index, (placement, mask)) in result.placements.iter().zip(&masks).enumerate() {
-        let px = ((placement.x_mm - options.bed.min_x) / options.resolution).round() as i32;
-        let py = ((placement.y_mm - options.bed.min_y) / options.resolution).round() as i32;
+    let masks: Vec<RasterMask> = result
+        .placements
+        .iter()
+        .zip(&centers)
+        .map(|(p, &(x, y))| {
+            let dx = p.x_mm - options.bed.min_x - f64::from(x) * options.resolution;
+            let dy = p.y_mm - options.bed.min_y - f64::from(y) * options.resolution;
+            if dx.abs() < 1e-7 && dy.abs() < 1e-7 {
+                return rasterize_footprint(
+                    footprint,
+                    p.angle_deg,
+                    options.resolution,
+                    options.clearance,
+                );
+            }
+            let (s, c) = p.angle_deg.to_radians().sin_cos();
+            let offset = Point {
+                x: dx * c + dy * s,
+                y: -dx * s + dy * c,
+            };
+            let shift = |loops: &[Vec<Point>]| {
+                loops
+                    .iter()
+                    .map(|l| {
+                        l.iter()
+                            .map(|p| Point {
+                                x: p.x + offset.x,
+                                y: p.y + offset.y,
+                            })
+                            .collect()
+                    })
+                    .collect()
+            };
+            let mut shifted = footprint.clone();
+            shifted.loops = shift(&footprint.loops);
+            shifted.body_loops = shift(&footprint.body_loops);
+            shifted.bed_loops = footprint.bed_loops.as_ref().map(|l| shift(l));
+            rasterize_footprint(&shifted, p.angle_deg, options.resolution, options.clearance)
+        })
+        .collect();
+    for (index, mask) in masks.iter().enumerate() {
+        let (px, py) = centers[index];
+        let x_mm = options.bed.min_x + f64::from(px) * options.resolution;
+        let y_mm = options.bed.min_y + f64::from(py) * options.resolution;
         let translated_bounds = Rect::new(
-            placement.x_mm + mask.bed_physical_bounds.min_x,
-            placement.y_mm + mask.bed_physical_bounds.min_y,
-            placement.x_mm + mask.bed_physical_bounds.max_x,
-            placement.y_mm + mask.bed_physical_bounds.max_y,
+            x_mm + mask.bed_physical_bounds.min_x,
+            y_mm + mask.bed_physical_bounds.min_y,
+            x_mm + mask.bed_physical_bounds.max_x,
+            y_mm + mask.bed_physical_bounds.max_y,
         );
         if translated_bounds.min_x < options.bed.min_x - 1e-6
             || translated_bounds.min_y < options.bed.min_y - 1e-6
@@ -1667,24 +1547,19 @@ pub fn validate_result(
                 "placement {index} leaves bed: {translated_bounds:?}"
             ));
         }
-        for exclusion in &options.exclusions {
-            if mask.bed_clearance.pixels().any(|(x, y)| {
-                let wx = placement.x_mm + (f64::from(x) + 0.5) * options.resolution;
-                let wy = placement.y_mm + (f64::from(y) + 0.5) * options.resolution;
-                wx >= exclusion.min_x
-                    && wx <= exclusion.max_x
-                    && wy >= exclusion.min_y
-                    && wy <= exclusion.max_y
-            }) {
-                return Err(format!("placement {index} intersects exclusion"));
-            }
+        // Exclusion feasibility follows the placement's bbox — the semantics BambuStudio's
+        // own validation uses (see aabb_hits_exclusion).
+        if bounds_hit_exclusion(
+            mask.bed_physical_bounds,
+            x_mm,
+            y_mm,
+            options.clearance,
+            &options.exclusions,
+        ) {
+            return Err(format!("placement {index} intersects exclusion (bbox)"));
         }
         for (previous, previous_mask) in masks.iter().enumerate().take(index) {
-            let previous_placement = &result.placements[previous];
-            let previous_px =
-                ((previous_placement.x_mm - options.bed.min_x) / options.resolution).round() as i32;
-            let previous_py =
-                ((previous_placement.y_mm - options.bed.min_y) / options.resolution).round() as i32;
+            let (previous_px, previous_py) = centers[previous];
             // Two-zone rule: a body must clear anything foreign, while supports may touch
             // other supports — the same predicate the packing strategies enforce.
             if masks_overlap(
@@ -1809,14 +1684,14 @@ pub fn patch_within_silhouette(
     };
     let patch_bounds = bounds_of(&patch.loops);
     let silhouette_bounds = bounds_of(&filled_silhouette_loops);
-    let min_ix = ((patch_bounds.min_x.min(silhouette_bounds.min_x)) / resolution - 0.5).floor()
-        as i32;
-    let max_ix = ((patch_bounds.max_x.max(silhouette_bounds.max_x)) / resolution - 0.5).ceil()
-        as i32;
-    let min_iy = ((patch_bounds.min_y.min(silhouette_bounds.min_y)) / resolution - 0.5).floor()
-        as i32;
-    let max_iy = ((patch_bounds.max_y.max(silhouette_bounds.max_y)) / resolution - 0.5).ceil()
-        as i32;
+    let min_ix =
+        ((patch_bounds.min_x.min(silhouette_bounds.min_x)) / resolution - 0.5).floor() as i32;
+    let max_ix =
+        ((patch_bounds.max_x.max(silhouette_bounds.max_x)) / resolution - 0.5).ceil() as i32;
+    let min_iy =
+        ((patch_bounds.min_y.min(silhouette_bounds.min_y)) / resolution - 0.5).floor() as i32;
+    let max_iy =
+        ((patch_bounds.max_y.max(silhouette_bounds.max_y)) / resolution - 0.5).ceil() as i32;
 
     let radius = (tolerance_mm / resolution).round() as i32;
     let mut silhouette_pixels: HashSet<(i32, i32)> = HashSet::new();
@@ -1879,14 +1754,14 @@ pub fn patch_overshoot_mm(patch: &Footprint, silhouette: &Footprint, resolution:
     };
     let patch_bounds = bounds_of(&patch.loops);
     let silhouette_bounds = bounds_of(&filled_silhouette_loops);
-    let min_ix = ((patch_bounds.min_x.min(silhouette_bounds.min_x)) / resolution - 0.5).floor()
-        as i32;
-    let max_ix = ((patch_bounds.max_x.max(silhouette_bounds.max_x)) / resolution - 0.5).ceil()
-        as i32;
-    let min_iy = ((patch_bounds.min_y.min(silhouette_bounds.min_y)) / resolution - 0.5).floor()
-        as i32;
-    let max_iy = ((patch_bounds.max_y.max(silhouette_bounds.max_y)) / resolution - 0.5).ceil()
-        as i32;
+    let min_ix =
+        ((patch_bounds.min_x.min(silhouette_bounds.min_x)) / resolution - 0.5).floor() as i32;
+    let max_ix =
+        ((patch_bounds.max_x.max(silhouette_bounds.max_x)) / resolution - 0.5).ceil() as i32;
+    let min_iy =
+        ((patch_bounds.min_y.min(silhouette_bounds.min_y)) / resolution - 0.5).floor() as i32;
+    let max_iy =
+        ((patch_bounds.max_y.max(silhouette_bounds.max_y)) / resolution - 0.5).ceil() as i32;
 
     let mut silhouette_pixels: HashSet<(i32, i32)> = HashSet::new();
     let mut patch_pixels: HashSet<(i32, i32)> = HashSet::new();
@@ -1904,8 +1779,10 @@ pub fn patch_overshoot_mm(patch: &Footprint, silhouette: &Footprint, resolution:
     }
     // Ring-grow the silhouette one Chebyshev pixel at a time until it covers every patch
     // pixel: the ring count at which the last spike is swallowed is the overshoot.
-    let mut uncovered: HashSet<(i32, i32)> =
-        patch_pixels.difference(&silhouette_pixels).copied().collect();
+    let mut uncovered: HashSet<(i32, i32)> = patch_pixels
+        .difference(&silhouette_pixels)
+        .copied()
+        .collect();
     if uncovered.is_empty() {
         return 0.0;
     }
