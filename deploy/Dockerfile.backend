@@ -3,9 +3,15 @@ WORKDIR /src
 COPY webapp/backend/gradlew webapp/backend/settings.gradle.kts webapp/backend/build.gradle.kts webapp/backend/gradle.properties ./
 COPY webapp/backend/gradle ./gradle
 COPY webapp/backend/src ./src
-RUN ./gradlew --no-daemon bootJar -x test
+# Кэш Gradle (дистрибутив и зависимости) живёт в BuildKit между сборками: services.gradle.org с main медленный.
+RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon bootJar -x test
 
 FROM eclipse-temurin:21-jre-jammy AS api
+ARG APT_MIRROR
+# Пустой APT_MIRROR = официальные зеркала. CI на main передаёт mirror.yandex.ru: deb.debian.org и
+# archive.ubuntu.com оттуда отдают 0.3–5 MB/s против ~30 MB/s.
+RUN if [ -n "$APT_MIRROR" ]; then find /etc/apt -name "*.list" -o -name "*.sources" | xargs sed -i -E \
+      "s#https?://(deb\.debian\.org|archive\.ubuntu\.com|security\.ubuntu\.com)#$APT_MIRROR#g"; fi
 RUN useradd -u 1000 -m goat && apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /src/build/libs/*-1.0.0.jar /app/app.jar

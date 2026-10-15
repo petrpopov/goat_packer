@@ -1,7 +1,7 @@
 FROM oven/bun:1.3.14 AS build
 WORKDIR /src
 COPY webapp/frontend/package.json webapp/frontend/bun.lock ./
-RUN bun install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
 COPY webapp/frontend/ ./
 ENV VITE_SERVER_MODE=true
 RUN bun run build

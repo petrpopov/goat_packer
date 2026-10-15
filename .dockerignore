@@ -8,3 +8,6 @@ target
 .v2c
 *.log
 deploy/.env
+deploy/vendor
+docs
+examples

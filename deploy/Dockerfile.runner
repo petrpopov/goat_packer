@@ -1,40 +1,15 @@
-# Both upstream Bambu and Orca builds are pinned Ubuntu24.04 x86-64 assets.
-FROM --platform=$BUILDPLATFORM rust:1.94.0-bookworm AS packer
-ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu libc6-dev-amd64-cross && rm -rf /var/lib/apt/lists/*
-RUN rustup target add x86_64-unknown-linux-gnu
+# Runner задачи на релиз: база слайсера (Dockerfile.slicer) + бинарники упаковщика этого коммита (~10 MB слой).
+# Собирается на x86-64 (CI на main); glibc bookworm старше Ubuntu 24.04 базы, поэтому бинарники совместимы.
+ARG SLICER_IMAGE
+FROM rust:1.94.0-bookworm AS packer
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc CARGO_BUILD_JOBS=2
-RUN cargo build --locked --release --target x86_64-unknown-linux-gnu --bins
+ENV CARGO_BUILD_JOBS=3
+# Реестр crates и target в кэше BuildKit: повторный релиз пересобирает только изменённое.
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/build/target \
+    cargo build --locked --release --bins && mkdir -p /out \
+    && cp target/release/colored_3mf_packer target/release/daily_scheduler target/release/verify_outputs /out/
 
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS extract
-ARG SLICER=bambu
-RUN apt-get update && apt-get install -y --no-install-recommends python3 squashfs-tools && rm -rf /var/lib/apt/lists/*
-COPY deploy/vendor/${SLICER}.AppImage /tmp/slicer.AppImage
-COPY deploy/runner/extract-appimage.py /extract.py
-RUN python3 /extract.py /tmp/slicer.AppImage /opt/slicer
-
-FROM ubuntu:24.04 AS runtime
-ARG SLICER=bambu
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates libgtk-3-0t64 libwebkit2gtk-4.1-0 libglu1-mesa libgl1 libegl1 libopengl0 \
-    libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libxrender1 libxi6 libxrandr2 libxinerama1 \
-    libxss1 libnss3 libsecret-1-0 libnotify4 libasound2t64 libfuse2t64 libxcb-cursor0 \
-    locales fonts-dejavu-core xvfb xauth dbus-x11 tini procps coreutils \
-    && rm -rf /var/lib/apt/lists/* && locale-gen en_US.UTF-8
-RUN getent passwd 1000 >/dev/null || useradd -m -u 1000 runner
-COPY --from=extract /opt/slicer /opt/slicer
-COPY --from=packer /build/target/x86_64-unknown-linux-gnu/release/colored_3mf_packer /usr/local/bin/
-COPY --from=packer /build/target/x86_64-unknown-linux-gnu/release/daily_scheduler /usr/local/bin/
-COPY --from=packer /build/target/x86_64-unknown-linux-gnu/release/verify_outputs /usr/local/bin/
-COPY deploy/runner/slicer.sh /usr/local/bin/slicer
-RUN mkdir -p /opt/slicers/bambu /opt/slicers/orca \
-    && ln -s /usr/local/bin/slicer /opt/slicers/bambu/AppRun \
-    && ln -s /usr/local/bin/slicer /opt/slicers/orca/AppRun && chmod +x /usr/local/bin/slicer
-ENV HOME=/work/home LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 LIBGL_ALWAYS_SOFTWARE=1
-WORKDIR /work
-USER 1000:1000
-ENTRYPOINT []
-CMD ["/usr/bin/sleep", "infinity"]
+FROM ${SLICER_IMAGE}
+COPY --from=packer /out/ /usr/local/bin/
