@@ -7,6 +7,7 @@ COPY webapp/backend/src ./src
 RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon bootJar -x test
 
 FROM eclipse-temurin:21-jre-jammy AS api
+LABEL goat-packer=1
 ARG APT_MIRROR
 # Пустой APT_MIRROR = официальные зеркала. CI на main передаёт mirror.yandex.ru: deb.debian.org и
 # archive.ubuntu.com оттуда отдают 0.3–5 MB/s против ~30 MB/s.

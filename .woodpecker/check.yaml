@@ -1,5 +1,6 @@
 # Проверки goat_packer на main: Rust, backend (Testcontainers через docker socket хоста), frontend.
-# Тег тоже проверяется: release.yaml ждёт успешного check.
+# Push в ветку после тестов собирает образы goat-packer-*:branch-<ветка> (перезаписываются, не выкладываются).
+# Тег тоже проверяется: release.yaml ждёт успешного check и собирает образы версии сам.
 when:
   - event: [push, pull_request, manual, tag]
 
@@ -24,7 +25,9 @@ steps:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/ci/goat_packer/gradle:/root/.gradle
     commands:
-      - cd webapp/backend && ./gradlew --no-daemon test
+      - cd webapp/backend
+      # Сводка Gradle не показывает причину: при падении печатаем начало ошибок из отчётов JUnit.
+      - ./gradlew --no-daemon test || { grep -h -A12 '<failure' build/test-results/test/*.xml | head -80; exit 1; }
 
   - name: frontend
     image: oven/bun:1.3.14
@@ -35,6 +38,21 @@ steps:
       - bun run typecheck
       - bun run lint
       - bun run build
+
+  - name: images (branch)
+    image: docker:29-cli
+    when:
+      - event: push
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/ci/goat_packer/slicers:/var/lib/ci/goat_packer/slicers
+    environment:
+      APT_MIRROR: http://mirror.yandex.ru
+      SLICER_CACHE: /var/lib/ci/goat_packer/slicers
+    commands:
+      - apk add -q curl
+      - sh deploy/build-images.sh "branch-$(echo "$CI_COMMIT_BRANCH" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-100)"
+      - sh deploy/prune-images.sh 3
 
   # Кэш сборки Rust растёт с каждой версией зависимостей: чистим, если больше 10 ГБ (диск main 50 ГБ).
   - name: cleanup target cache

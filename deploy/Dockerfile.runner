@@ -12,4 +12,5 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
     && cp target/release/colored_3mf_packer target/release/daily_scheduler target/release/verify_outputs /out/
 
 FROM ${SLICER_IMAGE}
+LABEL goat-packer=1
 COPY --from=packer /out/ /usr/local/bin/

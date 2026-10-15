@@ -2,10 +2,14 @@
 
 Образы собирает Woodpecker (`ci.ezheg.xyz`) прямо в Docker на `main`; реестра нет.
 
-- Push в любую ветку: `.woodpecker/check.yaml` — тесты Rust, backend (Testcontainers), frontend.
+- Push в любую ветку: `.woodpecker/check.yaml` — тесты Rust, backend (Testcontainers), frontend, затем
+  образы `goat-packer-*:branch-<ветка>` (перезаписываются следующим push, никуда не выкладываются).
 - Тег `v*`: `.woodpecker/release.yaml` — `deploy/build-images.sh <тег>` собирает
   `goat-packer-{api,worker,gateway,runner-bambu,runner-orca}:<тег>`, черновик GitHub Release получает
   `goat-packer-<тег>-linux-x86_64.tar.gz` (CLI), хранятся образы трёх последних версий.
+
+Выпуск версии: `git tag v0.2.0 && git push origin v0.2.0`. Черновик релиза публикуется руками:
+GitHub → Releases → черновик → Edit → Publish release (на работу сервера публикация не влияет).
 
 Базы слайсеров `goat-packer-slicer-{bambu,orca}:<версия>` описаны в `deploy/slicers.env` (URL, SHA256,
 offset SquashFS) и собираются один раз; AppImage при сборке не запускается. Смена версии слайсера —
