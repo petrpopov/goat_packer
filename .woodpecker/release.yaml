@@ -71,4 +71,4 @@ steps:
         sh -c 'apk add -q curl jq && sh deploy/dokploy-deploy.sh'
       - >-
         docker run --rm --network host --volumes-from "$self" -w "$CI_WORKSPACE" python:3.13-alpine
-        python deploy/smoke.py --url http://127.0.0.1:18088 --public-origin https://127.0.0.1:18088 --files-via http://127.0.0.1:18089
+        python deploy/smoke.py --url http://127.0.0.1:18088 --public-origin https://127.0.0.1:18088 --files-via http://127.0.0.1:18088

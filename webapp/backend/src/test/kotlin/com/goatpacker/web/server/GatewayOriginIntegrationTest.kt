@@ -115,4 +115,16 @@ class GatewayOriginIntegrationTest {
             assertEquals(200, accepted.statusCode(), accepted.body())
             assertEquals(403, guest(client, target, csrf, origin.replaceFirst("https://", "http://")).statusCode())
         }
+
+    /** Signed S3 links are path-style /goat/<key> on the app origin: proxied to storage unchanged, read-only. */
+    @Test
+    fun `bucket path goes to storage read-only on the same origin`() =
+        withGateway("") { _, target, client, _ ->
+            val read = client.send(HttpRequest.newBuilder(URI("$target/goat/probe")).GET().build(), HttpResponse.BodyHandlers.ofString())
+            assertFalse(read.body().contains("nginx"), "bucket path must reach storage, not the SPA: ${read.body()}")
+            assertNotEquals(200, read.statusCode())
+            val write = client.send(HttpRequest.newBuilder(URI("$target/goat/probe"))
+                .PUT(HttpRequest.BodyPublishers.ofString("x")).build(), HttpResponse.BodyHandlers.ofString())
+            assertEquals(403, write.statusCode())
+        }
 }
