@@ -10,6 +10,8 @@ cargo test --release --all     # release is required: packing tests are slow in 
 cargo test --release colored_pack   # by name substring
 ```
 
+CI: Woodpecker `ci.ezheg.xyz` (`.woodpecker/`): `check` on every push, `release` on tag `v*` builds `goat-packer-*:<tag>` into Docker on `main` via `deploy/build-images.sh` (the only description of the image build; no registry).
+
 Tests must stay self-contained: generated temp data or `tests/fixtures/` only; no sibling-dir paths, symlinks, env-gated no-op tests, shared `/tmp` names. The packer and tests never call a slicer or network; the production colored-3MF pipeline does (slicer path comes from the printer profile).
 
 ## Packing core (`src/lib.rs`, `src/packing_search.rs`)

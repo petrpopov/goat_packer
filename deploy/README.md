@@ -1,47 +1,23 @@
-# Развёртывание по IP: PostgreSQL-очередь, S3 и локальные слайсеры
+# Сборка и развёртывание
 
-Без RabbitMQ, домена, автоматического TLS и системы бэкапов. Ubuntu x86-64 + Docker Engine
-и Compose v2. Интернет нужен для первоначальной сборки/загрузки зависимостей; задачи
-обрабатываются локально в контейнерах **без сети**. Наличие слайсеров на хосте не требуется.
-ARM Docker Desktop/Colima может выполнять amd64 через эмуляцию, но это не замена замерам
-производительности на целевом Ubuntu-сервере.
+Образы собирает Woodpecker (`ci.ezheg.xyz`) прямо в Docker на `main`; реестра нет.
 
-## Новый сервер
+- Push в любую ветку: `.woodpecker/check.yaml` — тесты Rust, backend (Testcontainers), frontend.
+- Тег `v*`: `.woodpecker/release.yaml` — `deploy/build-images.sh <тег>` собирает
+  `goat-packer-{api,worker,gateway,runner-bambu,runner-orca}:<тег>`, черновик GitHub Release получает
+  `goat-packer-<тег>-linux-x86_64.tar.gz` (CLI), хранятся образы трёх последних версий.
 
-Из корня репозитория (подставьте реальный публичный IPv4):
+Базы слайсеров `goat-packer-slicer-{bambu,orca}:<версия>` описаны в `deploy/slicers.env` (URL, SHA256,
+offset SquashFS) и собираются один раз; AppImage при сборке не запускается. Смена версии слайсера —
+правка `slicers.env`, следующий релиз соберёт новую базу.
 
-```sh
-python3 deploy/configure.py --storage-gib 10 --cpus 4 --memory-mib 8192 --public-ip 203.0.113.10
-sh deploy/start.sh
-```
+Руками на x86-64 машине с Docker: `sh deploy/build-images.sh dev`, затем
+`GOAT_VERSION=dev docker compose --env-file deploy/.env -f deploy/compose.yml up -d`
+(в `deploy/.env` — `DATABASE_PASSWORD`, `S3_SECRET_KEY`, `ADMIN_PASSWORD` и параметры ниже).
+Развёртывание на сервер — через Dokploy (раздел добавляется в части 3).
 
-Открыть `http://IP:8088`. Порт8091 нужен для подписанных скачиваний из S3: откройте оба порта
-в сетевом firewall сервера. PostgreSQL, S3 admin API и backend наружу не публикуются.
-Без `--public-ip` доступ привязан к localhost. Адрес `203.0.113.10` — только пример.
-При HTTP пароли и cookies передаются без шифрования; это сознательное ограничение данного
-варианта запуска, а не обещание защиты канала.
-
-`start.sh` проверяет SHA256 закреплённых Bambu/Orca AppImage, собирает два runner image,
-затем API, worker и frontend. Первая сборка долгая; последующие используют Docker cache.
-Обработка не скачивает образы, профили или плагины из интернета.
-В админку: вкладка «Аккаунт», учётные данные `ADMIN_LOGIN`/`ADMIN_PASSWORD` из
-`deploy/.env` (0600). Не публикуйте файл. Пароль bootstrap применяется только при первом
-создании администратора, не сбрасывает его при рестарте.
-
-## Обновление существующего запуска
-
-**Не удаляйте volumes и не генерируйте заново секреты.** Для прежнего `.env`, в котором
-runner images были пустыми и память runner составляла1536MiB:
-
-```sh
-python3 deploy/configure.py --update --storage-gib 10 --cpus 4 --memory-mib 8192 --public-ip 203.0.113.10
-sh deploy/start.sh
-```
-
-`--update` сохраняет пароли, порты, путь scratch и заданные образы; обновляет выделенные
-ресурсы и заполняет отсутствующие runner references. Flyway применяет **новую V2** поверх V1.
-Число разрешённых задач, ранее изменённое в админке, сохраняется в БД: конфиг не затирает
-решение администратора. После увеличения ресурсов при необходимости измените лимит там.
+Обработка задач идёт локально в контейнерах **без сети**; слайсеры на хосте не нужны.
+При HTTP пароли и cookies передаются без шифрования.
 
 ## Ресурсы и исполнение
 
@@ -126,7 +102,7 @@ Gateway сохраняет внешний порт в X-Forwarded-Port, пере
 
 Основные env: `WORKER_CPUS`, `WORKER_MEMORY_MIB`, `EXECUTION_CPU_BUDGET`,
 `EXECUTION_MEMORY_MIB`, `MAX_PARALLEL` (начальный), `STORAGE_LIMIT_BYTES`, `JOB_TIMEOUT_SECONDS`,
-`MAX_QUEUE`, `GLOBAL_COMPUTE_SECONDS`, `RUNNER_BAMBU_IMAGE`, `RUNNER_ORCA_IMAGE`.
+`MAX_QUEUE`, `GLOBAL_COMPUTE_SECONDS`, `GOAT_VERSION` (версия образов, runner — той же версии).
 Снижение лимита параллелизма в админке останавливает новые запуски, но не убивает уже работающие
 задачи. ETA появляется после пяти сопоставимых успешных измерений и является диапазоном,
 а не гарантированным сроком. Не повышайте memory/parallelism без выделенного ресурса.

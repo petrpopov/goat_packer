@@ -13,12 +13,8 @@ __pycache__/
 # Self-contained integration archives
 !tests/fixtures/*.3mf
 
-# Private deployment config and local scratch
+# Local env for running deploy/compose.yml by hand
 deploy/.env
-deploy/sizing.json
-
-# Verified upstream binaries (downloaded at build time, not Git)
-deploy/vendor/
 
 # Local tool state
 .v2c/
