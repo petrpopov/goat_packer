@@ -53,10 +53,10 @@ class GatewayOriginIntegrationTest {
     @Autowired private lateinit var json: ObjectMapper
     @TempDir lateinit var directory: Path
 
-    @Test
-    fun `mapped gateway port is same origin but hostile origin and missing csrf remain forbidden`() {
+    private fun withGateway(publicScheme: String, check: (origin: String, mappedOrigin: String, client: HttpClient, csrf: String) -> Unit) {
         Testcontainers.exposeHostPorts(port)
         val config = Files.readString(Path.of("../../deploy/nginx.conf"))
+            .replace("\${GOAT_PUBLIC_SCHEME}", publicScheme)
             .replace("http://api:19190", "http://host.testcontainers.internal:$port")
             .replace("http://storage:8333", "http://host.testcontainers.internal:$port")
         val configPath = directory.resolve("nginx.conf")
@@ -66,39 +66,53 @@ class GatewayOriginIntegrationTest {
             .withCopyFileToContainer(MountableFile.forHostPath(configPath), "/etc/nginx/conf.d/default.conf")
             .use { gateway ->
                 gateway.start()
-                val origin = "http://${gateway.host}:${gateway.getMappedPort(80)}"
+                val mapped = "${gateway.host}:${gateway.getMappedPort(80)}"
                 val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
                 val client = HttpClient.newBuilder().cookieHandler(cookies).build()
                 val csrfResponse = client.send(
-                    HttpRequest.newBuilder(URI("$origin/api/v2/auth/csrf")).GET().build(),
+                    HttpRequest.newBuilder(URI("http://$mapped/api/v2/auth/csrf")).GET().build(),
                     HttpResponse.BodyHandlers.ofString(),
                 )
                 assertEquals(200, csrfResponse.statusCode())
                 val csrf = json.readTree(csrfResponse.body())["token"].asText()
-
-                fun guest(from: String, includeCsrf: Boolean = true, spoofForwarded: Boolean = false): HttpResponse<String> {
-                    val request = HttpRequest.newBuilder(URI("$origin/api/v2/auth/guest"))
-                        .header("Origin", from).header("Content-Type", "application/json")
-                    if (includeCsrf) request.header("X-XSRF-TOKEN", csrf)
-                    if (spoofForwarded) request
-                        .header("Forwarded", "host=evil.invalid;proto=https")
-                        .header("X-Forwarded-Host", "evil.invalid")
-                        .header("X-Forwarded-Port", "443")
-                        .header("X-Forwarded-Proto", "https")
-                    return client.send(request.POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString())
-                }
-
-                val accepted = guest(origin, spoofForwarded = true)
-                assertEquals(200, accepted.statusCode(), accepted.body())
-                assertEquals("GUEST", json.readTree(accepted.body())["kind"].asText())
-                val current = client.send(HttpRequest.newBuilder(URI("$origin/api/v2/auth/me")).GET().build(), HttpResponse.BodyHandlers.ofString())
-                assertEquals(200, current.statusCode(), current.body())
-                assertEquals(json.readTree(accepted.body())["id"], json.readTree(current.body())["id"])
-
-                assertEquals(403, guest("https://evil.invalid", spoofForwarded = true).statusCode())
-                val noCsrf = guest(origin, includeCsrf = false)
-                assertEquals(403, noCsrf.statusCode())
-                assertEquals("FORBIDDEN", json.readTree(noCsrf.body())["code"].asText())
+                check("${publicScheme.ifEmpty { "http" }}://$mapped", "http://$mapped", client, csrf)
             }
     }
+
+    private fun guest(client: HttpClient, target: String, csrf: String, from: String, includeCsrf: Boolean = true, spoofForwarded: Boolean = false): HttpResponse<String> {
+        val request = HttpRequest.newBuilder(URI("$target/api/v2/auth/guest"))
+            .header("Origin", from).header("Content-Type", "application/json")
+        if (includeCsrf) request.header("X-XSRF-TOKEN", csrf)
+        if (spoofForwarded) request
+            .header("Forwarded", "host=evil.invalid;proto=https")
+            .header("X-Forwarded-Host", "evil.invalid")
+            .header("X-Forwarded-Port", "443")
+            .header("X-Forwarded-Proto", "https")
+        return client.send(request.POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString())
+    }
+
+    @Test
+    fun `mapped gateway port is same origin but hostile origin and missing csrf remain forbidden`() =
+        withGateway("") { origin, target, client, csrf ->
+            val accepted = guest(client, target, csrf, origin, spoofForwarded = true)
+            assertEquals(200, accepted.statusCode(), accepted.body())
+            assertEquals("GUEST", json.readTree(accepted.body())["kind"].asText())
+            val current = client.send(HttpRequest.newBuilder(URI("$target/api/v2/auth/me")).GET().build(), HttpResponse.BodyHandlers.ofString())
+            assertEquals(200, current.statusCode(), current.body())
+            assertEquals(json.readTree(accepted.body())["id"], json.readTree(current.body())["id"])
+            assertEquals(403, guest(client, target, csrf, "https://evil.invalid", spoofForwarded = true).statusCode())
+            val noCsrf = guest(client, target, csrf, origin, includeCsrf = false)
+            assertEquals(403, noCsrf.statusCode())
+            assertEquals("FORBIDDEN", json.readTree(noCsrf.body())["code"].asText())
+        }
+
+    /** Pangolin terminates TLS and talks plain HTTP to the gateway: the public scheme is configuration. */
+    @Test
+    fun `configured https public scheme accepts the https origin and still rejects plain http`() =
+        withGateway("https") { origin, target, client, csrf ->
+            assertTrue(origin.startsWith("https://"))
+            val accepted = guest(client, target, csrf, origin)
+            assertEquals(200, accepted.statusCode(), accepted.body())
+            assertEquals(403, guest(client, target, csrf, origin.replaceFirst("https://", "http://")).statusCode())
+        }
 }

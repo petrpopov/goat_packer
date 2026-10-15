@@ -8,4 +8,6 @@ RUN bun run build
 FROM nginx:1.28-alpine
 LABEL goat-packer=1
 COPY --from=build /src/dist /usr/share/nginx/html
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+# Шаблон: entrypoint nginx подставляет определённые переменные окружения (GOAT_PUBLIC_SCHEME) в conf.d.
+COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
+ENV GOAT_PUBLIC_SCHEME=""
