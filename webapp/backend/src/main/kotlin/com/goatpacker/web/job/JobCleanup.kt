@@ -13,6 +13,7 @@ import java.time.OffsetDateTime
  * завершённые.
  */
 @Component
+@org.springframework.context.annotation.Profile("!server")
 class JobCleanup(
     private val store: JobStore,
     private val properties: AppProperties,
@@ -29,7 +30,7 @@ class JobCleanup(
         val ttlCutoff = now.minusHours(properties.jobTtlHours)
 
         store.all()
-            .filter { (it.current.finishedAt ?: it.createdAt).isBefore(ttlCutoff) }
+            .filter { it.current.finishedAt?.isBefore(ttlCutoff) == true }
             .forEach { purge(it, "истёк TTL ${properties.jobTtlHours} ч") }
 
         // Максимум 50 джобов: сначала самые старые завершённые.
@@ -40,6 +41,17 @@ class JobCleanup(
         if (store.count() > MAX_JOBS) {
             finished.take(store.count() - MAX_JOBS).forEach { purge(it, "превышен лимит джобов") }
         }
+        // Jobs live in memory; expired orphan directories after a restart also need cleanup.
+        if (Files.isDirectory(properties.jobsRootPath)) {
+            Files.list(properties.jobsRootPath).use { entries -> entries.forEach { dir ->
+                val id = dir.fileName.toString()
+                if (runCatching { java.util.UUID.fromString(id) }.isSuccess && store.get(id) == null
+                    && Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    && Files.getLastModifiedTime(dir).toInstant().isBefore(ttlCutoff.toInstant())) {
+                    deleteDirectory(dir)
+                }
+            } }
+        }
         if (running.isNotEmpty()) {
             log.debug("Активных джобов: {}", running.size)
         }
@@ -47,7 +59,7 @@ class JobCleanup(
 
     private fun purge(job: Job, reason: String) {
         log.info("Удаляю джобу {} ({}): {}", job.id, job.kind, reason)
-        job.process?.takeIf { it.isAlive }?.let { JobProcessKiller.kill(it) }
+        job.cancel()?.takeIf { it.isAlive }?.let { JobProcessKiller.kill(it) }
         store.remove(job.id)
         deleteDirectory(job.directory)
     }

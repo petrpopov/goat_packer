@@ -11,6 +11,7 @@ import com.goatpacker.web.job.JobStore
 import com.goatpacker.web.job.PackParams
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.web.multipart.MultipartFile
 import java.nio.file.Files
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -21,18 +22,20 @@ import java.util.concurrent.RejectedExecutionException
  * однопоточную очередь [JobRunner]. Упаковка выедает все ядра, поэтому второй джоб ждёт.
  */
 @Service
+@org.springframework.context.annotation.Profile("!server")
 class PackService(
     private val properties: AppProperties,
     private val profileService: ProfileService,
     private val store: JobStore,
     private val jobRunner: JobRunner,
+    private val projects: Project3mf,
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(PackService::class.java)
 
         /** "", "off", "global", "global,every=N", "from-z=H", "from-z=H,every=N" (H в мм, N ≥ 1). */
         private val NOZZLE_CLEAN_SPEC = Regex(
-            """^(global|global,every=[1-9]\d*|from-z=(\d+(\.\d+)?))(,every=[1-9]\d*)?$""",
+            """^(global|from-z=\d+(\.\d+)?)(,every=[1-9]\d*)?$""",
         )
     }
 
@@ -47,6 +50,7 @@ class PackService(
         }
         val profileId = form.profileId!!.trim()
         val profile = profileService.require(profileId)
+        profileService.requireMatches(projects.inspect(file), profile)
         val nozzleClean = form.nozzleClean?.trim() ?: ""
         validateNozzleClean(nozzleClean, profile)
 
@@ -55,16 +59,10 @@ class PackService(
             profilePath = profile.file,
             clearance = form.clearance ?: 0.7,
             resolution = form.resolution ?: 0.25,
-            // Дефолт = «Сильному» уровню ползунка UI (консольные 4800/2400, валидированы на
-            // козочках): поиск останавливается сам при плато, так что потолок почти бесплатен,
-            // а слабый дефолт стабильно недоупаковывал на 1 объект.
+            // The deterministic solver uses an effort portfolio, not seed-dependent restarts.
             attempts = form.attempts ?: 4800,
             candidates = form.candidates ?: 2400,
-            // Seed без значения — случайный на прогон: результат поиска сильно зависит от
-            // seed (goat1 P1S: seed 20270831 ни разу не находит 18 даже за 4800 полных
-            // попыток, другой seed находит на 387-й), поэтому «повторить запуск» — это
-            // легитимный способ улучшить плотность. Закреплённый seed = воспроизводимость.
-            seed = form.seed ?: kotlin.random.Random.nextLong(0, Long.MAX_VALUE),
+            seed = form.seed ?: 20_270_831,
             edgeMargin = form.edgeMargin,
             layout = form.layout ?: "search",
             nozzleClean = nozzleClean,
@@ -78,14 +76,20 @@ class PackService(
             createdAt = OffsetDateTime.now(),
         )
         Files.createDirectories(job.directory)
-        file.transferTo(job.directory.resolve("input.3mf").toFile())
-        store.put(job)
-
         try {
+            file.transferTo(job.directory.resolve("input.3mf").toFile())
+            store.put(job)
             jobRunner.runPack(job, params)
         } catch (ex: RejectedExecutionException) {
             store.remove(job.id)
+            job.cancel()
+            job.directory.toFile().deleteRecursively()
             throw BadRequestException("Очередь задач переполнена — попробуйте повторить позже")
+        } catch (ex: Exception) {
+            store.remove(job.id)
+            job.cancel()
+            job.directory.toFile().deleteRecursively()
+            throw ex
         }
 
         log.info("Создана pack-джоба {} (профиль {}, файл {} байт)", job.id, profileId, file.size)
@@ -113,9 +117,14 @@ class PackService(
                     "\"from-z=H\", \"from-z=H,every=N\", где H — высота в мм, N — целое ≥ 1",
             )
         }
+        val every = spec.substringAfter(",every=", "")
+        if (every.isNotEmpty() && every.toLongOrNull() == null) {
+            throw BadRequestException("nozzleClean: every слишком велико")
+        }
         val fromZ = Regex("""from-z=(\d+(\.\d+)?)""").find(spec)?.groupValues?.get(1)?.toDoubleOrNull()
-        if (fromZ != null && fromZ <= 0.0) {
+        if (fromZ != null && (!fromZ.isFinite() || fromZ <= 0.0)) {
             throw BadRequestException("nozzleClean: from-z=H требует H > 0")
         }
     }
+
 }

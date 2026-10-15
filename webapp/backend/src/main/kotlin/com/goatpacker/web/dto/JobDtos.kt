@@ -65,6 +65,7 @@ data class ScheduleInfoDto(
 )
 
 /** Статусная сводка джоба — то, что фронтенд поллит раз в секунду. */
+@JsonInclude(JsonInclude.Include.ALWAYS)
 data class JobStatusDto(
     val jobId: String,
     val kind: String,

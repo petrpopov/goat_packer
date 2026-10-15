@@ -108,7 +108,7 @@ optgroup {
 }
 
 .page-subtitle {
-  margin: -8px 0 0;
+  margin: 4px 0 0;
   font-size: 12.5px;
   color: var(--fg-muted);
 }
@@ -660,6 +660,17 @@ td.num {
   font-size: 12.5px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Сырой хвост журнала ошибки под переводённым заголовком (внутри details). */
+.error-details {
+  margin: 8px 0 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.85;
 }
 
 /* ── Artifacts ─────────────────────────────────────────────────────────── */

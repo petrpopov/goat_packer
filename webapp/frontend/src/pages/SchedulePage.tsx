@@ -6,6 +6,8 @@ import { fetchProfiles, startScheduleJob } from '@/api/services';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import JobCard from '@/components/JobCard';
+import { clockSeconds, numberInRange, validTimeWindow } from '@/utils/forms';
+import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
@@ -14,19 +16,16 @@ import { formatGrams, formatMinutes } from '@/utils/format';
 type SourceKind = 'pack' | 'file';
 type BenchMode = 'adaptive' | 'full';
 
-/** Часы:Минуты; часы могут быть > 24 (следующий день), поэтому 00–99. */
-const CLOCK_RE = /^\d{1,2}:[0-5]\d$/;
-
-function isClock(value: string): boolean {
-  return CLOCK_RE.test(value.trim());
-}
-
 export default function SchedulePage() {
   const packHandoff = useUiStore((state) => state.packHandoff);
 
   const [source, setSource] = useState<SourceKind>(packHandoff ? 'pack' : 'file');
   const [file, setFile] = useState<File | null>(null);
-  const [profileId, setProfileId] = useState(packHandoff?.profileId ?? '');
+  const detection = useProfileDetection(source === 'file' ? file : null);
+  const profileId = source === 'pack' ? (packHandoff?.profileId ?? '') : (detection.data?.profileId ?? '');
+  useEffect(() => {
+    if (packHandoff) setSource('pack');
+  }, [packHandoff]);
   const [dayStart, setDayStart] = useState('10:00');
   const [nightStart, setNightStart] = useState('23:00');
   const [horizonEnd, setHorizonEnd] = useState('34:00');
@@ -49,12 +48,14 @@ export default function SchedulePage() {
 
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? null;
-  const jobActive = job?.status === 'QUEUED' || job?.status === 'RUNNING';
+  const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
+  const jobActive =
+    Boolean(jobId) && !jobGone && (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
 
-  const dayStartValid = isClock(dayStart);
-  const nightStartValid = isClock(nightStart);
-  const horizonEndValid = isClock(horizonEnd);
-  const timesValid = dayStartValid && nightStartValid && horizonEndValid;
+  const dayStartValid = clockSeconds(dayStart) !== null;
+  const nightStartValid = clockSeconds(nightStart) !== null;
+  const horizonEndValid = clockSeconds(horizonEnd) !== null;
+  const timesValid = validTimeWindow(dayStart, nightStart, horizonEnd);
 
   const startMutation = useMutation({
     mutationFn: startScheduleJob,
@@ -68,11 +69,18 @@ export default function SchedulePage() {
   });
 
   const sourceReady = source === 'pack' ? packHandoff !== null : file !== null;
-  const canSubmit = sourceReady && profileId !== '' && timesValid && !jobActive && !startMutation.isPending;
+  const canSubmit =
+    sourceReady &&
+    profiles.some((p) => p.id === profileId) &&
+    timesValid &&
+    numberInRange(turnaroundMin, 0, 600, true) &&
+    numberInRange(prepMin, 0, 600, true) &&
+    !jobActive &&
+    !startMutation.isPending;
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!timesValid || profileId === '') return;
+    if (!canSubmit) return;
     if (source === 'pack' ? !packHandoff : !file) return;
 
     const form = new FormData();
@@ -185,6 +193,7 @@ export default function SchedulePage() {
               <button
                 type="button"
                 className={`btn${source === 'pack' ? ' btn-primary' : ''}`}
+                disabled={jobActive || startMutation.isPending}
                 onClick={() => setSource('pack')}
               >
                 Из фазы 1
@@ -193,6 +202,7 @@ export default function SchedulePage() {
             <button
               type="button"
               className={`btn${source === 'file' ? ' btn-primary' : ''}`}
+              disabled={jobActive || startMutation.isPending}
               onClick={() => setSource('file')}
             >
               Файл .3mf
@@ -202,22 +212,29 @@ export default function SchedulePage() {
           {source === 'pack' && packHandoff ? (
             <p className="source-note">
               Артефакт фазы 1: job <span className="mono">{packHandoff.packJobId}</span>
-              <button type="button" className="btn-ghost" onClick={() => setSource('file')}>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={jobActive || startMutation.isPending}
+                onClick={() => setSource('file')}
+              >
                 Заменить файлом
               </button>
             </p>
           ) : (
-            <FileDrop file={file} onFileChange={setFile} disabled={jobActive} />
+            <FileDrop file={file} onFileChange={setFile} disabled={jobActive || startMutation.isPending} />
           )}
 
+          {source === 'file' && detection.isError && <div className="error-block">{detection.error.message}</div>}
+          {source === 'file' && file && detection.isSuccess && !profileId && (
+            <div className="error-block">Не найден профиль принтера в файле</div>
+          )}
+          {!timesValid && (
+            <div className="error-block">Часы 0–47; начало дня должно быть раньше ночи, а ночь — раньше горизонта.</div>
+          )}
           <div className="form-grid">
             <Field label="Профиль принтера">
-              <select
-                className="input"
-                value={profileId}
-                onChange={(event) => setProfileId(event.target.value)}
-                disabled={profilesQuery.isPending || jobActive}
-              >
+              <select className="input" value={profileId} disabled>
                 <option value="">{profilesQuery.isPending ? 'Загрузка…' : '— выберите профиль —'}</option>
                 {profiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
@@ -234,7 +251,7 @@ export default function SchedulePage() {
                 placeholder="10:00"
                 value={dayStart}
                 onChange={(event) => setDayStart(event.target.value)}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               />
             </Field>
 
@@ -245,7 +262,7 @@ export default function SchedulePage() {
                 placeholder="23:00"
                 value={nightStart}
                 onChange={(event) => setNightStart(event.target.value)}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               />
             </Field>
 
@@ -260,7 +277,7 @@ export default function SchedulePage() {
                 placeholder="34:00"
                 value={horizonEnd}
                 onChange={(event) => setHorizonEnd(event.target.value)}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               />
             </Field>
 
@@ -269,10 +286,11 @@ export default function SchedulePage() {
                 className="input"
                 type="number"
                 min={0}
+                max={600}
                 step={1}
                 value={turnaroundMin}
                 onChange={(event) => setTurnaroundMin(event.target.value)}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               />
             </Field>
 
@@ -281,10 +299,11 @@ export default function SchedulePage() {
                 className="input"
                 type="number"
                 min={0}
+                max={600}
                 step={1}
                 value={prepMin}
                 onChange={(event) => setPrepMin(event.target.value)}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               />
             </Field>
 
@@ -293,7 +312,7 @@ export default function SchedulePage() {
                 className="input"
                 value={benchMode}
                 onChange={(event) => setBenchMode(event.target.value as BenchMode)}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               >
                 <option value="adaptive">Ускоренный (интерполяция)</option>
                 <option value="full">Полный (слайс каждой партии)</option>
@@ -310,7 +329,13 @@ export default function SchedulePage() {
         </section>
       </form>
 
-      <JobCard job={job} pollError={jobQuery.isError ? jobQuery.error : undefined} successContent={successContent} />
+      <JobCard
+        jobId={jobId}
+        onDismiss={() => setJobId(null)}
+        job={job}
+        pollError={jobQuery.isError ? jobQuery.error : undefined}
+        successContent={successContent}
+      />
     </div>
   );
 }

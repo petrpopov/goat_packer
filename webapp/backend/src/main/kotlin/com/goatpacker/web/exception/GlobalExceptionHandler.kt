@@ -56,6 +56,13 @@ class GlobalExceptionHandler {
             .body(mapOf("code" to "FILE_TOO_LARGE", "message" to message, "error" to message))
     }
 
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException::class,
+        org.springframework.web.multipart.support.MissingServletRequestPartException::class,
+        org.springframework.beans.TypeMismatchException::class,
+        org.springframework.http.converter.HttpMessageNotReadableException::class)
+    fun handleMalformed(ex: Exception): ResponseEntity<Map<String, String>> =
+        ResponseEntity.badRequest().body(mapOf("code" to "BAD_REQUEST", "message" to "Проверьте обязательные поля и формат запроса", "error" to "Некорректный запрос"))
+
     @ExceptionHandler(IOException::class)
     fun handleIo(ex: IOException): ResponseEntity<Map<String, String>> {
         log.error("[IO] {}", ex.message, ex)

@@ -3,6 +3,7 @@ package com.goatpacker.web.pack
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.awaitJobCompletion
 import com.goatpacker.web.FakeBins
+import com.goatpacker.web.miniProject3mf
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -46,7 +47,7 @@ class PackJobFlowTest(
     private fun uploadGoat(): String {
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake 3mf bytes".toByteArray()))
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
                 .param("profileId", "bambu_a2l"),
         )
             .andExpect(status().isAccepted)
@@ -109,7 +110,7 @@ class PackJobFlowTest(
         // «Неизвестный профиль принтера». Идентификатор живёт внутри json, а не в имени файла.
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake 3mf bytes".toByteArray()))
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab P1S")))
                 .param("profileId", "bambu_p1s"),
         )
             .andExpect(status().isAccepted)
@@ -126,4 +127,62 @@ class PackJobFlowTest(
         mockMvc.perform(get("/api/jobs/no-such-job")).andExpect(status().isNotFound)
         mockMvc.perform(delete("/api/jobs/no-such-job")).andExpect(status().isNotFound)
     }
+
+    @Test
+    fun `файл без zip-структуры отклоняется до постановки джобы`() {
+        mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "не архив".toByteArray()))
+                .param("profileId", "bambu_p1s"),
+        )
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `файл неизвестного принтера отклоняется с его именем в сообщении`() {
+        val response = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Prusa MK4")))
+                .param("profileId", "bambu_p1s"),
+        )
+            .andExpect(status().isBadRequest)
+            .andReturn()
+        val message = response.response.contentAsString
+        assertTrue(message.contains("Prusa MK4"), "в сообщении должно быть имя принтера: $message")
+    }
+
+    @Test
+    fun `несовпадение профиля и принтера файла отклоняется до постановки джобы`() {
+        // Регрессия: раньше это доходило до бинарника и падало сырой строкой
+        // "source printer 'Bambu Lab P1S' does not match profile 'Snapmaker U1'".
+        mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab P1S")))
+                .param("profileId", "snapmaker_u1"),
+        )
+            .andExpect(status().isBadRequest)
+    }
+    @Test
+    fun `pack accepts descriptor archive and exposes actual work placements`() {
+        val response = mockMvc.perform(multipart("/api/pack/jobs")
+            .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", com.goatpacker.web.descriptorProject3mf("Bambu Lab P1S")))
+            .param("profileId", "bambu_p1s").param("nozzleClean", "global,every=1"))
+            .andExpect(status().isAccepted).andReturn().response
+        val id = json.readTree(response.contentAsString)["jobId"].asText()
+        val result = mockMvc.awaitJobCompletion(id)
+        assertTrue(result["artifacts"].any { it["name"].asText() == "placements.json" })
+        mockMvc.perform(get("/api/jobs/$id/artifacts/placements.json")).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `duplicate every and invalid height are rejected before packing`() {
+        for (spec in listOf("global,every=2,every=3", "global,every=0", "from-z=0", "from-z=1e999", "global,every=999999999999999999999999")) {
+            val response = mockMvc.perform(multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", miniProject3mf("Bambu Lab P1S")))
+                .param("profileId", "bambu_p1s").param("nozzleClean", spec))
+                .andExpect(status().isBadRequest).andReturn().response
+            assertTrue(response.contentAsString.contains("nozzleClean"), response.contentAsString)
+        }
+    }
+
 }

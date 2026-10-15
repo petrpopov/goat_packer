@@ -1,3 +1,7 @@
+import { useMutation } from '@tanstack/react-query';
+import { ApiError, serverMode } from '@/api/http';
+import { deleteJob } from '@/api/services';
+import { pushToast } from '@/store/useToastStore';
 import type { ReactNode } from 'react';
 import type { JobStatusResponse } from '@/api/types';
 import ArtifactList from './ArtifactList';
@@ -5,6 +9,8 @@ import ProgressBar from './ProgressBar';
 import StatusPill from './StatusPill';
 
 interface JobCardProps {
+  jobId: string | null;
+  onDismiss: () => void;
   job: JobStatusResponse | null;
   /** Ошибка самого запроса статуса (сеть и т.п.) — не ошибка джобы. */
   pollError?: unknown;
@@ -19,18 +25,71 @@ function pollErrorMessage(pollError: unknown): string {
   return 'Не удалось получить статус задачи';
 }
 
-export default function JobCard({ job, pollError, successContent }: JobCardProps) {
+/** Разделитель «заголовок / сырые детали» из CliErrorTranslator бэкенда. */
+const DETAILS_SEPARATOR = '\n— детали —\n';
+
+/**
+ * Ошибка джобы: человекопонятный заголовок крупно, сырой хвост журнала — свёрнутым блоком
+ * (бэкенд склеивает их через DETAILS_SEPARATOR; без разделителя показываем как раньше).
+ */
+function JobError({ error }: { error: string }) {
+  const splitAt = error.indexOf(DETAILS_SEPARATOR);
+  const headline = splitAt >= 0 ? error.slice(0, splitAt) : error;
+  const details = splitAt >= 0 ? error.slice(splitAt + DETAILS_SEPARATOR.length) : null;
+  return (
+    <>
+      <div className="error-block">{headline}</div>
+      {details ? (
+        <details className="params">
+          <summary className="params-summary">Подробности журнала</summary>
+          <pre className="error-details">{details}</pre>
+        </details>
+      ) : null}
+    </>
+  );
+}
+
+export default function JobCard({ jobId, job, pollError, successContent, onDismiss }: JobCardProps) {
+  const cancel = useMutation({
+    mutationFn: () => {
+      if (!jobId) throw new Error('Задача не выбрана');
+      return deleteJob(jobId);
+    },
+    onSuccess: onDismiss,
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 404) onDismiss();
+      else pushToast(error.message, 'error');
+    },
+  });
+  const cancelButton = (
+    <button type="button" className="btn" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+      Отменить задачу
+    </button>
+  );
+  if (pollError instanceof ApiError && [404, 410].includes(pollError.status)) {
+    return (
+      <section className="card">
+        <div className="error-block">
+          Задача больше недоступна: сервер перезапущен, задача удалена или истёк срок хранения.
+        </div>
+        <button type="button" className="btn" onClick={onDismiss}>
+          Закрыть
+        </button>
+      </section>
+    );
+  }
   if (pollError && !job) {
     return (
       <section className="card">
         <div className="error-block">{pollErrorMessage(pollError)}</div>
+        {jobId && cancelButton}
       </section>
     );
   }
 
-  if (!job) return null;
+  if (!job) return jobId ? <section className="card">Получаю статус задачи… {cancelButton}</section> : null;
 
-  const active = job.status === 'QUEUED' || job.status === 'RUNNING';
+  const active = ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status);
 
   return (
     <section className="card job-card">
@@ -41,12 +100,33 @@ export default function JobCard({ job, pollError, successContent }: JobCardProps
         <StatusPill status={job.status} />
       </header>
 
+      {serverMode && job.status === 'QUEUED' && (
+        <p>
+          Место в очереди: {job.queuePosition ?? '—'}.{' '}
+          {job.estimatedWaitFromSeconds != null && job.estimatedWaitToSeconds != null
+            ? `Ожидание примерно ${Math.floor(job.estimatedWaitFromSeconds / 60)}–${Math.ceil(job.estimatedWaitToSeconds / 60)} мин. `
+            : ''}
+          {job.estimateReason ?? 'Время ожидания уточняется.'}
+        </p>
+      )}
+      {serverMode && job.expiresAt && (
+        <p className="hint">Файлы доступны до {new Date(job.expiresAt).toLocaleString()}</p>
+      )}
+      {serverMode && sessionStorage.getItem(`return:${job.jobId}`) && (
+        <div className="stack-sm">
+          <span>Сохраните ссылку для возврата (даёт доступ к просмотру):</span>
+          <input className="input mono" readOnly value={sessionStorage.getItem(`return:${job.jobId}`) ?? ''} />
+        </div>
+      )}
+      {active && job.canManage !== false && cancelButton}
       {active && <ProgressBar percent={job.progressPercent} message={job.phaseMessage ?? undefined} />}
 
-      {job.status === 'FAILED' && <div className="error-block">{job.error ?? 'Задача завершилась с ошибкой'}</div>}
+      {job.status === 'FAILED' && job.error ? <JobError error={job.error} /> : null}
+      {job.status === 'FAILED' && !job.error ? <div className="error-block">Задача завершилась с ошибкой</div> : null}
 
       {active && pollError ? <div className="error-block">{pollErrorMessage(pollError)}</div> : null}
 
+      {job.status === 'FAILED' && <ArtifactList artifacts={job.artifacts} />}
       {job.status === 'SUCCEEDED' && (
         <>
           {successContent}

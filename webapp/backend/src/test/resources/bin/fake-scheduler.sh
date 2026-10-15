@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Фейковый daily_scheduler для интеграционных тестов: печатает характерные строки прогресса
 # (ровно те, что разбирает ProgressTracker), создаёт schedule.csv, report.json
 # (printers[0].variable_batch_schedule) и plates.3mf по своим аргументам. Слайсер не вызывается.

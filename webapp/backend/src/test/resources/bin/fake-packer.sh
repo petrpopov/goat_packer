@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Фейковый colored_3mf_packer для интеграционных тестов: печатает характерные строки прогресса
 # (ровно те, что разбирает ProgressTracker) и создаёт артефакты по --output: packed.3mf и
 # packed.verification.json с object_count. Содержимое 3MF — фикция, слайсер не вызывается.
@@ -33,4 +33,6 @@ printf 'fake packed 3mf content for tests\n' > "$output"
 printf '{"object_count": 30, "output_3mf": "%s", "profile": "%s"}\n' "$output" "$profile" > "$verification"
 
 echo "packed 30 colored objects; wrote $output"
+mkdir -p work
+printf '{"placements": []}\n' > work/placements.json
 echo "report: $verification"

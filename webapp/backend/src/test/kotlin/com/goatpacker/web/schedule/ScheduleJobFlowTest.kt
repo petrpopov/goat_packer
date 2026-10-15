@@ -2,6 +2,7 @@ package com.goatpacker.web.schedule
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.FakeBins
+import com.goatpacker.web.miniProject3mf
 import com.goatpacker.web.awaitJobCompletion
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
@@ -44,7 +45,7 @@ class ScheduleJobFlowTest(
     private val json = ObjectMapper()
 
     private fun uploadFile(): MockMultipartFile =
-        MockMultipartFile("file", "packed.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake 3mf bytes".toByteArray())
+        MockMultipartFile("file", "packed.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
 
     @Test
     fun `расписание из загруженного файла — статус, работы, пластины, xlsx`() {
@@ -124,7 +125,7 @@ class ScheduleJobFlowTest(
         // 1. Сначала прогоняем pack-джобу.
         val packCreate = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake 3mf bytes".toByteArray()))
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
                 .param("profileId", "bambu_a2l"),
         )
             .andExpect(status().isAccepted)

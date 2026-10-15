@@ -12,17 +12,27 @@ export interface PrinterProfile {
   supportsNozzleClean: boolean;
 }
 
-/** Ответ /api/profiles/detect. */
+/** Ответ /api/profiles/detect. printerModel — принтер, записанный в файле (для понятных ошибок). */
 export interface DetectProfileResponse {
   profileId: string | null;
+  printerModel: string | null;
 }
 
 export type JobKind = 'pack' | 'schedule';
 
-export type JobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+export type JobStatus = 'QUEUED' | 'RUNNING' | 'FINALIZING' | 'LOST' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
 
 export type JobPhase =
-  'probe' | 'packing' | 'assembling' | 'slicing' | 'repacking' | 'benchmark' | 'optimizing' | 'writing' | 'cleanup';
+  | 'upload'
+  | 'probe'
+  | 'packing'
+  | 'assembling'
+  | 'slicing'
+  | 'repacking'
+  | 'benchmark'
+  | 'optimizing'
+  | 'writing'
+  | 'cleanup';
 
 export interface JobArtifact {
   name: string;
@@ -65,6 +75,14 @@ export interface ScheduleInfo {
 }
 
 export interface JobStatusResponse {
+  canManage?: boolean;
+  originalName?: string;
+  queuePosition?: number | null;
+  estimatedWaitSeconds?: number | null;
+  estimatedWaitFromSeconds?: number | null;
+  estimatedWaitToSeconds?: number | null;
+  estimateReason?: string;
+  expiresAt?: string | null;
   jobId: string;
   kind: JobKind;
   status: JobStatus;

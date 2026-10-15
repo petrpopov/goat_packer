@@ -27,7 +27,7 @@ data class PackParams(
     val seed: Long,
     /** Override отступа от края стола; null = дефолт профиля. */
     val edgeMargin: Double?,
-    /** search = полный рандом-поиск, grid = только детерминированная сетка (быстро). */
+    /** search = детерминированный поиск, grid = только детерминированная сетка (быстро). */
     val layout: String,
     val nozzleClean: String,
 )
@@ -38,7 +38,7 @@ sealed interface ScheduleSource {
     data object Uploaded : ScheduleSource
 
     /** Готовый упакованный файл из успешного pack-джоба. */
-    data class FromPackJob(val packedPath: Path) : ScheduleSource
+    data class FromPackJob(val packedPath: Path, val profileId: String, val job: Job) : ScheduleSource
 }
 
 /** Параметры schedule-джоба — транслируются в CLI-аргументы daily_scheduler один в один. */
@@ -65,6 +65,7 @@ class JobRunner(
     private val properties: AppProperties,
     private val objectMapper: ObjectMapper,
     private val xlsxWriter: XlsxWriter,
+    private val nativeLauncher: org.springframework.beans.factory.ObjectProvider<com.goatpacker.web.server.NativeLauncher>? = null,
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(JobRunner::class.java)
@@ -77,7 +78,9 @@ class JobRunner(
     }
 
     @Async("jobExecutor")
-    fun runPack(job: Job, params: PackParams) {
+    fun runPack(job: Job, params: PackParams) = runPackBlocking(job, params)
+
+    fun runPackBlocking(job: Job, params: PackParams) {
         val command = buildList {
             add(properties.packerBinPath.toString())
             add("--source")
@@ -114,11 +117,10 @@ class JobRunner(
     }
 
     @Async("jobExecutor")
-    fun runSchedule(job: Job, params: ScheduleParams) {
-        val source = when (val source = params.source) {
-            is ScheduleSource.Uploaded -> "input.3mf"
-            is ScheduleSource.FromPackJob -> source.packedPath.toAbsolutePath().toString()
-        }
+    fun runSchedule(job: Job, params: ScheduleParams) = runScheduleBlocking(job, params)
+
+    fun runScheduleBlocking(job: Job, params: ScheduleParams) {
+        val source = "input.3mf"
         val command = buildList {
             add(properties.schedulerBinPath.toString())
             // ВАЖНО: аргумент после --printer — одна строка с запятыми.
@@ -152,15 +154,20 @@ class JobRunner(
 
     private fun execute(job: Job, command: List<String>, finish: (Int) -> Unit) {
         log.info("Джоба {} ({}) запущена: {}", job.id, job.kind, command.joinToString(" "))
-        job.update { it.copy(status = JobStatus.RUNNING) }
+        if (job.cancelled) return
         val tracker = ProgressTracker(job.kind)
 
         try {
-            val process = ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .directory(job.directory.toFile())
-                .start()
-            job.process = process
+            val process = synchronized(job) {
+                if (job.cancelled) return
+                (nativeLauncher?.getIfAvailable()?.start(job, command) ?: ProcessBuilder(command)
+                    .redirectErrorStream(true)
+                    .directory(job.directory.toFile())
+                    .start()).also {
+                        job.process = it
+                        job.update { snap -> snap.copy(status = JobStatus.RUNNING) }
+                    }
+            }
 
             val logFile = job.directory.resolve(JobArtifacts.LOG_FILE)
             java.io.BufferedWriter(
@@ -169,11 +176,13 @@ class JobRunner(
                     StandardCharsets.UTF_8,
                 ),
             ).use { writer ->
-                process.inputStream.bufferedReader(StandardCharsets.UTF_8).forEachLine { line ->
-                    writer.write(line)
-                    writer.newLine()
-                    writer.flush()
+                var written = 0L
+                com.goatpacker.web.job.BoundedLines.read(process.inputStream) { line ->
+                    if (written < 10L * 1024 * 1024) {
+                        writer.write(line);writer.newLine();writer.flush();written += line.toByteArray(StandardCharsets.UTF_8).size + 1
+                    }
                     val event = tracker.onLine(line)
+                    if (line.contains("event=") || line.contains("\"event\"")) log.info("jobId={} component=cli message={}", job.id, line.take(8192))
                     job.update {
                         it.copy(
                             phase = event.phase,
@@ -186,12 +195,18 @@ class JobRunner(
 
             val exitCode = process.waitFor()
             log.info("Джоба {} завершилась с кодом {}", job.id, exitCode)
-            finish(exitCode)
+            if (!job.cancelled) {
+                nativeLauncher?.getIfAvailable()?.collect(job)
+                finish(exitCode)
+            }
         } catch (ex: Exception) {
             log.error("Джоба {} упала: {}", job.id, ex.message, ex)
-            fail(job, "Процесс завершился аварийно: ${ex.message ?: ex::class.java.simpleName}")
+            if (!job.cancelled) fail(job, "Процесс завершился аварийно: ${ex.message ?: ex::class.java.simpleName}")
         } finally {
-            job.process = null
+            nativeLauncher?.getIfAvailable()?.stop(job)
+            job.process?.takeIf { it.isAlive }?.let { JobProcessKiller.kill(it) }
+            synchronized(job) { job.process = null }
+            if (job.cancelled) job.directory.toFile().deleteRecursively()
         }
     }
 
@@ -245,7 +260,7 @@ class JobRunner(
 
     /** Общая проверка успеха: exit 0 + обязательные артефакты на месте. При провале — FAILED. */
     private fun succeeded(job: Job, exitCode: Int, required: List<String>): Boolean {
-        val missing = required.filter { !Files.exists(job.directory.resolve(it)) }
+        val missing = required.filter { !Files.isRegularFile(job.directory.resolve(it)) || Files.size(job.directory.resolve(it)) == 0L }
         if (exitCode != 0 || missing.isNotEmpty()) {
             val reason = buildString {
                 append("Процесс завершился с кодом $exitCode")
@@ -278,10 +293,21 @@ class JobRunner(
         job.update {
             it.copy(
                 status = JobStatus.FAILED,
-                error = logTail(job.directory, ERROR_TAIL_LINES) ?: reason,
+                error = friendlyError(job, reason) ?: reason,
                 finishedAt = OffsetDateTime.now(),
             )
         }
+    }
+
+    /**
+     * Хвост лога с переведённым заголовком: известные ошибки бинарников получают
+     * человекопонятное «что случилось и что делать», сырой хвост остаётся под разделителем
+     * (фронт показывает его свёрнутым). Неопознанный хвост возвращается как есть.
+     */
+    private fun friendlyError(job: Job, reason: String): String? {
+        val tail = logTail(job.directory, ERROR_TAIL_LINES) ?: return null
+        val headline = CliErrorTranslator.translate(tail) ?: reason
+        return headline + CliErrorTranslator.DETAILS_SEPARATOR + tail
     }
 
     /** Хвост лога: последние [lines] строк log.txt. */
@@ -291,7 +317,16 @@ class JobRunner(
             return null
         }
 
-        return Files.readAllLines(logFile, StandardCharsets.UTF_8).takeLast(lines).joinToString("\n")
+        return try {
+            val tail = java.util.ArrayDeque<String>(lines)
+            Files.newBufferedReader(logFile, StandardCharsets.UTF_8).useLines { stream ->
+                stream.forEach { line ->
+                    if (tail.size == lines) tail.removeFirst()
+                    tail.addLast(line.takeLast(4096))
+                }
+            }
+            tail.joinToString("\n")
+        } catch (_: Exception) { null }
     }
 
     /** report.json → printers[0].variable_batch_schedule → [ScheduleJobResult] (plates считаются тут). */

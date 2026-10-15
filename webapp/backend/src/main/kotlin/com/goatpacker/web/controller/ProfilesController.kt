@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
 
 @RestController
+@org.springframework.context.annotation.Profile("!server")
 @RequestMapping("/api/profiles")
 class ProfilesController(
     private val profileService: ProfileService,
@@ -21,6 +22,8 @@ class ProfilesController(
 
     /** Автоопределение профиля по printer_model внутри загруженного 3MF. */
     @PostMapping("/detect", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
-    fun detect(@RequestParam("file") file: MultipartFile): DetectProfileDto =
-        DetectProfileDto(profileId = profileService.detectFrom3mf(file))
+    fun detect(@RequestParam("file") file: MultipartFile): DetectProfileDto {
+        val detection = profileService.detectFrom3mf(file)
+        return DetectProfileDto(profileId = detection.profileId, printerModel = detection.printerModel)
+    }
 }

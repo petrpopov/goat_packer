@@ -1,4 +1,5 @@
 const API_PREFIX = '/api';
+export const serverMode = import.meta.env?.VITE_SERVER_MODE === 'true';
 
 export class ApiError extends Error {
   readonly code: string | null;
@@ -21,7 +22,16 @@ interface ErrorBody {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const isFormData = options.body instanceof FormData;
-  const headers = isFormData ? options.headers : { 'Content-Type': 'application/json', ...(options.headers ?? {}) };
+  const headers = new Headers(
+    isFormData ? options.headers : { 'Content-Type': 'application/json', ...(options.headers ?? {}) }
+  );
+  if (typeof document !== 'undefined' && !['GET', 'HEAD'].includes(options.method ?? 'GET')) {
+    const token = document.cookie
+      .split('; ')
+      .find((c) => c.startsWith('XSRF-TOKEN='))
+      ?.slice('XSRF-TOKEN='.length);
+    if (token) headers.set('X-XSRF-TOKEN', decodeURIComponent(token));
+  }
 
   const response = await fetch(`${API_PREFIX}${path}`, { ...options, headers });
 
@@ -45,8 +55,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  postForm: <T>(path: string, formData: FormData) => request<T>(path, { method: 'POST', body: formData }),
+  get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
+  postForm: <T>(path: string, formData: FormData, signal?: AbortSignal) =>
+    request<T>(path, { method: 'POST', body: formData, signal }),
+  delete: (path: string) => request<void>(path, { method: 'DELETE' }),
   /** Триггерит сохранение файла через скрытый <a download>. */
   download: (url: string, filename?: string) => {
     const link = document.createElement('a');
@@ -56,4 +68,20 @@ export const api = {
     link.click();
     link.remove();
   },
+};
+
+export const serverApi = {
+  get: <T>(path: string, signal?: AbortSignal) => request<T>(`/v2${path}`, { signal }),
+  post: <T>(path: string, data: unknown = {}, signal?: AbortSignal) =>
+    request<T>(`/v2${path}`, { method: 'POST', body: JSON.stringify(data), signal }),
+  putFile: <T>(path: string, file: File, signal?: AbortSignal) =>
+    request<T>(`/v2${path}`, {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': 'application/octet-stream' },
+      signal,
+    }),
+  createJob: <T>(data: unknown, key: string) =>
+    request<T>('/v2/jobs', { method: 'POST', body: JSON.stringify(data), headers: { 'Idempotency-Key': key } }),
+  delete: (path: string) => request<void>(`/v2${path}`, { method: 'DELETE' }),
 };

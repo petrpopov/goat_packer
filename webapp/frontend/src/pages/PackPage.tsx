@@ -2,51 +2,33 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
-import { detectProfile, fetchProfiles, startPackJob } from '@/api/services';
+import { fetchProfiles, startPackJob } from '@/api/services';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import JobCard from '@/components/JobCard';
+import { buildNozzleClean, numberInRange } from '@/utils/forms';
+import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 
 type NozzleCleanMode = 'off' | 'global' | 'from-z';
 
-/**
- * Уровни усилия поиска: один ползунок вместо двух числовых полей (попытки/кандидаты).
- * «Сильно» — консольный уровень, валидированный на козочках (4800/2400); поиск всё равно
- * останавливается сам, когда долго нет улучшений, так что завышенный потолок почти бесплатен.
- */
+/** Finite deterministic search portfolio; higher effort includes all earlier strategies. */
 const EFFORT_LEVELS = [
-  { label: 'Быстро', attempts: 500, candidates: 400 },
-  { label: 'Стандарт', attempts: 2000, candidates: 1000 },
-  { label: 'Сильно', attempts: 4800, candidates: 2400 },
-  { label: 'Максимум', attempts: 12000, candidates: 2400 },
+  { label: 'Быстро', attempts: 500 },
+  { label: 'Стандарт', attempts: 2000 },
+  { label: 'Сильно', attempts: 4800 },
+  { label: 'Максимум', attempts: 12000 },
 ] as const;
-
-/** nozzleClean → "", "global", "global,every=N", "from-z=H", "from-z=H,every=N". */
-function buildNozzleClean(mode: NozzleCleanMode, fromZ: string, globalEvery: string, fromZEvery: string): string {
-  if (mode === 'off') return '';
-  if (mode === 'global') {
-    const every = Number.parseInt(globalEvery, 10);
-    return Number.isFinite(every) && every > 1 ? `global,every=${every}` : 'global';
-  }
-  const height = Number.parseFloat(fromZ);
-  if (!Number.isFinite(height)) return '';
-  const every = Number.parseInt(fromZEvery, 10);
-  const base = `from-z=${height}`;
-  return Number.isFinite(every) && every > 1 ? `${base},every=${every}` : base;
-}
 
 export default function PackPage() {
   const sendToSchedule = useUiStore((state) => state.sendToSchedule);
 
   const [file, setFile] = useState<File | null>(null);
-  const [profileId, setProfileId] = useState('');
   const [clearance, setClearance] = useState('0.7');
   const [resolution, setResolution] = useState('0.25');
   const [effort, setEffort] = useState(EFFORT_LEVELS.length - 2);
-  const [seed, setSeed] = useState('20270831');
   const [cleanMode, setCleanMode] = useState<NozzleCleanMode>('off');
   const [layout, setLayout] = useState<'search' | 'grid'>('search');
   const [edgeMargin, setEdgeMargin] = useState('');
@@ -67,30 +49,37 @@ export default function PackPage() {
     }
   }, [profilesQuery.isError, profilesQuery.error]);
 
-  // Автоопределение профиля: printer_model внутри 3MF сопоставляется с профилями на бэкенде.
-  // Подставляем, только если пользователь ещё не выбрал профиль руками.
-  const detectMutation = useMutation({
-    mutationFn: detectProfile,
-    onSuccess: (response) => {
-      if (response.profileId !== null && profileId === '') {
-        setProfileId(response.profileId);
-      }
-    },
-  });
-
-  const handleFileChange = (next: File | null) => {
-    setFile(next);
-    if (next !== null) {
-      detectMutation.mutate(next);
-    }
-  };
+  const detectMutation = useProfileDetection(file);
+  const profileId = detectMutation.data?.profileId ?? '';
+  const handleFileChange = (next: File | null) => setFile(next);
 
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? null;
-  const jobActive = job?.status === 'QUEUED' || job?.status === 'RUNNING';
+  const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
+  const jobActive =
+    Boolean(jobId) && !jobGone && (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const nozzleCleanAvailable = selectedProfile === null || selectedProfile.supportsNozzleClean;
+
+  // Состояние детекта профиля по загруженному файлу: idle / detecting / ok / unknown.
+  const detection =
+    file === null
+      ? 'idle'
+      : detectMutation.isPending
+        ? 'detecting'
+        : detectMutation.data?.profileId != null
+          ? 'ok'
+          : 'unknown';
+  const detectionError = detectMutation.isError
+    ? detectMutation.error instanceof Error
+      ? detectMutation.error.message
+      : 'Не удалось проверить файл'
+    : detection === 'unknown'
+      ? detectMutation.data?.printerModel
+        ? `Для принтера «${detectMutation.data.printerModel}» не найден подходящий профиль.`
+        : 'В проекте не указан printer_model. Сохраните проект с выбранным принтером в слайсере.'
+      : null;
 
   const startMutation = useMutation({
     mutationFn: startPackJob,
@@ -103,12 +92,30 @@ export default function PackPage() {
     },
   });
 
-  const nozzleCleanInvalid = cleanMode === 'from-z' && fromZ.trim() === '';
-  const canSubmit = Boolean(file) && profileId !== '' && !jobActive && !startMutation.isPending && !nozzleCleanInvalid;
+  const effectiveCleanMode = nozzleCleanAvailable ? cleanMode : 'off';
+  let nozzleSpec = '';
+  let nozzleCleanInvalid = false;
+  try {
+    nozzleSpec = buildNozzleClean(effectiveCleanMode, fromZ, globalEvery, fromZEvery);
+  } catch {
+    nozzleCleanInvalid = true;
+  }
+  const numbersValid =
+    numberInRange(clearance, 0.05, 10) &&
+    numberInRange(resolution, 0.05, 1) &&
+    (edgeMargin.trim() === '' || numberInRange(edgeMargin, 0, 20));
+  const canSubmit =
+    Boolean(file) &&
+    selectedProfile !== null &&
+    numbersValid &&
+    detection === 'ok' &&
+    !jobActive &&
+    !startMutation.isPending &&
+    !nozzleCleanInvalid;
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!file || profileId === '' || nozzleCleanInvalid) return;
+    if (!canSubmit || !file) return;
 
     const form = new FormData();
     form.append('file', file);
@@ -116,12 +123,7 @@ export default function PackPage() {
     form.append('clearance', clearance);
     form.append('resolution', resolution);
     form.append('attempts', String(EFFORT_LEVELS[effort].attempts));
-    form.append('candidates', String(EFFORT_LEVELS[effort].candidates));
-    // Seed по умолчанию закреплён (20270831 — проверенный на козочках): раскладка — лотерея
-    // по seed, стабильный дефолт даёт один и тот же результат без крутки ручек. Пустое поле
-    // = случайный на прогон (бэкенд подставит) — осознанная крутилка, если хочется иначе.
-    if (seed.trim() !== '') form.append('seed', seed.trim());
-    form.append('nozzleClean', buildNozzleClean(cleanMode, fromZ, globalEvery, fromZEvery));
+    form.append('nozzleClean', nozzleSpec);
     form.append('layout', layout);
     // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки).
     if (edgeMargin.trim() !== '') form.append('edgeMargin', edgeMargin.trim());
@@ -152,16 +154,23 @@ export default function PackPage() {
 
       <form className="stack" onSubmit={handleSubmit}>
         <section className="card">
-          <FileDrop file={file} onFileChange={handleFileChange} disabled={jobActive} />
+          <FileDrop file={file} onFileChange={handleFileChange} disabled={jobActive || startMutation.isPending} />
+          {detectionError ? <div className="error-block">{detectionError}</div> : null}
 
           <div className="form-grid">
-            <Field label="Профиль принтера">
-              <select
-                className="input"
-                value={profileId}
-                onChange={(event) => setProfileId(event.target.value)}
-                disabled={profilesQuery.isPending || jobActive}
-              >
+            <Field
+              label="Профиль принтера"
+              hint={
+                detection === 'detecting'
+                  ? 'Определяю принтер по файлу…'
+                  : detection === 'ok'
+                    ? 'Определён по файлу — выбор заблокирован'
+                    : detection === 'unknown'
+                      ? 'Профиль не определён'
+                      : undefined
+              }
+            >
+              <select className="input" value={profileId} disabled>
                 <option value="">{profilesQuery.isPending ? 'Загрузка…' : '— выберите профиль —'}</option>
                 {profiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
@@ -173,13 +182,15 @@ export default function PackPage() {
 
             <Field
               label="Раскладка"
-              hint={layout === 'grid' ? 'Ровная сетка, без поиска — быстро' : 'Плотный подбор с поворотами и нависаниями'}
+              hint={
+                layout === 'grid' ? 'Ровная сетка, без поиска — быстро' : 'Плотный подбор с поворотами и нависаниями'
+              }
             >
               <select
                 className="input"
                 value={layout}
                 onChange={(event) => setLayout(event.target.value as 'search' | 'grid')}
-                disabled={jobActive}
+                disabled={jobActive || startMutation.isPending}
               >
                 <option value="search">Подбор (плотнее)</option>
                 <option value="grid">Сетка (быстро, равномерно)</option>
@@ -211,7 +222,7 @@ export default function PackPage() {
                   step={1}
                   value={globalEvery}
                   onChange={(event) => setGlobalEvery(event.target.value)}
-                  disabled={jobActive}
+                  disabled={jobActive || startMutation.isPending}
                 />
               </Field>
             )}
@@ -230,7 +241,7 @@ export default function PackPage() {
                     step="any"
                     value={fromZ}
                     onChange={(event) => setFromZ(event.target.value)}
-                    disabled={jobActive}
+                    disabled={jobActive || startMutation.isPending}
                   />
                 </Field>
                 <Field label="Каждый N слой">
@@ -241,7 +252,7 @@ export default function PackPage() {
                     step={1}
                     value={fromZEvery}
                     onChange={(event) => setFromZEvery(event.target.value)}
-                    disabled={jobActive}
+                    disabled={jobActive || startMutation.isPending}
                   />
                 </Field>
               </>
@@ -259,7 +270,7 @@ export default function PackPage() {
                   step="any"
                   value={clearance}
                   onChange={(event) => setClearance(event.target.value)}
-                  disabled={jobActive}
+                  disabled={jobActive || startMutation.isPending}
                 />
               </Field>
               <Field label="Разрешение растра, мм">
@@ -270,12 +281,12 @@ export default function PackPage() {
                   step="any"
                   value={resolution}
                   onChange={(event) => setResolution(event.target.value)}
-                  disabled={jobActive}
+                  disabled={jobActive || startMutation.isPending}
                 />
               </Field>
               <Field
                 label="Усилие поиска"
-                hint={`${EFFORT_LEVELS[effort].attempts} попыток · ${EFFORT_LEVELS[effort].candidates} кандидатов на шаг`}
+                hint={`${EFFORT_LEVELS[effort].attempts} — усилие детерминированного поиска`}
               >
                 <div className="effort-slider">
                   <input
@@ -286,7 +297,7 @@ export default function PackPage() {
                     step={1}
                     value={effort}
                     onChange={(event) => setEffort(Number(event.target.value))}
-                    disabled={jobActive}
+                    disabled={jobActive || startMutation.isPending}
                     aria-label="Усилие поиска"
                   />
                   <div className="effort-labels">
@@ -300,7 +311,11 @@ export default function PackPage() {
               </Field>
               <Field
                 label="Отступ от края, мм"
-                hint={selectedProfile ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)` : 'пусто — дефолт профиля'}
+                hint={
+                  selectedProfile
+                    ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)`
+                    : 'пусто — дефолт профиля'
+                }
               >
                 <input
                   className="input"
@@ -310,18 +325,7 @@ export default function PackPage() {
                   placeholder={selectedProfile ? String(selectedProfile.edgeMarginMm) : ''}
                   value={edgeMargin}
                   onChange={(event) => setEdgeMargin(event.target.value)}
-                  disabled={jobActive}
-                />
-              </Field>
-              <Field label="Seed" hint="стабильный по умолчанию — одинаковый результат; очисти для случайного на прогон">
-                <input
-                  className="input mono"
-                  type="number"
-                  step={1}
-                  placeholder="случайный"
-                  value={seed}
-                  onChange={(event) => setSeed(event.target.value)}
-                  disabled={jobActive}
+                  disabled={jobActive || startMutation.isPending}
                 />
               </Field>
             </div>
@@ -336,7 +340,13 @@ export default function PackPage() {
         </section>
       </form>
 
-      <JobCard job={job} pollError={jobQuery.isError ? jobQuery.error : undefined} successContent={successContent} />
+      <JobCard
+        jobId={jobId}
+        onDismiss={() => setJobId(null)}
+        job={job}
+        pollError={jobQuery.isError ? jobQuery.error : undefined}
+        successContent={successContent}
+      />
     </div>
   );
 }

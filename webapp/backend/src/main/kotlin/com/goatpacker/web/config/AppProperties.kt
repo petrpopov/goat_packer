@@ -20,6 +20,7 @@ data class AppProperties(
     var profilesDir: String = "../../profiles",
     var jobsRoot: String = "${System.getProperty("java.io.tmpdir")}/goat-packer-web/jobs",
     var jobTtlHours: Long = 12,
+    var allowedOrigins: List<String> = listOf("http://localhost:3007", "http://127.0.0.1:3007"),
 ) {
     lateinit var packerBinPath: Path
     lateinit var schedulerBinPath: Path

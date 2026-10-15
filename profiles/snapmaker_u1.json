@@ -1,4 +1,5 @@
 {
+  "download_slug": "u1",
   "id": "snapmaker_u1",
   "printer_name": "Snapmaker U1",
   "slicer_kind": "orca",

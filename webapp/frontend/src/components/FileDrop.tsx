@@ -1,9 +1,10 @@
+import { serverMode } from '@/api/http';
 import { useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import { pushToast } from '@/store/useToastStore';
 import { formatBytes } from '@/utils/format';
 
-const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = (serverMode ? 50 : 200) * 1024 * 1024;
 
 interface FileDropProps {
   file: File | null;
@@ -13,7 +14,8 @@ interface FileDropProps {
 
 function validateFile(file: File): string | null {
   if (!file.name.toLowerCase().endsWith('.3mf')) return 'Поддерживаются только файлы .3mf';
-  if (file.size > MAX_FILE_SIZE_BYTES) return 'Файл больше 200 МБ';
+  if (file.size === 0) return 'Файл пуст';
+  if (file.size > MAX_FILE_SIZE_BYTES) return `Файл больше ${MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ`;
   return null;
 }
 
@@ -22,7 +24,7 @@ export default function FileDrop({ file, onFileChange, disabled = false }: FileD
   const [dragOver, setDragOver] = useState(false);
 
   const accept = (candidate: File | null | undefined) => {
-    if (!candidate) return;
+    if (disabled || !candidate) return;
     const problem = validateFile(candidate);
     if (problem) {
       pushToast(problem, 'error');
@@ -87,16 +89,18 @@ export default function FileDrop({ file, onFileChange, disabled = false }: FileD
       ) : (
         <>
           <span className="file-name">Перетащите файл .3mf сюда</span>
-          <span className="file-size">или нажмите для выбора · до 200 МБ</span>
+          <span className="file-size">или нажмите для выбора · до {MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ</span>
         </>
       )}
       <input
         ref={inputRef}
         type="file"
+        disabled={disabled}
         accept=".3mf"
         className="file-drop-input"
         onChange={(event) => {
           accept(event.target.files?.[0]);
+          event.target.value = '';
         }}
       />
     </div>

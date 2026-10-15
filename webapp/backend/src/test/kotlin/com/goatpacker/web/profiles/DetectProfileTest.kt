@@ -58,6 +58,7 @@ class DetectProfileTest(
     fun `точное имя принтера из 3mf даёт профиль u1`() {
         val response = json.readTree(detect(mini3mf("Snapmaker U1")))
         assertEquals("snapmaker_u1", response["profileId"].asText())
+        assertEquals("Snapmaker U1", response["printerModel"].asText())
     }
 
     @Test
@@ -73,4 +74,48 @@ class DetectProfileTest(
             assertTrue(node.isMissingNode || node.isNull || node.asText("").isEmpty(), "ожидался null: $node")
         }
     }
+
+    @Test
+    fun `неизвестный принтер всё же назван в printerModel — фронт покажет чей файл`() {
+        val response = json.readTree(detect(mini3mf("Prusa MK4")))
+        assertEquals("Prusa MK4", response["printerModel"].asText())
+    }
+
+    @Test
+    fun `файл без printer_model отдаёт printerModel null`() {
+        val response = json.readTree(detect(mini3mf(null)))
+        // non_null-сериализация опускает поле целиком — path() не бросает NPE на отсутствующем.
+        val model = response.path("printerModel")
+        assertTrue(model.isMissingNode || model.isNull || model.asText("").isEmpty())
+    }
+    @Test
+    fun `slicer stored previews with descriptors do not hide printer settings`() {
+        val bytes = com.goatpacker.web.descriptorProject3mf("Bambu Lab P1S")
+        org.junit.jupiter.api.assertThrows<java.util.zip.ZipException> {
+            java.util.zip.ZipInputStream(bytes.inputStream()).use { it.nextEntry }
+        }
+        val response = json.readTree(detect(bytes))
+        assertEquals("bambu_p1s", response["profileId"].asText())
+        assertEquals("Bambu Lab P1S", response["printerModel"].asText())
+    }
+
+    @Test
+    fun `missing printer has explicit nullable fields`() {
+        val response = json.readTree(detect(mini3mf(null)))
+        assertTrue(response.has("profileId") && response["profileId"].isNull)
+        assertTrue(response.has("printerModel") && response["printerModel"].isNull)
+    }
+
+    @Test
+    fun `broken archive and missing multipart field return 400 instead of unknown printer`() {
+        mockMvc.perform(multipart("/api/profiles/detect")).andExpect(status().isBadRequest)
+        mockMvc.perform(multipart("/api/profiles/detect").file(MockMultipartFile("file", "bad.3mf", "application/octet-stream", byteArrayOf(1,2,3))))
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `short generic names cannot silently select a different printer`() {
+        assertTrue(json.readTree(detect(mini3mf("Bambu Lab P1")))["profileId"].isNull)
+    }
+
 }

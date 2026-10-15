@@ -23,11 +23,13 @@ import java.util.concurrent.RejectedExecutionException
  * pack-джоба. Проверяет порядок окон «день < ночь < горизонт» и ставит джоб в очередь.
  */
 @Service
+@org.springframework.context.annotation.Profile("!server")
 class ScheduleService(
     private val properties: AppProperties,
     private val profileService: ProfileService,
     private val store: JobStore,
     private val jobRunner: JobRunner,
+    private val projects: Project3mf,
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(ScheduleService::class.java)
@@ -40,6 +42,10 @@ class ScheduleService(
         val profile = profileService.require(profileId)
 
         val source = resolveSource(form)
+        if (source is ScheduleSource.Uploaded) profileService.requireMatches(projects.inspect(form.file!!), profile)
+        if (source is ScheduleSource.FromPackJob && source.profileId != profileId) {
+            throw BadRequestException("Профиль расписания должен совпадать с профилем исходной упаковки")
+        }
         val dayStart = form.dayStart?.trim() ?: "10:00"
         val nightStart = form.nightStart?.trim() ?: "23:00"
         val horizonEnd = form.horizonEnd?.trim() ?: "34:00"
@@ -65,16 +71,28 @@ class ScheduleService(
             createdAt = OffsetDateTime.now(),
         )
         Files.createDirectories(job.directory)
-        if (source is ScheduleSource.Uploaded) {
-            form.file!!.transferTo(job.directory.resolve("input.3mf").toFile())
-        }
-        store.put(job)
-
         try {
+            val input = job.directory.resolve("input.3mf")
+            when (source) {
+                ScheduleSource.Uploaded -> form.file!!.transferTo(input.toFile())
+                is ScheduleSource.FromPackJob -> synchronized(source.job) {
+                    if (source.job.cancelled) throw BadRequestException("Исходная pack-задача удалена")
+                    Files.copy(source.packedPath, input)
+                }
+            }
+            // Each queued job owns its source; deleting/expiring a pack cannot break it later.
+            store.put(job)
             jobRunner.runSchedule(job, params)
         } catch (ex: RejectedExecutionException) {
             store.remove(job.id)
+            job.cancel()
+            job.directory.toFile().deleteRecursively()
             throw BadRequestException("Очередь задач переполнена — попробуйте повторить позже")
+        } catch (ex: Exception) {
+            store.remove(job.id)
+            job.cancel()
+            job.directory.toFile().deleteRecursively()
+            throw ex
         }
 
         log.info("Создана schedule-джоба {} (профиль {}, источник {})", job.id, profileId, source)
@@ -83,7 +101,9 @@ class ScheduleService(
 
     private fun resolveSource(form: ScheduleJobForm): ScheduleSource {
         val file = form.file
-        if (file != null && !file.isEmpty) {
+        if (file != null && !form.packJobId.isNullOrBlank()) throw BadRequestException("Укажите только один источник: file или packJobId")
+        if (file != null && file.isEmpty) throw BadRequestException("Файл .3mf пуст")
+        if (file != null) {
             val fileName = file.originalFilename ?: ""
             if (!fileName.lowercase().endsWith(".3mf")) {
                 throw BadRequestException("Файл должен иметь расширение .3mf, получено: «$fileName»")
@@ -110,7 +130,7 @@ class ScheduleService(
             throw BadRequestException("У pack-джобы «$packJobId» нет артефакта packed.3mf")
         }
 
-        return ScheduleSource.FromPackJob(packed)
+        return ScheduleSource.FromPackJob(packed, packJob.packResult?.profileId.orEmpty(), packJob)
     }
 
     private fun validateTimeWindow(dayStart: String, nightStart: String, horizonEnd: String) {

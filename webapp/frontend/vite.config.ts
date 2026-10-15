@@ -13,7 +13,7 @@ export default defineConfig({
     port: 3007,
     proxy: {
       '/api': {
-        target: 'http://localhost:19190',
+        target: process.env.GOAT_API_TARGET ?? 'http://localhost:19190',
         changeOrigin: true,
       },
     },

@@ -25,6 +25,7 @@ import java.nio.file.Files
 
 /** Чтение статуса джоба, выдача артефактов, отмена и удаление. */
 @Service
+@org.springframework.context.annotation.Profile("!server")
 class JobService(
     private val store: JobStore,
 ) {
@@ -106,6 +107,9 @@ class JobService(
 
     fun artifact(id: String, name: String): ResponseEntity<FileSystemResource> {
         val job = requireJob(id)
+        if (name != JobArtifacts.LOG_FILE && job.current.status != JobStatus.SUCCEEDED) {
+            throw ResourceNotFoundException("Артефакт ещё не готов")
+        }
         val path = JobArtifacts.resolve(job.kind, job.directory, name)
             ?: throw ResourceNotFoundException("Артефакт «$name» у джобы $id не найден")
 
@@ -122,7 +126,7 @@ class JobService(
         val job = store.remove(id)
             ?: throw ResourceNotFoundException("Джоба $id не найдена")
 
-        job.process?.takeIf { it.isAlive }?.let { process ->
+        job.cancel()?.takeIf { it.isAlive }?.let { process ->
             log.info("Джоба {} ещё выполняется — убиваю процесс", id)
             JobProcessKiller.kill(process)
         }

@@ -15,7 +15,9 @@ object JobArtifacts {
     data class ArtifactSpec(val name: String, val resolve: (Path) -> Path?)
 
     private fun firstExisting(dir: Path, vararg candidates: String): Path? =
-        candidates.map { dir.resolve(it) }.firstOrNull { Files.exists(it) }
+        candidates.map { dir.resolve(it) }.firstOrNull {
+            Files.isRegularFile(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) && it.toRealPath().startsWith(dir.toRealPath())
+        }
 
     fun whitelist(kind: JobKind): List<ArtifactSpec> = when (kind) {
         JobKind.PACK -> listOf(
@@ -23,7 +25,7 @@ object JobArtifacts {
             // Пакер пишет отчёт рядом с --output как "packed.verification.json" (with_extension);
             // наружу он идёт под каноничным именем verification.json.
             ArtifactSpec("verification.json") { dir -> firstExisting(dir, "verification.json", "packed.verification.json") },
-            ArtifactSpec("placements.json") { dir -> firstExisting(dir, "placements.json") },
+            ArtifactSpec("placements.json") { dir -> firstExisting(dir, "work/placements.json", "placements.json") },
             ArtifactSpec(LOG_FILE) { dir -> firstExisting(dir, LOG_FILE) },
         )
 
@@ -38,7 +40,7 @@ object JobArtifacts {
 
     /** Путь к артефакту по имени; null, если имя не в white-list или файла нет. */
     fun resolve(kind: JobKind, dir: Path, name: String): Path? =
-        whitelist(kind).firstOrNull { it.name == name }?.resolve(dir)?.takeIf { Files.exists(it) }
+        whitelist(kind).firstOrNull { it.name == name }?.resolve(dir)?.takeIf { Files.isRegularFile(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) }
 
     /** Существующие артефакты: пары (публичное имя, путь). */
     fun listExisting(kind: JobKind, dir: Path): List<Pair<String, Path>> =

@@ -102,6 +102,16 @@ class Job(
     val directory: Path,
     val createdAt: OffsetDateTime,
 ) {
+    @Volatile
+    var cancelled = false
+        private set
+
+    @Synchronized
+    fun cancel(): Process? {
+        cancelled = true
+        return process
+    }
+
     val snapshot = AtomicReference(
         JobSnapshot(
             status = JobStatus.QUEUED,
@@ -126,7 +136,13 @@ class Job(
     val current: JobSnapshot
         get() = snapshot.get()
 
+    var runtimeFence: Long = 0
+    var runtimeImage: String? = null
+    var runtimeTimeoutSeconds: Long = 1800
+    var onUpdate: ((JobSnapshot) -> Unit)? = null
+
     fun update(transform: (JobSnapshot) -> JobSnapshot) {
-        snapshot.updateAndGet(transform)
+        val next = snapshot.updateAndGet { if (cancelled) it else transform(it) }
+        onUpdate?.invoke(next)
     }
 }

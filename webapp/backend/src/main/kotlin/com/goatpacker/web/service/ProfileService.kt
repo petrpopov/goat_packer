@@ -10,7 +10,6 @@ import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.zip.ZipInputStream
 
 /**
  * Каталог принтеров: при каждом запросе читаются все json-файлы из {profiles-dir} (их три,
@@ -26,6 +25,7 @@ import java.util.zip.ZipInputStream
 class ProfileService(
     private val properties: AppProperties,
     private val objectMapper: ObjectMapper,
+    private val projects: Project3mf,
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(ProfileService::class.java)
@@ -34,46 +34,43 @@ class ProfileService(
     /** Профиль, разрешённый по id: DTO для проверок и путь к файлу для команд бинарников. */
     data class ResolvedProfile(val dto: ProfileDto, val file: Path)
 
+    /**
+     * Результат автоопределения профиля по 3MF. [printerModel] сохраняется и при неудаче
+     * сопоставления — из него строится внятное «файл от принтера „X“, профиля для него нет»
+     * вместо голого null.
+     */
+    data class Detection(val profileId: String?, val printerModel: String?)
+
     fun list(): List<ProfileDto> = loadAll().map { it.dto }
 
     /**
      * Определяет профиль по содержимому загруженного 3MF: из Metadata/project_settings.config
      * берётся printer_model и сопоставляется с printer_name профилей (точное совпадение, затем
-     * вхождение в обе стороны). Null = определить не удалось, пусть выбирает руками.
+     * вхождение в обе стороны). profileId = null, когда сопоставить не удалось — тогда
+     * printerModel говорит, чей это файл, и из него строится понятное сообщение.
      */
-    fun detectFrom3mf(file: MultipartFile): String? {
-        val printerModel = readPrinterModel(file) ?: return null
-        val profiles = loadAll()
-        profiles
-            .find { it.dto.name.equals(printerModel, ignoreCase = true) }
-            ?.let { return it.dto.id }
-        profiles
-            .find {
-                it.dto.name.isNotBlank() && (
-                    it.dto.name.contains(printerModel, ignoreCase = true) ||
-                        printerModel.contains(it.dto.name, ignoreCase = true)
-                )
-            }
-            ?.let { return it.dto.id }
-        return null
+    fun detectFrom3mf(file: MultipartFile): Detection {
+        return detect(projects.inspect(file).printerModel)
     }
 
-    private fun readPrinterModel(file: MultipartFile): String? = try {
-        ZipInputStream(file.inputStream).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                if (entry.name.equals("Metadata/project_settings.config", ignoreCase = true)) {
-                    val node = objectMapper.readTree(zip.readBytes())
-                    val model = node.path("printer_model").asText("").trim()
-                    return model.ifEmpty { null }
-                }
-                entry = zip.nextEntry
-            }
-            null
+    fun detect(printerModel: String?): Detection {
+        if (printerModel.isNullOrBlank()) return Detection(null, null)
+        val profiles = loadAll()
+        val exact = profiles.filter { it.dto.name.equals(printerModel, ignoreCase = true) }
+        val matches = if (exact.isNotEmpty()) exact else profiles.filter {
+            printerModel.startsWith(it.dto.name + " ", ignoreCase = true)
         }
-    } catch (ex: Exception) {
-        log.warn("Не удалось прочитать printer_model из {}: {}", file.originalFilename, ex.message)
-        null
+        return Detection(matches.singleOrNull()?.dto?.id, printerModel)
+    }
+
+    fun requireMatches(inspection: Project3mf.Inspection, profile: ResolvedProfile) {
+        projects.requireModel(inspection)
+        val detected = detect(inspection.printerModel)
+        when {
+            detected.printerModel == null -> throw BadRequestException("В проекте нет printer_model. Сохраните проект с выбранным принтером в слайсере")
+            detected.profileId == null -> throw BadRequestException("Для принтера «${detected.printerModel}» не найден однозначный профиль")
+            detected.profileId != profile.dto.id -> throw BadRequestException("Файл от принтера «${detected.printerModel}», а выбран «${profile.dto.name}»")
+        }
     }
 
     fun exists(profileId: String): Boolean = findById(profileId) != null
@@ -98,13 +95,16 @@ class ProfileService(
                 .toList()
                 .mapNotNull { file -> parseProfile(file) }
                 .sortedBy { profile -> profile.dto.name }
+                .also { profiles ->
+                    require(profiles.map { it.dto.id }.distinct().size == profiles.size) { "В каталоге профилей повторяются id принтеров" }
+                }
         }
     }
 
     private fun parseProfile(file: Path): ResolvedProfile? = try {
         val node: JsonNode = objectMapper.readTree(file.toFile())
         val area = node.get("printable_area")
-        if (area == null || !area.isArray || area.size() < 4) {
+        if (area == null || !area.isArray || area.size() != 4 || area.any { !it.isNumber || !it.asDouble().isFinite() }) {
             log.warn("Профиль {} без printable_area — пропускаю", file.fileName)
             null
         } else {
@@ -115,9 +115,11 @@ class ProfileService(
                 bedWidthMm = area.get(2).asDouble() - area.get(0).asDouble(),
                 bedDepthMm = area.get(3).asDouble() - area.get(1).asDouble(),
                 edgeMarginMm = node.path("edge_margin_mm").asDouble(0.0),
-                supportsNozzleClean = !node.path("nozzle_clean_gcode").isMissingNode &&
-                    !node.path("nozzle_clean_gcode").isNull,
+                supportsNozzleClean = node.path("nozzle_clean_gcode").asText("").isNotBlank(),
             )
+            require(dto.id.isNotBlank() && dto.name.isNotBlank() && dto.slicerKind in setOf("bambu", "orca")) { "Профиль без id, имени или поддерживаемого слайсера" }
+            require(dto.bedWidthMm > 0 && dto.bedDepthMm > 0 && dto.edgeMarginMm.isFinite()
+                && dto.edgeMarginMm >= 0 && dto.edgeMarginMm * 2 < minOf(dto.bedWidthMm, dto.bedDepthMm)) { "Некорректные границы стола" }
             ResolvedProfile(dto, file)
         }
     } catch (ex: Exception) {

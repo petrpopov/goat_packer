@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 export type Theme = 'dark' | 'light';
-export type Tab = 'pack' | 'schedule';
+export type Tab = 'pack' | 'schedule' | 'account' | 'history' | 'admin';
 
 export interface PackHandoff {
   packJobId: string;
@@ -39,7 +39,7 @@ interface UiState {
 
 export const useUiStore = create<UiState>((set, get) => ({
   theme: readInitialTheme(),
-  activeTab: 'pack',
+  activeTab: typeof location !== 'undefined' && location.pathname.startsWith('/jobs/') ? 'history' : 'pack',
   packHandoff: null,
   toggleTheme: () => {
     const next: Theme = get().theme === 'dark' ? 'light' : 'dark';

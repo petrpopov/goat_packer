@@ -74,7 +74,9 @@ data class ScheduleJobForm(
     val benchMode: String? = null,
 )
 
-/** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось. */
+/** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось; printerModel — что за принтер записан в файле (для понятных сообщений). */
+@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
 data class DetectProfileDto(
     val profileId: String?,
+    val printerModel: String?,
 )

@@ -1,5 +1,6 @@
 package com.goatpacker.web.validation
 
+import com.goatpacker.web.miniProject3mf
 import com.goatpacker.web.FakeBins
 import java.nio.file.Files
 import java.nio.file.Path
@@ -34,7 +35,7 @@ class ValidationTest(
         }
     }
 
-    private val goat = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake".toByteArray())
+    private val goat = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
 
     @Test
     fun `pack без файла — 400`() {
@@ -89,7 +90,7 @@ class ValidationTest(
 
     @Test
     fun `pack с файлом не 3mf-расширения — 400`() {
-        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, "fake".toByteArray())
+        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
         mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(stl)

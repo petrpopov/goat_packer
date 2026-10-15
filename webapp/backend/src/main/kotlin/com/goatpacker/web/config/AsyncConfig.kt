@@ -12,6 +12,7 @@ import java.util.concurrent.ThreadPoolExecutor
  * AbortPolicy, чтобы вызывающий сразу получил отказ, а не ждал в невидимой очереди.
  */
 @Configuration
+@org.springframework.context.annotation.Profile("!server")
 class AsyncConfig {
 
     @Bean(name = ["jobExecutor"])

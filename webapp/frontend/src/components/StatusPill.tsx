@@ -5,6 +5,11 @@ const LABELS: Record<JobStatus, string> = {
   RUNNING: 'Выполняется',
   SUCCEEDED: 'Готово',
   FAILED: 'Ошибка',
+  FINALIZING: 'Сохранение',
+  LOST: 'Нет связи',
+  RETRY_WAIT: 'Ожидание повтора',
+  CANCELLED: 'Отменено',
+  EXPIRED: 'Истекло',
 };
 
 const PILL_CLASSES: Record<JobStatus, string> = {
@@ -12,6 +17,11 @@ const PILL_CLASSES: Record<JobStatus, string> = {
   RUNNING: 'pill pill-cyan',
   SUCCEEDED: 'pill pill-ok',
   FAILED: 'pill pill-crit',
+  FINALIZING: 'pill pill-cyan',
+  LOST: 'pill pill-warn',
+  RETRY_WAIT: 'pill pill-warn',
+  CANCELLED: 'pill pill-muted',
+  EXPIRED: 'pill pill-muted',
 };
 
 export default function StatusPill({ status }: { status: JobStatus }) {

@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
+@org.springframework.context.annotation.Profile("!server")
 @RequestMapping("/api/pack")
 class PackController(
     private val packService: PackService,
