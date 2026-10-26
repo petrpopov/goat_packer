@@ -43,6 +43,12 @@ object CliErrorTranslator {
         Pattern(Regex("time window ([\\d.]+) h not met after (\\d+) window slices; last: (\\d+) objects = ([\\d.]+) h")) {
             "Не удалось уложиться в окно ${it.groupValues[1]} ч за ${it.groupValues[2]} пробных нарезки: последний вариант — ${it.groupValues[3]} шт. за ${it.groupValues[4]} ч. Увеличьте окно или уменьшите запас."
         },
+        Pattern(Regex("relocated wipe tower would overlap a printer keep-out area")) {
+            "Башня очистки в центре стола попала бы в запретную зону принтера. Отключите раскладку от центра."
+        },
+        Pattern(Regex("slicer ignored the relocated wipe tower")) {
+            "Слайсер не поставил башню очистки в центр стола (wipe_tower_x/y). Отключите раскладку от центра."
+        },
         // ams_calibration сам пишет эту ошибку по-русски — отдаём как есть.
         Pattern(Regex("для теста нужен проект минимум с двумя филаментами")) { it.value },
         Pattern(Regex("prime tower changed again after the permitted re-pack")) {

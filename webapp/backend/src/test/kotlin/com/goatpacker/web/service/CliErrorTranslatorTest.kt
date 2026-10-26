@@ -59,6 +59,18 @@ class CliErrorTranslatorTest {
     }
 
     @Test
+    fun `ошибки переноса башни в центр переводятся`() {
+        val keepout = CliErrorTranslator.translate(
+            "error: relocated wipe tower would overlap a printer keep-out area; rerun with --no-centre",
+        )!!
+        assertTrue(keepout.contains("запретную зону"), keepout)
+        val ignored = CliErrorTranslator.translate(
+            "error: slicer ignored the relocated wipe tower (wipe_tower_x/y): final tower corner 170.0,180.0",
+        )!!
+        assertTrue(ignored.contains("не поставил башню"), ignored)
+    }
+
+    @Test
     fun `окно не достигнуто за отведённые нарезки переводится с последним вариантом`() {
         val tail = "error: time window 12.0 h not met after 4 window slices; last: 7 objects = 12.6 h corrected"
         val headline = CliErrorTranslator.translate(tail)!!
