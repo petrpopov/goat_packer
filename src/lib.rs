@@ -10,6 +10,7 @@ pub mod colored_packer;
 pub mod embedded_mesh;
 pub mod nozzle_clean;
 pub mod plate_preview;
+pub mod print_time;
 pub mod scheduler;
 pub mod process_output;
 pub mod slicer_cli;
