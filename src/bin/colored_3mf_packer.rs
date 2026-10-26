@@ -3,7 +3,6 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use goat_packer::{
@@ -584,16 +583,18 @@ fn slice_project(
         fs::remove_dir_all(&output_dir)?;
     }
     fs::create_dir_all(&output_dir)?;
-    let mut command = Command::new(&profile.slicer_path);
-    if profile.no_check_for_final_tower_probe && label.starts_with("final") {
-        command.arg("--no-check");
-    }
-    let output = goat_packer::process_output::bounded_output(command
-        .arg("--slice")
-        .arg("1")
-        .arg("--outputdir")
-        .arg(&output_dir)
-        .arg(&input))?;
+    let extra: &[&str] = if profile.no_check_for_final_tower_probe && label.starts_with("final") {
+        &["--no-check"]
+    } else {
+        &[]
+    };
+    let mut command = goat_packer::slicer_cli::slice_command(
+        Path::new(&profile.slicer_path),
+        extra,
+        &output_dir,
+        &input,
+    );
+    let output = goat_packer::process_output::bounded_output(&mut command)?;
     let log_path = work_dir.join(format!("{label}_slice.log"));
     fs::write(&log_path, [&output.stdout[..], &output.stderr[..]].concat())?;
     if !output.status.success() {
