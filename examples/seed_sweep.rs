@@ -135,6 +135,7 @@ fn run() -> Result<(), String> {
                 max_objects: 0,
                 lock_orientation: false,
                 seed,
+                support_overlap_mm: None,
             };
             let grid = grid_layout(&footprint, &options).placements.len();
             let random = pack_footprint(&footprint, &options).placements.len();

@@ -28,6 +28,7 @@ fn p1s_search_meets_existing_seventeen_model_baseline() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 20_270_826,
+        support_overlap_mm: None,
     };
     let result = pack_footprint(&footprint, &options);
     validate_result(&footprint, &options, &result).unwrap();
@@ -56,6 +57,7 @@ fn u1_search_keeps_eighteen_models_with_edge_margin_and_purge_line() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 20_270_829,
+        support_overlap_mm: None,
     };
     let result = pack_footprint(&footprint, &options);
     validate_result(&footprint, &options, &result).unwrap();
@@ -87,6 +89,7 @@ fn fixture_options() -> PackOptions {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     }
 }
 

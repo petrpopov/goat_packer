@@ -54,6 +54,9 @@ struct Args {
     layout: LayoutMode,
     nozzle_clean: Option<NozzleCleanSpec>,
     time: TimeOptions,
+    /// `--support-overlap-mm`: how far the supports of different objects may overlap
+    /// (`PackOptions::support_overlap_mm`); `None` = unlimited, the plain two-zone rule.
+    support_overlap_mm: Option<f64>,
 }
 
 /// Time-model options (spec 2026-10-26-time-model-and-window-design). Without
@@ -137,6 +140,11 @@ struct ColoredPackReport {
     tower_relocated_to: Option<[f64; 2]>,
     /// Measured distance of the first final slice's tower centre from that target.
     tower_relocation_error_mm: Option<f64>,
+    /// The probe's first-layer patch reaches past the mesh silhouette (supports/brim), so the
+    /// orientation is locked to the sliced one.
+    supports_detected: bool,
+    /// Echo of `--support-overlap-mm`; `null` = unlimited.
+    support_overlap_mm: Option<f64>,
 }
 
 /// `time` block of the verification report. `samples` lists every plate whose time was
@@ -825,6 +833,10 @@ fn run() -> AppResult<()> {
             ]
         }),
         tower_relocation_error_mm,
+        // lock_orientation is set exactly in the "patch past silhouette (supports/brim)"
+        // branch: the patch carries a support zone beyond the body.
+        supports_detected: lock_orientation,
+        support_overlap_mm: args.support_overlap_mm,
     };
     let report_path = args.output.with_extension("verification.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
@@ -967,6 +979,9 @@ fn pack(
         lock_orientation,
         stall_attempts: args.stall,
         seed: args.seed,
+        // Only bites when the footprint has a support zone (the locked patch ∪ silhouette
+        // branch); a silhouette footprint has body == full and the option is a no-op.
+        support_overlap_mm: args.support_overlap_mm,
     };
     // The deterministic grid runs first as a floor score: small models tile as densely as
     // their bounding boxes allow, and the deterministic search only wins when it beats that.
@@ -1393,6 +1408,7 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut seed = 20_270_831;
     let mut nozzle_clean = None;
     let mut time = TimeOptions::default();
+    let mut support_overlap_mm = None;
     while let Some(option) = args.next() {
         // The valueless switches; every other option consumes the next argument.
         if option == "--ams-correction" {
@@ -1444,6 +1460,10 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
             "--prep-min" => {
                 time.prep_min = parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?;
             }
+            "--support-overlap-mm" => {
+                support_overlap_mm =
+                    Some(parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?);
+            }
             _ => return Err(format!("unknown option: {option}").into()),
         }
     }
@@ -1469,6 +1489,7 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
         layout,
         nozzle_clean,
         time,
+        support_overlap_mm,
     })
 }
 
@@ -1546,6 +1567,7 @@ mod tests {
             layout: LayoutMode::Search,
             nozzle_clean: None,
             time: TimeOptions::default(),
+            support_overlap_mm: None,
         };
 
         let footprint = extract_footprint(&stl).unwrap();
@@ -1565,6 +1587,7 @@ mod tests {
         lock_orientation: false,
         stall_attempts: args.stall,
             seed: args.seed,
+            support_overlap_mm: None,
         };
         validate_result(&footprint, &options, &result).unwrap();
     }
@@ -1732,6 +1755,22 @@ mod tests {
         assert_eq!(args.time.margin_pct, 15.0);
         assert_eq!(args.time.prep_min, 5.0);
         assert_eq!(args.clearance, 0.9);
+    }
+
+    #[test]
+    fn support_overlap_defaults_to_unlimited_and_rejects_negatives() {
+        assert_eq!(parse(&REQUIRED).unwrap().support_overlap_mm, None);
+        assert_eq!(
+            parse_with(&["--support-overlap-mm", "0"]).unwrap().support_overlap_mm,
+            Some(0.0)
+        );
+        assert_eq!(
+            parse_with(&["--support-overlap-mm", "1.5"]).unwrap().support_overlap_mm,
+            Some(1.5)
+        );
+        for bad in ["-0.5", "NaN", "inf", "x"] {
+            assert!(parse_with(&["--support-overlap-mm", bad]).is_err(), "{bad}");
+        }
     }
 
     #[test]
