@@ -211,7 +211,10 @@ fn fit_window(
     }
     let mut count = match count_for_window(probe, max, window_s) {
         WindowFit::All => return Ok(None),
-        WindowFit::NotEvenOne => return Err(even_one_exceeds(probe.corrected_s, window_s).into()),
+        // The probe fits (checked above), so the line through it cannot be over the window at
+        // one object; NotEvenOne here means the max plate itself holds a single object and is
+        // over. That measured plate is the evidence, not the probe.
+        WindowFit::NotEvenOne => return Err(even_one_exceeds(max.corrected_s, window_s).into()),
         WindowFit::Count(count) => count,
     };
     let mut samples = Vec::new();
@@ -1911,6 +1914,20 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.to_string().contains("even one object exceeds the time window"));
+    }
+
+    #[test]
+    fn fit_window_reports_the_max_plate_time_when_a_single_object_max_plate_is_over() {
+        // The probe fits, but the bed holds only one object and that real plate (relocated
+        // tower, wipe) is over the window: the error must name the measured 13.9 h, not the
+        // probe's 0.3 h.
+        let error = fit_window(sample(1, 1_000.0), sample(1, 50_000.0), 43_200.0, |_| {
+            panic!("no window slice expected")
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("even one object exceeds the time window"), "{error}");
+        assert!(error.contains("13.9 h > window 12.0 h"), "{error}");
     }
 
     #[test]
