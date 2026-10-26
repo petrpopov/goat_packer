@@ -12,6 +12,7 @@ pub mod nozzle_clean;
 pub mod plate_preview;
 pub mod scheduler;
 pub mod process_output;
+pub mod slicer_cli;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Point {
