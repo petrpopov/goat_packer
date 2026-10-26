@@ -41,3 +41,13 @@ fn detects_slicer_kind_from_known_printer_models() {
     );
     assert_eq!(detect_slicer_kind_from_printer_model("Prusa MK4"), None);
 }
+
+#[test]
+fn profiles_carry_real_filament_change_duration() {
+    let load = |path: &str| load_printer_profile(std::path::Path::new(path)).unwrap();
+    // gen-1 AMS measured on koza-mini: A2L 23 + 72, P1S 57 + 34 (spec 2026-10-26).
+    assert_eq!(load("profiles/bambu_a2l.json").filament_change_seconds, Some(95.0));
+    assert_eq!(load("profiles/p1s.json").filament_change_seconds, Some(91.0));
+    // U1 is a tool changer: no AMS change correction.
+    assert_eq!(load("profiles/snapmaker_u1.json").filament_change_seconds, None);
+}

@@ -11,5 +11,6 @@
   "exclusion_rectangles": [],
   "purge_lines": [[105.0, 1.0, 185.0, 1.0, 2.0]],
   "tower_marker_style": "wipe_tower",
-  "tower_line_width_mm": 0.5
+  "tower_line_width_mm": 0.5,
+  "filament_change_seconds": 95
 }

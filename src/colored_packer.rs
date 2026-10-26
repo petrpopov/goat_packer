@@ -27,6 +27,12 @@ pub struct PrinterProfile {
     /// Absent (e.g. Snapmaker) means nozzle-clean injection is unsupported for this printer.
     #[serde(default)]
     pub nozzle_clean_gcode: Option<String>,
+    /// Real full duration (s) of one filament change with the AMS actually attached; replaces
+    /// the slicer's per-change assumption in `print_time::corrected_seconds`. Gen-1 AMS
+    /// measured: P1S 57 + 34, A2L 23 + 72 (spec 2026-10-26). Absent = tool changer (U1) or
+    /// no correction known.
+    #[serde(default)]
+    pub filament_change_seconds: Option<f64>,
 }
 
 impl PrinterProfile {
@@ -292,6 +298,7 @@ mod tests {
             tower_marker_style: "wipe_tower".to_owned(),
             tower_line_width_mm: 0.5,
             nozzle_clean_gcode: None,
+            filament_change_seconds: None,
         }
     }
 

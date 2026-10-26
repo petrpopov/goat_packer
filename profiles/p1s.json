@@ -17,5 +17,6 @@
   ],
   "tower_marker_style": "wipe_tower",
   "tower_line_width_mm": 0.5,
+  "filament_change_seconds": 91,
   "nozzle_clean_gcode": "M400 ; finish all queued moves\nG1 Z{max_layer_z + 3.0} F1200 ; drop bed 3mm below the tallest printed part (firmware toolchange idiom)\nM83 ; relative extrusion\nG1 E-2.0 F1800 ; retract before travel\nG1 X70 F21000 ; to the chute approach column (firmware toolchange path)\nG1 Y245\nG1 Y265 F3000 ; over the back edge, into the wiper zone\nG1 X90 F3000 ; scrape onto the wiper tab\nG1 Y255 F4000\nG1 X105 F5000\nG1 Y265 F5000\nG1 X70 F10000 ; wipe passes across the tab\nG1 X100 F5000\nG1 X70 F10000\nG1 X100 F5000\nG1 X70 F10000\nG1 X80 F15000 ; flick the rocker to shed debris\nG1 X60\nG1 X80\nG1 X60\nG1 X80\nG1 X100 F5000\nG1 X165 F15000 ; final wipe on the right-side scraper\nG1 E2.0 F1800 ; prime nozzle back to pressure\nG1 Y256 ; move Y aside, prevent collision (firmware trailer)\nG1 Z{layer_z} F1200 ; return bed to the new layer height"
 }
