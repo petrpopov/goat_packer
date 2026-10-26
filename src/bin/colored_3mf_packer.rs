@@ -17,7 +17,8 @@ use goat_packer::{
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     plate_centre::{
-        RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, loops_bounds, plate_centre,
+        RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, ensure_relocated_tower_clear,
+        loops_bounds, plate_centre,
         relocate_keepout, relocate_wipe_tower_in_3mf, smallest_containing_zone,
         tower_corner_error_mm, union_rect,
     },
@@ -551,9 +552,13 @@ fn run() -> AppResult<()> {
     } else {
         None
     };
+    let mut keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
     let relocation: Option<RelocatedTower> = match (centre, probe_tower) {
         (Some(centre), Some(tower)) => {
             let moved = relocate_keepout(tower.keepout, centre, profile.usable_bed()?);
+            // The clamp only knows the bed; a centre near an exclusion corner or purge line
+            // would put the printed tower on it.
+            ensure_relocated_tower_clear(moved.keepout, &keepouts)?;
             println!(
                 "centre-out plate around ({:.1}, {:.1}): prime tower moves by ({:+.1}, {:+.1}) mm; \
                  keepout {:.2},{:.2} → {:.2},{:.2}",
@@ -581,7 +586,6 @@ fn run() -> AppResult<()> {
     let reserved_tower_keepout = relocation
         .map(|relocated| relocated.keepout)
         .or(probe_tower.map(|tower| tower.keepout));
-    let mut keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
     if let Some(keepout) = reserved_tower_keepout {
         keepouts.push(keepout);
     }

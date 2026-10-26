@@ -83,6 +83,27 @@ pub fn relocate_keepout(keepout: Rect, target: (f64, f64), bed: Rect) -> Relocat
     }
 }
 
+/// Errors when the relocated tower keepout overlaps any of the profile's fixed keepouts
+/// (exclusion rectangles, purge-line strips; `PrinterProfile::fixed_keepouts`). The relocation
+/// clamps only against the bed, so on a printer whose plate centre sits near such an area the
+/// slicer would print the tower into it — the packer reserves both as obstacles and would never
+/// notice. Edge contact is not an overlap.
+pub fn ensure_relocated_tower_clear(keepout: Rect, fixed_keepouts: &[Rect]) -> Result<(), String> {
+    let overlaps = |other: &Rect| {
+        keepout.min_x < other.max_x
+            && other.min_x < keepout.max_x
+            && keepout.min_y < other.max_y
+            && other.min_y < keepout.max_y
+    };
+    if fixed_keepouts.iter().any(overlaps) {
+        return Err(
+            "relocated wipe tower would overlap a printer keep-out area; rerun with --no-centre"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 /// Formats a millimetre setting the way BambuStudio writes them: up to three decimals, no
 /// trailing zeros ("164.898", "160").
 fn format_setting_mm(value: f64) -> String {

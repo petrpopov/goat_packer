@@ -4,7 +4,8 @@ use goat_packer::{
     Point, Rect,
     colored_packer::PrinterProfile,
     plate_centre::{
-        HeatZone, centre_out_order, loops_bounds, plate_centre, relocate_keepout,
+        HeatZone, centre_out_order, ensure_relocated_tower_clear, loops_bounds, plate_centre,
+        relocate_keepout,
         relocate_wipe_tower_in_3mf, shift_wipe_tower_settings, smallest_containing_zone,
         tower_corner_error_mm,
     },
@@ -89,6 +90,20 @@ fn clamp_shrinks_the_shift_never_the_keepout() {
     assert_rect(moved.keepout, [0.0, 0.0, 40.0, 50.0]);
     assert_close(moved.shift.0, -100.0);
     assert_close(moved.shift.1, -100.0);
+}
+
+#[test]
+fn relocated_tower_must_not_overlap_a_fixed_keepout() {
+    let tower = Rect::new(145.0, 135.0, 185.0, 185.0);
+    // Exclusion corner and a purge strip elsewhere: clear. Edge contact is not an overlap.
+    let clear = [Rect::new(0.0, 0.0, 20.0, 20.0), Rect::new(185.0, 0.0, 300.0, 5.0)];
+    assert!(ensure_relocated_tower_clear(tower, &clear).is_ok());
+    let blocked = [Rect::new(0.0, 0.0, 20.0, 20.0), Rect::new(180.0, 100.0, 200.0, 140.0)];
+    let error = ensure_relocated_tower_clear(tower, &blocked).unwrap_err();
+    assert_eq!(
+        error,
+        "relocated wipe tower would overlap a printer keep-out area; rerun with --no-centre"
+    );
 }
 
 // ---- settings patch ------------------------------------------------------------------------
