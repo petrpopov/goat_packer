@@ -51,3 +51,76 @@ fn profiles_carry_real_filament_change_duration() {
     // U1 is a tool changer: no AMS change correction.
     assert_eq!(load("profiles/snapmaker_u1.json").filament_change_seconds, None);
 }
+
+mod cli_settings {
+    use goat_packer::colored_packer::{
+        apply_cli_settings_workarounds, load_printer_profile, normalize_flush_volumes_matrix,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn normalize_flush_volumes_matrix_shrinks_a_stale_larger_matrix() {
+        let mut settings = json!({
+            "filament_colour": ["#C6001A", "#CBC6B8"],
+            "flush_volumes_matrix": ["0", "214", "268", "381", "613", "0", "323", "558", "601",
+                "222", "0", "442", "592", "280", "298", "0"],
+        });
+        assert!(normalize_flush_volumes_matrix(&mut settings));
+        assert_eq!(settings["flush_volumes_matrix"], json!(["0", "214", "613", "0"]));
+    }
+
+    #[test]
+    fn normalize_flush_volumes_matrix_grows_a_stale_smaller_matrix_with_zeros() {
+        let mut settings = json!({
+            "filament_colour": ["#C6001A", "#CBC6B8", "#FFFFFF"],
+            "flush_volumes_matrix": ["0", "214", "613", "0"],
+        });
+        assert!(normalize_flush_volumes_matrix(&mut settings));
+        assert_eq!(
+            settings["flush_volumes_matrix"],
+            json!(["0", "214", "0", "613", "0", "0", "0", "0", "0"])
+        );
+    }
+
+    #[test]
+    fn normalize_flush_volumes_matrix_is_a_noop_when_already_consistent() {
+        let mut settings = json!({
+            "filament_colour": ["#C6001A"],
+            "flush_volumes_matrix": ["0"],
+        });
+        assert!(!normalize_flush_volumes_matrix(&mut settings));
+    }
+
+    #[test]
+    fn normalize_flush_volumes_matrix_is_a_noop_without_filament_colour() {
+        let mut settings = json!({
+            "flush_volumes_matrix": ["0", "214", "268", "381", "613", "0", "323", "558", "601",
+                "222", "0", "442", "592", "280", "298", "0"],
+        });
+        assert!(!normalize_flush_volumes_matrix(&mut settings));
+    }
+
+    #[test]
+    fn cli_workarounds_blank_start_gcode_only_when_the_profile_asks_and_always_fix_the_matrix() {
+        let p1s = load_printer_profile(std::path::Path::new("profiles/p1s.json")).unwrap();
+        let u1 = load_printer_profile(std::path::Path::new("profiles/snapmaker_u1.json")).unwrap();
+        let stale = json!({
+            "machine_start_gcode": "G28",
+            "filament_colour": ["#C6001A"],
+            "flush_volumes_matrix": ["0", "1", "2", "0"],
+        });
+
+        let mut settings = stale.clone();
+        assert!(apply_cli_settings_workarounds(&p1s, &mut settings));
+        assert_eq!(settings["machine_start_gcode"], json!("G28"));
+        assert_eq!(settings["flush_volumes_matrix"], json!(["0"]));
+
+        let mut settings = stale.clone();
+        assert!(apply_cli_settings_workarounds(&u1, &mut settings));
+        assert_eq!(settings["machine_start_gcode"], json!(""));
+        assert_eq!(settings["flush_volumes_matrix"], json!(["0"]));
+
+        let mut consistent = json!({ "filament_colour": ["#C6001A"], "flush_volumes_matrix": ["0"] });
+        assert!(!apply_cli_settings_workarounds(&p1s, &mut consistent));
+    }
+}

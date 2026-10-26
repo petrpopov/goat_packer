@@ -20,7 +20,10 @@ use goat_packer::{
         CalibrationProjects, Variant, bambu_filament_change_times, cube_footprint,
         instructions_markdown, plan_projects, read_template, write_calibration_3mf,
     },
-    colored_packer::{PrinterProfile, load_printer_profile, parse_prime_tower_bounds},
+    colored_packer::{
+        PrinterProfile, apply_cli_settings_workarounds, load_printer_profile,
+        parse_prime_tower_bounds,
+    },
     scheduler::{parse_bambu_result, parse_orca_gcode},
 };
 
@@ -150,15 +153,16 @@ fn run() -> AppResult<()> {
 }
 
 /// Settings for the copy that is actually sliced: the downloadable projects keep the template
-/// settings byte for byte, but profiles with `blank_start_gcode_for_cli` (Orca/U1) need the
-/// start G-code blanked for the CLI, exactly like `colored_3mf_packer`'s `prepare_cli_copy`.
-/// The start G-code is identical in A and B, so its time cancels out of the measurement.
+/// settings byte for byte, but the CLI copy gets the same workarounds as `colored_3mf_packer`'s
+/// `prepare_cli_copy` (`apply_cli_settings_workarounds`): blanked start G-code on
+/// `blank_start_gcode_for_cli` profiles (Orca/U1) and a `flush_volumes_matrix` resized to the
+/// filament count. The start G-code is identical in A and B, so its time cancels out of the
+/// measurement. Nothing to fix = the original bytes, untouched.
 fn cli_project_settings(profile: &PrinterProfile, original: &[u8]) -> AppResult<Vec<u8>> {
-    if !profile.blank_start_gcode_for_cli {
+    let mut settings: serde_json::Value = serde_json::from_slice(original)?;
+    if !apply_cli_settings_workarounds(profile, &mut settings) {
         return Ok(original.to_vec());
     }
-    let mut settings: serde_json::Value = serde_json::from_slice(original)?;
-    settings["machine_start_gcode"] = serde_json::Value::String(String::new());
     Ok(serde_json::to_vec(&settings)?)
 }
 
@@ -263,4 +267,29 @@ fn check_tower_clear(
         .into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_settings_resize_a_stale_flush_matrix_like_the_packer() {
+        let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
+        let original = serde_json::to_vec(&serde_json::json!({
+            "filament_colour": ["#C6001A", "#CBC6B8"],
+            "flush_volumes_matrix": ["0", "1", "2", "3", "0", "4", "5", "6", "0"],
+        }))
+        .unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_slice(&cli_project_settings(&profile, &original).unwrap()).unwrap();
+        assert_eq!(settings["flush_volumes_matrix"], serde_json::json!(["0", "1", "3", "0"]));
+    }
+
+    #[test]
+    fn cli_settings_keep_the_original_bytes_when_nothing_needs_fixing() {
+        let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
+        let original = br##"{"flush_volumes_matrix":["0"],  "filament_colour":["#FFFFFF"]}"##;
+        assert_eq!(cli_project_settings(&profile, original).unwrap(), original.to_vec());
+    }
 }

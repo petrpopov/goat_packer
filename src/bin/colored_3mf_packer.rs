@@ -11,8 +11,8 @@ use goat_packer::{
     union_loops, validate_result,
     assemble::{AssembleOptions, assemble_project, source_model_center},
     colored_packer::{
-        PrimeTowerBounds, PrinterProfile, detect_slicer_kind_from_printer_model,
-        load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
+        PrimeTowerBounds, PrinterProfile, apply_cli_settings_workarounds,
+        detect_slicer_kind_from_printer_model, load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
     },
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
@@ -1270,13 +1270,7 @@ fn prepare_cli_copy(profile: &PrinterProfile, project: &Path, output: &Path) -> 
         entry.read_to_end(&mut bytes)?;
         if name == "Metadata/project_settings.config" {
             let mut settings: serde_json::Value = serde_json::from_slice(&bytes)?;
-            if profile.blank_start_gcode_for_cli {
-                settings["machine_start_gcode"] = serde_json::Value::String(String::new());
-                changed = true;
-            }
-            if normalize_flush_volumes_matrix(&mut settings) {
-                changed = true;
-            }
+            changed = apply_cli_settings_workarounds(profile, &mut settings);
             bytes = serde_json::to_vec(&settings)?;
         }
         entries.push((name, is_dir, bytes));
@@ -1296,47 +1290,6 @@ fn prepare_cli_copy(profile: &PrinterProfile, project: &Path, output: &Path) -> 
     }
     archive.finish()?;
     Ok(true)
-}
-
-/// Resizes `settings["flush_volumes_matrix"]` to `filament_colour.len()^2` entries when it doesn't
-/// already match, reusing values from the overlapping top-left block of the old matrix (row-major,
-/// square) and filling any newly-added cells with `"0"`. Returns `false` (no-op) when either field
-/// is missing/not an array or the size already matches.
-fn normalize_flush_volumes_matrix(settings: &mut serde_json::Value) -> bool {
-    let Some(filament_count) = settings
-        .get("filament_colour")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::len)
-    else {
-        return false;
-    };
-    let Some(matrix) = settings
-        .get("flush_volumes_matrix")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-    else {
-        return false;
-    };
-    let expected_len = filament_count * filament_count;
-    if matrix.len() == expected_len {
-        return false;
-    }
-    let old_side = (matrix.len() as f64).sqrt().round() as usize;
-    let old_side = if old_side * old_side == matrix.len() { old_side } else { 0 };
-    let zero = serde_json::Value::String("0".to_owned());
-    let mut resized = Vec::with_capacity(expected_len);
-    for row in 0..filament_count {
-        for col in 0..filament_count {
-            let value = if row < old_side && col < old_side {
-                matrix[row * old_side + col].clone()
-            } else {
-                zero.clone()
-            };
-            resized.push(value);
-        }
-    }
-    settings["flush_volumes_matrix"] = serde_json::Value::Array(resized);
-    true
 }
 
 fn source_project_settings(source: &Path) -> AppResult<serde_json::Value> {
@@ -1685,42 +1638,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_flush_volumes_matrix_shrinks_a_stale_larger_matrix() {
-        let mut settings = serde_json::json!({
-            "filament_colour": ["#C6001A", "#CBC6B8"],
-            "flush_volumes_matrix": ["0", "214", "268", "381", "613", "0", "323", "558", "601",
-                "222", "0", "442", "592", "280", "298", "0"],
-        });
-        assert!(normalize_flush_volumes_matrix(&mut settings));
-        assert_eq!(
-            settings["flush_volumes_matrix"],
-            serde_json::json!(["0", "214", "613", "0"])
-        );
-    }
-
-    #[test]
-    fn normalize_flush_volumes_matrix_grows_a_stale_smaller_matrix_with_zeros() {
-        let mut settings = serde_json::json!({
-            "filament_colour": ["#C6001A", "#CBC6B8", "#FFFFFF"],
-            "flush_volumes_matrix": ["0", "214", "613", "0"],
-        });
-        assert!(normalize_flush_volumes_matrix(&mut settings));
-        assert_eq!(
-            settings["flush_volumes_matrix"],
-            serde_json::json!(["0", "214", "0", "613", "0", "0", "0", "0", "0"])
-        );
-    }
-
-    #[test]
-    fn normalize_flush_volumes_matrix_is_a_noop_when_already_consistent() {
-        let mut settings = serde_json::json!({
-            "filament_colour": ["#C6001A"],
-            "flush_volumes_matrix": ["0"],
-        });
-        assert!(!normalize_flush_volumes_matrix(&mut settings));
-    }
-
-    #[test]
     fn output_tail_keeps_the_last_non_empty_lines_of_combined_slicer_output() {
         let stdout = b"trace line 1\ntrace line 2\n\n[error] plate 1: boom\n";
         let stderr = b"";
@@ -1741,15 +1658,6 @@ mod tests {
             slicer_report_error(dir.path()).as_deref(),
             Some("Some objects are located over the boundary of the heated bed.")
         );
-    }
-
-    #[test]
-    fn normalize_flush_volumes_matrix_is_a_noop_without_filament_colour() {
-        let mut settings = serde_json::json!({
-            "flush_volumes_matrix": ["0", "214", "268", "381", "613", "0", "323", "558", "601",
-                "222", "0", "442", "592", "280", "298", "0"],
-        });
-        assert!(!normalize_flush_volumes_matrix(&mut settings));
     }
 
     fn parse(list: &[&str]) -> AppResult<Args> {
