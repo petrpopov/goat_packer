@@ -45,10 +45,16 @@ fn rect_area(rect: Rect) -> f64 {
     (rect.max_x - rect.min_x) * (rect.max_y - rect.min_y)
 }
 
-/// Plate centre the objects and the tower gather around: the centre of the first (smallest)
-/// heat zone, or of the usable bed when the printer has no zones.
+/// Plate centre the objects and the tower gather around: the centre of the smallest heat zone
+/// by area, or of the usable bed when the printer has no zones. Picked by area, the same rule
+/// as `smallest_containing_zone`, so a mis-ordered profile cannot centre the plate on a large
+/// zone while the report names the small one.
 pub fn plate_centre(zones: &[HeatZone], usable_bed: Rect) -> (f64, f64) {
-    rect_centre(zones.first().map_or(usable_bed, HeatZone::as_rect))
+    let smallest = zones
+        .iter()
+        .map(HeatZone::as_rect)
+        .min_by(|a, b| rect_area(*a).total_cmp(&rect_area(*b)));
+    rect_centre(smallest.unwrap_or(usable_bed))
 }
 
 /// A tower keepout moved towards a target centre.

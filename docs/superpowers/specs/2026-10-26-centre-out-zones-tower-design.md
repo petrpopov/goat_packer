@@ -23,7 +23,8 @@ farthest object first.
 1. **Profile**: optional `heat_zones: [{ "name": "inner", "rect": [x0,y0,x1,y1] }, ...]`,
    smallest first. A2L (system key `bed_heat_soak_area`): inner `[102, 93.4, 228, 226.6]`,
    middle `[60, 49, 270, 271]`, full `[0, 0, 330, 320]`. Other printers: absent.
-   Centre = centre of the first zone, or of the usable bed when no zones.
+   Centre = centre of the smallest zone by area (same rule as the zone report), or of the
+   usable bed when no zones.
 2. **Activation**: only with `--time-window-hours`; additionally `--no-centre` opts out.
    Without a window nothing changes (corner sweep, tower where the source put it).
 3. **Tower relocation** (when the probe found a tower): shift = centre − probe keepout centre.

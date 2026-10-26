@@ -33,8 +33,9 @@ pub struct PrinterProfile {
     /// no correction known.
     #[serde(default)]
     pub filament_change_seconds: Option<f64>,
-    /// Bed-heating zones, smallest first; the first zone's centre is where time-window plates
-    /// gather their objects and the prime tower (`plate_centre`). A2L source: the system
+    /// Bed-heating zones, conventionally smallest first; the smallest zone's centre (by area,
+    /// not list position) is where time-window plates gather their objects and the prime tower
+    /// (`plate_centre`). A2L source: the system
     /// profile key `bed_heat_soak_area` (two rectangles as corner lists, plus the full bed);
     /// its start G-code heat-soaks only the first-layer bbox
     /// (`G29.30 X{first_layer_print_min[0]} ...`), so a compact plate in the inner zone heats

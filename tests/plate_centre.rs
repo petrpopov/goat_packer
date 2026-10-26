@@ -54,7 +54,7 @@ fn profiles_without_heat_zones_parse_to_an_empty_list() {
 // ---- centre --------------------------------------------------------------------------------
 
 #[test]
-fn centre_is_the_first_zone_centre_or_the_usable_bed_centre() {
+fn centre_is_the_smallest_zone_centre_or_the_usable_bed_centre() {
     let bed = Rect::new(0.0, 0.0, 330.0, 320.0);
     let (x, y) = plate_centre(&a2l_zones(), bed);
     assert_close(x, 165.0);
@@ -62,6 +62,16 @@ fn centre_is_the_first_zone_centre_or_the_usable_bed_centre() {
     let (x, y) = plate_centre(&[], Rect::new(3.5, 3.5, 266.5, 266.5));
     assert_close(x, 135.0);
     assert_close(y, 135.0);
+}
+
+#[test]
+fn centre_comes_from_the_smallest_zone_regardless_of_profile_order() {
+    let mut zones = a2l_zones();
+    zones.reverse();
+    zones[0].rect = [0.0, 0.0, 300.0, 300.0]; // "full" first, centre (150, 150)
+    let (x, y) = plate_centre(&zones, Rect::new(0.0, 0.0, 330.0, 320.0));
+    assert_close(x, 165.0); // inner zone centre
+    assert_close(y, 160.0);
 }
 
 // ---- keepout shift + clamp -----------------------------------------------------------------
