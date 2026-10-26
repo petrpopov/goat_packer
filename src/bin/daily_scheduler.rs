@@ -121,6 +121,14 @@ struct BenchmarkRecord {
     change_correction_seconds: i64,
 }
 
+/// `--reuse-benchmarks` with an active AMS correction over rows that all count 0 changes: a
+/// report written before change counts existed deserializes them as 0 (`serde(default)`), so the
+/// correction silently does nothing. Genuinely change-free plates (single colour) look the same,
+/// hence a note, not an error.
+fn reused_rows_lack_change_counts(rows: &[BenchmarkRecord], correction_active: bool) -> bool {
+    correction_active && !rows.is_empty() && rows.iter().all(|row| row.filament_changes == 0)
+}
+
 fn measured_origin() -> BenchmarkOrigin {
     BenchmarkOrigin::Measured
 }
@@ -212,6 +220,14 @@ fn run() -> AppResult<()> {
         )?;
         let previous: PlannerReport = serde_json::from_slice(&fs::read(report_path)?)?;
         println!("Reusing {} prior benchmark rows", previous.benchmarks.len());
+        let correction_active = changes.iter().any(|change| change.real_change_s.is_some());
+        if reused_rows_lack_change_counts(&previous.benchmarks, correction_active) {
+            println!(
+                "note: every reused benchmark row has 0 filament changes; reports written before \
+                 the AMS correction carry no change counts, so no AMS correction is applied — \
+                 re-benchmark without --reuse-benchmarks to correct for the real change time"
+            );
+        }
         let mut benchmarks = previous.benchmarks;
         // The correction is a policy over measured change counts, not a measurement: re-derive
         // it so reused rows follow this run's --ams-correction/change-s settings.
@@ -1283,6 +1299,17 @@ mod tests {
             "hash",
             Path::new("slicer"),
         )
+    }
+
+    #[test]
+    fn reused_rows_without_change_counts_are_flagged_only_when_a_correction_applies() {
+        let change = ChangeCorrection { slicer_change_s: 23.0, real_change_s: Some(95.0) };
+        let old_report = vec![record(0, change), record(0, change)];
+        assert!(reused_rows_lack_change_counts(&old_report, true));
+        assert!(!reused_rows_lack_change_counts(&old_report, false));
+        let new_report = vec![record(0, change), record(12, change)];
+        assert!(!reused_rows_lack_change_counts(&new_report, true));
+        assert!(!reused_rows_lack_change_counts(&[], true));
     }
 
     #[test]
