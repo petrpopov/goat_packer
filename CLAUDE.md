@@ -31,8 +31,9 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 ## `colored_3mf_packer` (`src/bin/colored_3mf_packer.rs`) invariants
 
 - Collision geometry comes from the mesh embedded in the source 3MF (`embedded_mesh`), never a separate STL (a drifted STL silently invalidated collisions). Its bbox center must be compensated (rotation-aware) in every build-item transform in `assemble`; otherwise clones with a source translation fall off the bed.
-- `assemble` uses the default mesh mode, never `reuse_source_object_instances` (triggers "gcode path conflicts"). `project_settings.config` is copied byte-for-byte; `paint_color` lives in the mesh, so coloring survives.
+- `assemble` uses the default mesh mode, never `reuse_source_object_instances` (triggers "gcode path conflicts"). `project_settings.config` is copied byte-for-byte (single exception: a centre-out time-window plate shifts `wipe_tower_x/y[0]` after assembly, `plate_centre::relocate_wipe_tower_in_3mf`); `paint_color` lives in the mesh, so coloring survives.
 - `evaluate_final_tower`: a tower appearing/disappearing only in the final slice is a hard error; only a grown tower earns one repack.
+- Centre-out (`--time-window-hours`, opt out `--no-centre`; `src/plate_centre.rs`): placements are ordered by distance from the first `heat_zones` centre and the window keeps a prefix; the tower keepout moves there by the same shift as the setting (no re-probe), and the first final slice must show the tower within 5 mm of the target or it errors. No window = no reorder, no relocation.
 - `prepare_cli_copy` resizes `flush_volumes_matrix` to `filament_colour.len()^2` and optionally blanks `machine_start_gcode`; Orca CLI rejects mismatches.
 - `--nozzle-clean` (`src/nozzle_clean.rs`): wipe body is profile-owned (`nozzle_clean_gcode`); absent field = unsupported, explicit error (A2L has no hardware-validated sequence). Details: `docs/superpowers/specs/2026-09-02-nozzle-clean-injection-design.md`.
 

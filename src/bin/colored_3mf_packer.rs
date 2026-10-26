@@ -16,6 +16,11 @@ use goat_packer::{
     },
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
+    plate_centre::{
+        RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, loops_bounds, plate_centre,
+        relocate_keepout, relocate_wipe_tower_in_3mf, smallest_containing_zone,
+        tower_centre_error_mm, union_rect,
+    },
     print_time::{
         TimeCorrection, TimeSample, WindowFit, corrected_seconds, count_for_window,
         shrink_count, slicer_change_seconds,
@@ -61,6 +66,9 @@ struct TimeOptions {
     change_seconds: Option<f64>,
     margin_pct: f64,
     prep_min: f64,
+    /// `--no-centre`: keep the corner sweep and the source tower position on a time-window
+    /// plate (spec 2026-10-26-centre-out-zones-tower-design).
+    no_centre: bool,
 }
 
 impl Default for TimeOptions {
@@ -73,11 +81,19 @@ impl Default for TimeOptions {
             change_seconds: None,
             margin_pct: 10.0,
             prep_min: 0.0,
+            no_centre: false,
         }
     }
 }
 
 impl TimeOptions {
+    /// Centre-out ordering, heat zones and the tower relocation apply only to time-window
+    /// plates: a max-count plate keeps today's corner sweep, since a centre tower fragments the
+    /// free space and could cost objects.
+    fn centre_out(&self) -> bool {
+        self.window_hours.is_some() && !self.no_centre
+    }
+
     /// The effective correction. A profile without `filament_change_seconds` (tool changer)
     /// has nothing to correct, so the change term stays off even when asked for.
     fn correction(&self, profile: &PrinterProfile) -> TimeCorrection {
@@ -114,6 +130,13 @@ struct ColoredPackReport {
     /// Corrected print time of the written plate; `None` only when no window was requested
     /// and the slicer estimate could not be read (the plate itself is still valid).
     time: Option<TimeReport>,
+    /// Smallest profile heat zone holding the kept objects plus the tower keepout; `None`
+    /// without a time window, without profile zones, or when no zone contains the plate.
+    heat_zone: Option<String>,
+    /// Centre of the relocated tower keepout (centre-out window plates with a tower).
+    tower_relocated_to: Option<[f64; 2]>,
+    /// Measured distance of the first final slice's tower centre from that target.
+    tower_relocation_error_mm: Option<f64>,
 }
 
 /// `time` block of the verification report. `samples` lists every plate whose time was
@@ -475,9 +498,49 @@ fn run() -> AppResult<()> {
             (silhouette.clone(), false, 0.0)
         }
     };
+    // Centre-out time-window plate (spec 2026-10-26-centre-out-zones-tower-design): the kept
+    // objects gather around the smallest heat zone's centre, and the tower moves there too so
+    // every colour change travels a short way. The tower's size does not depend on its
+    // position, so the probe keepout shifted by the same vector is the reservation — no
+    // re-probe; the first final slice verifies the slicer really moved it.
+    let centre = if args.time.centre_out() {
+        Some(plate_centre(&profile.heat_zones, profile.usable_bed()?))
+    } else {
+        None
+    };
+    let relocation: Option<RelocatedTower> = match (centre, probe_tower) {
+        (Some(centre), Some(tower)) => {
+            let moved = relocate_keepout(tower.keepout, centre, profile.usable_bed()?);
+            println!(
+                "centre-out plate around ({:.1}, {:.1}): prime tower moves by ({:+.1}, {:+.1}) mm; \
+                 keepout {:.2},{:.2} → {:.2},{:.2}",
+                centre.0,
+                centre.1,
+                moved.shift.0,
+                moved.shift.1,
+                moved.keepout.min_x,
+                moved.keepout.min_y,
+                moved.keepout.max_x,
+                moved.keepout.max_y
+            );
+            Some(moved)
+        }
+        (Some(centre), None) => {
+            println!(
+                "centre-out plate around ({:.1}, {:.1}); no tower to relocate",
+                centre.0, centre.1
+            );
+            None
+        }
+        (None, _) => None,
+    };
+    let tower_shift = relocation.map(|relocated| relocated.shift);
+    let reserved_tower_keepout = relocation
+        .map(|relocated| relocated.keepout)
+        .or(probe_tower.map(|tower| tower.keepout));
     let mut keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
-    if let Some(tower) = probe_tower {
-        keepouts.push(tower.keepout);
+    if let Some(keepout) = reserved_tower_keepout {
+        keepouts.push(keepout);
     }
     // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
     // silhouette: the slicer's bed-collision warning measures the full model extent, which
@@ -494,8 +557,19 @@ fn run() -> AppResult<()> {
     }
     eprintln!("packing ({} attempts, seed {})...", args.attempts, args.seed);
     let mut packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
+    if let Some(centre) = centre {
+        order_centre_out(&footprint, &mut packed, centre);
+    }
     eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
-    build_colored_project(&args, &profile, &footprint_stl, &footprint, &packed, &keepouts)?;
+    build_colored_project(
+        &args,
+        &profile,
+        &footprint_stl,
+        &footprint,
+        &packed,
+        &keepouts,
+        tower_shift,
+    )?;
     eprintln!("slicing final plate ({} objects)...", packed.placements.len());
     let mut final_slice = slice_project(
         &profile,
@@ -506,8 +580,33 @@ fn run() -> AppResult<()> {
     )?;
     let mut final_tower =
         parse_prime_tower_bounds(&final_slice.gcode, profile.tower_line_width_mm, args.clearance);
+    // Checked before the tower evaluation: a slicer that silently dropped the relocation (e.g.
+    // a setting reset to the system value because it is not listed in
+    // `different_settings_to_system`) prints the tower at the source corner, which would read
+    // as a "grown" tower and trigger a pointless repack instead of naming the cause.
+    let mut tower_relocation_error_mm = None;
+    if let (Some(relocated), Some(tower)) = (relocation, final_tower) {
+        let error = tower_centre_error_mm(tower.keepout, relocated.keepout);
+        let (mx, my) = (
+            (tower.keepout.min_x + tower.keepout.max_x) * 0.5,
+            (tower.keepout.min_y + tower.keepout.max_y) * 0.5,
+        );
+        if error > TOWER_TARGET_TOLERANCE_MM {
+            return Err(format!(
+                "slicer ignored the relocated wipe tower (wipe_tower_x/y): final tower centre \
+                 ({mx:.1}, {my:.1}) is {error:.1} mm from the target ({:.1}, {:.1})",
+                (relocated.keepout.min_x + relocated.keepout.max_x) * 0.5,
+                (relocated.keepout.min_y + relocated.keepout.max_y) * 0.5,
+            )
+            .into());
+        }
+        println!(
+            "relocated prime tower confirmed in the final slice: centre ({mx:.1}, {my:.1}), \
+             {error:.1} mm from the target"
+        );
+        tower_relocation_error_mm = Some(error);
+    }
     let mut repacked = false;
-    let reserved_tower_keepout = probe_tower.map(|tower| tower.keepout);
     if evaluate_final_tower(probe_tower, final_tower, reserved_tower_keepout)?
         == TowerOutcome::RepackRequired
     {
@@ -529,8 +628,19 @@ fn run() -> AppResult<()> {
             keepouts.push(grown_keepout);
             eprintln!("re-packing ({} attempts, seed {})...", args.attempts, args.seed);
             packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
+            if let Some(centre) = centre {
+                order_centre_out(&footprint, &mut packed, centre);
+            }
             eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
-            build_colored_project(&args, &profile, &footprint_stl, &footprint, &packed, &keepouts)?;
+            build_colored_project(
+                &args,
+                &profile,
+                &footprint_stl,
+                &footprint,
+                &packed,
+                &keepouts,
+                tower_shift,
+            )?;
             eprintln!("slicing repacked plate ({} objects)...", packed.placements.len());
             final_slice = slice_project(
                 &profile,
@@ -588,6 +698,7 @@ fn run() -> AppResult<()> {
                     &footprint,
                     &prefix,
                     &keepouts,
+                    tower_shift,
                 )?;
                 eprintln!("slicing time-window plate ({count} objects)...");
                 let slice = slice_project(
@@ -678,6 +789,23 @@ fn run() -> AppResult<()> {
         },
     };
 
+    // Zone report for window plates only: a max-count plate fills the bed by construction.
+    let heat_zone = if window_s.is_some() {
+        let (bbox, zone) = heat_zone_of(&profile, &footprint, &packed, validated_tower_keepout);
+        if let (false, Some(bbox)) = (profile.heat_zones.is_empty(), bbox) {
+            println!(
+                "heat zone: {} (objects + tower x [{:.1}, {:.1}], y [{:.1}, {:.1}])",
+                zone.as_deref().unwrap_or("none"),
+                bbox.min_x,
+                bbox.max_x,
+                bbox.min_y,
+                bbox.max_y
+            );
+        }
+        zone
+    } else {
+        None
+    };
     let report = ColoredPackReport {
         source_3mf: args.source_3mf.display().to_string(),
         output_3mf: args.output.display().to_string(),
@@ -689,6 +817,14 @@ fn run() -> AppResult<()> {
         repacked,
         paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
         time,
+        heat_zone,
+        tower_relocated_to: relocation.map(|relocated| {
+            [
+                (relocated.keepout.min_x + relocated.keepout.max_x) * 0.5,
+                (relocated.keepout.min_y + relocated.keepout.max_y) * 0.5,
+            ]
+        }),
+        tower_relocation_error_mm,
     };
     let report_path = args.output.with_extension("verification.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
@@ -723,6 +859,54 @@ fn placement_world_loops(
                 .collect()
         })
         .collect()
+}
+
+/// World-XY bbox of one placement's footprint loops (`None` only for an empty footprint).
+fn placement_world_bounds(
+    footprint: &Footprint,
+    placement: &goat_packer::PackedPlacement,
+) -> Option<Rect> {
+    loops_bounds(&placement_world_loops(footprint, placement))
+}
+
+/// Reorders the layout centre-out: by the distance from `centre` to each placement's world
+/// footprint bbox centre, ties by packing order. Any subset of a valid layout is valid, so the
+/// time window's prefix then always drops the farthest object first.
+fn order_centre_out(footprint: &Footprint, packed: &mut PackResult, centre: (f64, f64)) {
+    let centres: Vec<(f64, f64)> = packed
+        .placements
+        .iter()
+        .map(|placement| {
+            placement_world_bounds(footprint, placement).map_or(
+                (placement.x_mm, placement.y_mm),
+                |bounds| {
+                    ((bounds.min_x + bounds.max_x) * 0.5, (bounds.min_y + bounds.max_y) * 0.5)
+                },
+            )
+        })
+        .collect();
+    let order = centre_out_order(&centres, centre);
+    packed.placements = order.into_iter().map(|index| packed.placements[index].clone()).collect();
+}
+
+/// Spec "zone report": bbox of the kept placements ∪ the tower keepout (the first layer the
+/// A2L start G-code heat-soaks) and the smallest heat zone containing it.
+fn heat_zone_of(
+    profile: &PrinterProfile,
+    footprint: &Footprint,
+    packed: &PackResult,
+    tower_keepout: Option<Rect>,
+) -> (Option<Rect>, Option<String>) {
+    let bbox = packed
+        .placements
+        .iter()
+        .filter_map(|placement| placement_world_bounds(footprint, placement))
+        .chain(tower_keepout)
+        .reduce(union_rect);
+    let zone = bbox
+        .and_then(|bbox| smallest_containing_zone(&profile.heat_zones, bbox))
+        .map(|zone| zone.name.clone());
+    (bbox, zone)
 }
 
 /// The source model's bbox center in bed coordinates: the baked STL's center transformed by
@@ -857,6 +1041,7 @@ fn build_colored_project(
     footprint: &Footprint,
     packed: &PackResult,
     keepouts: &[Rect],
+    tower_shift: Option<(f64, f64)>,
 ) -> AppResult<()> {
     let placements = args.work_dir.join("placements.json");
     fs::write(&placements, serde_json::to_vec_pretty(packed)?)?;
@@ -880,6 +1065,16 @@ fn build_colored_project(
     };
     assemble_project(&args.source_3mf, &args.output, &options)
         .map_err(|error| format!("3MF assembly failed: {error}"))?;
+    // The one documented exception to "project_settings.config is copied byte-for-byte": a
+    // centre-out window plate moves the tower next to its objects, and the tower position IS a
+    // project setting (`wipe_tower_x/y[0]`). Applied to the output, so the CLI copies sliced
+    // below and the written project carry the same tower the keepout reserved. Each build
+    // re-assembles from the source, so the shift never accumulates.
+    if let Some(shift) = tower_shift {
+        let (x, y) = relocate_wipe_tower_in_3mf(&args.output, shift)
+            .map_err(|error| format!("wipe tower relocation failed: {error}"))?;
+        eprintln!("wipe tower relocated: wipe_tower_x/y[0] = {x:.3}, {y:.3}");
+    }
     // Applied after assembly (both here and on the single repack path): the CLI copies sliced
     // for probes/final checks derive from this same file, so their timings and tower state
     // reflect the real, wipe-carrying G-code.
@@ -1199,9 +1394,13 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut nozzle_clean = None;
     let mut time = TimeOptions::default();
     while let Some(option) = args.next() {
-        // The only valueless switch; every other option consumes the next argument.
+        // The valueless switches; every other option consumes the next argument.
         if option == "--ams-correction" {
             time.ams_correction = true;
+            continue;
+        }
+        if option == "--no-centre" {
+            time.no_centre = true;
             continue;
         }
         let value = args
@@ -1533,6 +1732,56 @@ mod tests {
         assert_eq!(args.time.margin_pct, 15.0);
         assert_eq!(args.time.prep_min, 5.0);
         assert_eq!(args.clearance, 0.9);
+    }
+
+    #[test]
+    fn centre_out_only_with_a_window_and_without_no_centre() {
+        assert!(!parse(&REQUIRED).unwrap().time.centre_out());
+        assert!(!parse_with(&["--no-centre"]).unwrap().time.centre_out());
+        assert!(parse_with(&["--time-window-hours", "12"]).unwrap().time.centre_out());
+        let opted_out = parse_with(&["--no-centre", "--time-window-hours", "12"]).unwrap();
+        assert!(opted_out.time.no_centre);
+        assert!(!opted_out.time.centre_out());
+    }
+
+    #[test]
+    fn centre_out_orders_placements_by_world_bbox_centre() {
+        let square = vec![
+            Point { x: -1.0, y: -1.0 },
+            Point { x: 1.0, y: -1.0 },
+            Point { x: 1.0, y: 1.0 },
+            Point { x: -1.0, y: 1.0 },
+        ];
+        // Footprint off its own origin: the bbox centre, not the placement point, is ranked.
+        let shifted: Vec<Point> = square.iter().map(|p| Point { x: p.x + 10.0, y: p.y }).collect();
+        let footprint = Footprint {
+            body_loops: vec![shifted.clone()],
+            bed_loops: None,
+            loops: vec![shifted],
+            width: 2.0,
+            height: 2.0,
+            min_z: 0.0,
+            max_z: 0.0,
+            triangle_count: 0,
+        };
+        let at = |x_mm: f64, y_mm: f64, angle_deg: f64| goat_packer::PackedPlacement {
+            x_mm,
+            y_mm,
+            angle_deg,
+        };
+        let mut packed = PackResult {
+            placements: vec![at(0.0, 0.0, 0.0), at(90.0, 100.0, 0.0), at(100.0, 90.0, 180.0)],
+            resolution_mm: 0.25,
+            requested_clearance_mm: 0.7,
+            angle_step_deg: 2.0,
+            attempts: 1,
+            attempts_run: 1,
+            seed: 1,
+        };
+        // Centres: (10,0), (100,100), (90,90) -> nearest to (90,90) first.
+        order_centre_out(&footprint, &mut packed, (90.0, 90.0));
+        let xs: Vec<f64> = packed.placements.iter().map(|p| p.x_mm).collect();
+        assert_eq!(xs, vec![100.0, 90.0, 0.0]);
     }
 
     #[test]
