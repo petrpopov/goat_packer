@@ -543,14 +543,6 @@ pub fn bambu_filament_change_times(result_json: &[u8]) -> CalibrationResult<u64>
         .ok_or_else(|| "Bambu result.json has no filament_change_times".into())
 }
 
-/// Orca marks every executed tool change with a `; toolchange #N` comment.
-pub fn orca_toolchange_count(gcode: &[u8]) -> u64 {
-    String::from_utf8_lossy(gcode)
-        .lines()
-        .filter(|line| line.trim_start().starts_with("; toolchange #"))
-        .count() as u64
-}
-
 /// `instructions.md`: plain-language Russian instructions for printing and timing the test.
 pub fn instructions_markdown(printer_name: &str, variant: Variant, plan: &BandPlan) -> String {
     let changes = variant.changes();

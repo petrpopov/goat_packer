@@ -58,3 +58,13 @@ fn counts_orca_toolchange_comments() {
                   ; toolchange #1\nT1\n; toolchange #2\nT0\n; toolchange #3\nT1\n";
     assert_eq!(parse_orca_gcode(input, 1).unwrap().filament_changes, 3);
 }
+
+#[test]
+fn orca_change_count_ignores_the_marker_inside_a_config_line() {
+    // Orca appends its config block as `; key = value` lines; a change G-code template that
+    // mentions the marker must not count as a change.
+    let input = b"; estimated printing time (normal mode) = 1h 0m 0s\n\
+                  ; toolchange #1\nT1\n\
+                  ; change_filament_gcode = M620 S[next_extruder]A\\n; toolchange #2\\nT[next_extruder]\n";
+    assert_eq!(parse_orca_gcode(input, 1).unwrap().filament_changes, 1);
+}

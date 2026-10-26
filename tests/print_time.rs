@@ -1,6 +1,6 @@
 use goat_packer::print_time::{
-    TimeCorrection, TimeSample, WindowFit, corrected_seconds, count_for_window, shrink_count,
-    slicer_change_seconds,
+    TimeCorrection, TimeSample, WindowFit, corrected_seconds, count_for_window,
+    orca_toolchange_count, shrink_count, slicer_change_seconds,
 };
 use serde_json::json;
 
@@ -186,4 +186,12 @@ fn shrink_count_guards_zero_slope_and_minimum() {
     assert_eq!(shrink_count(16, 28_000.0, 25_500.0, -5.0), 15);
     assert_eq!(shrink_count(3, 100_000.0, 25_500.0, 1_000.0), 1);
     assert_eq!(shrink_count(1, 100_000.0, 25_500.0, 1_000.0), 1);
+}
+
+#[test]
+fn orca_toolchange_count_counts_only_line_leading_markers() {
+    let gcode = "; start\n; toolchange #1\nT1\n  ; toolchange #2\nT0\n;toolchange without space\n\
+                 ; change_filament_gcode = M620 S[next_extruder]A\\n; toolchange #3 inside a config value\n\
+                 G1 X1 ; toolchange #4 trailing comment\n";
+    assert_eq!(orca_toolchange_count(gcode), 2);
 }

@@ -18,8 +18,7 @@ use std::{
 use goat_packer::{
     ams_calibration::{
         CalibrationProjects, Variant, bambu_filament_change_times, cube_footprint,
-        instructions_markdown, orca_toolchange_count, plan_projects, read_template,
-        write_calibration_3mf,
+        instructions_markdown, plan_projects, read_template, write_calibration_3mf,
     },
     colored_packer::{PrinterProfile, load_printer_profile, parse_prime_tower_bounds},
     scheduler::{parse_bambu_result, parse_orca_gcode},
@@ -221,10 +220,10 @@ fn slice(
             bambu_filament_change_times(&result)?,
         )
     } else {
-        (
-            parse_orca_gcode(&gcode, 1)?.slicer_total_seconds as f64,
-            orca_toolchange_count(&gcode),
-        )
+        // The change count comes from `print_time::orca_toolchange_count`, the same counter the
+        // scheduler and the packer use, so a calibration and a correction agree on "a change".
+        let estimate = parse_orca_gcode(&gcode, 1)?;
+        (estimate.slicer_total_seconds as f64, estimate.filament_changes)
     };
     Ok(Slice {
         estimate_s,

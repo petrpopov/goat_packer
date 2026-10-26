@@ -4,10 +4,10 @@ use goat_packer::{
     ams_calibration::{
         BandPlan, CUBE_SIDE_MM, TWO_FILAMENTS_ERROR, Template, Variant, band_plan,
         bambu_filament_change_times, cube_footprint, cube_mesh, custom_gcode_per_layer_xml,
-        instructions_markdown, model_settings_xml, model_xml, orca_toolchange_count,
-        parse_template_settings, place_cube, plan_projects, write_calibration_3mf,
+        instructions_markdown, model_settings_xml, model_xml, parse_template_settings, place_cube, plan_projects, write_calibration_3mf,
     },
     colored_packer::{PrinterProfile, load_printer_profile},
+    print_time::orca_toolchange_count,
 };
 
 fn assert_close(actual: f64, expected: f64) {
@@ -345,6 +345,6 @@ fn change_counts_are_read_from_slicer_output() {
     let result = br#"{"error_string":"Success.","sliced_plates":[{"filament_change_times":10,"total_predication":1783.3}]}"#;
     assert_eq!(bambu_filament_change_times(result).unwrap(), 10);
     assert!(bambu_filament_change_times(br#"{"sliced_plates":[]}"#).is_err());
-    let gcode = b"; start\n; toolchange #1\nT1\nG1 X1\n; toolchange #2\nT0\n;toolchange without space\n";
+    let gcode = "; start\n; toolchange #1\nT1\nG1 X1\n; toolchange #2\nT0\n;toolchange without space\n";
     assert_eq!(orca_toolchange_count(gcode), 2);
 }

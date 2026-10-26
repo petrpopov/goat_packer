@@ -407,12 +407,7 @@ pub fn parse_orca_gcode(data: &[u8], object_count: usize) -> SchedulerResult<Sli
         .map(parse_number_list_sum)
         .transpose()?
         .unwrap_or(0.0);
-    // Orca has no change counter in its summary; it writes one `; toolchange #N` comment per
-    // tool change into the G-code body.
-    let filament_changes = text
-        .lines()
-        .filter(|line| line.contains("; toolchange #"))
-        .count() as u64;
+    let filament_changes = crate::print_time::orca_toolchange_count(&text);
     Ok(SliceEstimate {
         object_count,
         model_seconds: seconds,

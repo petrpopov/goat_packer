@@ -75,6 +75,17 @@ pub fn corrected_seconds(
     (estimate_s + change_term + correction.prep_s) * (1.0 + correction.margin)
 }
 
+/// Tool changes in an Orca G-code: Orca has no change counter in its summary and writes one
+/// `; toolchange #N` comment per executed change into the body. Only line-leading markers count:
+/// the config block Orca appends (`; key = value`) can carry a change-G-code template that
+/// mentions the marker mid-line, and counting it would inflate every AMS correction.
+pub fn orca_toolchange_count(gcode_text: &str) -> u64 {
+    gcode_text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("; toolchange #"))
+        .count() as u64
+}
+
 /// One measured plate: object count, raw slicer estimate, change count, corrected time.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TimeSample {
