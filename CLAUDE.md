@@ -44,6 +44,11 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - Multi-plate 3MF (`build_schedule_plates_3mf`), both locked by `tests/scheduler_plate_grid.rs`: plate grid is `cols = ceil(sqrt(n))` (not round), row-major, slot offset `bed_size * 1.2`; `wipe_tower_x/y` entries are used verbatim per plate, so every plate gets the SAME entry as the source (shifting it puts the tower off-bed, omitting it auto-places it onto objects).
 - Benchmark `adaptive` (default) slices few sizes and interpolates (`origin: "interpolated"`); `--reuse-benchmarks` re-reads a prior `--output-report`.
 
+## AMS calibration (`src/ams_calibration.rs`, `src/bin/ams_calibration.rs`)
+
+- Generates two cube projects from the user's own 3MF (settings byte-for-byte, `Application` metadata copied: the slicers only load `project_settings.config` from a 3MF they recognise).
+- A per-layer `ToolChange` applies to the layer whose `print_z == top_z` (that layer is already in the new filament), so entries carry the first layer of each band; an entry at the first layer's own z recolours it without a change (Bambu reported one change short). The binary errors when `changes_sliced != changes_expected`.
+
 ## Conventions
 
 - Comments explain why something must not change (empirical slicer quirks); preserve and extend them.

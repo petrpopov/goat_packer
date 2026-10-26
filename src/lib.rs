@@ -5,6 +5,7 @@ use std::{collections::HashSet, fs, io, path::Path};
 
 mod packing_search;
 
+pub mod ams_calibration;
 pub mod assemble;
 pub mod colored_packer;
 pub mod embedded_mesh;
