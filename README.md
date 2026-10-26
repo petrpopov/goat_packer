@@ -51,14 +51,37 @@ configured in the printer profile for probing/final slicing.
 | `--seed` | `20270831` | compatibility/report field; results no longer depend on randomness |
 | `--support-overlap-mm` | unlimited | how far printed supports (patch past the body) of different objects may overlap, mm; `0` = supports may touch but not overlap. Bodies still keep `--clearance` from anything foreign; no-op without detected supports |
 | `--nozzle-clean` | off | inject periodic nozzle wipes into Layer Change G-code: `global,every=10` (whole print) or `from-z=6.6,every=1` (only from a height) |
+| `--time-window-hours` | off | keep only as many objects as finish within N hours (corrected time, see below) |
+| `--ams-correction` | off | correct the slicer estimate by the profile's real filament change duration (`filament_change_seconds`); no-op on tool changers |
+| `--change-seconds` | profile | real duration of one filament change, s (0–600); implies `--ams-correction` |
+| `--time-margin-pct` | `10` | safety margin on the corrected time, % (0–50) |
+| `--prep-min` | `0` | fixed per-plate preparation time (bed swap, loading), minutes |
+| `--no-centre` | off | with a time window: keep the corner layout and the source tower position instead of gathering objects and tower around the plate centre |
 
 Writes `<output>.verification.json` with the object count and prime tower bounds, plus
 `supports_detected` (the probe patch reaches past the silhouette, orientation locked) and the
-echoed `support_overlap_mm`.
+echoed `support_overlap_mm`, and a `time` block (measured samples, chosen count, corrected
+seconds; with a window also `heat_zone` and the tower relocation).
+
+### Time window
+
+Corrected time = `(slicer estimate + changes × (real change − slicer's assumed change) + prep) ×
+(1 + margin)`. With `--time-window-hours` the packer packs the full plate as usual, slices it,
+aims at the window along the line through the 1-object probe and the full plate, slices that
+prefix, and shrinks (along the line through the measured window plate and the full plate) while
+it is over; at most 4 extra slices. The kept objects are the ones closest to the plate centre
+(the smallest profile heat zone, A2L), and the prime tower moves there too (`wipe_tower_x/y`);
+`--no-centre` turns both off. The run fails if even one object exceeds the window, if the
+slicer ignored the tower move, or if the moved tower would land on a printer keep-out area.
+
+Profiles with `blank_start_gcode_for_cli` (Snapmaker U1) slice with the start G-code blanked, so
+their estimates and the window time exclude the start sequence (homing, heating, purge); cover it
+with `--prep-min`.
 
 An independent exact-geometry check on any output: `./target/release/verify_outputs <stl>
 <placements.json> <packed.3mf>` (minimum gap, edge margin, purge-line gap, keepouts, transforms,
-ZIP CRC).
+ZIP CRC). It measures gaps between the objects' mesh silhouettes, not `--support-overlap-mm`
+(printed supports): support overlap is verified only by the packer's own `validate_result`.
 
 ## Nozzle clean
 
@@ -89,11 +112,12 @@ Human-pasteable versions for the Bambu Studio / Orca UI live in `gcode/`.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--printer` | — | repeatable; `profile=`, `source=` required, plus optional `name=`, `prep-min=`, `prep-sweep=a:b:c`, `plates-3mf=<path>` |
+| `--printer` | — | repeatable; `profile=`, `source=` required, plus optional `name=`, `prep-min=`, `prep-sweep=a:b:c`, `plates-3mf=<path>`, `change-s=<s>` (real filament change duration for this printer, 0–600; implies the AMS correction for it) |
 | `--output-schedule` | — | required; path to write the resolved per-printer job sequence as CSV |
 | `--output-report` | off | optional path for the full benchmarks/sensitivity/schedule JSON dump |
 | `--turnaround-min` | `10` | dead time between jobs |
 | `--reuse-benchmarks` | off | reuse prior slice timings from `--output-report` instead of re-slicing |
+| `--ams-correction` | off | add `changes × (real − slicer-assumed change time)` to every benchmark, using the profile's `filament_change_seconds` (or `change-s=`); reused rows are re-corrected, but reports written before change counts existed carry none (a note says so; re-benchmark) |
 
 It slices each batch size to measure real print times (in a scratch temp dir that's cleaned up
 automatically), then optimizes a 10:00→10:00 cycle: day jobs plus one overnight job.
@@ -102,3 +126,28 @@ Give a `--printer` a `plates-3mf=<path>` to also get that printer's resolved sch
 multi-plate 3MF: one `<plate>` per distinct batch size in the schedule, each trimmed from `source`
 by dropping objects from one edge of the existing dense layout (same convention as the internal
 per-batch benchmarking) rather than re-packing from scratch.
+
+## AMS calibration
+
+Measures the real duration of one filament change on your printer, for `--change-seconds` /
+`change-s=`.
+
+```bash
+./target/release/ams_calibration --template my_project.3mf --profile profiles/bambu_a2l.json \
+  --variant normal --out-dir calib/
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--template` | — | any project 3MF for that printer with at least two filaments; the test inherits its printer, process, filaments and AMS type |
+| `--profile` | — | printer profile JSON (`profiles/`) |
+| `--variant` | — | `normal` (10 changes, about ±12 s) or `perfectionist` (30 changes, about ±4 s) |
+| `--out-dir` | — | where to write the results |
+
+Writes `calib_A.3mf` (a 20 × 20 mm cube in filament 1, no changes), `calib_B.3mf` (the same cube
+with exactly that many changes), `instructions.md` (Russian, for the operator) and
+`calibration.json` (`variant`, `changes_expected`, `changes_sliced`, `estimate_a_s`,
+`estimate_b_s`, `slicer_change_s`); `slicing/` keeps the slicer runs. Both projects are sliced
+locally to check the change count and that the prime tower clears the cube. Print A and B,
+note start/finish clock times, then `extra = ((fact_B − est_B) − (fact_A − est_A)) / changes`
+and the real change time is `extra + slicer_change_s`.
