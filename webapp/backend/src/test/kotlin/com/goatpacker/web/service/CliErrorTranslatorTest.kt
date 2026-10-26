@@ -51,6 +51,21 @@ class CliErrorTranslatorTest {
     }
 
     @Test
+    fun `объект длиннее окна печати переводится с часами`() {
+        val tail = "error: even one object exceeds the time window: 13.4 h > window 12.0 h"
+        val headline = CliErrorTranslator.translate(tail)!!
+        assertTrue(headline.contains("13.4") && headline.contains("12.0"), headline)
+        assertTrue(headline.contains("Даже один объект"), headline)
+    }
+
+    @Test
+    fun `окно не достигнуто за отведённые нарезки переводится с последним вариантом`() {
+        val tail = "error: time window 12.0 h not met after 4 window slices; last: 7 objects = 12.6 h corrected"
+        val headline = CliErrorTranslator.translate(tail)!!
+        assertTrue(headline.contains("12.0") && headline.contains("7 шт.") && headline.contains("12.6"), headline)
+    }
+
+    @Test
     fun `неопознанный хвост возвращает null без выдумок`() {
         assertNull(CliErrorTranslator.translate("something completely different went wrong"))
         assertNull(CliErrorTranslator.translate(""))

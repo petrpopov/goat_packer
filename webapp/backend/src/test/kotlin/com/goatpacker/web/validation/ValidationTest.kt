@@ -89,6 +89,52 @@ class ValidationTest(
     }
 
     @Test
+    fun `pack с окном, сменой или запасом вне диапазона — 400`() {
+        for ((name, value) in listOf(
+            "timeWindowHours" to "0.4", "timeWindowHours" to "241",
+            "changeSeconds" to "-1", "changeSeconds" to "601",
+            "timeMarginPct" to "-1", "timeMarginPct" to "51",
+        )) {
+            mockMvc.perform(
+                multipart("/api/pack/jobs")
+                    .file(goat)
+                    .param("profileId", "bambu_a2l")
+                    .param("amsCorrection", "true")
+                    .param(name, value),
+            )
+                .andExpect(status().isBadRequest)
+        }
+    }
+
+    @Test
+    fun `pack и schedule с коррекцией AMS на тулчейнджере (u1) — 400`() {
+        val u1 = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Snapmaker U1"))
+        for (endpoint in listOf("/api/pack/jobs", "/api/schedule/jobs")) {
+            val body = mockMvc.perform(
+                multipart(endpoint)
+                    .file(u1)
+                    .param("profileId", "snapmaker_u1")
+                    .param("amsCorrection", "true"),
+            )
+                .andExpect(status().isBadRequest)
+                .andReturn().response.contentAsString
+            org.junit.jupiter.api.Assertions.assertTrue(body.contains("коррекция"), body)
+        }
+    }
+
+    @Test
+    fun `schedule со сменой прутка вне диапазона — 400`() {
+        mockMvc.perform(
+            multipart("/api/schedule/jobs")
+                .file(goat)
+                .param("profileId", "bambu_a2l")
+                .param("amsCorrection", "true")
+                .param("changeSeconds", "700"),
+        )
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
     fun `pack с файлом не 3mf-расширения — 400`() {
         val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
         mockMvc.perform(

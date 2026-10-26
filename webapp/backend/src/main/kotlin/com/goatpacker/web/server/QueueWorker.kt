@@ -116,8 +116,10 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
             if(!queue.pulse(record.id,record.fence)) {job.cancel();return}
             val r=mapper.readValue<JobRequest>(record.paramsJson)
             log.info("event=job_started jobId={} fence={} kind={} image={} cpu={} memoryMiB={}",record.id,record.fence,record.kind,job.runtimeImage,props.workerCpus,props.workerMemoryMib)
-            if(record.kind=="PACK") runner.runPackBlocking(job,PackParams(record.profileId,Path.of("profile.json"),r.clearance,r.resolution,r.attempts,2400,20270831,r.edgeMargin,r.layout,r.nozzleClean))
-            else runner.runScheduleBlocking(job,ScheduleParams(record.profileId,Path.of("profile.json"),ScheduleSource.Uploaded,r.dayStart,r.nightStart,r.horizonEnd,r.turnaroundMin,r.prepMin,r.benchMode))
+            if(record.kind=="PACK") runner.runPackBlocking(job,PackParams(record.profileId,Path.of("profile.json"),r.clearance,r.resolution,r.attempts,2400,20270831,r.edgeMargin,r.layout,r.nozzleClean,
+                timeWindowHours=r.timeWindowHours,amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds,timeMarginPct=r.timeMarginPct))
+            else runner.runScheduleBlocking(job,ScheduleParams(record.profileId,Path.of("profile.json"),ScheduleSource.Uploaded,r.dayStart,r.nightStart,r.horizonEnd,r.turnaroundMin,r.prepMin,r.benchMode,
+                amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds))
             if(!stopNative(job)) {retryReason="Остановка контейнера не подтверждена";return}
             if(job.cancelled) {queue.finish(record.id,record.fence,null,emptyList(),"Задача остановлена по лимиту или отменена");return}
             val result=if(record.kind=="PACK") mapper.writeValueAsString(job.packResult) else mapper.writeValueAsString(job.scheduleResult)

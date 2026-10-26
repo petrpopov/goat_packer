@@ -53,6 +53,8 @@ class PackService(
         profileService.requireMatches(projects.inspect(file), profile)
         val nozzleClean = form.nozzleClean?.trim() ?: ""
         validateNozzleClean(nozzleClean, profile)
+        val amsCorrection = form.amsCorrection == true
+        profileService.requireAmsCorrectionSupported(profile, amsCorrection)
 
         val params = PackParams(
             profileId = profileId,
@@ -66,6 +68,10 @@ class PackService(
             edgeMargin = form.edgeMargin,
             layout = form.layout ?: "search",
             nozzleClean = nozzleClean,
+            timeWindowHours = form.timeWindowHours,
+            amsCorrection = amsCorrection,
+            changeSeconds = form.changeSeconds,
+            timeMarginPct = form.timeMarginPct,
         )
 
         val jobId = UUID.randomUUID().toString()

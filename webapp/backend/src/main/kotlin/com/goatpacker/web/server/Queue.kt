@@ -16,7 +16,9 @@ val activeStates=setOf("QUEUED","RUNNING","FINALIZING","LOST","RETRY_WAIT")
 data class JobRequest(val kind:String="PACK",val fileId:String?=null,val packJobId:String?=null,val profileId:String="",
     val clearance:Double=0.7,val resolution:Double=0.25,val attempts:Long=4800,val edgeMargin:Double?=null,
     val layout:String="search",val nozzleClean:String="",val dayStart:String="10:00",val nightStart:String="23:00",
-    val horizonEnd:String="34:00",val turnaroundMin:Int=10,val prepMin:Int=10,val benchMode:String="adaptive")
+    val horizonEnd:String="34:00",val turnaroundMin:Int=10,val prepMin:Int=10,val benchMode:String="adaptive",
+    // Время печати (упаковка) и коррекция смены прутка AMS (упаковка и расписание); null = не задано.
+    val timeWindowHours:Double?=null,val amsCorrection:Boolean=false,val changeSeconds:Double?=null,val timeMarginPct:Double?=null)
 data class CreatedJob(val jobId:String,val readToken:String?=null)
 
 @Service @Profile("server")
@@ -58,6 +60,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         reserveCompute(owner,budgetDay,props.jobTimeoutSeconds)
         val profile=profiles.require(request.profileId)
         if(request.nozzleClean.isNotBlank() && !profile.dto.supportsNozzleClean) bad("Принтер не поддерживает чистку сопла")
+        if(request.amsCorrection && profile.dto.filamentChangeSeconds==null) bad("Для этого принтера коррекция смены прутка не нужна")
         if(owner.kind=="GUEST" && request.benchMode=="full") bad("Полный перебор партий доступен только аккаунту")
         val token=Secrets.token()
         val j=jobs.save(QueueJobEntity(ownerId=ownerId,kind=request.kind,inputBlobId=input,originalName=name,
@@ -237,6 +240,9 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         if(!r.clearance.isFinite() || r.clearance !in 0.05..10.0 || !r.resolution.isFinite() || r.resolution !in 0.05..1.0) bad("Некорректные зазор/разрешение")
         if(r.attempts !in 1..1000000 || r.layout !in listOf("search","grid") || r.benchMode !in listOf("adaptive","full")) bad("Некорректный режим поиска")
         if(r.edgeMargin!=null && (!r.edgeMargin.isFinite() || r.edgeMargin !in 0.0..20.0)) bad("Некорректный отступ")
+        if(r.timeWindowHours!=null && (!r.timeWindowHours.isFinite() || r.timeWindowHours !in 0.5..240.0)) bad("Окно печати должно быть 0.5–240 ч")
+        if(r.changeSeconds!=null && (!r.changeSeconds.isFinite() || r.changeSeconds !in 0.0..600.0)) bad("Длительность смены прутка должна быть 0–600 с")
+        if(r.timeMarginPct!=null && (!r.timeMarginPct.isFinite() || r.timeMarginPct !in 0.0..50.0)) bad("Запас времени должен быть 0–50 %")
         if(r.nozzleClean.isNotBlank()) {
             if(!Regex("^(global|from-z=\\d+(\\.\\d+)?)(,every=[1-9]\\d*)?$").matches(r.nozzleClean)) bad("Некорректная чистка сопла")
             if(r.nozzleClean.startsWith("from-z=") && (r.nozzleClean.substringAfter('=').substringBefore(',').toDoubleOrNull()?.let { it.isFinite() && it>0 }!=true)) bad("Высота должна быть положительной")

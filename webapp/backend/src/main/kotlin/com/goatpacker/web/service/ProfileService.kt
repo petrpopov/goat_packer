@@ -14,7 +14,7 @@ import java.nio.file.Path
 /**
  * Каталог принтеров: при каждом запросе читаются все json-файлы из {profiles-dir} (их три,
  * дёшево). Профиль в файле: {"id","printer_name","slicer_kind","printable_area":[x0,y0,x1,y1],
- * "edge_margin_mm","nozzle_clean_gcode"(может не быть)}.
+ * "edge_margin_mm","nozzle_clean_gcode"(может не быть),"filament_change_seconds"(может не быть)}.
  *
  * Идентификатор профиля — поле "id" ВНУТРИ json, а не имя файла: у нас p1s.json несёт id
  * "bambu_p1s", и попытка разрешить профиль путём {id}.json ломалась «неизвестным профилем».
@@ -73,6 +73,19 @@ class ProfileService(
         }
     }
 
+    /**
+     * Коррекция смены прутка имеет смысл только для принтера с AMS-сменами: у тулчейнджера
+     * (в профиле нет filament_change_seconds) CLI её молча проигнорировал бы, а явный
+     * change-seconds наоборот включил бы ложную коррекцию — поэтому понятная 400 заранее.
+     */
+    fun requireAmsCorrectionSupported(profile: ResolvedProfile, amsCorrection: Boolean) {
+        if (amsCorrection && profile.dto.filamentChangeSeconds == null) {
+            throw BadRequestException(
+                "Принтер «${profile.dto.name}» меняет пруток без AMS — коррекция времени смены не нужна",
+            )
+        }
+    }
+
     fun exists(profileId: String): Boolean = findById(profileId) != null
 
     fun require(profileId: String): ResolvedProfile =
@@ -116,6 +129,9 @@ class ProfileService(
                 bedDepthMm = area.get(3).asDouble() - area.get(1).asDouble(),
                 edgeMarginMm = node.path("edge_margin_mm").asDouble(0.0),
                 supportsNozzleClean = node.path("nozzle_clean_gcode").asText("").isNotBlank(),
+                filamentChangeSeconds = node.get("filament_change_seconds")
+                    ?.takeIf { it.isNumber && it.asDouble().isFinite() && it.asDouble() >= 0 }
+                    ?.asDouble(),
             )
             require(dto.id.isNotBlank() && dto.name.isNotBlank() && dto.slicerKind in setOf("bambu", "orca")) { "Профиль без id, имени или поддерживаемого слайсера" }
             require(dto.bedWidthMm > 0 && dto.bedDepthMm > 0 && dto.edgeMarginMm.isFinite()

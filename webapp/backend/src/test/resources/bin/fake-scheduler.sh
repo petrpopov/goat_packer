@@ -2,7 +2,10 @@
 # Фейковый daily_scheduler для интеграционных тестов: печатает характерные строки прогресса
 # (ровно те, что разбирает ProgressTracker), создаёт schedule.csv, report.json
 # (printers[0].variable_batch_schedule) и plates.3mf по своим аргументам. Слайсер не вызывается.
+# Аргументы пишутся построчно в scheduler-args.txt (рабочий каталог джоба) для проверки сборки CLI.
 set -euo pipefail
+
+printf '%s\n' "$@" > scheduler-args.txt
 
 printer_spec=""
 output_schedule="schedule.csv"

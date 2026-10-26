@@ -150,4 +150,46 @@ class ScheduleJobFlowTest(
         val jobs = body["schedule"]["jobs"]
         assertTrue(jobs.isArray && jobs.size() > 0, "работы расписания не должны быть пустыми")
     }
+
+    private fun schedulerArgs(jobId: String): List<String> =
+        Files.readAllLines(tmpRoot.resolve("jobs").resolve(jobId).resolve("scheduler-args.txt"))
+
+    @Test
+    fun `коррекция AMS — глобальный флаг и change-s в спеке принтера`() {
+        val create = mockMvc.perform(
+            multipart("/api/schedule/jobs")
+                .file(uploadFile())
+                .param("profileId", "bambu_a2l")
+                .param("amsCorrection", "true")
+                .param("changeSeconds", "95"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        mockMvc.awaitJobCompletion(jobId)
+
+        val args = schedulerArgs(jobId)
+        assertTrue("--ams-correction" in args, args.toString())
+        val spec = args[args.indexOf("--printer") + 1].split(',')
+        assertTrue("change-s=95.0" in spec, spec.toString())
+        assertTrue(spec.last() == "plates-3mf=plates.3mf", spec.toString())
+    }
+
+    @Test
+    fun `без коррекции AMS ни флага, ни change-s`() {
+        val create = mockMvc.perform(
+            multipart("/api/schedule/jobs")
+                .file(uploadFile())
+                .param("profileId", "bambu_a2l")
+                .param("changeSeconds", "95"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        mockMvc.awaitJobCompletion(jobId)
+
+        val args = schedulerArgs(jobId)
+        assertTrue("--ams-correction" !in args, args.toString())
+        assertTrue(args.none { it.contains("change-s=") }, args.toString())
+    }
 }

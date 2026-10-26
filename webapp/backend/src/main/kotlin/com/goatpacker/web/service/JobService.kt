@@ -3,6 +3,7 @@ package com.goatpacker.web.service
 import com.goatpacker.web.dto.ArtifactDto
 import com.goatpacker.web.dto.JobStatusDto
 import com.goatpacker.web.dto.PackInfoDto
+import com.goatpacker.web.dto.PackTimeDto
 import com.goatpacker.web.dto.PlateDto
 import com.goatpacker.web.dto.ScheduleInfoDto
 import com.goatpacker.web.dto.ScheduleJobDto
@@ -76,7 +77,21 @@ class JobService(
             finishedAt = snap.finishedAt,
             artifacts = artifacts,
             pack = job.packResult?.let {
-                PackInfoDto(objectCount = it.objectCount, profileId = it.profileId, clearanceMm = it.clearanceMm)
+                PackInfoDto(
+                    objectCount = it.objectCount,
+                    profileId = it.profileId,
+                    clearanceMm = it.clearanceMm,
+                    time = it.time?.let { t ->
+                        PackTimeDto(
+                            windowHours = t.windowHours,
+                            marginPct = t.marginPct,
+                            realChangeSeconds = t.realChangeSeconds,
+                            chosenCount = t.chosenCount,
+                            fullCount = t.fullCount,
+                            correctedSeconds = t.correctedSeconds,
+                        )
+                    },
+                )
             },
             schedule = job.scheduleResult?.let {
                 ScheduleInfoDto(

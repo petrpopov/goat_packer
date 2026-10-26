@@ -38,6 +38,20 @@ data class PackJobForm(
     )
     val layout: String? = null,
     val nozzleClean: String? = null,
+    /** Окно печати, ч: уложить стол в это время (с коррекцией и запасом). Пусто — без окна. */
+    @field:DecimalMin(value = "0.5", message = "timeWindowHours должен быть в диапазоне 0.5..240 ч")
+    @field:DecimalMax(value = "240", message = "timeWindowHours должен быть в диапазоне 0.5..240 ч")
+    val timeWindowHours: Double? = null,
+    /** Коррекция времени смены прутка AMS (слайсер занижает её). */
+    val amsCorrection: Boolean? = null,
+    /** Реальная длительность смены, с; пусто — значение профиля. Учитывается только с amsCorrection. */
+    @field:DecimalMin(value = "0", message = "changeSeconds должен быть в диапазоне 0..600 с")
+    @field:DecimalMax(value = "600", message = "changeSeconds должен быть в диапазоне 0..600 с")
+    val changeSeconds: Double? = null,
+    /** Запас к оценке времени, %; пусто — дефолт CLI (10). */
+    @field:DecimalMin(value = "0", message = "timeMarginPct должен быть в диапазоне 0..50 %")
+    @field:DecimalMax(value = "50", message = "timeMarginPct должен быть в диапазоне 0..50 %")
+    val timeMarginPct: Double? = null,
 )
 
 /** Форма создания schedule-джоба (multipart/form-data). */
@@ -72,6 +86,12 @@ data class ScheduleJobForm(
         message = "benchMode допустим adaptive или full",
     )
     val benchMode: String? = null,
+    /** Коррекция времени смены прутка AMS в замерах слайсера. */
+    val amsCorrection: Boolean? = null,
+    /** Реальная длительность смены, с; пусто — значение профиля. Учитывается только с amsCorrection. */
+    @field:DecimalMin(value = "0", message = "changeSeconds должен быть в диапазоне 0..600 с")
+    @field:DecimalMax(value = "600", message = "changeSeconds должен быть в диапазоне 0..600 с")
+    val changeSeconds: Double? = null,
 )
 
 /** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось; printerModel — что за принтер записан в файле (для понятных сообщений). */

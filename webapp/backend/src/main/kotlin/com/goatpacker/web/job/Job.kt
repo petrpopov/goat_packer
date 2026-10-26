@@ -61,6 +61,18 @@ data class PackJobResult(
     val objectCount: Int,
     val profileId: String,
     val clearanceMm: Double,
+    /** Оценка времени из блока `time` verification.json; null — не измерено. */
+    val time: PackTimeResult? = null,
+)
+
+/** Сводка блока `time` отчёта упаковщика (секунды; см. [com.goatpacker.web.dto.PackTimeDto]). */
+data class PackTimeResult(
+    val windowHours: Double?,
+    val marginPct: Double,
+    val realChangeSeconds: Double?,
+    val chosenCount: Int,
+    val fullCount: Int,
+    val correctedSeconds: Double,
 )
 
 /** Одна работа в расписании (из report.json → variable_batch_schedule.jobs). */

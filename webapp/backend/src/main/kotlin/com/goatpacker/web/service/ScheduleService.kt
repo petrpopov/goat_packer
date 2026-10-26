@@ -50,6 +50,8 @@ class ScheduleService(
         val nightStart = form.nightStart?.trim() ?: "23:00"
         val horizonEnd = form.horizonEnd?.trim() ?: "34:00"
         validateTimeWindow(dayStart, nightStart, horizonEnd)
+        val amsCorrection = form.amsCorrection == true
+        profileService.requireAmsCorrectionSupported(profile, amsCorrection)
 
         val params = ScheduleParams(
             profileId = profileId,
@@ -61,6 +63,8 @@ class ScheduleService(
             turnaroundMin = form.turnaroundMin ?: 10,
             prepMin = form.prepMin ?: 10,
             benchMode = form.benchMode?.trim() ?: "adaptive",
+            amsCorrection = amsCorrection,
+            changeSeconds = form.changeSeconds,
         )
 
         val jobId = UUID.randomUUID().toString()

@@ -71,6 +71,15 @@ class PackJobFlowTest(
         assertEquals(30, body["pack"]["objectCount"].asInt())
         assertEquals("bambu_a2l", body["pack"]["profileId"].asText())
         assertEquals(0.7, body["pack"]["clearanceMm"].asDouble(), 1e-9)
+        // Без окна: время записанного стола есть, окна нет, флаги времени не передаются.
+        // null-поля Jackson не пишет (non_null): «нет окна» = поле отсутствует.
+        assertTrue(body["pack"]["time"].path("windowHours").let { it.isMissingNode || it.isNull }, body["pack"].toString())
+        assertEquals(79200.0, body["pack"]["time"]["correctedSeconds"].asDouble(), 1e-9)
+        assertEquals(30, body["pack"]["time"]["fullCount"].asInt())
+        val args = packerArgs(jobId)
+        for (flag in listOf("--time-window-hours", "--ams-correction", "--change-seconds", "--time-margin-pct")) {
+            assertTrue(flag !in args, "$flag не задан пользователем: $args")
+        }
         assertTrue(body.hasNonNull("phaseMessage"), "phaseMessage должен содержать последнюю строку вывода")
         assertNotNull(body["createdAt"])
         assertNotNull(body["finishedAt"])
@@ -120,6 +129,59 @@ class PackJobFlowTest(
         val body = mockMvc.awaitJobCompletion(jobId)
         assertEquals("SUCCEEDED", body["status"].asText())
         assertEquals("bambu_p1s", body["pack"]["profileId"].asText())
+    }
+
+    private fun packerArgs(jobId: String): List<String> =
+        Files.readAllLines(tmpRoot.resolve("jobs").resolve(jobId).resolve("packer-args.txt"))
+
+    @Test
+    fun `окно печати и коррекция AMS доходят до CLI, итог стола — в результате`() {
+        val create = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
+                .param("profileId", "bambu_a2l")
+                .param("timeWindowHours", "12")
+                .param("amsCorrection", "true")
+                .param("changeSeconds", "80")
+                .param("timeMarginPct", "15"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        val body = mockMvc.awaitJobCompletion(jobId)
+
+        val args = packerArgs(jobId)
+        fun valueOf(flag: String) = args.getOrNull(args.indexOf(flag) + 1)?.toDouble()
+        assertEquals(12.0, valueOf("--time-window-hours"))
+        assertTrue("--ams-correction" in args, args.toString())
+        assertEquals(80.0, valueOf("--change-seconds"))
+        assertEquals(15.0, valueOf("--time-margin-pct"))
+
+        val pack = body["pack"]
+        assertEquals(12, pack["objectCount"].asInt())
+        val time = pack["time"]
+        assertEquals(12.0, time["windowHours"].asDouble(), 1e-9)
+        assertEquals(12, time["chosenCount"].asInt())
+        // Полный стол — наибольший count среди замеров (второй, после пробы на 1 объект).
+        assertEquals(30, time["fullCount"].asInt())
+        assertEquals(41580.0, time["correctedSeconds"].asDouble(), 1e-9)
+        assertEquals(95.0, time["realChangeSeconds"].asDouble(), 1e-9)
+    }
+
+    @Test
+    fun `длительность смены без галочки коррекции не включает её молча`() {
+        val create = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
+                .param("profileId", "bambu_a2l")
+                .param("changeSeconds", "80"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        mockMvc.awaitJobCompletion(jobId)
+        val args = packerArgs(jobId)
+        assertTrue("--change-seconds" !in args && "--ams-correction" !in args, args.toString())
     }
 
     @Test

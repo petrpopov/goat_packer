@@ -30,6 +30,14 @@ data class PackParams(
     /** search = детерминированный поиск, grid = только детерминированная сетка (быстро). */
     val layout: String,
     val nozzleClean: String,
+    /** Окно печати, ч → --time-window-hours; null = без окна. */
+    val timeWindowHours: Double? = null,
+    /** --ams-correction; false = флаг не передаётся. */
+    val amsCorrection: Boolean = false,
+    /** --change-seconds (передаётся только вместе с [amsCorrection]); null = значение профиля. */
+    val changeSeconds: Double? = null,
+    /** --time-margin-pct; null = дефолт CLI (10 %). */
+    val timeMarginPct: Double? = null,
 )
 
 /** Источник 3MF для schedule-джоба. */
@@ -53,6 +61,10 @@ data class ScheduleParams(
     val turnaroundMin: Int,
     val prepMin: Int,
     val benchMode: String,
+    /** Глобальный --ams-correction. */
+    val amsCorrection: Boolean = false,
+    /** Ключ change-s= в спеке --printer (только вместе с [amsCorrection]); null = значение профиля. */
+    val changeSeconds: Double? = null,
 )
 
 /**
@@ -111,6 +123,23 @@ class JobRunner(
                 add("--nozzle-clean")
                 add(params.nozzleClean)
             }
+            params.timeWindowHours?.let {
+                add("--time-window-hours")
+                add(it.toString())
+            }
+            // --change-seconds сам включает коррекцию в CLI, поэтому без галочки его не передаём:
+            // иначе значение, оставшееся в форме, молча включило бы коррекцию.
+            if (params.amsCorrection) {
+                add("--ams-correction")
+                params.changeSeconds?.let {
+                    add("--change-seconds")
+                    add(it.toString())
+                }
+            }
+            params.timeMarginPct?.let {
+                add("--time-margin-pct")
+                add(it.toString())
+            }
         }
 
         execute(job, command) { exitCode -> finishPack(job, params, exitCode) }
@@ -129,8 +158,11 @@ class JobRunner(
                 "profile=${params.profilePath}," +
                     "source=$source," +
                     "prep-min=${params.prepMin}," +
+                    // change-s= сам включает коррекцию — только вместе с --ams-correction.
+                    (params.changeSeconds?.takeIf { params.amsCorrection }?.let { "change-s=$it," } ?: "") +
                     "plates-3mf=plates.3mf",
             )
+            if (params.amsCorrection) add("--ams-correction")
             add("--output-schedule")
             add("schedule.csv")
             add("--output-report")
@@ -215,9 +247,10 @@ class JobRunner(
             return
         }
 
-        val objectCount = job.directory.resolve("packed.verification.json")
+        val report = job.directory.resolve("packed.verification.json")
             .takeIf { Files.exists(it) }
             ?.let { objectMapper.readTree(it.toFile()) }
+        val objectCount = report
             ?.get("object_count")
             ?.asInt(-1)
             ?: -1
@@ -230,8 +263,30 @@ class JobRunner(
             objectCount = objectCount,
             profileId = params.profileId,
             clearanceMm = params.clearance,
+            time = report?.get("time")?.let(::parsePackTime),
         )
         succeed(job, JobPhase.CLEANUP)
+    }
+
+    /**
+     * Блок `time` отчёта упаковщика → [PackTimeResult]. null/битый блок = время не измерено
+     * (стол при этом валиден), поэтому ошибкой джобы это не считается. Полный стол — наибольший
+     * count среди замеров: с окном это второй замер (после пробы на 1 объект), без окна — сам стол.
+     */
+    private fun parsePackTime(node: JsonNode): PackTimeResult? {
+        if (!node.isObject) return null
+        val corrected = node.get("corrected_s")?.takeIf { it.isNumber }?.asDouble() ?: return null
+        val chosen = node.get("chosen_count")?.takeIf { it.canConvertToInt() }?.asInt() ?: return null
+        val fullCount = node.path("samples").mapNotNull { sample -> sample.get("count")?.takeIf { it.isInt }?.asInt() }
+            .maxOrNull() ?: chosen
+        return PackTimeResult(
+            windowHours = node.get("window_hours")?.takeIf { it.isNumber }?.asDouble(),
+            marginPct = node.path("margin_pct").asDouble(0.0),
+            realChangeSeconds = node.get("real_change_s")?.takeIf { it.isNumber }?.asDouble(),
+            chosenCount = chosen,
+            fullCount = maxOf(fullCount, chosen),
+            correctedSeconds = corrected,
+        )
     }
 
     private fun finishSchedule(job: Job, exitCode: Int) {

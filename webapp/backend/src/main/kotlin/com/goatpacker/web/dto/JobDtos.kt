@@ -12,6 +12,11 @@ data class ProfileDto(
     val bedDepthMm: Double,
     val edgeMarginMm: Double,
     val supportsNozzleClean: Boolean,
+    /**
+     * Реальная длительность смены прутка AMS, с (`filament_change_seconds` профиля).
+     * null — у принтера нет AMS-смен (тулчейнджер), коррекция времени ему не нужна.
+     */
+    val filamentChangeSeconds: Double? = null,
 )
 
 /** Ответ на создание джоба. */
@@ -31,6 +36,23 @@ data class PackInfoDto(
     val objectCount: Int,
     val profileId: String,
     val clearanceMm: Double,
+    /** Сводка блока `time` из packed.verification.json; null — время не измерено. */
+    val time: PackTimeDto? = null,
+)
+
+/** Оценка времени печати записанного стола (с коррекцией смен прутка и запасом). */
+data class PackTimeDto(
+    /** Окно печати, ч; null — окно не задавалось. */
+    val windowHours: Double?,
+    val marginPct: Double,
+    /** Реальная длительность смены, с; null — коррекция смен выключена. */
+    val realChangeSeconds: Double?,
+    /** Объектов на записанном столе. */
+    val chosenCount: Int,
+    /** Объектов на полном (максимальном) столе — наибольший count среди замеров. */
+    val fullCount: Int,
+    /** Скорректированное время записанного стола, с. */
+    val correctedSeconds: Double,
 )
 
 /** Работа в расписании. */

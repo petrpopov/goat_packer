@@ -65,7 +65,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             assertEquals("bambu_p1s",call("PUT","/api/v2/uploads/$id/content",data,headers=mapOf("Origin" to "http://localhost:3007"))["profileId"].asText())
             return id
         }
-        fun job(file:String,key:String=newId())=call("POST","/api/v2/jobs",mapOf("fileId" to file,"profileId" to "bambu_p1s"),headers=mapOf("Idempotency-Key" to key))
+        fun job(file:String,key:String=newId(),extra:Map<String,Any> = emptyMap(),expected:Int=200)=call("POST","/api/v2/jobs",mapOf("fileId" to file,"profileId" to "bambu_p1s")+extra,expected,headers=mapOf("Idempotency-Key" to key))
     }
     @BeforeEach fun clearQueue() {
         jdbc.update("delete from compute_budgets");jdbc.update("delete from bot_challenges");jdbc.update("delete from object_gc");jdbc.update("delete from worker_nodes");jdbc.update("delete from artifacts");jdbc.update("delete from queue_jobs");jdbc.update("delete from uploads");jdbc.update("delete from blobs")
@@ -138,7 +138,12 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         assertNull(queue.claim("none"))
     }
     @Test fun `complete durable job workflow publishes named files and hides diagnostics`() {
-        val client=Client();client.guest();val id=client.job(client.upload())["jobId"].asText()
+        val client=Client();client.guest()
+        val file=client.upload()
+        // Окно/смена/запас вне диапазона отсекаются при постановке, до очереди.
+        for(bad in listOf(mapOf("timeWindowHours" to 0.1),mapOf("changeSeconds" to 601),mapOf("timeMarginPct" to 51)))
+            client.job(file,extra=bad,expected=400)
+        val id=client.job(file,extra=mapOf("timeWindowHours" to 12,"amsCorrection" to true,"changeSeconds" to 80,"timeMarginPct" to 15))["jobId"].asText()
         val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
         try {
             worker.dispatch()
@@ -146,7 +151,10 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             while(jobs.findById(id).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
             val response=client.call("GET","/api/v2/jobs/$id")
             assertEquals("SUCCEEDED",response["status"].asText(),response.toString())
-            assertEquals(30,response["pack"]["objectCount"].asInt())
+            // Фейковый пакер с окном пишет стол «12 из 30»; блок time доходит до ответа сервера.
+            assertEquals(12,response["pack"]["objectCount"].asInt())
+            assertEquals(12.0,response["pack"]["time"]["windowHours"].asDouble(),1e-9)
+            assertEquals(30,response["pack"]["time"]["fullCount"].asInt())
             assertEquals(1,response["artifacts"].size())
             assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"))
             assertTrue(client.call("GET","/api/v2/jobs/$id?debug=true")["artifacts"].size()>1)
