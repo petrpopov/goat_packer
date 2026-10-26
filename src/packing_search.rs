@@ -670,13 +670,16 @@ mod tests {
                 .support_core
                 .is_none()
         );
-        // X = 0: the core is exactly the clearance zone.
+        // X = 0: the core is exactly the printed patch (supports may touch, not overlap).
         let mask = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(0.0));
         let core = mask.support_core.unwrap();
         assert_eq!(
             core.pixels().collect::<HashSet<_>>(),
-            mask.clearance.pixels().collect::<HashSet<_>>()
+            mask.physical.pixels().collect::<HashSet<_>>()
         );
+        // X = 1 at 0.5 mm pixels: eroded by exactly one pixel.
+        let eroded = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(1.0));
+        assert!(eroded.support_core.unwrap().pixel_count < mask.physical.pixel_count);
     }
 
     #[test]

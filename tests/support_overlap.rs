@@ -39,8 +39,9 @@ fn skirted() -> Footprint {
 
 fn options(support_overlap_mm: Option<f64>) -> PackOptions {
     PackOptions {
-        // One row of objects: every neighbour pair is a horizontal pair.
-        bed: Rect::new(0.0, 0.0, 40.0, 9.0),
+        // One row of objects: every neighbour pair is a horizontal pair. 34.5 mm fits five
+        // at the unlimited 6.5 mm pitch but only four at the 8 mm pitch of X = 0.
+        bed: Rect::new(0.0, 0.0, 34.5, 9.0),
         exclusions: vec![],
         resolution: RESOLUTION,
         clearance: CLEARANCE,
@@ -136,17 +137,17 @@ fn unlimited_lets_supports_overlap() {
 }
 
 #[test]
-fn zero_forbids_support_overlap_but_packs_supports_at_clearance() {
+fn zero_forbids_support_overlap_but_lets_supports_touch() {
     let unlimited = pack_footprint(&skirted(), &options(None));
     for result in layouts(&options(Some(0.0))) {
         assert!(result.placements.len() >= 2, "{result:#?}");
         let gap = min_support_gap(&result);
-        // Supports keep the same clearance a body would: no overlap, not even a touch...
-        assert!(gap >= CLEARANCE - TOLERANCE, "gap {gap}: {result:#?}");
-        // ...but they are not pushed further apart than that.
-        assert!(gap <= CLEARANCE + TOLERANCE, "gap {gap}: {result:#?}");
+        // Printed supports never overlap...
+        assert!(gap >= -TOLERANCE, "gap {gap}: {result:#?}");
+        // ...but neighbours may touch: no clearance is added between supports.
+        assert!(gap <= TOLERANCE, "gap {gap}: {result:#?}");
         assert!(min_body_gap(&result) >= CLEARANCE - TOLERANCE, "{result:#?}");
-        // 8.5 mm pitch instead of 6.5 mm: the rule costs an object on this 40 mm row.
+        // 8 mm pitch instead of 6.5 mm: the rule costs an object on this row.
         assert!(result.placements.len() < unlimited.placements.len());
     }
 }
@@ -157,12 +158,11 @@ fn x_bounds_support_overlap_depth() {
         for result in layouts(&options(Some(overlap))) {
             assert!(result.placements.len() >= 2, "{result:#?}");
             let gap = min_support_gap(&result);
-            // The clearance zones of two supports overlap by at most X, so the supports
-            // themselves keep `clearance - X` (negative = overlap depth <= X - clearance).
-            assert!(gap >= CLEARANCE - overlap - TOLERANCE, "X={overlap} gap {gap}");
+            // Printed supports overlap by at most X...
             assert!(-gap <= overlap + TOLERANCE, "X={overlap} overlap {}", -gap);
-            // The rule binds: neighbours pack right up to the allowance.
-            assert!(gap <= CLEARANCE - overlap + TOLERANCE, "X={overlap} gap {gap}");
+            // ...and the rule binds: neighbours pack right up to the allowance (X <= 1.5 mm,
+            // the most the bodies' clearance leaves on this skirt).
+            assert!(-gap >= overlap - TOLERANCE, "X={overlap} overlap {}", -gap);
             assert!(min_body_gap(&result) >= CLEARANCE - TOLERANCE, "X={overlap}");
         }
     }
@@ -189,14 +189,17 @@ fn validate_result_rejects_a_layout_exceeding_x() {
         .expect("unlimited support overlap accepts it");
     assert!(validate_result(&fp, &options(Some(1.0)), &close(&options(Some(1.0)))).is_err());
     assert!(validate_result(&fp, &options(Some(0.0)), &close(&options(Some(0.0)))).is_err());
-    // 7.5 mm apart: clearance zones overlap by exactly 1.0 mm — allowed at X = 1.0.
-    let at_limit = layout(&[(10.0, 4.5), (17.5, 4.5)], &options(Some(1.0)));
+    // 7.0 mm apart: skirts overlap by exactly 1.0 mm — allowed at X = 1.0.
+    let at_limit = layout(&[(10.0, 4.5), (17.0, 4.5)], &options(Some(1.0)));
     validate_result(&fp, &options(Some(1.0)), &at_limit).unwrap();
-    // 8.5 mm apart: supports at clearance — allowed at X = 0.
-    let at_clearance = layout(&[(10.0, 4.5), (18.5, 4.5)], &options(Some(0.0)));
-    validate_result(&fp, &options(Some(0.0)), &at_clearance).unwrap();
+    let beyond_limit = layout(&[(10.0, 4.5), (16.75, 4.5)], &options(Some(1.0)));
+    assert!(validate_result(&fp, &options(Some(1.0)), &beyond_limit).is_err());
+    // 8 mm apart: supports touch — allowed at X = 0; 7.75 mm (0.25 mm overlap) is not.
     let touching = layout(&[(10.0, 4.5), (18.0, 4.5)], &options(Some(0.0)));
-    assert!(validate_result(&fp, &options(Some(0.0)), &touching).is_err());
+    validate_result(&fp, &options(Some(0.0)), &touching).unwrap();
+    let overlapping = layout(&[(10.0, 4.5), (17.75, 4.5)], &options(Some(0.0)));
+    let error = validate_result(&fp, &options(Some(0.0)), &overlapping).unwrap_err();
+    assert!(error.contains("supports overlap"), "{error}");
 }
 
 #[test]

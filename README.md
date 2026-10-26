@@ -49,7 +49,7 @@ configured in the printer profile for probing/final slicing.
 | `--candidates` | `2400` | compatibility flag; free positions are now scanned exhaustively |
 | `--stall` | `0` | compatibility flag; no scheduling-dependent early stopping |
 | `--seed` | `20270831` | compatibility/report field; results no longer depend on randomness |
-| `--support-overlap-mm` | unlimited | how far supports (patch past the body) of different objects may overlap: their clearance zones overlap by at most X, so supports keep `clearance − X` mm; `0` = supports keep the full clearance. Bodies unaffected; no-op without detected supports |
+| `--support-overlap-mm` | unlimited | how far printed supports (patch past the body) of different objects may overlap, mm; `0` = supports may touch but not overlap. Bodies still keep `--clearance` from anything foreign; no-op without detected supports |
 | `--nozzle-clean` | off | inject periodic nozzle wipes into Layer Change G-code: `global,every=10` (whole print) or `from-z=6.6,every=1` (only from a height) |
 
 Writes `<output>.verification.json` with the object count and prime tower bounds, plus

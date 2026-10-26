@@ -995,12 +995,11 @@ pub struct RasterMask {
     pub bed_clearance: PixelMask,
     pub bed_physical_bounds: Rect,
     pub physical_bounds: Rect,
-    /// Support-overlap rule (`PackOptions::support_overlap_mm = Some(X)`): the full patch
-    /// dilated by `(clearance - X) / 2` (eroded when negative) — the `clearance` zone shrunk
-    /// by X/2 per side. Two cores must not overlap, so the clearance zones of two supports
-    /// overlap by at most X. `None` without the option, and when the footprint carries no
-    /// support zone (body == full): the two-zone rule then already forbids any overlap of
-    /// the clearance zones, which contain the cores.
+    /// Support-overlap rule (`PackOptions::support_overlap_mm = Some(X)`): the printed patch
+    /// eroded by X/2 per side. Two cores must not overlap, so printed supports of two objects
+    /// overlap by at most X (X = 0: they may touch). `None` without the option, and when the
+    /// footprint carries no support zone (body == full): the two-zone rule then already
+    /// forbids any overlap of the clearance zones, which contain the cores.
     pub support_core: Option<PixelMask>,
 }
 
@@ -1013,11 +1012,14 @@ pub fn rasterize_footprint(
     rasterize_footprint_with_support(footprint, angle_deg, resolution, clearance, None)
 }
 
-/// Pixel radius of the support core: `ceil((clearance - X) / 2 / resolution)`. Rounding up
-/// dilates generously and erodes sparingly, so the raster never allows more than X; at X = 0
-/// it is exactly the `clearance` radius.
-fn support_core_radius(clearance: f64, support_overlap_mm: f64, resolution: f64) -> i32 {
-    ((clearance - support_overlap_mm) * 0.5 / resolution).ceil() as i32
+/// Pixel radius of the support core: `ceil(-X / 2 / resolution)`, an erosion of the printed
+/// patch by X/2 per side (negative = erosion). Rounding toward zero erodes sparingly, so the
+/// raster never allows more than X of physical overlap; at X = 0 the core is the patch itself
+/// (neighbouring supports may touch, not overlap). Clearance deliberately plays no part: the
+/// user's tolerance is "supports may overlap each other, never the model", and the body keeps
+/// its clearance through the two-zone pairs.
+fn support_core_radius(support_overlap_mm: f64, resolution: f64) -> i32 {
+    (-support_overlap_mm * 0.5 / resolution).ceil() as i32
 }
 
 /// `rasterize_footprint` plus the support core for `PackOptions::support_overlap_mm`.
@@ -1151,7 +1153,7 @@ pub fn rasterize_footprint_with_support(
         })
         .map(|overlap| {
             assert!(overlap.is_finite() && overlap >= 0.0);
-            let core_radius = support_core_radius(clearance, overlap, resolution);
+            let core_radius = support_core_radius(overlap, resolution);
             let core = if core_radius >= 0 {
                 physical_pixels.dilate(core_radius)
             } else {
@@ -1314,10 +1316,10 @@ pub struct PackOptions {
     /// Retained in reports for compatibility; geometry, not a random seed, determines layouts.
     pub seed: u64,
     /// Supports (full patch minus body) of different objects may overlap by at most this many
-    /// mm, measured on their clearance zones: the supports themselves keep `clearance - X`
-    /// (negative = overlap depth). `0` = supports keep the clearance a body keeps; `None` =
-    /// unlimited (the plain two-zone rule). Bodies are unaffected. A no-op for footprints
-    /// without a separate body zone.
+    /// mm of printed material ("supports may overlap each other, never the model"). `0` =
+    /// supports may touch but not overlap; `None` = unlimited (the plain two-zone rule).
+    /// Bodies are unaffected: they keep clearance from anything foreign. A no-op for
+    /// footprints without a separate body zone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub support_overlap_mm: Option<f64>,
 }
