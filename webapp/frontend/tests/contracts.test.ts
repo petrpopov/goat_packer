@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { api, ApiError } from '../src/api/http';
 import { detectProfile, deleteJob } from '../src/api/services';
-import { buildNozzleClean, clockSeconds, numberInRange, validTimeWindow } from '../src/utils/forms';
+import { buildNozzleClean, buildTimeFields, clockSeconds, numberInRange, validTimeWindow } from '../src/utils/forms';
+import { formatHoursMinutes, packTimeLines } from '../src/utils/format';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -33,6 +34,44 @@ describe('form contracts', () => {
     expect(validTimeWindow('10:00', '23:00', '34:00')).toBe(true);
     expect(validTimeWindow('23:00', '10:00', '34:00')).toBe(false);
     expect(validTimeWindow('10:00', '10:00', '34:00')).toBe(false);
+  });
+});
+
+describe('time window and AMS correction', () => {
+  const base = { windowOn: false, windowHours: '12', marginPct: '10', amsOn: false, changeSeconds: '95' };
+  test('nothing is sent unless the user enabled it', () => {
+    expect(buildTimeFields(base, true)).toEqual([]);
+  });
+  test('window sends hours and margin; AMS sends the flag and seconds', () => {
+    expect(buildTimeFields({ ...base, windowOn: true, amsOn: true, changeSeconds: '80' }, true)).toEqual([
+      ['timeWindowHours', '12'],
+      ['timeMarginPct', '10'],
+      ['amsCorrection', 'true'],
+      ['changeSeconds', '80'],
+    ]);
+    // Пустая длительность — значение профиля, отдельно не шлётся.
+    expect(buildTimeFields({ ...base, amsOn: true, changeSeconds: ' ' }, true)).toEqual([['amsCorrection', 'true']]);
+  });
+  test('AMS correction is dropped for a printer without change time (tool changer)', () => {
+    expect(buildTimeFields({ ...base, amsOn: true }, false)).toEqual([]);
+  });
+  test('out-of-range values are rejected like on the backend', () => {
+    for (const windowHours of ['0.4', '241', '', 'abc']) {
+      expect(() => buildTimeFields({ ...base, windowOn: true, windowHours }, true)).toThrow();
+    }
+    for (const marginPct of ['-1', '51']) {
+      expect(() => buildTimeFields({ ...base, windowOn: true, marginPct }, true)).toThrow();
+    }
+    for (const changeSeconds of ['-1', '601']) {
+      expect(() => buildTimeFields({ ...base, amsOn: true, changeSeconds }, true)).toThrow();
+    }
+  });
+  test('result shows corrected time and, with a window, K of M', () => {
+    expect(formatHoursMinutes(41580)).toBe('11 ч 33 мин');
+    expect(formatHoursMinutes(3900)).toBe('1 ч 05 мин');
+    const time = { windowHours: 12, marginPct: 10, chosenCount: 12, fullCount: 30, correctedSeconds: 41580 };
+    expect(packTimeLines(time)).toEqual(['Оценка с коррекцией: 11 ч 33 мин', 'окно 12 ч, на столе 12 из 30']);
+    expect(packTimeLines({ ...time, windowHours: undefined })).toEqual(['Оценка с коррекцией: 11 ч 33 мин']);
   });
 });
 

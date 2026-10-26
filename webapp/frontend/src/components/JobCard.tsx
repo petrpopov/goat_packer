@@ -4,6 +4,7 @@ import { deleteJob } from '@/api/services';
 import { pushToast } from '@/store/useToastStore';
 import type { ReactNode } from 'react';
 import type { JobStatusResponse } from '@/api/types';
+import { packTimeLines } from '@/utils/format';
 import ArtifactList from './ArtifactList';
 import ProgressBar from './ProgressBar';
 import StatusPill from './StatusPill';
@@ -130,6 +131,15 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
       {job.status === 'SUCCEEDED' && (
         <>
           {successContent}
+          {job.pack?.time ? (
+            <div className="stack-sm">
+              {packTimeLines(job.pack.time).map((line) => (
+                <p className="time-summary" key={line}>
+                  {line}
+                </p>
+              ))}
+            </div>
+          ) : null}
           <ArtifactList artifacts={job.artifacts} />
         </>
       )}

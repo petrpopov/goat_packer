@@ -3,10 +3,12 @@ import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
 import { fetchProfiles, startScheduleJob } from '@/api/services';
+import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import JobCard from '@/components/JobCard';
-import { clockSeconds, numberInRange, validTimeWindow } from '@/utils/forms';
+import { buildTimeFields, clockSeconds, numberInRange, validTimeWindow } from '@/utils/forms';
+import { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
 import { pushToast } from '@/store/useToastStore';
@@ -36,6 +38,18 @@ export default function SchedulePage() {
 
   const profilesQuery = useQuery({ queryKey: ['profiles'], queryFn: fetchProfiles });
   const profiles = useMemo(() => profilesQuery.data ?? [], [profilesQuery.data]);
+  const ams = useAmsCorrection(profiles.find((p) => p.id === profileId) ?? null);
+  let timeFields: [string, string][] = [];
+  let timeInvalid = false;
+  try {
+    // В расписании окна нет — только коррекция смены прутка.
+    timeFields = buildTimeFields(
+      { windowOn: false, windowHours: '', marginPct: '', amsOn: ams.on, changeSeconds: ams.seconds },
+      ams.available
+    );
+  } catch {
+    timeInvalid = true;
+  }
 
   useEffect(() => {
     if (profilesQuery.isError) {
@@ -75,6 +89,7 @@ export default function SchedulePage() {
     timesValid &&
     numberInRange(turnaroundMin, 0, 600, true) &&
     numberInRange(prepMin, 0, 600, true) &&
+    !timeInvalid &&
     !jobActive &&
     !startMutation.isPending;
 
@@ -96,6 +111,7 @@ export default function SchedulePage() {
     form.append('turnaroundMin', turnaroundMin);
     form.append('prepMin', prepMin);
     form.append('benchMode', benchMode);
+    for (const [name, value] of timeFields) form.append(name, value);
 
     startMutation.mutate(form);
   };
@@ -318,6 +334,16 @@ export default function SchedulePage() {
                 <option value="full">Полный (слайс каждой партии)</option>
               </select>
             </Field>
+
+            <AmsCorrectionFields
+              available={ams.available}
+              on={ams.on}
+              onToggle={ams.setOn}
+              seconds={ams.seconds}
+              onSecondsChange={ams.setSeconds}
+              invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
+              disabled={jobActive || startMutation.isPending}
+            />
           </div>
 
           <div className="form-actions">

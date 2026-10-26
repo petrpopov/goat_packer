@@ -50,12 +50,14 @@ bun run dev
 
 ## API
 
-- `GET /api/profiles` — профили принтеров из `profiles/`.
+- `GET /api/profiles` — профили принтеров из `profiles/` (`filamentChangeSeconds` нет — коррекция смены не нужна).
 - `POST /api/pack/jobs` — multipart: `file` (.3mf, один объект) + `profileId`, `clearance`,
-  `resolution`, `attempts`, `candidates`, `seed`, `nozzleClean` → `{"jobId"}`.
+  `resolution`, `attempts`, `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
+  (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
+  (0–50 %, дефолт CLI 10) → `{"jobId"}`. В результате `pack.time` — оценка времени стола с коррекцией.
 - `POST /api/schedule/jobs` — multipart: `file` или `packJobId` (артефакт фазы 1) +
   `profileId`, `dayStart`, `nightStart`, `horizonEnd` (HH:MM, часы могут быть >24),
-  `turnaroundMin`, `prepMin`, `benchMode` (`adaptive`|`full`) → `{"jobId"}`.
+  `turnaroundMin`, `prepMin`, `benchMode` (`adaptive`|`full`), `amsCorrection`, `changeSeconds` → `{"jobId"}`.
 - `GET /api/jobs/{id}` — статус/прогресс/результат (поллинг).
 - `GET /api/jobs/{id}/artifacts/{name}` — скачивание артефакта.
 - `DELETE /api/jobs/{id}` — отменить и удалить.

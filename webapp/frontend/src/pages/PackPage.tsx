@@ -3,10 +3,12 @@ import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
 import { fetchProfiles, startPackJob } from '@/api/services';
+import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import JobCard from '@/components/JobCard';
-import { buildNozzleClean, numberInRange } from '@/utils/forms';
+import { buildNozzleClean, buildTimeFields, numberInRange } from '@/utils/forms';
+import { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
 import { pushToast } from '@/store/useToastStore';
@@ -35,6 +37,9 @@ export default function PackPage() {
   const [globalEvery, setGlobalEvery] = useState('10');
   const [fromZ, setFromZ] = useState('');
   const [fromZEvery, setFromZEvery] = useState('1');
+  const [windowOn, setWindowOn] = useState(false);
+  const [windowHours, setWindowHours] = useState('12');
+  const [marginPct, setMarginPct] = useState('10');
   const [jobId, setJobId] = useState<string | null>(null);
 
   const profilesQuery = useQuery({ queryKey: ['profiles'], queryFn: fetchProfiles });
@@ -61,6 +66,7 @@ export default function PackPage() {
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const nozzleCleanAvailable = selectedProfile === null || selectedProfile.supportsNozzleClean;
+  const ams = useAmsCorrection(selectedProfile);
 
   // Состояние детекта профиля по загруженному файлу: idle / detecting / ok / unknown.
   const detection =
@@ -100,6 +106,16 @@ export default function PackPage() {
   } catch {
     nozzleCleanInvalid = true;
   }
+  let timeFields: [string, string][] = [];
+  let timeInvalid = false;
+  try {
+    timeFields = buildTimeFields(
+      { windowOn, windowHours, marginPct, amsOn: ams.on, changeSeconds: ams.seconds },
+      ams.available
+    );
+  } catch {
+    timeInvalid = true;
+  }
   const numbersValid =
     numberInRange(clearance, 0.05, 10) &&
     numberInRange(resolution, 0.05, 1) &&
@@ -111,7 +127,8 @@ export default function PackPage() {
     detection === 'ok' &&
     !jobActive &&
     !startMutation.isPending &&
-    !nozzleCleanInvalid;
+    !nozzleCleanInvalid &&
+    !timeInvalid;
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -127,6 +144,8 @@ export default function PackPage() {
     form.append('layout', layout);
     // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки).
     if (edgeMargin.trim() !== '') form.append('edgeMargin', edgeMargin.trim());
+    // Окно и коррекция — только если заданы: иначе действуют дефолты CLI.
+    for (const [name, value] of timeFields) form.append(name, value);
 
     startMutation.mutate(form);
   };
@@ -257,6 +276,66 @@ export default function PackPage() {
                 </Field>
               </>
             )}
+
+            <div className="field">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={windowOn}
+                  onChange={(event) => setWindowOn(event.target.checked)}
+                  disabled={jobActive || startMutation.isPending}
+                />
+                Уложиться в окно печати
+              </label>
+              <span className="field-hint">стол урезается до числа объектов, которое печатается за окно</span>
+            </div>
+
+            {windowOn && (
+              <>
+                <Field
+                  label="Окно печати, ч"
+                  error={!numberInRange(windowHours, 0.5, 240)}
+                  hint={numberInRange(windowHours, 0.5, 240) ? undefined : '0.5–240 ч'}
+                >
+                  <input
+                    className="input"
+                    type="number"
+                    min={0.5}
+                    max={240}
+                    step="any"
+                    value={windowHours}
+                    onChange={(event) => setWindowHours(event.target.value)}
+                    disabled={jobActive || startMutation.isPending}
+                  />
+                </Field>
+                <Field
+                  label="Запас, %"
+                  error={!numberInRange(marginPct, 0, 50)}
+                  hint={numberInRange(marginPct, 0, 50) ? 'добавляется к оценке слайсера' : '0–50 %'}
+                >
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={50}
+                    step="any"
+                    value={marginPct}
+                    onChange={(event) => setMarginPct(event.target.value)}
+                    disabled={jobActive || startMutation.isPending}
+                  />
+                </Field>
+              </>
+            )}
+
+            <AmsCorrectionFields
+              available={ams.available}
+              on={ams.on}
+              onToggle={ams.setOn}
+              seconds={ams.seconds}
+              onSecondsChange={ams.setSeconds}
+              invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
+              disabled={jobActive || startMutation.isPending}
+            />
           </div>
 
           <details className="params">

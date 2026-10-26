@@ -32,3 +32,36 @@ export function buildNozzleClean(
   // `global` without every means 10 in the CLI, not 1. Always send the actual UI value.
   return `${mode === 'global' ? 'global' : `from-z=${Number(fromZ)}`},every=${Number(every)}`;
 }
+
+export interface TimeFormState {
+  /** «Уложиться в окно печати». */
+  windowOn: boolean;
+  windowHours: string;
+  marginPct: string;
+  /** «Коррекция времени смены прутка (AMS)». */
+  amsOn: boolean;
+  changeSeconds: string;
+}
+
+/**
+ * Поля формы времени печати — только заданные пользователем (иначе действуют дефолты CLI).
+ * Длительность смены уходит только с включённой коррекцией: в CLI она сама включает коррекцию.
+ * Пустая длительность = значение профиля. Бросает на невалидных значениях (диапазоны — как на бэкенде).
+ */
+export function buildTimeFields(state: TimeFormState, amsAvailable: boolean): [string, string][] {
+  const fields: [string, string][] = [];
+  if (state.windowOn) {
+    if (!numberInRange(state.windowHours, 0.5, 240)) throw new Error('Окно печати: 0.5–240 ч');
+    if (!numberInRange(state.marginPct, 0, 50)) throw new Error('Запас: 0–50 %');
+    fields.push(['timeWindowHours', String(Number(state.windowHours))]);
+    fields.push(['timeMarginPct', String(Number(state.marginPct))]);
+  }
+  if (state.amsOn && amsAvailable) {
+    fields.push(['amsCorrection', 'true']);
+    if (state.changeSeconds.trim() !== '') {
+      if (!numberInRange(state.changeSeconds, 0, 600)) throw new Error('Смена прутка: 0–600 с');
+      fields.push(['changeSeconds', String(Number(state.changeSeconds))]);
+    }
+  }
+  return fields;
+}

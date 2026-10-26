@@ -10,6 +10,8 @@ export interface PrinterProfile {
   bedDepthMm: number;
   edgeMarginMm: number;
   supportsNozzleClean: boolean;
+  /** Реальная длительность смены прутка AMS, с; нет/null — принтеру коррекция не нужна (тулчейнджер). */
+  filamentChangeSeconds?: number | null;
 }
 
 /** Ответ /api/profiles/detect. printerModel — принтер, записанный в файле (для понятных ошибок). */
@@ -40,10 +42,26 @@ export interface JobArtifact {
   downloadUrl: string;
 }
 
+/** Оценка времени записанного стола (из блока time отчёта упаковщика). */
+export interface PackTimeInfo {
+  /** Окно печати, ч; null — окно не задавалось. */
+  windowHours?: number | null;
+  marginPct: number;
+  /** Реальная длительность смены, с; null — коррекция смен выключена. */
+  realChangeSeconds?: number | null;
+  /** Объектов на записанном столе. */
+  chosenCount: number;
+  /** Объектов на полном (максимальном) столе. */
+  fullCount: number;
+  /** Скорректированное время печати записанного стола, с. */
+  correctedSeconds: number;
+}
+
 export interface PackJobInfo {
   objectCount: number;
   profileId: string;
   clearanceMm: number;
+  time?: PackTimeInfo | null;
 }
 
 export interface ScheduleJobEntry {

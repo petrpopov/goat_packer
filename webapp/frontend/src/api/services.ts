@@ -62,9 +62,21 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE', form: FormData): Promise<
   const body: Record<string, unknown> = { kind };
   for (const [name, value] of form.entries()) {
     if (name === 'file' || name === 'seed' || name === 'candidates') continue;
-    body[name] = ['clearance', 'resolution', 'attempts', 'edgeMargin', 'turnaroundMin', 'prepMin'].includes(name)
+    body[name] = [
+      'clearance',
+      'resolution',
+      'attempts',
+      'edgeMargin',
+      'turnaroundMin',
+      'prepMin',
+      'timeWindowHours',
+      'changeSeconds',
+      'timeMarginPct',
+    ].includes(name)
       ? Number(value)
-      : value;
+      : name === 'amsCorrection'
+        ? value === 'true'
+        : value;
   }
   if (fileId) body.fileId = fileId;
   let key = pendingRequests.get(form);
