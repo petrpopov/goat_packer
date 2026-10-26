@@ -187,12 +187,16 @@ pub fn parse_prime_tower_bounds(
         // OrcaSlicer's IDEX tool change (Snapmaker U1) empties and wipes the nozzle at a
         // garbage point far away from the tower between `;WIPE_START` and `;WIPE_END`, still
         // inside the WIPE_TOWER section. Those moves are not the tower: counting them made
-        // the "tower bounds" half the plate wide on a real project.
-        if line.contains(";WIPE_START") {
+        // the "tower bounds" half the plate wide on a real project. BambuStudio spells the
+        // same marker `; WIPE_START` (with a space) and retract-wipes at the object it just
+        // printed, right after `; WIPE_TOWER_START`: on an A2L koza plate that stretched the
+        // tower over the objects and made a relocated tower look ignored.
+        let marker = line.trim_start_matches(';').trim();
+        if marker == "WIPE_START" {
             nozzle_wipe = true;
             continue;
         }
-        if line.contains(";WIPE_END") {
+        if marker == "WIPE_END" {
             nozzle_wipe = false;
             continue;
         }

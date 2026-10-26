@@ -89,3 +89,34 @@ G1 X10 Y5 E0.1
     assert!((bounds.keepout.min_y - (0.0 - expected_expansion)).abs() < 1e-9);
     assert!((bounds.keepout.max_y - (5.0 + expected_expansion)).abs() < 1e-9);
 }
+
+/// BambuStudio (A2L, 2026-10-26) spells the nozzle wipe marker with a space, `; WIPE_START`,
+/// and runs the post-change retract-wipe at the OBJECT just printed, right after
+/// `; WIPE_TOWER_START`. Counting those `G1 X.. Y.. E-1.9` points stretched
+/// a ~27x24 mm koza tower (brim included) to an 84x92 mm keepout over the object (probe),
+/// and across a 61-object plate (final) — a "tower" that moved with the objects.
+#[test]
+fn bambu_spaced_wipe_marker_inside_tower_section_is_not_part_of_the_tower() {
+    let gcode = b"
+G90
+G1 X113.446 Y127.443
+; FEATURE: Prime tower
+; WIPE_TOWER_START
+; WIPE_START
+G1 F12000
+G1 X113.446 Y127.443 E-1.9
+G1 X118.0 Y128.0 E-0.2
+; WIPE_END
+G1 E-.1 F1800
+G1 X172 Y182 F30000
+G1 X170 Y180 E1.0
+G1 X190 Y180 E1.0
+G1 X190 Y198 E1.0
+; WIPE_TOWER_END
+";
+    let bounds = parse_prime_tower_bounds(gcode, 0.5, 0.7).unwrap();
+    assert_eq!(bounds.centerline.min_x, 170.0);
+    assert_eq!(bounds.centerline.min_y, 180.0);
+    assert_eq!(bounds.centerline.max_x, 190.0);
+    assert_eq!(bounds.centerline.max_y, 198.0);
+}
