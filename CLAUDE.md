@@ -19,6 +19,7 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - Search is deterministic; `seed`/`candidates`/`stall` are compatibility fields, not random controls. More effort extends a prefix, never discards an earlier winner. Rayon only parallelizes independent angle families.
 - `validate_result` must stay independent of the search's no-fit maps (it re-rasterizes). `verify_outputs` is a further independent check (`geo`, exact geometry) sharing no packing code: use it as second opinion on any layout change.
 - Heuristic at finite resolution, not an optimality proof. Tradeoffs: `docs/packing-search.md`.
+- `support_overlap_mm` (`--support-overlap-mm`, `None` = unlimited): a third no-fit pair of support cores (full patch dilated by `(clearance − X)/2`, eroded when negative) so support clearance zones overlap ≤ X; grid and `validate_result` check it too. Cores are only built when `Some` and body ≠ full, so the default path and bodyless footprints stay byte-identical.
 
 ## Printer profiles / slicer quirks (`src/colored_packer.rs`)
 

@@ -856,16 +856,7 @@ impl SpanRaster {
             return self.clone();
         }
         let widths: Vec<i32> = (-radius..=radius)
-            .map(|dy| {
-                let mut w = (f64::from(radius * radius - dy * dy)).sqrt() as i32;
-                while w * w + dy * dy > radius * radius {
-                    w -= 1;
-                }
-                while (w + 1) * (w + 1) + dy * dy <= radius * radius {
-                    w += 1;
-                }
-                w
-            })
+            .map(|dy| disc_half_width(radius, dy))
             .collect();
         let min_y = self.min_y - radius;
         let max_y = self.max_y() + radius;
@@ -882,6 +873,72 @@ impl SpanRaster {
             .collect();
         SpanRaster { min_y, rows }
     }
+
+    /// Erosion by the same discrete disc `dilate` uses: a pixel survives iff the whole disc
+    /// around it is set. Row `y` is the intersection over `dy` of row `y + dy` narrowed by
+    /// `isqrt(radius² - dy²)` on both sides (spans are merged, so a run of set pixels always
+    /// lies inside a single span).
+    fn erode(&self, radius: i32) -> SpanRaster {
+        if radius <= 0 || self.rows.is_empty() {
+            return self.clone();
+        }
+        let min_y = self.min_y + radius;
+        let max_y = self.max_y() - radius;
+        let rows = (min_y..max_y.max(min_y))
+            .map(|y| {
+                let mut acc: Option<Vec<(i32, i32)>> = None;
+                for dy in -radius..=radius {
+                    let w = disc_half_width(radius, dy);
+                    let narrowed: Vec<(i32, i32)> = self
+                        .row(y + dy)
+                        .iter()
+                        .map(|&(a, b)| (a + w, b - w))
+                        .filter(|&(a, b)| a < b)
+                        .collect();
+                    acc = Some(match acc {
+                        None => narrowed,
+                        Some(previous) => intersect_spans(&previous, &narrowed),
+                    });
+                    if acc.as_ref().is_some_and(Vec::is_empty) {
+                        break;
+                    }
+                }
+                acc.unwrap_or_default()
+            })
+            .collect();
+        SpanRaster { min_y, rows }
+    }
+}
+
+/// `isqrt(radius² - dy²)`: half-width of row `dy` of the discrete disc `dx² + dy² <= radius²`.
+fn disc_half_width(radius: i32, dy: i32) -> i32 {
+    let mut w = (f64::from(radius * radius - dy * dy)).sqrt() as i32;
+    while w * w + dy * dy > radius * radius {
+        w -= 1;
+    }
+    while (w + 1) * (w + 1) + dy * dy <= radius * radius {
+        w += 1;
+    }
+    w
+}
+
+/// Intersection of two sorted, disjoint span lists.
+fn intersect_spans(a: &[(i32, i32)], b: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < a.len() && j < b.len() {
+        let start = a[i].0.max(b[j].0);
+        let end = a[i].1.min(b[j].1);
+        if start < end {
+            out.push((start, end));
+        }
+        if a[i].1 < b[j].1 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
 }
 
 /// Smallest `ix` whose pixel centre `(ix + 0.5) * resolution` is `>= c`, evaluated with the
@@ -938,6 +995,13 @@ pub struct RasterMask {
     pub bed_clearance: PixelMask,
     pub bed_physical_bounds: Rect,
     pub physical_bounds: Rect,
+    /// Support-overlap rule (`PackOptions::support_overlap_mm = Some(X)`): the full patch
+    /// dilated by `(clearance - X) / 2` (eroded when negative) — the `clearance` zone shrunk
+    /// by X/2 per side. Two cores must not overlap, so the clearance zones of two supports
+    /// overlap by at most X. `None` without the option, and when the footprint carries no
+    /// support zone (body == full): the two-zone rule then already forbids any overlap of
+    /// the clearance zones, which contain the cores.
+    pub support_core: Option<PixelMask>,
 }
 
 pub fn rasterize_footprint(
@@ -945,6 +1009,24 @@ pub fn rasterize_footprint(
     angle_deg: f64,
     resolution: f64,
     clearance: f64,
+) -> RasterMask {
+    rasterize_footprint_with_support(footprint, angle_deg, resolution, clearance, None)
+}
+
+/// Pixel radius of the support core: `ceil((clearance - X) / 2 / resolution)`. Rounding up
+/// dilates generously and erodes sparingly, so the raster never allows more than X; at X = 0
+/// it is exactly the `clearance` radius.
+fn support_core_radius(clearance: f64, support_overlap_mm: f64, resolution: f64) -> i32 {
+    ((clearance - support_overlap_mm) * 0.5 / resolution).ceil() as i32
+}
+
+/// `rasterize_footprint` plus the support core for `PackOptions::support_overlap_mm`.
+pub fn rasterize_footprint_with_support(
+    footprint: &Footprint,
+    angle_deg: f64,
+    resolution: f64,
+    clearance: f64,
+    support_overlap_mm: Option<f64>,
 ) -> RasterMask {
     assert!(resolution.is_finite() && resolution > 0.0);
     assert!(angle_deg.is_finite());
@@ -1062,6 +1144,22 @@ pub fn rasterize_footprint(
     };
     let bed_clearance_pixels = bed_physical_pixels.dilate(radius);
 
+    let support_core = support_overlap_mm
+        .filter(|_| {
+            body_clearance_pixels.min_y != clearance_pixels.min_y
+                || body_clearance_pixels.rows != clearance_pixels.rows
+        })
+        .map(|overlap| {
+            assert!(overlap.is_finite() && overlap >= 0.0);
+            let core_radius = support_core_radius(clearance, overlap, resolution);
+            let core = if core_radius >= 0 {
+                physical_pixels.dilate(core_radius)
+            } else {
+                physical_pixels.erode(-core_radius)
+            };
+            PixelMask::from_spans(&core)
+        });
+
     RasterMask {
         angle_deg,
         resolution,
@@ -1072,6 +1170,16 @@ pub fn rasterize_footprint(
         bed_clearance: PixelMask::from_spans(&bed_clearance_pixels),
         bed_physical_bounds,
         physical_bounds: bounds,
+        support_core,
+    }
+}
+
+/// Support-overlap pair: the support cores of two placements (shifted by `(dx, dy)` pixels
+/// of `b` relative to `a`) overlap. Never true when either side carries no core.
+fn support_cores_overlap(a: &RasterMask, b: &RasterMask, dx: i32, dy: i32) -> bool {
+    match (&a.support_core, &b.support_core) {
+        (Some(core_a), Some(core_b)) => masks_overlap(core_a, 0, 0, core_b, dx, dy),
+        _ => false,
     }
 }
 
@@ -1205,6 +1313,13 @@ pub struct PackOptions {
     pub lock_orientation: bool,
     /// Retained in reports for compatibility; geometry, not a random seed, determines layouts.
     pub seed: u64,
+    /// Supports (full patch minus body) of different objects may overlap by at most this many
+    /// mm, measured on their clearance zones: the supports themselves keep `clearance - X`
+    /// (negative = overlap depth). `0` = supports keep the clearance a body keeps; `None` =
+    /// unlimited (the plain two-zone rule). Bodies are unaffected. A no-op for footprints
+    /// without a separate body zone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support_overlap_mm: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1250,9 +1365,14 @@ fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), 
         || options.angle_step_deg > 360.0
         || !valid_rect(&options.bed)
         || options.exclusions.iter().any(|r| !valid_rect(r))
+        || options
+            .support_overlap_mm
+            .is_some_and(|x| !x.is_finite() || x < 0.0)
     {
         return Err(
-            "invalid packing resolution, clearance, angle step or bed/exclusion bounds".to_owned(),
+            "invalid packing resolution, clearance, angle step, support overlap or bed/exclusion \
+             bounds"
+                .to_owned(),
         );
     }
     if footprint.loops.is_empty()
@@ -1316,13 +1436,20 @@ fn grid_layout_inner(footprint: &Footprint, options: &PackOptions) -> PackResult
             &[0.0, 90.0]
         };
     for &angle in orientations {
-        let mask = rasterize_footprint(footprint, angle, options.resolution, options.clearance);
+        let mask = rasterize_footprint_with_support(
+            footprint,
+            angle,
+            options.resolution,
+            options.clearance,
+            options.support_overlap_mm,
+        );
         // The lattice pitch per axis is the SMALLEST whole-pixel shift where two copies of
         // the mask satisfy the two-zone rule — not the full bounding box. Distant lattice
         // neighbours can still conflict for disconnected shapes; every cell is checked below.
         let pair_collides = |dx: i32, dy: i32| {
             masks_overlap(&mask.clearance, 0, 0, &mask.body_clearance, dx, dy)
                 || masks_overlap(&mask.body_clearance, 0, 0, &mask.clearance, dx, dy)
+                || support_cores_overlap(&mask, &mask, dx, dy)
         };
         let pitch_x = (1..)
             .find(|&s| !pair_collides(s, 0))
@@ -1500,11 +1627,12 @@ pub fn validate_result(
             let dx = p.x_mm - options.bed.min_x - f64::from(x) * options.resolution;
             let dy = p.y_mm - options.bed.min_y - f64::from(y) * options.resolution;
             if dx.abs() < 1e-7 && dy.abs() < 1e-7 {
-                return rasterize_footprint(
+                return rasterize_footprint_with_support(
                     footprint,
                     p.angle_deg,
                     options.resolution,
                     options.clearance,
+                    options.support_overlap_mm,
                 );
             }
             let (s, c) = p.angle_deg.to_radians().sin_cos();
@@ -1529,7 +1657,13 @@ pub fn validate_result(
             shifted.loops = shift(&footprint.loops);
             shifted.body_loops = shift(&footprint.body_loops);
             shifted.bed_loops = footprint.bed_loops.as_ref().map(|l| shift(l));
-            rasterize_footprint(&shifted, p.angle_deg, options.resolution, options.clearance)
+            rasterize_footprint_with_support(
+                &shifted,
+                p.angle_deg,
+                options.resolution,
+                options.clearance,
+                options.support_overlap_mm,
+            )
         })
         .collect();
     for (index, mask) in masks.iter().enumerate() {
@@ -1584,6 +1718,17 @@ pub fn validate_result(
                 return Err(format!(
                     "placements {previous} and {index} overlap: a body touches a foreign \
                      structure"
+                ));
+            }
+            if support_cores_overlap(
+                previous_mask,
+                mask,
+                px - previous_px,
+                py - previous_py,
+            ) {
+                return Err(format!(
+                    "placements {previous} and {index}: supports overlap by more than {} mm",
+                    options.support_overlap_mm.unwrap_or_default()
                 ));
             }
         }

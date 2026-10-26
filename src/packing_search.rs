@@ -162,11 +162,16 @@ impl Frame {
 
 /// All integer translations of B relative to A that overlap at least one occupied pixel.
 /// Span difference: [a,b) - [c,d) = [a-d+1,b-c). Holes remain holes.
+/// The third pair (support cores) exists only with `support_overlap_mm`; a side without a
+/// core has no support zone, and the two-zone pairs already cover it.
 fn no_fit(a: &RasterMask, b: &RasterMask) -> SpanRaster {
-    let pairs = [
+    let mut pairs = vec![
         (&a.clearance, &b.body_clearance),
         (&a.body_clearance, &b.clearance),
     ];
+    if let (Some(core_a), Some(core_b)) = (&a.support_core, &b.support_core) {
+        pairs.push((core_a, core_b));
+    }
     let min_y = pairs
         .iter()
         .map(|(a, b)| a.min_y - b.min_y - b.height as i32 + 1)
@@ -178,7 +183,7 @@ fn no_fit(a: &RasterMask, b: &RasterMask) -> SpanRaster {
         .max()
         .unwrap();
     let mut rows = vec![Vec::new(); (max_y - min_y) as usize];
-    for (index, (a, b)) in pairs.into_iter().enumerate() {
+    for (index, &(a, b)) in pairs.iter().enumerate() {
         if index == 1
             && pairs[0].0.min_x == a.min_x
             && pairs[0].0.min_y == a.min_y
@@ -418,18 +423,20 @@ pub(super) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
         .into_par_iter()
         .map(|i| {
             let angle = i as f64 * options.angle_step_deg;
-            let mut masks = vec![rasterize_footprint(
+            let mut masks = vec![rasterize_footprint_with_support(
                 &frame.footprint,
                 angle,
                 options.resolution,
                 options.clearance,
+                options.support_overlap_mm,
             )];
             if !options.lock_orientation {
-                masks.push(rasterize_footprint(
+                masks.push(rasterize_footprint_with_support(
                     &frame.footprint,
                     angle + 180.0,
                     options.resolution,
                     options.clearance,
+                    options.support_overlap_mm,
                 ));
             }
             let (best, baseline) = pair_search(&masks, options, variants);
@@ -480,7 +487,13 @@ pub(super) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
         let masks: Vec<_> = angles
             .iter()
             .map(|&a| {
-                rasterize_footprint(&frame.footprint, a, options.resolution, options.clearance)
+                rasterize_footprint_with_support(
+                    &frame.footprint,
+                    a,
+                    options.resolution,
+                    options.clearance,
+                    options.support_overlap_mm,
+                )
             })
             .collect();
         let mixed_variants = (options.attempts - count).min(8 * masks.len());
@@ -611,6 +624,92 @@ mod tests {
                             .pixels()
                             .collect::<HashSet<_>>(),
                         grown
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_fit_with_support_cores_matches_brute_force_three_pair_collisions() {
+        let fp = shape();
+        for overlap in [0.0, 0.5, 1.5] {
+            for angle in [0., 13., 90., 180.] {
+                let a = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(overlap));
+                let b = rasterize_footprint_with_support(&fp, angle, 0.5, 0.5, Some(overlap));
+                assert!(a.support_core.is_some() && b.support_core.is_some());
+                let nfp = no_fit(&a, &b);
+                for y in -24..=24 {
+                    for x in -24..=24 {
+                        let expected = masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
+                            || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y)
+                            || masks_overlap(
+                                a.support_core.as_ref().unwrap(),
+                                0,
+                                0,
+                                b.support_core.as_ref().unwrap(),
+                                x,
+                                y,
+                            );
+                        let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
+                        assert_eq!(actual, expected, "X={overlap} angle={angle} shift={x},{y}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn support_core_is_absent_without_the_option_or_a_support_zone() {
+        let fp = shape();
+        assert!(rasterize_footprint(&fp, 0., 0.5, 0.5).support_core.is_none());
+        let mut bodyless = fp.clone();
+        bodyless.body_loops.clear();
+        assert!(
+            rasterize_footprint_with_support(&bodyless, 0., 0.5, 0.5, Some(0.0))
+                .support_core
+                .is_none()
+        );
+        // X = 0: the core is exactly the clearance zone.
+        let mask = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(0.0));
+        let core = mask.support_core.unwrap();
+        assert_eq!(
+            core.pixels().collect::<HashSet<_>>(),
+            mask.clearance.pixels().collect::<HashSet<_>>()
+        );
+    }
+
+    #[test]
+    fn erosion_matches_pixel_oracle() {
+        let fp = shape();
+        for angle in [0., 13., 45., 137.] {
+            let loops: Vec<Vec<_>> = fp
+                .loops
+                .iter()
+                .map(|l| l.iter().map(|&p| rotate(p, angle)).collect())
+                .collect();
+            for resolution in [0.125, 0.25] {
+                let spans = SpanRaster::scanline(&loops, resolution, (-64, 63, -64, 63));
+                let pixels: HashSet<_> = PixelMask::from_spans(&spans).pixels().collect();
+                for radius in [0i32, 1, 2, 3, 5] {
+                    let eroded: HashSet<_> = pixels
+                        .iter()
+                        .copied()
+                        .filter(|&(x, y)| {
+                            (-radius..=radius).all(|dy| {
+                                (-radius..=radius).all(|dx| {
+                                    dx * dx + dy * dy > radius * radius
+                                        || pixels.contains(&(x + dx, y + dy))
+                                })
+                            })
+                        })
+                        .collect();
+                    assert_eq!(
+                        PixelMask::from_spans(&spans.erode(radius))
+                            .pixels()
+                            .collect::<HashSet<_>>(),
+                        eroded,
+                        "angle={angle} resolution={resolution} radius={radius}"
                     );
                 }
             }

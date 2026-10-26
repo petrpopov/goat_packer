@@ -60,6 +60,7 @@ fn packer_places_four_squares_without_overlap() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 7,
+        support_overlap_mm: None,
     };
     let result = pack_footprint(&square, &options);
     assert!(result.placements.len() >= 4, "{result:#?}");
@@ -81,6 +82,7 @@ fn packer_never_uses_exclusion_area() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 9,
+        support_overlap_mm: None,
     };
     let result = pack_footprint(&square, &options);
     validate_result(&square, &options, &result).unwrap();
@@ -114,6 +116,7 @@ fn bed_bounds_measure_bed_loops_not_the_silhouette_alone() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 7,
+        support_overlap_mm: None,
     };
     // The mesh square fits at x=8 (max 8+2=10), but the spike would print to 8+5=13: a
     // silhouette-only check accepts it, the bed_loops check must not.
@@ -168,6 +171,7 @@ fn grid_tiles_the_bed_and_validate_result_accepts_it() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     };
     let result = grid_layout(&square, &options);
     assert_eq!(result.placements.len(), 6, "{result:#?}");
@@ -205,6 +209,7 @@ fn grid_skips_cells_that_touch_an_exclusion() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     };
     let result = grid_layout(&square, &options);
     // Two 4 mm columns survive (centres at x = 2 and 6 mm) x two rows = 4 cells, all left
@@ -235,6 +240,7 @@ fn layouts_exceed_the_old_128_cap_and_honor_an_explicit_one() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     };
     let unlimited = grid_layout(&square, &options);
     assert_eq!(unlimited.placements.len(), 400, "{unlimited:#?}");
@@ -284,6 +290,7 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     };
 
     // dy = 2.0 mm: the slabs overlap (each 3 mm tall), the bodies (1 mm tall) do not — the
@@ -325,6 +332,7 @@ fn grid_picks_the_orientation_that_fits_more_cells() {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     };
     let result = grid_layout(&rectangle, &options);
     // The undilated edge fits: seven rows at 3 mm pitch, instead of the old six.
@@ -353,6 +361,7 @@ fn stable_options() -> PackOptions {
         lock_orientation: false,
         stall_attempts: 0,
         seed: 1,
+        support_overlap_mm: None,
     }
 }
 
