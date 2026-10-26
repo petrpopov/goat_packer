@@ -34,7 +34,7 @@ steps:
     commands:
       - cargo build --release --locked --bins
       - mkdir -p dist
-      - tar czf "dist/goat-packer-$CI_COMMIT_TAG-linux-x86_64.tar.gz" -C target/release colored_3mf_packer daily_scheduler verify_outputs
+      - tar czf "dist/goat-packer-$CI_COMMIT_TAG-linux-x86_64.tar.gz" -C target/release colored_3mf_packer daily_scheduler verify_outputs ams_calibration
 
   - name: github release (draft)
     image: alpine:3.22
