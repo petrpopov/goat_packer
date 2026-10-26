@@ -120,3 +120,52 @@ G1 X190 Y198 E1.0
     assert_eq!(bounds.centerline.max_x, 190.0);
     assert_eq!(bounds.centerline.max_y, 198.0);
 }
+
+/// Controller repro (real A2L koza probe G-code): a retract-wipe `G1 X125.282 Y116.54 E-.4256`
+/// right after `WIPE_TOWER_START`, at the object, while the tower sits at x=170..205 — here
+/// without any wipe marker. Only moves that really extrude are the tower: relative E (M83,
+/// the Bambu/Orca default) needs E > 0.
+#[test]
+fn retract_moves_with_negative_e_are_not_part_of_the_tower() {
+    let gcode = b"
+G90
+M83
+G1 X125 Y116 F30000
+; WIPE_TOWER_START
+G1 X125.282 Y116.54 E-.4256
+G1 X170 Y180 F30000
+G1 X170 Y181 E0.2
+G1 X205 Y181 E1.0
+G1 X205 Y200 E1.0
+; WIPE_TOWER_END
+";
+    let bounds = parse_prime_tower_bounds(gcode, 0.5, 0.7).unwrap();
+    assert_eq!(bounds.centerline.min_x, 170.0);
+    assert_eq!(bounds.centerline.min_y, 181.0);
+    assert_eq!(bounds.centerline.max_x, 205.0);
+    assert_eq!(bounds.centerline.max_y, 200.0);
+}
+
+/// Absolute E (M82): a move extrudes when E rises past the previous value; `G92 E` resets the
+/// reference. A retract (E falls) and a move right after a reset to the same value do not.
+#[test]
+fn absolute_e_mode_counts_only_rising_e_and_honours_g92() {
+    let gcode = b"
+G90
+M82
+G1 X10 Y10 E5.0
+; WIPE_TOWER_START
+G1 X125 Y116 E4.2
+G1 X170 Y180 E4.2
+G1 X190 Y180 E5.2
+G92 E0
+G1 X190 Y199 E0.8
+G1 X60 Y60 E0.8
+; WIPE_TOWER_END
+";
+    let bounds = parse_prime_tower_bounds(gcode, 0.5, 0.7).unwrap();
+    assert_eq!(bounds.centerline.min_x, 190.0);
+    assert_eq!(bounds.centerline.min_y, 180.0);
+    assert_eq!(bounds.centerline.max_x, 190.0);
+    assert_eq!(bounds.centerline.max_y, 199.0);
+}

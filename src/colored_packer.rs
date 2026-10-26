@@ -149,6 +149,10 @@ pub fn parse_prime_tower_bounds(
 ) -> Option<PrimeTowerBounds> {
     let text = String::from_utf8_lossy(gcode);
     let mut absolute_mode = true;
+    // Extruder mode only from M82/M83 (not G90/G91): Bambu/Orca emit M83 once and keep
+    // issuing G90/G91 for XY moves, so tying E to G90 would misread every later move.
+    let mut absolute_e = false;
+    let mut last_e = 0.0;
     let mut x = 0.0;
     let mut y = 0.0;
     let mut active = false;
@@ -164,6 +168,20 @@ pub fn parse_prime_tower_bounds(
         let line = raw_line.trim();
         if line.starts_with("G90") {
             absolute_mode = true;
+            continue;
+        }
+        if line.starts_with("M82") {
+            absolute_e = true;
+            continue;
+        }
+        if line.starts_with("M83") {
+            absolute_e = false;
+            continue;
+        }
+        if line.starts_with("G92") {
+            if let Some(value) = gcode_axis(line, 'E') {
+                last_e = value;
+            }
             continue;
         }
         if line.starts_with("G91") {
@@ -203,6 +221,21 @@ pub fn parse_prime_tower_bounds(
         if !(line.starts_with("G0") || line.starts_with("G1")) {
             continue;
         }
+        // Only a move that really lays down filament is tower. Bambu retract-wipes at the
+        // object just printed right after `WIPE_TOWER_START` (real A2L koza probe:
+        // `G1 X125.282 Y116.54 E-.4256` while the tower sits at x=170..205); counting that
+        // move inflated the keepout to ~82x88 mm over the object and caused "prime tower
+        // changed again after the permitted re-pack" on every archived multi-colour koza
+        // source. Relative E: E > 0; absolute E: E above the previous value.
+        let extrudes = match gcode_axis(line, 'E') {
+            Some(e) if absolute_e => {
+                let rising = e > last_e;
+                last_e = e;
+                rising
+            }
+            Some(e) => e > 0.0,
+            None => false,
+        };
         let parsed_x = gcode_axis(line, 'X');
         let parsed_y = gcode_axis(line, 'Y');
         if absolute_mode {
@@ -223,7 +256,7 @@ pub fn parse_prime_tower_bounds(
         if active
             && !nozzle_wipe
             && (parsed_x.is_some() || parsed_y.is_some())
-            && gcode_axis(line, 'E').is_some()
+            && extrudes
         {
             min_x = min_x.min(x);
             min_y = min_y.min(y);
