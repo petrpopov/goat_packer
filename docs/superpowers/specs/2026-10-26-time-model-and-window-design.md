@@ -60,10 +60,17 @@ Flow with a window:
 3. N = floor of the affine solve through the two samples, clamped to 1..Nmax.
 4. Keep the first N placements (packing order = prefix order, same rule as the scheduler's
    `subset_3mf`), rebuild the project, slice `final_window_<N>`, check the tower against the
-   reserved keepout (`evaluate_final_tower`; RepackRequired here is an error — a smaller plate
-   must not grow the tower), compute corrected(N).
+   reserved keepout (`evaluate_final_tower`), compute corrected(N). A tower that grew past the
+   reserved keepout (RepackRequired) is an error only if the grown keepout reaches a kept
+   placement — that would void the layout's collision checks; growth that hits nothing is
+   accepted, the same rule as on the max plate (no repack on a window plate).
 5. Over the window → N -= max(1, ceil(excess / slope)), repeat step 4; at most 4 window slices,
-   then error. Under the window is accepted (no upward search: the affine fit already aimed at
+   then error. `slope` is the secant through the window plate just measured and the max plate,
+   (corrected(N) − corrected(Nmax)) / (N − Nmax): both were sliced from the assembled output with
+   identical settings (relocated tower, nozzle-clean wipe), while the probe is sliced from the
+   source with the tower at the source position. The probe line is only the fallback when no
+   such pair exists. With `--nozzle-clean` the probe slices a copy of the source with the same
+   injection, so step 1 compares like with like. Under the window is accepted (no upward search: the affine fit already aimed at
    the boundary; prefer a guaranteed fit).
 
 Report (`*.verification.json`) gains `time`: `{ window_hours, margin_pct, real_change_s,
