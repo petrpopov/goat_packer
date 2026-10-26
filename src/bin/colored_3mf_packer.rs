@@ -1321,6 +1321,7 @@ mod tests {
             tower_line_width_mm: 0.4,
             nozzle_clean_gcode: None,
             filament_change_seconds: None,
+            heat_zones: vec![],
         }
     }
 

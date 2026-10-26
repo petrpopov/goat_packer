@@ -2,7 +2,7 @@ use std::{error::Error, fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Rect, axis_aligned_line_keepout};
+use crate::{Rect, axis_aligned_line_keepout, plate_centre::HeatZone};
 
 pub type ColoredPackerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -33,6 +33,14 @@ pub struct PrinterProfile {
     /// no correction known.
     #[serde(default)]
     pub filament_change_seconds: Option<f64>,
+    /// Bed-heating zones, smallest first; the first zone's centre is where time-window plates
+    /// gather their objects and the prime tower (`plate_centre`). A2L source: the system
+    /// profile key `bed_heat_soak_area` (two rectangles as corner lists, plus the full bed);
+    /// its start G-code heat-soaks only the first-layer bbox
+    /// (`G29.30 X{first_layer_print_min[0]} ...`), so a compact plate in the inner zone heats
+    /// less bed. Absent = printer heats the whole bed; the centre is the usable bed's.
+    #[serde(default)]
+    pub heat_zones: Vec<HeatZone>,
 }
 
 impl PrinterProfile {
@@ -299,6 +307,7 @@ mod tests {
             tower_line_width_mm: 0.5,
             nozzle_clean_gcode: None,
             filament_change_seconds: None,
+            heat_zones: vec![],
         }
     }
 

@@ -9,6 +9,7 @@ pub mod assemble;
 pub mod colored_packer;
 pub mod embedded_mesh;
 pub mod nozzle_clean;
+pub mod plate_centre;
 pub mod plate_preview;
 pub mod print_time;
 pub mod scheduler;

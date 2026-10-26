@@ -12,5 +12,10 @@
   "purge_lines": [[105.0, 1.0, 185.0, 1.0, 2.0]],
   "tower_marker_style": "wipe_tower",
   "tower_line_width_mm": 0.5,
-  "filament_change_seconds": 95
+  "filament_change_seconds": 95,
+  "heat_zones": [
+    { "name": "inner", "rect": [102, 93.4, 228, 226.6] },
+    { "name": "middle", "rect": [60, 49, 270, 271] },
+    { "name": "full", "rect": [0, 0, 330, 320] }
+  ]
 }
