@@ -36,6 +36,15 @@ object JobArtifacts {
             ArtifactSpec("report.json") { dir -> firstExisting(dir, "report.json") },
             ArtifactSpec(LOG_FILE) { dir -> firstExisting(dir, LOG_FILE) },
         )
+
+        // ams_calibration пишет в --out-dir out; черновики слайсинга (out/slicing/) не отдаются.
+        JobKind.CALIBRATION -> listOf(
+            ArtifactSpec("calib_A.3mf") { dir -> firstExisting(dir, "out/calib_A.3mf") },
+            ArtifactSpec("calib_B.3mf") { dir -> firstExisting(dir, "out/calib_B.3mf") },
+            ArtifactSpec("instructions.md") { dir -> firstExisting(dir, "out/instructions.md") },
+            ArtifactSpec("calibration.json") { dir -> firstExisting(dir, "out/calibration.json") },
+            ArtifactSpec(LOG_FILE) { dir -> firstExisting(dir, LOG_FILE) },
+        )
     }
 
     /** Путь к артефакту по имени; null, если имя не в white-list или файла нет. */

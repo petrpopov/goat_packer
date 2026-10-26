@@ -9,7 +9,8 @@ ENV CARGO_BUILD_JOBS=3
 # Реестр crates и target в кэше BuildKit: повторный релиз пересобирает только изменённое.
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/build/target \
     cargo build --locked --release --bins && mkdir -p /out \
-    && cp target/release/colored_3mf_packer target/release/daily_scheduler target/release/verify_outputs /out/
+    && cp target/release/colored_3mf_packer target/release/daily_scheduler target/release/verify_outputs \
+       target/release/ams_calibration /out/
 
 FROM ${SLICER_IMAGE}
 LABEL goat-packer=1

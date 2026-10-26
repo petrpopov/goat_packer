@@ -29,6 +29,9 @@ class ProfileService(
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(ProfileService::class.java)
+
+        /** Ответ на калибровку принтера без AMS-смен (общий для локального и серверного режимов). */
+        const val CALIBRATION_NOT_NEEDED = "для этого принтера калибровка не нужна"
     }
 
     /** Профиль, разрешённый по id: DTO для проверок и путь к файлу для команд бинарников. */
@@ -83,6 +86,16 @@ class ProfileService(
             throw BadRequestException(
                 "Принтер «${profile.dto.name}» меняет пруток без AMS — коррекция времени смены не нужна",
             )
+        }
+    }
+
+    /**
+     * Калибровка меряет смену прутка AMS; принтеру без filament_change_seconds (тулчейнджер, U1)
+     * корректировать нечего — тест был бы пустой тратой двух печатей.
+     */
+    fun requireCalibrationSupported(profile: ResolvedProfile) {
+        if (profile.dto.filamentChangeSeconds == null) {
+            throw BadRequestException(CALIBRATION_NOT_NEEDED)
         }
     }
 

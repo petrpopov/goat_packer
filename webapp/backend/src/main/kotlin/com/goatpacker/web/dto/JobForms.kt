@@ -52,6 +52,23 @@ data class PackJobForm(
     @field:DecimalMin(value = "0", message = "timeMarginPct должен быть в диапазоне 0..50 %")
     @field:DecimalMax(value = "50", message = "timeMarginPct должен быть в диапазоне 0..50 %")
     val timeMarginPct: Double? = null,
+    /** Допустимое перекрытие поддержек соседних объектов, мм; пусто — без ограничений. */
+    @field:DecimalMin(value = "0", message = "supportOverlapMm должен быть в диапазоне 0..20 мм")
+    @field:DecimalMax(value = "20", message = "supportOverlapMm должен быть в диапазоне 0..20 мм")
+    val supportOverlapMm: Double? = null,
+)
+
+/** Форма calibration-джоба (multipart/form-data): свой проект 3MF как шаблон теста смены AMS. */
+data class CalibrationJobForm(
+    @field:NotNull(message = "Файл .3mf обязателен")
+    val file: MultipartFile? = null,
+    @field:NotBlank(message = "profileId обязателен")
+    val profileId: String? = null,
+    @field:Pattern(
+        regexp = """^(normal|perfectionist)$""",
+        message = "variant допустим normal или perfectionist",
+    )
+    val variant: String? = null,
 )
 
 /** Форма создания schedule-джоба (multipart/form-data). */

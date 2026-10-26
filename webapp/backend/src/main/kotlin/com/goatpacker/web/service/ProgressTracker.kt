@@ -58,6 +58,8 @@ object ProgressRules {
         return when (kind) {
             JobKind.PACK -> parsePacker(lower, line, inRepack)
             JobKind.SCHEDULE -> parseScheduler(lower, line, lastSampleTotal)
+            // ams_calibration молчит до конца; итоговый calibration.json печатается в stdout.
+            JobKind.CALIBRATION -> if ("\"changes_sliced\"" in line) JobPhase.WRITING to 95 else null
         }
     }
 
@@ -146,14 +148,22 @@ object ProgressRules {
  * процент на 40). Процент клампится в 0..99, пока процесс жив; 100 выставляет JobRunner при exit 0.
  */
 class ProgressTracker(private val kind: JobKind) {
-    var phase: JobPhase = JobPhase.UPLOAD
+    companion object {
+        /** Сообщение calibration-джоба на всё время нарезки (бинарник прогресс не печатает). */
+        const val CALIBRATION_MESSAGE = "Готовлю и нарезаю проекты A и B (1–2 минуты)…"
+
+        private val PACK_FOOTPRINT_ATTEMPTS_RE = Regex("""pack_footprint:\s*(\d+)/(\d+)\s+attempts""")
+    }
+
+    // Калибровка стартует сразу с нарезки: иначе первая же строка вывода откатила бы фазу к upload.
+    var phase: JobPhase = if (kind == JobKind.CALIBRATION) JobPhase.SLICING else JobPhase.UPLOAD
         private set
 
-    var percent: Int = 0
+    var percent: Int = if (kind == JobKind.CALIBRATION) 10 else 0
         private set
 
     /** Последнее значимое сообщение (строка вывода «как есть», с префиксом внутри repack). */
-    var message: String? = null
+    var message: String? = if (kind == JobKind.CALIBRATION) CALIBRATION_MESSAGE else null
         private set
 
     /** Последний j из строк "slicing sample i/j" — для правила "refining". */
@@ -195,16 +205,15 @@ class ProgressTracker(private val kind: JobKind) {
             }
         }
 
-        message = if (inRepack && kind == JobKind.PACK && PACK_FOOTPRINT_ATTEMPTS_RE.containsMatchIn(line)) {
+        message = if (kind == JobKind.CALIBRATION) {
+            // Вывод калибровки — многострочный JSON итога; показывать его построчно бессмысленно.
+            CALIBRATION_MESSAGE
+        } else if (inRepack && kind == JobKind.PACK && PACK_FOOTPRINT_ATTEMPTS_RE.containsMatchIn(line)) {
             "Перепаковка: $line"
         } else {
             line
         }
 
         return ProgressEvent(phase, percent, message ?: line)
-    }
-
-    private companion object {
-        private val PACK_FOOTPRINT_ATTEMPTS_RE = Regex("""pack_footprint:\s*(\d+)/(\d+)\s+attempts""")
     }
 }

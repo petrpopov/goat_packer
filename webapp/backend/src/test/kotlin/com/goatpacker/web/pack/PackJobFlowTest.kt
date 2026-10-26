@@ -77,9 +77,11 @@ class PackJobFlowTest(
         assertEquals(79200.0, body["pack"]["time"]["correctedSeconds"].asDouble(), 1e-9)
         assertEquals(30, body["pack"]["time"]["fullCount"].asInt())
         val args = packerArgs(jobId)
-        for (flag in listOf("--time-window-hours", "--ams-correction", "--change-seconds", "--time-margin-pct")) {
+        for (flag in listOf("--time-window-hours", "--ams-correction", "--change-seconds", "--time-margin-pct", "--support-overlap-mm")) {
             assertTrue(flag !in args, "$flag не задан пользователем: $args")
         }
+        // Отчёт без полей поддержек (старый пакер) — их нет и в результате, ошибки нет.
+        assertTrue(!body["pack"].hasNonNull("supportsDetected"), body["pack"].toString())
         assertTrue(body.hasNonNull("phaseMessage"), "phaseMessage должен содержать последнюю строку вывода")
         assertNotNull(body["createdAt"])
         assertNotNull(body["finishedAt"])
@@ -166,6 +168,26 @@ class PackJobFlowTest(
         assertEquals(30, time["fullCount"].asInt())
         assertEquals(41580.0, time["correctedSeconds"].asDouble(), 1e-9)
         assertEquals(95.0, time["realChangeSeconds"].asDouble(), 1e-9)
+    }
+
+    @Test
+    fun `перекрытие поддержек доходит до CLI, обнаруженные поддержки — в результате`() {
+        for (overlap in listOf("0", "2.5")) {
+            val create = mockMvc.perform(
+                multipart("/api/pack/jobs")
+                    .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
+                    .param("profileId", "bambu_a2l")
+                    .param("supportOverlapMm", overlap),
+            )
+                .andExpect(status().isAccepted)
+                .andReturn()
+            val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+            val body = mockMvc.awaitJobCompletion(jobId)
+            val args = packerArgs(jobId)
+            assertEquals(overlap.toDouble(), args[args.indexOf("--support-overlap-mm") + 1].toDouble())
+            assertTrue(body["pack"]["supportsDetected"].asBoolean(), body["pack"].toString())
+            assertEquals(overlap.toDouble(), body["pack"]["supportOverlapMm"].asDouble(), 1e-9)
+        }
     }
 
     @Test

@@ -72,6 +72,7 @@ class PackService(
             amsCorrection = amsCorrection,
             changeSeconds = form.changeSeconds,
             timeMarginPct = form.timeMarginPct,
+            supportOverlapMm = form.supportOverlapMm,
         )
 
         val jobId = UUID.randomUUID().toString()

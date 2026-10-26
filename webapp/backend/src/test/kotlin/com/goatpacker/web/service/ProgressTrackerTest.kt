@@ -262,4 +262,16 @@ class ProgressTrackerTest {
         assertEquals(JobPhase.PROBE, event.phase)
         assertEquals(5, event.progressPercent)
     }
+
+    @Test
+    fun `калибровка стартует с нарезки и не откатывается к upload`() {
+        val tracker = ProgressTracker(com.goatpacker.web.job.JobKind.CALIBRATION)
+        val first = tracker.onLine("{")
+        assertEquals(com.goatpacker.web.job.JobPhase.SLICING, first.phase)
+        assertEquals(10, first.progressPercent)
+        assertEquals(ProgressTracker.CALIBRATION_MESSAGE, first.phaseMessage)
+        val done = tracker.onLine("  \"changes_sliced\": 10,")
+        assertEquals(com.goatpacker.web.job.JobPhase.WRITING, done.phase)
+        assertEquals(95, done.progressPercent)
+    }
 }

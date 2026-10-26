@@ -47,6 +47,17 @@ fun miniProject3mf(printerModel: String): ByteArray {
     return bytes.toByteArray()
 }
 
+/** Поллинг статуса джоба до любого терминального состояния (SUCCEEDED или FAILED). */
+fun MockMvc.awaitJobTerminal(id: String, timeoutMs: Long = 30_000, mapper: ObjectMapper = ObjectMapper()): JsonNode {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        val body = mapper.readTree(perform(get("/api/jobs/$id")).andReturn().response.contentAsString)
+        if (body.path("status").asText() in setOf("SUCCEEDED", "FAILED")) return body
+        Thread.sleep(150)
+    }
+    throw AssertionError("Джоба $id не завершилась за $timeoutMs мс")
+}
+
 /** Поллинг статуса джоба до терминального состояния (таймаут 30 с). */
 fun MockMvc.awaitJobCompletion(
     id: String,
@@ -72,14 +83,14 @@ fun MockMvc.awaitJobCompletion(
 
 /** Minimal central-directory ZIP with STORED + data descriptors, as emitted for slicer PNGs.
  * Deliberately NOT ZipOutputStream: that writer refuses this valid combination. */
-fun descriptorProject3mf(printerModel: String): ByteArray {
+fun descriptorProject3mf(printerModel: String, settings: Map<String, Any> = emptyMap()): ByteArray {
     val out = java.io.ByteArrayOutputStream()
     fun word(value: Long, count: Int) { repeat(count) { out.write((value shr (it * 8)).toInt() and 255) } }
     data class Entry(val name: ByteArray, val data: ByteArray, val crc: Long, val offset: Int)
     val entries = linkedMapOf(
         "Metadata/plate_1.png" to "synthetic preview",
         "3D/3dmodel.model" to "<model/>",
-        "Metadata/project_settings.config" to ObjectMapper().writeValueAsString(mapOf("printer_model" to printerModel)),
+        "Metadata/project_settings.config" to ObjectMapper().writeValueAsString(mapOf("printer_model" to printerModel) + settings),
     ).map { (name, data) ->
         val n = name.toByteArray(); val bytes = data.toByteArray()
         val crc = java.util.zip.CRC32().apply { update(bytes) }.value

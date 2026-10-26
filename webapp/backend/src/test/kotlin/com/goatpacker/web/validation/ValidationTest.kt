@@ -94,6 +94,7 @@ class ValidationTest(
             "timeWindowHours" to "0.4", "timeWindowHours" to "241",
             "changeSeconds" to "-1", "changeSeconds" to "601",
             "timeMarginPct" to "-1", "timeMarginPct" to "51",
+            "supportOverlapMm" to "-0.1", "supportOverlapMm" to "20.5", "supportOverlapMm" to "abc",
         )) {
             mockMvc.perform(
                 multipart("/api/pack/jobs")
@@ -104,6 +105,16 @@ class ValidationTest(
             )
                 .andExpect(status().isBadRequest)
         }
+    }
+
+    @Test
+    fun `calibration без варианта из списка или для u1 — 400`() {
+        mockMvc.perform(multipart("/api/calibration/jobs").file(goat).param("profileId", "bambu_a2l").param("variant", "fast"))
+            .andExpect(status().isBadRequest)
+        val u1 = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Snapmaker U1"))
+        val body = mockMvc.perform(multipart("/api/calibration/jobs").file(u1).param("profileId", "snapmaker_u1"))
+            .andExpect(status().isBadRequest).andReturn().response.contentAsString
+        org.junit.jupiter.api.Assertions.assertTrue(body.contains("калибровка не нужна"), body)
     }
 
     @Test

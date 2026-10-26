@@ -38,6 +38,22 @@ data class PackInfoDto(
     val clearanceMm: Double,
     /** Сводка блока `time` из packed.verification.json; null — время не измерено. */
     val time: PackTimeDto? = null,
+    /** У модели обнаружены поддержки — поворот заблокирован; null — пакер поле не прислал. */
+    val supportsDetected: Boolean? = null,
+    /** Допустимое перекрытие поддержек, мм; null — без ограничений. */
+    val supportOverlapMm: Double? = null,
+)
+
+/** Итог calibration-джоба: значения calibration.json и текст instructions.md. */
+data class CalibrationInfoDto(
+    val profileId: String,
+    val variant: String,
+    val changesExpected: Int,
+    val changesSliced: Int,
+    val estimateASeconds: Double,
+    val estimateBSeconds: Double,
+    val slicerChangeSeconds: Double,
+    val instructions: String,
 )
 
 /** Оценка времени печати записанного стола (с коррекцией смен прутка и запасом). */
@@ -101,4 +117,5 @@ data class JobStatusDto(
     val artifacts: List<ArtifactDto>,
     val pack: PackInfoDto?,
     val schedule: ScheduleInfoDto?,
+    val calibration: CalibrationInfoDto? = null,
 )

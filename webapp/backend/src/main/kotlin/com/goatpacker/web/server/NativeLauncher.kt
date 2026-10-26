@@ -79,7 +79,9 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
         val id=containers[job.id] ?: error("Runner not tracked")
         runCommand(listOf("docker","pause",id))
         var remaining=props.outputReservationBytes
-        for(name in listOf("packed.3mf","packed.verification.json","work/placements.json","schedule.csv","plates.3mf","report.json")) {
+        for(name in listOf("packed.3mf","packed.verification.json","work/placements.json","schedule.csv","plates.3mf","report.json",
+            // ams_calibration (--out-dir out); черновики out/slicing/ наружу не копируются.
+            "out/calib_A.3mf","out/calib_B.3mf","out/instructions.md","out/calibration.json")) {
             val target=job.directory.resolve(name);Files.createDirectories(target.parent)
             val process=ProcessBuilder("docker","run","--rm","--platform","linux/amd64","--name","goat-export-${job.id}",
                 "--label","goat.worker=${props.workerId}","--network","none","--read-only","--cap-drop","ALL",

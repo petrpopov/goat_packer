@@ -117,22 +117,30 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
             val r=mapper.readValue<JobRequest>(record.paramsJson)
             log.info("event=job_started jobId={} fence={} kind={} image={} cpu={} memoryMiB={}",record.id,record.fence,record.kind,job.runtimeImage,props.workerCpus,props.workerMemoryMib)
             if(record.kind=="PACK") runner.runPackBlocking(job,PackParams(record.profileId,Path.of("profile.json"),r.clearance,r.resolution,r.attempts,2400,20270831,r.edgeMargin,r.layout,r.nozzleClean,
-                timeWindowHours=r.timeWindowHours,amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds,timeMarginPct=r.timeMarginPct))
+                timeWindowHours=r.timeWindowHours,amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds,timeMarginPct=r.timeMarginPct,
+                supportOverlapMm=r.supportOverlapMm))
+            else if(record.kind=="CALIBRATION") runner.runCalibrationBlocking(job,CalibrationParams(record.profileId,Path.of("profile.json"),r.variant))
             else runner.runScheduleBlocking(job,ScheduleParams(record.profileId,Path.of("profile.json"),ScheduleSource.Uploaded,r.dayStart,r.nightStart,r.horizonEnd,r.turnaroundMin,r.prepMin,r.benchMode,
                 amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds))
             if(!stopNative(job)) {retryReason="Остановка контейнера не подтверждена";return}
             if(job.cancelled) {queue.finish(record.id,record.fence,null,emptyList(),"Задача остановлена по лимиту или отменена");return}
-            val result=if(record.kind=="PACK") mapper.writeValueAsString(job.packResult) else mapper.writeValueAsString(job.scheduleResult)
+            val result=when(record.kind) {
+                "PACK" -> mapper.writeValueAsString(job.packResult)
+                "CALIBRATION" -> mapper.writeValueAsString(job.calibrationResult)
+                else -> mapper.writeValueAsString(job.scheduleResult)
+            }
             var bytes=0L
             for((name,path) in JobArtifacts.listExisting(job.kind,job.directory)) {
                 val size=Files.size(path);bytes+=size;check(bytes<=record.reservedBytes) {"Output exceeds reserved quota"}
                 val base=safeName(record.originalName).replace(Regex("(?i)\\.3mf$"),"").take(80)
                 val slug=profile.path("download_slug").asText(record.profileId).replace(Regex("[^a-zA-Z0-9_-]"),"_").take(40)
                 val count=job.packResult?.objectCount ?: job.scheduleResult?.totalObjects ?: 0
-                val download=if(name.endsWith(".3mf")) "${base}_${slug}_${count}_${if(record.kind=="PACK") "packed" else "schedule"}.3mf" else name
+                // Калибровочные файлы сохраняют свои имена: instructions.md ссылается на calib_A/calib_B.
+                val download=if(record.kind=="CALIBRATION") name
+                    else if(name.endsWith(".3mf")) "${base}_${slug}_${count}_${if(record.kind=="PACK") "packed" else "schedule"}.3mf" else name
                 val key="jobs/${record.id}/${record.fence}/${newId()}/$name"
                 queue.stageObject(key,size);store.put(key,path)
-                uploaded+=ArtifactEntity(jobId=record.id,name=name,downloadName=download,objectKey=key,sizeBytes=size,debug=name.endsWith(".json") || name.endsWith(".txt"))
+                uploaded+=ArtifactEntity(jobId=record.id,name=name,downloadName=download,objectKey=key,sizeBytes=size,debug=(name.endsWith(".json") && name!="calibration.json") || name.endsWith(".txt"))
             }
             val outputs=if(job.current.status==JobStatus.SUCCEEDED) uploaded else uploaded.filter {it.debug}
             val committed=if(job.current.status==JobStatus.SUCCEEDED) queue.finish(record.id,record.fence,result,outputs,null)

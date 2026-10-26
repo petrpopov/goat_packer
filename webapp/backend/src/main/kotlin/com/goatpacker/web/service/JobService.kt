@@ -1,6 +1,7 @@
 package com.goatpacker.web.service
 
 import com.goatpacker.web.dto.ArtifactDto
+import com.goatpacker.web.dto.CalibrationInfoDto
 import com.goatpacker.web.dto.JobStatusDto
 import com.goatpacker.web.dto.PackInfoDto
 import com.goatpacker.web.dto.PackTimeDto
@@ -39,6 +40,7 @@ class JobService(
             "xlsx" to MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
             "json" to MediaType.APPLICATION_JSON,
             "txt" to MediaType(MediaType.TEXT_PLAIN, StandardCharsets.UTF_8),
+            "md" to MediaType(MediaType.parseMediaType("text/markdown"), StandardCharsets.UTF_8),
         )
     }
 
@@ -91,6 +93,8 @@ class JobService(
                             correctedSeconds = t.correctedSeconds,
                         )
                     },
+                    supportsDetected = it.supportsDetected,
+                    supportOverlapMm = it.supportOverlapMm,
                 )
             },
             schedule = job.scheduleResult?.let {
@@ -115,6 +119,18 @@ class JobService(
                         )
                     },
                     plates = it.plates.map { plate -> PlateDto(label = plate.label, objectCount = plate.objectCount) },
+                )
+            },
+            calibration = job.calibrationResult?.let {
+                CalibrationInfoDto(
+                    profileId = it.profileId,
+                    variant = it.variant,
+                    changesExpected = it.changesExpected,
+                    changesSliced = it.changesSliced,
+                    estimateASeconds = it.estimateASeconds,
+                    estimateBSeconds = it.estimateBSeconds,
+                    slicerChangeSeconds = it.slicerChangeSeconds,
+                    instructions = it.instructions,
                 )
             },
         )

@@ -66,6 +66,12 @@ class CliErrorTranslatorTest {
     }
 
     @Test
+    fun `ошибка калибровки на русском отдаётся как есть`() {
+        val tail = "error: для теста нужен проект минимум с двумя филаментами"
+        assertEquals("для теста нужен проект минимум с двумя филаментами", CliErrorTranslator.translate(tail))
+    }
+
+    @Test
     fun `неопознанный хвост возвращает null без выдумок`() {
         assertNull(CliErrorTranslator.translate("something completely different went wrong"))
         assertNull(CliErrorTranslator.translate(""))

@@ -18,7 +18,9 @@ data class JobRequest(val kind:String="PACK",val fileId:String?=null,val packJob
     val layout:String="search",val nozzleClean:String="",val dayStart:String="10:00",val nightStart:String="23:00",
     val horizonEnd:String="34:00",val turnaroundMin:Int=10,val prepMin:Int=10,val benchMode:String="adaptive",
     // Время печати (упаковка) и коррекция смены прутка AMS (упаковка и расписание); null = не задано.
-    val timeWindowHours:Double?=null,val amsCorrection:Boolean=false,val changeSeconds:Double?=null,val timeMarginPct:Double?=null)
+    val timeWindowHours:Double?=null,val amsCorrection:Boolean=false,val changeSeconds:Double?=null,val timeMarginPct:Double?=null,
+    // Перекрытие поддержек (упаковка), мм; null = без ограничений. Вариант теста смены AMS (калибровка).
+    val supportOverlapMm:Double?=null,val variant:String="normal")
 data class CreatedJob(val jobId:String,val readToken:String?=null)
 
 @Service @Profile("server")
@@ -61,6 +63,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         val profile=profiles.require(request.profileId)
         if(request.nozzleClean.isNotBlank() && !profile.dto.supportsNozzleClean) bad("Принтер не поддерживает чистку сопла")
         if(request.amsCorrection && profile.dto.filamentChangeSeconds==null) bad("Для этого принтера коррекция смены прутка не нужна")
+        if(request.kind=="CALIBRATION" && profile.dto.filamentChangeSeconds==null) bad(ProfileService.CALIBRATION_NOT_NEEDED)
         if(owner.kind=="GUEST" && request.benchMode=="full") bad("Полный перебор партий доступен только аккаунту")
         val token=Secrets.token()
         val j=jobs.save(QueueJobEntity(ownerId=ownerId,kind=request.kind,inputBlobId=input,originalName=name,
@@ -235,8 +238,11 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         j.expiresAt=if(owners.findById(j.ownerId).orElseThrow().kind=="GUEST") Instant.now().plusSeconds(86400) else null
     }
     private fun validate(r:JobRequest) {
-        if(r.kind !in listOf("PACK","SCHEDULE") || (r.fileId==null)==(r.packJobId==null)) bad("Укажите один источник и тип PACK/SCHEDULE")
+        if(r.kind !in listOf("PACK","SCHEDULE","CALIBRATION") || (r.fileId==null)==(r.packJobId==null)) bad("Укажите один источник и тип PACK/SCHEDULE/CALIBRATION")
         if(r.kind=="PACK" && r.packJobId!=null) bad("Для упаковки нужен загруженный файл")
+        if(r.kind=="CALIBRATION" && r.packJobId!=null) bad("Для калибровки нужен загруженный проект")
+        if(r.variant !in listOf("normal","perfectionist")) bad("Вариант калибровки: normal или perfectionist")
+        if(r.supportOverlapMm!=null && (!r.supportOverlapMm.isFinite() || r.supportOverlapMm !in 0.0..20.0)) bad("Перекрытие поддержек должно быть 0–20 мм")
         if(!r.clearance.isFinite() || r.clearance !in 0.05..10.0 || !r.resolution.isFinite() || r.resolution !in 0.05..1.0) bad("Некорректные зазор/разрешение")
         if(r.attempts !in 1..1000000 || r.layout !in listOf("search","grid") || r.benchMode !in listOf("adaptive","full")) bad("Некорректный режим поиска")
         if(r.edgeMargin!=null && (!r.edgeMargin.isFinite() || r.edgeMargin !in 0.0..20.0)) bad("Некорректный отступ")
@@ -311,6 +317,7 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
             "originalName" to j.originalName,"queuePosition" to ahead?.plus(1),"estimatedWaitSeconds" to estimate,"estimatedWaitFromSeconds" to estimate?.div(2),"estimatedWaitToSeconds" to estimate?.let { it*2+10 },
             "estimateReason" to (if(slots==0) "Нет доступных исполнителей или очередь на паузе" else if(estimate==null) "Недостаточно измерений для надёжной оценки" else "Приблизительно по медиане последних задач; фактическое время может отличаться"),
             "artifacts" to artifacts.findAllByJobId(j.id).filter { debug || !it.debug }.map { mapOf("id" to it.id,"name" to it.downloadName,"sizeBytes" to it.sizeBytes,"downloadUrl" to "/api/v2/jobs/${j.id}/artifacts/${it.id}/download") },
-            "pack" to if(j.kind=="PACK") result else null,"schedule" to if(j.kind=="SCHEDULE") result else null)
+            "pack" to if(j.kind=="PACK") result else null,"schedule" to if(j.kind=="SCHEDULE") result else null,
+            "calibration" to if(j.kind=="CALIBRATION") result else null)
     }
 }

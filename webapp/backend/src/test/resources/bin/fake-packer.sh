@@ -3,7 +3,8 @@
 # (ровно те, что разбирает ProgressTracker) и создаёт артефакты по --output: packed.3mf и
 # packed.verification.json с object_count и блоком time. Содержимое 3MF — фикция, слайсер не
 # вызывается. Аргументы пишутся построчно в packer-args.txt (рабочий каталог джоба), чтобы
-# тесты проверяли сборку CLI; --time-window-hours W даёт стол «12 из 30» с окном W.
+# тесты проверяли сборку CLI; --time-window-hours W даёт стол «12 из 30» с окном W;
+# --support-overlap-mm X добавляет в отчёт supports_detected/support_overlap_mm.
 set -euo pipefail
 
 printf '%s\n' "$@" > packer-args.txt
@@ -12,6 +13,7 @@ output="packed.3mf"
 profile=""
 source_file=""
 window_hours=""
+support_overlap=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -19,6 +21,7 @@ while [[ $# -gt 0 ]]; do
     --profile) profile="$2"; shift 2;;
     --output) output="$2"; shift 2;;
     --time-window-hours) window_hours="$2"; shift 2;;
+    --support-overlap-mm) support_overlap="$2"; shift 2;;
     *) shift;;
   esac
 done
@@ -44,7 +47,12 @@ else
   count=30
   time_block='{"window_hours": null, "margin_pct": 10, "real_change_s": null, "slicer_change_s": 20, "prep_s": 0, "samples": [{"count": 30, "estimate_s": 72000, "changes": 300, "corrected_s": 79200}], "chosen_count": 30, "corrected_s": 79200}'
 fi
-printf '{"object_count": %s, "output_3mf": "%s", "profile": "%s", "time": %s}\n' "$count" "$output" "$profile" "$time_block" > "$verification"
+# С --support-overlap-mm отчёт несёт поля поддержек; без него — нет (как у старого пакера).
+supports_block=""
+if [[ -n "$support_overlap" ]]; then
+  supports_block=', "supports_detected": true, "support_overlap_mm": '"$support_overlap"
+fi
+printf '{"object_count": %s, "output_3mf": "%s", "profile": "%s", "time": %s%s}\n' "$count" "$output" "$profile" "$time_block" "$supports_block" > "$verification"
 
 echo "packed 30 colored objects; wrote $output"
 mkdir -p work

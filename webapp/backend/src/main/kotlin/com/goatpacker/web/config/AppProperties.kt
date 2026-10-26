@@ -17,6 +17,7 @@ import java.nio.file.Paths
 data class AppProperties(
     var packerBin: String = "../../target/release/colored_3mf_packer",
     var schedulerBin: String = "../../target/release/daily_scheduler",
+    var calibrationBin: String = "../../target/release/ams_calibration",
     var profilesDir: String = "../../profiles",
     var jobsRoot: String = "${System.getProperty("java.io.tmpdir")}/goat-packer-web/jobs",
     var jobTtlHours: Long = 12,
@@ -24,6 +25,7 @@ data class AppProperties(
 ) {
     lateinit var packerBinPath: Path
     lateinit var schedulerBinPath: Path
+    lateinit var calibrationBinPath: Path
     lateinit var profilesDirPath: Path
     lateinit var jobsRootPath: Path
 
@@ -31,6 +33,7 @@ data class AppProperties(
     fun resolveAbsolutePaths() {
         packerBinPath = toAbsolute(packerBin)
         schedulerBinPath = toAbsolute(schedulerBin)
+        calibrationBinPath = toAbsolute(calibrationBin)
         profilesDirPath = toAbsolute(profilesDir)
         jobsRootPath = toAbsolute(jobsRoot)
     }

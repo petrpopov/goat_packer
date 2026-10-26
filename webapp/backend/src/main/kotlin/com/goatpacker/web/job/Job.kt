@@ -5,10 +5,11 @@ import java.nio.file.Path
 import java.time.OffsetDateTime
 import java.util.concurrent.atomic.AtomicReference
 
-/** Тип джоба: упаковка 3MF или построение расписания. */
+/** Тип джоба: упаковка 3MF, построение расписания или калибровка времени смены AMS. */
 enum class JobKind {
     PACK,
-    SCHEDULE;
+    SCHEDULE,
+    CALIBRATION;
 
     @JsonValue
     fun jsonValue(): String = name.lowercase()
@@ -63,6 +64,28 @@ data class PackJobResult(
     val clearanceMm: Double,
     /** Оценка времени из блока `time` verification.json; null — не измерено. */
     val time: PackTimeResult? = null,
+    /**
+     * `supports_detected` отчёта: у модели есть поддержки за пределами силуэта, поворот
+     * заблокирован. null — старый пакер без этого поля.
+     */
+    val supportsDetected: Boolean? = null,
+    /** `support_overlap_mm` отчёта: допустимое перекрытие поддержек, мм; null — без ограничений. */
+    val supportOverlapMm: Double? = null,
+)
+
+/**
+ * Результат calibration-джоба: calibration.json бинарника ams_calibration + текст
+ * instructions.md (небольшой — отдаётся прямо в статусе, чтобы фронт не тянул файл отдельно).
+ */
+data class CalibrationJobResult(
+    val profileId: String,
+    val variant: String,
+    val changesExpected: Int,
+    val changesSliced: Int,
+    val estimateASeconds: Double,
+    val estimateBSeconds: Double,
+    val slicerChangeSeconds: Double,
+    val instructions: String,
 )
 
 /** Сводка блока `time` отчёта упаковщика (секунды; см. [com.goatpacker.web.dto.PackTimeDto]). */
@@ -144,6 +167,9 @@ class Job(
 
     @Volatile
     var scheduleResult: ScheduleJobResult? = null
+
+    @Volatile
+    var calibrationResult: CalibrationJobResult? = null
 
     val current: JobSnapshot
         get() = snapshot.get()

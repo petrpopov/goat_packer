@@ -38,6 +38,17 @@ data class PackParams(
     val changeSeconds: Double? = null,
     /** --time-margin-pct; null = дефолт CLI (10 %). */
     val timeMarginPct: Double? = null,
+    /** --support-overlap-mm; null = без ограничений (флаг не передаётся). */
+    val supportOverlapMm: Double? = null,
+)
+
+/** Параметры calibration-джоба — CLI-аргументы ams_calibration. */
+data class CalibrationParams(
+    val profileId: String,
+    /** Путь к json профиля (как у упаковщика: из него бинарник берёт slicer_path). */
+    val profilePath: Path,
+    /** normal (10 смен) | perfectionist (30 смен). */
+    val variant: String,
 )
 
 /** Источник 3MF для schedule-джоба. */
@@ -87,6 +98,12 @@ class JobRunner(
 
         private val PACK_REQUIRED = listOf("packed.3mf")
         private val SCHEDULE_REQUIRED = listOf("schedule.csv", "plates.3mf")
+        private val CALIBRATION_REQUIRED = listOf(
+            "out/calib_A.3mf", "out/calib_B.3mf", "out/instructions.md", "out/calibration.json",
+        )
+
+        /** Каталог вывода ams_calibration внутри каталога джоба (черновики — в out/slicing/). */
+        const val CALIBRATION_OUT_DIR = "out"
     }
 
     @Async("jobExecutor")
@@ -140,6 +157,11 @@ class JobRunner(
                 add("--time-margin-pct")
                 add(it.toString())
             }
+            // Пусто = без ограничений (поведение до флага), поэтому передаём только заданное.
+            params.supportOverlapMm?.let {
+                add("--support-overlap-mm")
+                add(it.toString())
+            }
         }
 
         execute(job, command) { exitCode -> finishPack(job, params, exitCode) }
@@ -182,6 +204,27 @@ class JobRunner(
         }
 
         execute(job, command) { exitCode -> finishSchedule(job, exitCode) }
+    }
+
+    @Async("jobExecutor")
+    fun runCalibration(job: Job, params: CalibrationParams) = runCalibrationBlocking(job, params)
+
+    /**
+     * ams_calibration генерирует два проекта и нарезает оба (1–2 мин) молча, без строк прогресса,
+     * поэтому фаза «нарезка» выставляется сразу при старте.
+     */
+    fun runCalibrationBlocking(job: Job, params: CalibrationParams) {
+        val command = listOf(
+            properties.calibrationBinPath.toString(),
+            "--template", "input.3mf",
+            "--profile", params.profilePath.toString(),
+            "--variant", params.variant,
+            "--out-dir", CALIBRATION_OUT_DIR,
+        )
+        job.update {
+            it.copy(phase = JobPhase.SLICING, progressPercent = 10, phaseMessage = ProgressTracker.CALIBRATION_MESSAGE)
+        }
+        execute(job, command) { exitCode -> finishCalibration(job, params, exitCode) }
     }
 
     private fun execute(job: Job, command: List<String>, finish: (Int) -> Unit) {
@@ -264,8 +307,38 @@ class JobRunner(
             profileId = params.profileId,
             clearanceMm = params.clearance,
             time = report?.get("time")?.let(::parsePackTime),
+            supportsDetected = report?.get("supports_detected")?.takeIf { it.isBoolean }?.asBoolean(),
+            supportOverlapMm = report?.get("support_overlap_mm")?.takeIf { it.isNumber }?.asDouble(),
         )
         succeed(job, JobPhase.CLEANUP)
+    }
+
+    /** calibration.json → [CalibrationJobResult]; инструкция читается целиком (единицы КБ). */
+    private fun finishCalibration(job: Job, params: CalibrationParams, exitCode: Int) {
+        if (!succeeded(job, exitCode, CALIBRATION_REQUIRED)) {
+            return
+        }
+        val out = job.directory.resolve(CALIBRATION_OUT_DIR)
+        val result = try {
+            val node = objectMapper.readTree(out.resolve("calibration.json").toFile())
+            fun number(name: String): Double =
+                node.get(name)?.takeIf { it.isNumber }?.asDouble() ?: error("поле $name отсутствует")
+            CalibrationJobResult(
+                profileId = params.profileId,
+                variant = node.path("variant").asText(params.variant),
+                changesExpected = number("changes_expected").toInt(),
+                changesSliced = number("changes_sliced").toInt(),
+                estimateASeconds = number("estimate_a_s"),
+                estimateBSeconds = number("estimate_b_s"),
+                slicerChangeSeconds = number("slicer_change_s"),
+                instructions = Files.readString(out.resolve("instructions.md"), StandardCharsets.UTF_8).take(64 * 1024),
+            )
+        } catch (ex: Exception) {
+            fail(job, "Не удалось разобрать calibration.json: ${ex.message}")
+            return
+        }
+        job.calibrationResult = result
+        succeed(job, JobPhase.WRITING)
     }
 
     /**

@@ -38,6 +38,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             r.add("platform.runner-mode"){"local"};r.add("platform.allow-local-runner"){true}
             r.add("app.packer-bin"){com.goatpacker.web.FakeBins.install(root,"fake-packer.sh")}
             r.add("app.scheduler-bin"){com.goatpacker.web.FakeBins.install(root,"fake-scheduler.sh")}
+            r.add("app.calibration-bin"){com.goatpacker.web.FakeBins.install(root,"fake-calibration.sh")}
             r.add("app.jobs-root"){root.resolve("work").toString()};r.add("app.profiles-dir"){"../../profiles"}
         }
     }
@@ -59,10 +60,10 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         }
         fun guest()=call("POST","/api/v2/auth/guest")
         fun login(name:String="admin",pass:String="Test-admin-secret-123",expected:Int=200)=call("POST","/api/v2/auth/login",mapOf("login" to name,"password" to pass),expected)
-        fun upload():String {
-            val data=descriptorProject3mf("Bambu Lab P1S")
+        fun upload(printer:String="Bambu Lab P1S",profile:String="bambu_p1s"):String {
+            val data=descriptorProject3mf(printer)
             val id=call("POST","/api/v2/uploads",mapOf("name" to "cat.3mf","sizeBytes" to data.size))["fileId"].asText()
-            assertEquals("bambu_p1s",call("PUT","/api/v2/uploads/$id/content",data,headers=mapOf("Origin" to "http://localhost:3007"))["profileId"].asText())
+            assertEquals(profile,call("PUT","/api/v2/uploads/$id/content",data,headers=mapOf("Origin" to "http://localhost:3007"))["profileId"].asText())
             return id
         }
         fun job(file:String,key:String=newId(),extra:Map<String,Any> = emptyMap(),expected:Int=200)=call("POST","/api/v2/jobs",mapOf("fileId" to file,"profileId" to "bambu_p1s")+extra,expected,headers=mapOf("Idempotency-Key" to key))
@@ -143,7 +144,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         // Окно/смена/запас вне диапазона отсекаются при постановке, до очереди.
         for(bad in listOf(mapOf("timeWindowHours" to 0.1),mapOf("changeSeconds" to 601),mapOf("timeMarginPct" to 51)))
             client.job(file,extra=bad,expected=400)
-        val id=client.job(file,extra=mapOf("timeWindowHours" to 12,"amsCorrection" to true,"changeSeconds" to 80,"timeMarginPct" to 15))["jobId"].asText()
+        val id=client.job(file,extra=mapOf("timeWindowHours" to 12,"amsCorrection" to true,"changeSeconds" to 80,"timeMarginPct" to 15,"supportOverlapMm" to 1.5))["jobId"].asText()
         val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
         try {
             worker.dispatch()
@@ -155,12 +156,48 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             assertEquals(12,response["pack"]["objectCount"].asInt())
             assertEquals(12.0,response["pack"]["time"]["windowHours"].asDouble(),1e-9)
             assertEquals(30,response["pack"]["time"]["fullCount"].asInt())
+            // --support-overlap-mm доходит до пакера; поля поддержек отчёта — до ответа.
+            assertTrue(response["pack"]["supportsDetected"].asBoolean(),response.toString())
+            assertEquals(1.5,response["pack"]["supportOverlapMm"].asDouble(),1e-9)
             assertEquals(1,response["artifacts"].size())
             assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"))
             assertTrue(client.call("GET","/api/v2/jobs/$id?debug=true")["artifacts"].size()>1)
             client.call("DELETE","/api/v2/jobs/$id")
             client.call("GET","/api/v2/jobs/$id",expected=404)
         } finally {worker.stop()}
+    }
+
+    @Test fun `calibration job runs on the worker and publishes test files and values`() {
+        val client=Client();client.guest()
+        val file=client.upload()
+        client.job(file,extra=mapOf("kind" to "CALIBRATION","variant" to "extreme"),expected=400)
+        client.job(file,extra=mapOf("supportOverlapMm" to 21),expected=400)
+        val id=client.job(file,extra=mapOf("kind" to "CALIBRATION","variant" to "perfectionist"))["jobId"].asText()
+        val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
+        try {
+            worker.dispatch()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+            while(jobs.findById(id).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+            val response=client.call("GET","/api/v2/jobs/$id")
+            assertEquals("SUCCEEDED",response["status"].asText(),response.toString())
+            assertEquals("calibration",response["kind"].asText())
+            val calibration=response["calibration"]
+            assertEquals(30,calibration["changesExpected"].asInt())
+            assertEquals(1500.0,calibration["estimateASeconds"].asDouble(),1e-9)
+            assertEquals(2400.0,calibration["estimateBSeconds"].asDouble(),1e-9)
+            assertEquals(20.5,calibration["slicerChangeSeconds"].asDouble(),1e-9)
+            assertTrue(calibration["instructions"].asText().contains("calib_B.3mf"))
+            assertTrue(response["pack"].isNull)
+            // Файлы теста — под своими именами (на них ссылается инструкция); журнал — только в debug.
+            assertEquals(setOf("calib_A.3mf","calib_B.3mf","instructions.md","calibration.json"),response["artifacts"].map { it["name"].asText() }.toSet())
+        } finally {worker.stop()}
+    }
+
+    @Test fun `calibration is rejected for a printer without AMS changes`() {
+        val client=Client();client.guest()
+        val file=client.upload("Snapmaker U1","snapmaker_u1")
+        val error=client.call("POST","/api/v2/jobs",mapOf("fileId" to file,"profileId" to "snapmaker_u1","kind" to "CALIBRATION"),400,headers=mapOf("Idempotency-Key" to newId()))
+        assertTrue(error.toString().contains("для этого принтера калибровка не нужна"),error.toString())
     }
 
     @Test fun `restart requires confirmed stop increments fence and limits retry budget`() {
