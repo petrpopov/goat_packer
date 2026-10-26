@@ -16,7 +16,11 @@ use goat_packer::{
     },
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
-    scheduler::object_count_3mf,
+    print_time::{
+        TimeCorrection, TimeSample, WindowFit, corrected_seconds, count_for_window,
+        shrink_count, slicer_change_seconds,
+    },
+    scheduler::{SliceEstimate, object_count_3mf, parse_bambu_result, parse_orca_gcode},
 };
 use serde::Serialize;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -44,6 +48,50 @@ struct Args {
     /// and skips the search — faster, perfectly uniform, a bit sparser.
     layout: LayoutMode,
     nozzle_clean: Option<NozzleCleanSpec>,
+    time: TimeOptions,
+}
+
+/// Time-model options (spec 2026-10-26-time-model-and-window-design). Without
+/// `--time-window-hours` they only shape the corrected time written to the report.
+#[derive(Clone, Debug, PartialEq)]
+struct TimeOptions {
+    window_hours: Option<f64>,
+    ams_correction: bool,
+    /// Overrides the profile's `filament_change_seconds`; setting it implies `ams_correction`.
+    change_seconds: Option<f64>,
+    margin_pct: f64,
+    prep_min: f64,
+}
+
+impl Default for TimeOptions {
+    fn default() -> Self {
+        // 10 % margin: the AMS calibration is a lower bound and the per-change cost varies
+        // about ±15 % with the interval between changes.
+        Self {
+            window_hours: None,
+            ams_correction: false,
+            change_seconds: None,
+            margin_pct: 10.0,
+            prep_min: 0.0,
+        }
+    }
+}
+
+impl TimeOptions {
+    /// The effective correction. A profile without `filament_change_seconds` (tool changer)
+    /// has nothing to correct, so the change term stays off even when asked for.
+    fn correction(&self, profile: &PrinterProfile) -> TimeCorrection {
+        let real_change_s = if self.ams_correction {
+            self.change_seconds.or(profile.filament_change_seconds)
+        } else {
+            None
+        };
+        TimeCorrection {
+            real_change_s,
+            prep_s: self.prep_min * 60.0,
+            margin: self.margin_pct / 100.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -63,6 +111,132 @@ struct ColoredPackReport {
     final_tower: Option<PrimeTowerBounds>,
     repacked: bool,
     paint_color_attribute_mentions: usize,
+    /// Corrected print time of the written plate; `None` only when no window was requested
+    /// and the slicer estimate could not be read (the plate itself is still valid).
+    time: Option<TimeReport>,
+}
+
+/// `time` block of the verification report. `samples` lists every plate whose time was
+/// measured: without a window just the final plate; with one the probe (1 object), the max
+/// plate and each window slice in order. `chosen_count`/`corrected_s` describe the written plate.
+#[derive(Debug, Serialize)]
+struct TimeReport {
+    window_hours: Option<f64>,
+    margin_pct: f64,
+    real_change_s: Option<f64>,
+    slicer_change_s: f64,
+    prep_s: f64,
+    samples: Vec<TimeSample>,
+    chosen_count: usize,
+    corrected_s: f64,
+}
+
+/// One slicer run: the G-code (tower and first-layer parsing) plus the slicer's own time
+/// estimate. The estimate is kept as a Result so a plate whose summary cannot be parsed still
+/// packs when no time window depends on it.
+struct SliceOutput {
+    gcode: Vec<u8>,
+    estimate: Result<SliceEstimate, String>,
+}
+
+/// Window slices allowed after the max plate before giving up; each costs a full slice, and
+/// the affine aim plus the shrink step normally land within one or two.
+const MAX_WINDOW_SLICES: usize = 4;
+
+/// Outcome of the window search when the window binds: the chosen prefix length and the
+/// window slices measured on the way (the last one is the chosen plate).
+#[derive(Debug, PartialEq)]
+struct WindowChoice {
+    count: usize,
+    samples: Vec<TimeSample>,
+}
+
+fn hours(seconds: f64) -> f64 {
+    seconds / 3600.0
+}
+
+fn even_one_exceeds(corrected_s: f64, window_s: f64) -> String {
+    format!(
+        "even one object exceeds the time window: {:.1} h > window {:.1} h",
+        hours(corrected_s),
+        hours(window_s)
+    )
+}
+
+/// Spec steps 3-5: aim at the window with the affine line through the probe (1 object) and the
+/// max plate, then measure that prefix and shrink while it is over. Under the window is
+/// accepted without searching upward: the line already aimed at the boundary, and a
+/// guaranteed fit beats one more object. `None` = the max plate fits (window does not bind).
+/// `measure(n)` builds and slices the n-prefix and returns its corrected sample.
+fn fit_window(
+    probe: TimeSample,
+    max: TimeSample,
+    window_s: f64,
+    mut measure: impl FnMut(usize) -> AppResult<TimeSample>,
+) -> AppResult<Option<WindowChoice>> {
+    if probe.corrected_s > window_s {
+        return Err(even_one_exceeds(probe.corrected_s, window_s).into());
+    }
+    let mut count = match count_for_window(probe, max, window_s) {
+        WindowFit::All => return Ok(None),
+        WindowFit::NotEvenOne => return Err(even_one_exceeds(probe.corrected_s, window_s).into()),
+        WindowFit::Count(count) => count,
+    };
+    let mut samples = Vec::new();
+    loop {
+        println!(
+            "time window {:.1} h: max plate {} objects = {:.1} h corrected; trying {count}",
+            hours(window_s),
+            max.count,
+            hours(max.corrected_s)
+        );
+        let sample = measure(count)?;
+        samples.push(sample);
+        if sample.corrected_s <= window_s {
+            println!(
+                "time window {:.1} h: {count} objects = {:.1} h corrected; fits",
+                hours(window_s),
+                hours(sample.corrected_s)
+            );
+            return Ok(Some(WindowChoice { count, samples }));
+        }
+        if count == 1 {
+            return Err(even_one_exceeds(sample.corrected_s, window_s).into());
+        }
+        if samples.len() >= MAX_WINDOW_SLICES {
+            return Err(format!(
+                "time window {:.1} h not met after {MAX_WINDOW_SLICES} window slices; last: \
+                 {count} objects = {:.1} h corrected",
+                hours(window_s),
+                hours(sample.corrected_s)
+            )
+            .into());
+        }
+        // Slope through the probe and the plate just measured: it overshot because the
+        // first line was too flat here, so this local slope sizes the step better.
+        let slope = (sample.corrected_s - probe.corrected_s) / (count - probe.count) as f64;
+        count = shrink_count(count, sample.corrected_s, window_s, slope);
+    }
+}
+
+fn time_sample(
+    count: usize,
+    estimate: &SliceEstimate,
+    slicer_change_s: f64,
+    correction: &TimeCorrection,
+) -> TimeSample {
+    let estimate_s = estimate.slicer_total_seconds as f64;
+    TimeSample {
+        count,
+        estimate_s,
+        changes: estimate.filament_changes,
+        corrected_s: corrected_seconds(
+            estimate_s,
+            estimate.filament_changes,
+            slicer_change_s,
+            correction,
+        ),
+    }
 }
 
 /// What to do after comparing the probe-slice tower against the final-slice tower. A project with
@@ -120,6 +294,18 @@ fn run() -> AppResult<()> {
         profile.edge_margin_mm = edge_margin;
     }
     validate_source_printer(&args.source_3mf, &profile)?;
+    // Read once: the assembled output copies project_settings.config byte-for-byte, so the
+    // source's per-change assumption holds for every plate sliced below.
+    let slicer_change_s = slicer_change_seconds(&source_project_settings(&args.source_3mf)?);
+    let correction = args.time.correction(&profile);
+    if args.time.ams_correction && correction.real_change_s.is_none() {
+        eprintln!(
+            "note: profile '{}' has no filament_change_seconds (tool changer); AMS change \
+             correction is off",
+            profile.id
+        );
+    }
+    let window_s = args.time.window_hours.map(|window_hours| window_hours * 3600.0);
     fs::create_dir_all(&args.work_dir)?;
     let source_count = object_count_3mf(&args.source_3mf)?;
     if source_count != 1 {
@@ -137,7 +323,30 @@ fn run() -> AppResult<()> {
     let footprint_stl = args.work_dir.join("embedded_source.stl");
     derive_embedded_stl(&args.source_3mf, &footprint_stl)?;
     eprintln!("probing prime tower position (slicing 1 object)...");
-    let probe_gcode = slice_project(&profile, &args.source_3mf, 1, &args.work_dir, "probe")?;
+    let probe = slice_project(&profile, &args.source_3mf, 1, &args.work_dir, "probe")?;
+    // Spec step 1: with a window, a single object that already overruns it fails here, before
+    // the expensive packing.
+    let probe_sample = match window_s {
+        Some(window_s) => {
+            let estimate = probe
+                .estimate
+                .as_ref()
+                .map_err(|error| format!("probe slice time estimate unavailable: {error}"))?;
+            let sample = time_sample(1, estimate, slicer_change_s, &correction);
+            if sample.corrected_s > window_s {
+                return Err(even_one_exceeds(sample.corrected_s, window_s).into());
+            }
+            println!(
+                "time window {:.1} h: 1 object = {:.1} h corrected ({} filament changes)",
+                hours(window_s),
+                hours(sample.corrected_s),
+                sample.changes
+            );
+            Some(sample)
+        }
+        None => None,
+    };
+    let probe_gcode = probe.gcode;
     let probe_tower =
         parse_prime_tower_bounds(&probe_gcode, profile.tower_line_width_mm, args.clearance);
     match probe_tower {
@@ -288,7 +497,7 @@ fn run() -> AppResult<()> {
     eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
     build_colored_project(&args, &profile, &footprint_stl, &footprint, &packed, &keepouts)?;
     eprintln!("slicing final plate ({} objects)...", packed.placements.len());
-    let mut final_gcode = slice_project(
+    let mut final_slice = slice_project(
         &profile,
         &args.output,
         packed.placements.len(),
@@ -296,7 +505,7 @@ fn run() -> AppResult<()> {
         "final_first",
     )?;
     let mut final_tower =
-        parse_prime_tower_bounds(&final_gcode, profile.tower_line_width_mm, args.clearance);
+        parse_prime_tower_bounds(&final_slice.gcode, profile.tower_line_width_mm, args.clearance);
     let mut repacked = false;
     let reserved_tower_keepout = probe_tower.map(|tower| tower.keepout);
     if evaluate_final_tower(probe_tower, final_tower, reserved_tower_keepout)?
@@ -323,15 +532,18 @@ fn run() -> AppResult<()> {
             eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
             build_colored_project(&args, &profile, &footprint_stl, &footprint, &packed, &keepouts)?;
             eprintln!("slicing repacked plate ({} objects)...", packed.placements.len());
-            final_gcode = slice_project(
+            final_slice = slice_project(
                 &profile,
                 &args.output,
                 packed.placements.len(),
                 &args.work_dir,
                 "final_repacked",
             )?;
-            final_tower =
-                parse_prime_tower_bounds(&final_gcode, profile.tower_line_width_mm, args.clearance);
+            final_tower = parse_prime_tower_bounds(
+                &final_slice.gcode,
+                profile.tower_line_width_mm,
+                args.clearance,
+            );
             if evaluate_final_tower(probe_tower, final_tower, keepouts.last().copied())?
                 == TowerOutcome::RepackRequired
             {
@@ -347,6 +559,125 @@ fn run() -> AppResult<()> {
         }
     }
 
+    // The keepout this layout was validated against: the probe's (or the grown one after a
+    // repack). A grown tower that reached no placement left the layout as is.
+    let validated_tower_keepout = if repacked {
+        keepouts.last().copied()
+    } else {
+        reserved_tower_keepout
+    };
+    let time = match (window_s, probe_sample) {
+        (Some(window_s), Some(probe_sample)) => {
+            let estimate = final_slice
+                .estimate
+                .as_ref()
+                .map_err(|error| format!("final slice time estimate unavailable: {error}"))?;
+            let max_sample =
+                time_sample(packed.placements.len(), estimate, slicer_change_s, &correction);
+            let full = packed.clone();
+            let mut window_tower = None;
+            let choice = fit_window(probe_sample, max_sample, window_s, |count| {
+                // A prefix of a valid layout is valid (same rule as the scheduler's
+                // subset_3mf), and packing order puts the kept objects together.
+                let mut prefix = full.clone();
+                prefix.placements.truncate(count);
+                build_colored_project(
+                    &args,
+                    &profile,
+                    &footprint_stl,
+                    &footprint,
+                    &prefix,
+                    &keepouts,
+                )?;
+                eprintln!("slicing time-window plate ({count} objects)...");
+                let slice = slice_project(
+                    &profile,
+                    &args.output,
+                    count,
+                    &args.work_dir,
+                    &format!("final_window_{count}"),
+                )?;
+                let tower = parse_prime_tower_bounds(
+                    &slice.gcode,
+                    profile.tower_line_width_mm,
+                    args.clearance,
+                );
+                if evaluate_final_tower(probe_tower, tower, validated_tower_keepout)?
+                    == TowerOutcome::RepackRequired
+                {
+                    // Fewer objects must not grow the tower; if it did and reaches a kept
+                    // placement, the layout's collision checks are void. A growth that hits
+                    // nothing is accepted for the same reason as on the max plate.
+                    let grown = tower.unwrap().keepout;
+                    if prefix.placements.iter().any(|placement| {
+                        loops_touch_rect(&placement_world_loops(&footprint, placement), grown)
+                    }) {
+                        return Err(format!(
+                            "prime tower of the {count}-object time-window plate outgrew the \
+                             reserved keepout and reaches a placement"
+                        )
+                        .into());
+                    }
+                }
+                let estimate = slice.estimate.map_err(|error| {
+                    format!("time-window slice ({count} objects) estimate unavailable: {error}")
+                })?;
+                window_tower = Some(tower);
+                Ok(time_sample(count, &estimate, slicer_change_s, &correction))
+            })?;
+            let mut samples = vec![probe_sample, max_sample];
+            let chosen = match choice {
+                Some(choice) => {
+                    packed.placements.truncate(choice.count);
+                    final_tower = window_tower.expect("a chosen window plate was sliced");
+                    samples.extend(choice.samples);
+                    *samples.last().expect("window samples are non-empty")
+                }
+                None => {
+                    println!(
+                        "time window {:.1} h: max plate {} objects = {:.1} h corrected; fits",
+                        hours(window_s),
+                        max_sample.count,
+                        hours(max_sample.corrected_s)
+                    );
+                    max_sample
+                }
+            };
+            Some(TimeReport {
+                window_hours: args.time.window_hours,
+                margin_pct: args.time.margin_pct,
+                real_change_s: correction.real_change_s,
+                slicer_change_s,
+                prep_s: correction.prep_s,
+                samples,
+                chosen_count: chosen.count,
+                corrected_s: chosen.corrected_s,
+            })
+        }
+        _ => match &final_slice.estimate {
+            Ok(estimate) => {
+                let sample =
+                    time_sample(packed.placements.len(), estimate, slicer_change_s, &correction);
+                Some(TimeReport {
+                    window_hours: None,
+                    margin_pct: args.time.margin_pct,
+                    real_change_s: correction.real_change_s,
+                    slicer_change_s,
+                    prep_s: correction.prep_s,
+                    samples: vec![sample],
+                    chosen_count: sample.count,
+                    corrected_s: sample.corrected_s,
+                })
+            }
+            Err(error) => {
+                eprintln!(
+                    "note: final slice time estimate unavailable ({error}); report has no time"
+                );
+                None
+            }
+        },
+    };
+
     let report = ColoredPackReport {
         source_3mf: args.source_3mf.display().to_string(),
         output_3mf: args.output.display().to_string(),
@@ -357,6 +688,7 @@ fn run() -> AppResult<()> {
         final_tower,
         repacked,
         paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
+        time,
     };
     let report_path = args.output.with_extension("verification.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
@@ -568,10 +900,10 @@ fn build_colored_project(
 fn slice_project(
     profile: &PrinterProfile,
     project: &Path,
-    _count: usize,
+    count: usize,
     work_dir: &Path,
     label: &str,
-) -> AppResult<Vec<u8>> {
+) -> AppResult<SliceOutput> {
     let sanitized = work_dir.join(format!("{label}_cli.3mf"));
     let input = if prepare_cli_copy(profile, project, &sanitized)? {
         sanitized
@@ -626,12 +958,22 @@ fn slice_project(
         )
         .into());
     }
-    let gcode = fs::read_dir(output_dir)?
+    let gcode_path = fs::read_dir(&output_dir)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| path.extension().is_some_and(|extension| extension == "gcode"))
         .ok_or("slicer output did not contain G-code")?;
-    Ok(fs::read(gcode)?)
+    let gcode = fs::read(gcode_path)?;
+    // Same sources as the scheduler's benchmark: BambuStudio writes its summary (with the
+    // change count) to result.json, Orca only leaves the estimate in the G-code.
+    let estimate = if profile.slicer_kind == "bambu" {
+        fs::read(output_dir.join("result.json"))
+            .map_err(|error| format!("cannot read result.json: {error}"))
+            .and_then(|bytes| parse_bambu_result(&bytes).map_err(|error| error.to_string()))
+    } else {
+        parse_orca_gcode(&gcode, count).map_err(|error| error.to_string())
+    };
+    Ok(SliceOutput { gcode, estimate })
 }
 
 /// Reads the slicer's own `result.json` from the output dir and extracts its `error_string` —
@@ -756,14 +1098,17 @@ fn normalize_flush_volumes_matrix(settings: &mut serde_json::Value) -> bool {
     true
 }
 
-fn validate_source_printer(source: &Path, profile: &PrinterProfile) -> AppResult<()> {
+fn source_project_settings(source: &Path) -> AppResult<serde_json::Value> {
     let mut archive = ZipArchive::new(fs::File::open(source)?)?;
     let mut settings = Vec::new();
-    use std::io::Read;
     archive
         .by_name("Metadata/project_settings.config")?
         .read_to_end(&mut settings)?;
-    let configured: serde_json::Value = serde_json::from_slice(&settings)?;
+    Ok(serde_json::from_slice(&settings)?)
+}
+
+fn validate_source_printer(source: &Path, profile: &PrinterProfile) -> AppResult<()> {
+    let configured = source_project_settings(source)?;
     let printer = configured
         .get("printer_model")
         .and_then(serde_json::Value::as_str)
@@ -813,7 +1158,30 @@ fn paint_attribute_count(source: &Path) -> AppResult<usize> {
 }
 
 fn parse_args() -> AppResult<Args> {
-    let mut args = std::env::args().skip(1);
+    parse_args_from(std::env::args().skip(1))
+}
+
+/// Parses a time option and rejects non-finite or out-of-range values up front: a NaN window
+/// would compare false everywhere and silently disable the fit.
+fn parse_time_value(
+    option: &str,
+    value: &str,
+    min: f64,
+    max: f64,
+    min_exclusive: bool,
+) -> AppResult<f64> {
+    let parsed: f64 = value
+        .parse()
+        .map_err(|error| format!("invalid value for {option}: {value} ({error})"))?;
+    let above_min = if min_exclusive { parsed > min } else { parsed >= min };
+    if !parsed.is_finite() || !above_min || parsed > max {
+        let low = if min_exclusive { "(" } else { "[" };
+        return Err(format!("{option} must be in {low}{min}, {max}]; got {value}").into());
+    }
+    Ok(parsed)
+}
+
+fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut source_3mf = None;
     let mut profile_path = None;
     let mut output = None;
@@ -829,7 +1197,13 @@ fn parse_args() -> AppResult<Args> {
     let mut layout = LayoutMode::Search;
     let mut seed = 20_270_831;
     let mut nozzle_clean = None;
+    let mut time = TimeOptions::default();
     while let Some(option) = args.next() {
+        // The only valueless switch; every other option consumes the next argument.
+        if option == "--ams-correction" {
+            time.ams_correction = true;
+            continue;
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for {option}"))?;
@@ -857,6 +1231,20 @@ fn parse_args() -> AppResult<Args> {
             "--nozzle-clean" => {
                 nozzle_clean = Some(NozzleCleanSpec::parse(&value)?);
             }
+            "--time-window-hours" => {
+                time.window_hours =
+                    Some(parse_time_value(&option, &value, 0.0, f64::INFINITY, true)?);
+            }
+            "--change-seconds" => {
+                time.change_seconds = Some(parse_time_value(&option, &value, 0.0, 600.0, false)?);
+                time.ams_correction = true;
+            }
+            "--time-margin-pct" => {
+                time.margin_pct = parse_time_value(&option, &value, 0.0, 50.0, false)?;
+            }
+            "--prep-min" => {
+                time.prep_min = parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?;
+            }
             _ => return Err(format!("unknown option: {option}").into()),
         }
     }
@@ -881,6 +1269,7 @@ fn parse_args() -> AppResult<Args> {
         edge_margin,
         layout,
         nozzle_clean,
+        time,
     })
 }
 
@@ -956,6 +1345,7 @@ mod tests {
             edge_margin: None,
             layout: LayoutMode::Search,
             nozzle_clean: None,
+            time: TimeOptions::default(),
         };
 
         let footprint = extract_footprint(&stl).unwrap();
@@ -1106,5 +1496,147 @@ mod tests {
                 "222", "0", "442", "592", "280", "298", "0"],
         });
         assert!(!normalize_flush_volumes_matrix(&mut settings));
+    }
+
+    fn parse(list: &[&str]) -> AppResult<Args> {
+        parse_args_from(list.iter().map(|item| (*item).to_owned()))
+    }
+
+    const REQUIRED: [&str; 6] = ["--source", "s.3mf", "--profile", "p.json", "--output", "o.3mf"];
+
+    fn parse_with(extra: &[&str]) -> AppResult<Args> {
+        let mut list = REQUIRED.to_vec();
+        list.extend_from_slice(extra);
+        parse(&list)
+    }
+
+    #[test]
+    fn time_options_default_to_no_window_and_no_correction() {
+        let args = parse(&REQUIRED).unwrap();
+        assert_eq!(args.time.window_hours, None);
+        assert!(!args.time.ams_correction);
+        assert_eq!(args.time.change_seconds, None);
+        assert_eq!(args.time.margin_pct, 10.0);
+        assert_eq!(args.time.prep_min, 0.0);
+    }
+
+    #[test]
+    fn time_options_parse_including_valueless_ams_flag() {
+        let args = parse_with(&[
+            "--time-window-hours", "12", "--ams-correction", "--time-margin-pct", "15",
+            "--prep-min", "5", "--clearance", "0.9",
+        ])
+        .unwrap();
+        assert_eq!(args.time.window_hours, Some(12.0));
+        assert!(args.time.ams_correction);
+        assert_eq!(args.time.margin_pct, 15.0);
+        assert_eq!(args.time.prep_min, 5.0);
+        assert_eq!(args.clearance, 0.9);
+    }
+
+    #[test]
+    fn change_seconds_implies_ams_correction() {
+        let args = parse_with(&["--change-seconds", "80"]).unwrap();
+        assert!(args.time.ams_correction);
+        assert_eq!(args.time.change_seconds, Some(80.0));
+    }
+
+    #[test]
+    fn time_options_reject_out_of_range_values() {
+        for bad in [
+            &["--time-window-hours", "0"][..],
+            &["--time-window-hours", "-1"],
+            &["--time-window-hours", "NaN"],
+            &["--change-seconds", "-1"],
+            &["--change-seconds", "601"],
+            &["--time-margin-pct", "-1"],
+            &["--time-margin-pct", "51"],
+            &["--prep-min", "-1"],
+        ] {
+            assert!(parse_with(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn time_correction_uses_profile_or_override_only_when_enabled() {
+        let mut profile = test_profile();
+        profile.filament_change_seconds = Some(95.0);
+        let off = parse(&REQUIRED).unwrap().time;
+        assert_eq!(off.correction(&profile).real_change_s, None);
+        let on = parse_with(&["--ams-correction", "--prep-min", "2"]).unwrap().time;
+        let correction = on.correction(&profile);
+        assert_eq!(correction.real_change_s, Some(95.0));
+        assert_eq!(correction.prep_s, 120.0);
+        assert!((correction.margin - 0.1).abs() < 1e-12);
+        let overridden = parse_with(&["--change-seconds", "70"]).unwrap().time;
+        assert_eq!(overridden.correction(&profile).real_change_s, Some(70.0));
+        // A tool changer has no profile value: correction silently stays off.
+        assert_eq!(on.correction(&test_profile()).real_change_s, None);
+    }
+
+    fn sample(count: usize, corrected_s: f64) -> TimeSample {
+        TimeSample { count, estimate_s: corrected_s, changes: 0, corrected_s }
+    }
+
+    #[test]
+    fn fit_window_keeps_everything_when_the_max_plate_fits() {
+        let fit = fit_window(sample(1, 1_000.0), sample(30, 30_000.0), 40_000.0, |_| {
+            panic!("no window slice expected")
+        })
+        .unwrap();
+        assert_eq!(fit, None);
+    }
+
+    #[test]
+    fn fit_window_rejects_a_single_object_over_the_window() {
+        let error = fit_window(sample(1, 50_000.0), sample(30, 90_000.0), 43_200.0, |_| {
+            panic!("no window slice expected")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("even one object exceeds the time window"));
+    }
+
+    #[test]
+    fn fit_window_accepts_the_affine_count_when_it_fits() {
+        // line(N) = 1000 * N; window 15500 -> 15.
+        let mut sliced = Vec::new();
+        let fit = fit_window(sample(1, 1_000.0), sample(41, 41_000.0), 15_500.0, |n| {
+            sliced.push(n);
+            Ok(sample(n, 1_000.0 * n as f64))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(sliced, vec![15]);
+        assert_eq!(fit.count, 15);
+        assert_eq!(fit.samples.len(), 1);
+    }
+
+    #[test]
+    fn fit_window_shrinks_after_an_overshoot() {
+        // Real plates are slower than the line: 1200 s per object beyond the first.
+        let mut sliced = Vec::new();
+        let fit = fit_window(sample(1, 1_000.0), sample(41, 41_000.0), 15_500.0, |n| {
+            sliced.push(n);
+            Ok(sample(n, 1_000.0 + 1_200.0 * (n as f64 - 1.0)))
+        })
+        .unwrap()
+        .unwrap();
+        // 15 -> 17800 s, excess 2300 over slope 1200 -> step 2 -> 13 (15400 s) fits.
+        assert_eq!(sliced, vec![15, 13]);
+        assert_eq!(fit.count, 13);
+        assert_eq!(fit.samples.last().unwrap().count, 13);
+    }
+
+    #[test]
+    fn fit_window_gives_up_after_four_window_slices() {
+        let mut sliced = 0;
+        let error = fit_window(sample(1, 1_000.0), sample(41, 41_000.0), 15_500.0, |n| {
+            sliced += 1;
+            // Every measured prefix lands just over the window.
+            Ok(sample(n, 15_501.0))
+        })
+        .unwrap_err();
+        assert_eq!(sliced, MAX_WINDOW_SLICES);
+        assert!(error.to_string().contains("time window"));
     }
 }
