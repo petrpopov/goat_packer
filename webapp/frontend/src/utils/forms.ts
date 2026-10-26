@@ -33,6 +33,16 @@ export function buildNozzleClean(
   return `${mode === 'global' ? 'global' : `from-z=${Number(fromZ)}`},every=${Number(every)}`;
 }
 
+/**
+ * «Перекрытие поддержек, мм»: пусто — без ограничений (поле не шлётся, CLI без флага),
+ * иначе 0–20 мм, как на бэкенде. Бросает на невалидном значении.
+ */
+export function buildSupportOverlap(value: string): [string, string][] {
+  if (value.trim() === '') return [];
+  if (!numberInRange(value, 0, 20)) throw new Error('Перекрытие поддержек: 0–20 мм');
+  return [['supportOverlapMm', String(Number(value))]];
+}
+
 export interface TimeFormState {
   /** «Уложиться в окно печати». */
   windowOn: boolean;

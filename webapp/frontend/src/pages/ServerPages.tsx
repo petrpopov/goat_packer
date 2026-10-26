@@ -5,7 +5,9 @@ import { ApiError, serverApi } from '@/api/http';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 import { useJob } from '@/hooks/useJob';
+import AmsCalculator from '@/components/AmsCalculator';
 import JobCard from '@/components/JobCard';
+import { calibrationValues } from '@/utils/calibration';
 import StatusPill from '@/components/StatusPill';
 import type { JobStatusResponse } from '@/api/types';
 
@@ -278,6 +280,13 @@ export function HistoryPage() {
           ) : null
         }
       />
+      {current.data?.status === 'SUCCEEDED' && current.data.calibration ? (
+        <AmsCalculator
+          key={current.data.jobId}
+          profileId={current.data.calibration.profileId}
+          initial={calibrationValues(current.data.calibration)}
+        />
+      ) : null}
     </div>
   );
 }

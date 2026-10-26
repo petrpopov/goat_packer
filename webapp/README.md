@@ -44,6 +44,7 @@ bun run dev
 |---|---|---|
 | `GOAT_PACKER_BIN` | путь к colored_3mf_packer | `../../target/release/colored_3mf_packer` |
 | `GOAT_SCHEDULER_BIN` | путь к daily_scheduler | `../../target/release/daily_scheduler` |
+| `GOAT_CALIBRATION_BIN` | путь к ams_calibration | `../../target/release/ams_calibration` |
 | `GOAT_PROFILES_DIR` | каталог профилей принтеров | `../../profiles` |
 | `GOAT_JOBS_ROOT` | каталог джобов | `${java.io.tmpdir}/goat-packer-web/jobs` |
 | `PORT` | порт бэкенда | 19190 |
@@ -54,7 +55,16 @@ bun run dev
 - `POST /api/pack/jobs` — multipart: `file` (.3mf, один объект) + `profileId`, `clearance`,
   `resolution`, `attempts`, `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
   (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
-  (0–50 %, дефолт CLI 10) → `{"jobId"}`. В результате `pack.time` — оценка времени стола с коррекцией.
+  (0–50 %, дефолт CLI 10), `supportOverlapMm` (0–20 мм; пусто — без ограничений, флаг
+  `--support-overlap-mm` не передаётся) → `{"jobId"}`. В результате `pack.time` — оценка времени стола
+  с коррекцией, `pack.supportsDetected`/`pack.supportOverlapMm` — из отчёта (могут отсутствовать).
+- `POST /api/calibration/jobs` — multipart: `file` (свой проект .3mf, ≥ 2 филаментов) + `profileId`,
+  `variant` (`normal` — 10 смен, `perfectionist` — 30) → `{"jobId"}`. Запускает `ams_calibration`
+  (`--out-dir out`, 1–2 мин); принтер без `filamentChangeSeconds` — 400 «для этого принтера калибровка
+  не нужна». В результате `calibration` — значения `calibration.json` и текст `instructions.md`;
+  артефакты `calib_A.3mf`, `calib_B.3mf`, `instructions.md`, `calibration.json` (черновики `out/slicing/`
+  не отдаются). Калькулятор на странице «Калибровка AMS» хранит итог по принтеру в localStorage
+  (`goat-packer-ams-change-seconds`), и поле «Смена прутка, с» подставляет его раньше значения профиля.
 - `POST /api/schedule/jobs` — multipart: `file` или `packJobId` (артефакт фазы 1) +
   `profileId`, `dayStart`, `nightStart`, `horizonEnd` (HH:MM, часы могут быть >24),
   `turnaroundMin`, `prepMin`, `benchMode` (`adaptive`|`full`), `amsCorrection`, `changeSeconds` → `{"jobId"}`.

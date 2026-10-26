@@ -892,3 +892,55 @@ td.num {
   font-size: 13px;
   color: var(--fg-muted);
 }
+
+/* Предупреждение (не ошибка): подозрительный результат калибровки, принтер без AMS. */
+.warn-block {
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in oklch, var(--warn) 35%, transparent);
+  color: var(--warn);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 12.5px;
+}
+
+/* Инструкция калибровки (instructions.md), отрисованная без HTML из файла. */
+.markdown {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.markdown h3,
+.markdown h4 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol {
+  margin: 0 0 8px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 20px;
+}
+
+.markdown code {
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
+.markdown-code {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+}

@@ -20,7 +20,7 @@ export interface DetectProfileResponse {
   printerModel: string | null;
 }
 
-export type JobKind = 'pack' | 'schedule';
+export type JobKind = 'pack' | 'schedule' | 'calibration';
 
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'FINALIZING' | 'LOST' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
 
@@ -62,6 +62,22 @@ export interface PackJobInfo {
   profileId: string;
   clearanceMm: number;
   time?: PackTimeInfo | null;
+  /** У модели обнаружены поддержки — поворот заблокирован; нет поля — старый пакер. */
+  supportsDetected?: boolean | null;
+  /** Допустимое перекрытие поддержек, мм; null — без ограничений. */
+  supportOverlapMm?: number | null;
+}
+
+/** Итог задачи калибровки AMS: значения calibration.json и текст instructions.md. */
+export interface CalibrationInfo {
+  profileId: string;
+  variant: string;
+  changesExpected: number;
+  changesSliced: number;
+  estimateASeconds: number;
+  estimateBSeconds: number;
+  slicerChangeSeconds: number;
+  instructions: string;
 }
 
 export interface ScheduleJobEntry {
@@ -113,6 +129,7 @@ export interface JobStatusResponse {
   artifacts: JobArtifact[];
   pack: PackJobInfo | null;
   schedule: ScheduleInfo | null;
+  calibration?: CalibrationInfo | null;
 }
 
 export interface StartJobResponse {

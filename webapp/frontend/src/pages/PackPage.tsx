@@ -7,7 +7,7 @@ import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import JobCard from '@/components/JobCard';
-import { buildNozzleClean, buildTimeFields, numberInRange } from '@/utils/forms';
+import { buildNozzleClean, buildSupportOverlap, buildTimeFields, numberInRange } from '@/utils/forms';
 import { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
@@ -40,6 +40,7 @@ export default function PackPage() {
   const [windowOn, setWindowOn] = useState(false);
   const [windowHours, setWindowHours] = useState('12');
   const [marginPct, setMarginPct] = useState('10');
+  const [supportOverlap, setSupportOverlap] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
 
   const profilesQuery = useQuery({ queryKey: ['profiles'], queryFn: fetchProfiles });
@@ -116,6 +117,13 @@ export default function PackPage() {
   } catch {
     timeInvalid = true;
   }
+  let supportFields: [string, string][] = [];
+  let supportInvalid = false;
+  try {
+    supportFields = buildSupportOverlap(supportOverlap);
+  } catch {
+    supportInvalid = true;
+  }
   const numbersValid =
     numberInRange(clearance, 0.05, 10) &&
     numberInRange(resolution, 0.05, 1) &&
@@ -128,7 +136,8 @@ export default function PackPage() {
     !jobActive &&
     !startMutation.isPending &&
     !nozzleCleanInvalid &&
-    !timeInvalid;
+    !timeInvalid &&
+    !supportInvalid;
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -146,6 +155,8 @@ export default function PackPage() {
     if (edgeMargin.trim() !== '') form.append('edgeMargin', edgeMargin.trim());
     // Окно и коррекция — только если заданы: иначе действуют дефолты CLI.
     for (const [name, value] of timeFields) form.append(name, value);
+    // Пустое перекрытие = без ограничений: поле не шлётся, флаг CLI не передаётся.
+    for (const [name, value] of supportFields) form.append(name, value);
 
     startMutation.mutate(form);
   };
@@ -336,6 +347,28 @@ export default function PackPage() {
               invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
               disabled={jobActive || startMutation.isPending}
             />
+
+            <Field
+              label="Перекрытие поддержек, мм"
+              error={supportInvalid}
+              hint={
+                supportInvalid
+                  ? '0–20 мм или пусто'
+                  : 'пусто — без ограничений, 0 — поддержки соседей не пересекаются; тело модели никогда не перекрывается'
+              }
+            >
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={20}
+                step="any"
+                placeholder="без ограничений"
+                value={supportOverlap}
+                onChange={(event) => setSupportOverlap(event.target.value)}
+                disabled={jobActive || startMutation.isPending}
+              />
+            </Field>
           </div>
 
           <details className="params">

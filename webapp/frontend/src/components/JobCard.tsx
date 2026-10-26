@@ -4,8 +4,9 @@ import { deleteJob } from '@/api/services';
 import { pushToast } from '@/store/useToastStore';
 import type { ReactNode } from 'react';
 import type { JobStatusResponse } from '@/api/types';
-import { packTimeLines } from '@/utils/format';
+import { formatHoursMinutes, packTimeLines } from '@/utils/format';
 import ArtifactList from './ArtifactList';
+import MarkdownView from './MarkdownView';
 import ProgressBar from './ProgressBar';
 import StatusPill from './StatusPill';
 
@@ -138,6 +139,21 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
                   {line}
                 </p>
               ))}
+            </div>
+          ) : null}
+          {job.pack?.supportsDetected ? (
+            <p className="time-summary">обнаружены поддержки: поворот моделей заблокирован</p>
+          ) : null}
+          {job.calibration ? (
+            <div className="stack-sm">
+              <p className="time-summary">
+                Оценка слайсера: A — {formatHoursMinutes(job.calibration.estimateASeconds)}, B —{' '}
+                {formatHoursMinutes(job.calibration.estimateBSeconds)}; смен в B: {job.calibration.changesSliced}
+              </p>
+              <details className="params" open>
+                <summary className="params-summary">Инструкция</summary>
+                <MarkdownView source={job.calibration.instructions} />
+              </details>
             </div>
           ) : null}
           <ArtifactList artifacts={job.artifacts} />

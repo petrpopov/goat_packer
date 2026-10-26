@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 export type Theme = 'dark' | 'light';
-export type Tab = 'pack' | 'schedule' | 'account' | 'history' | 'admin';
+export type Tab = 'pack' | 'schedule' | 'calibration' | 'account' | 'history' | 'admin';
 
 export interface PackHandoff {
   packJobId: string;

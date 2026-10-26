@@ -2,6 +2,7 @@ import { serverMode } from '@/api/http';
 import { ServerGate, useSession, AccountPage, HistoryPage, AdminPage } from '@/pages/ServerPages';
 import type { Session } from '@/pages/ServerPages';
 import ToastHost from '@/components/ToastHost';
+import CalibrationPage from '@/pages/CalibrationPage';
 import PackPage from '@/pages/PackPage';
 import SchedulePage from '@/pages/SchedulePage';
 import { useUiStore } from '@/store/useUiStore';
@@ -56,6 +57,13 @@ function Shell({ user }: { user?: Session }) {
         >
           Фаза 2 · Расписание
         </button>
+        <button
+          type="button"
+          className={`tab${activeTab === 'calibration' ? ' active' : ''}`}
+          onClick={() => setTab('calibration')}
+        >
+          Калибровка AMS
+        </button>
         {serverMode && (
           <>
             <button
@@ -91,6 +99,9 @@ function Shell({ user }: { user?: Session }) {
         </div>
         <div hidden={activeTab !== 'schedule'}>
           <SchedulePage />
+        </div>
+        <div hidden={activeTab !== 'calibration'}>
+          <CalibrationPage />
         </div>
         {serverMode && (
           <>

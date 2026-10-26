@@ -38,6 +38,10 @@ export async function startScheduleJob(form: FormData): Promise<StartJobResponse
   return serverMode ? submitServer('SCHEDULE', form) : api.postForm<StartJobResponse>('/schedule/jobs', form);
 }
 
+export async function startCalibrationJob(form: FormData): Promise<StartJobResponse> {
+  return serverMode ? submitServer('CALIBRATION', form) : api.postForm<StartJobResponse>('/calibration/jobs', form);
+}
+
 export async function getJob(id: string, signal?: AbortSignal): Promise<JobStatusResponse> {
   return serverMode
     ? serverApi.get<JobStatusResponse>(
@@ -55,7 +59,7 @@ export async function deleteJob(id: string): Promise<void> {
 
 const uploadedFiles = new WeakMap<File, string>();
 const pendingRequests = new WeakMap<FormData, string>();
-async function submitServer(kind: 'PACK' | 'SCHEDULE', form: FormData): Promise<StartJobResponse> {
+async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: FormData): Promise<StartJobResponse> {
   const file = form.get('file');
   const fileId = file instanceof File ? uploadedFiles.get(file) : undefined;
   if (file instanceof File && !fileId) throw new Error('Загрузите файл и дождитесь определения принтера');
@@ -72,6 +76,7 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE', form: FormData): Promise<
       'timeWindowHours',
       'changeSeconds',
       'timeMarginPct',
+      'supportOverlapMm',
     ].includes(name)
       ? Number(value)
       : name === 'amsCorrection'
