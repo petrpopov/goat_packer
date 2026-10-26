@@ -18,6 +18,11 @@ pub struct SliceEstimate {
     pub model_seconds: u64,
     pub slicer_total_seconds: u64,
     pub filament_grams: f64,
+    /// Filament changes in the slice (Bambu `filament_change_times`, Orca `; toolchange #`
+    /// lines). Feeds the AMS change correction in `print_time`; default 0 keeps reports that
+    /// predate the field loadable.
+    #[serde(default)]
+    pub filament_changes: u64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -369,11 +374,17 @@ pub fn parse_bambu_result(data: &[u8]) -> SchedulerResult<SliceEstimate> {
                 .sum()
         })
         .unwrap_or(0.0);
+    // Absent on older BambuStudio builds and on single-filament plates: no changes.
+    let filament_changes = plate
+        .get("filament_change_times")
+        .and_then(serde_json::Value::as_f64)
+        .map_or(0, |changes| changes.max(0.0).round() as u64);
     Ok(SliceEstimate {
         object_count,
         model_seconds,
         slicer_total_seconds,
         filament_grams,
+        filament_changes,
     })
 }
 
@@ -396,11 +407,18 @@ pub fn parse_orca_gcode(data: &[u8], object_count: usize) -> SchedulerResult<Sli
         .map(parse_number_list_sum)
         .transpose()?
         .unwrap_or(0.0);
+    // Orca has no change counter in its summary; it writes one `; toolchange #N` comment per
+    // tool change into the G-code body.
+    let filament_changes = text
+        .lines()
+        .filter(|line| line.contains("; toolchange #"))
+        .count() as u64;
     Ok(SliceEstimate {
         object_count,
         model_seconds: seconds,
         slicer_total_seconds: seconds,
         filament_grams,
+        filament_changes,
     })
 }
 

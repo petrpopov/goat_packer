@@ -455,6 +455,12 @@ fn adaptive_benchmarks(
             .map(|(count, estimate)| (*count, estimate.filament_grams))
             .collect::<Vec<_>>(),
     )?;
+    let changes_curve = BatchCurve::new(
+        &measured
+            .iter()
+            .map(|(count, estimate)| (*count, estimate.filament_changes as f64))
+            .collect::<Vec<_>>(),
+    )?;
 
     let measured_count = counts.len();
     println!(
@@ -481,6 +487,7 @@ fn adaptive_benchmarks(
             model_seconds: model_curve.value(count).round() as u64,
             slicer_total_seconds: seconds_curve.value(count).round() as u64,
             filament_grams: grams_curve.value(count),
+            filament_changes: changes_curve.value(count).max(0.0).round() as u64,
         };
         let mut record = record_from_estimate(
             printer,

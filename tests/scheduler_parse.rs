@@ -34,3 +34,27 @@ fn parses_mixed_hour_minute_second_duration_text() {
     assert_eq!(parse_duration_text("42m 5s").unwrap(), 2_525);
     assert_eq!(parse_duration_text("17s").unwrap(), 17);
 }
+
+#[test]
+fn parses_bambu_filament_change_count() {
+    let input = br#"{"sliced_plates": [{
+        "main_predication": 100.0, "total_predication": 120.4,
+        "filament_change_times": 227, "objects": [{}]
+    }]}"#;
+    assert_eq!(parse_bambu_result(input).unwrap().filament_changes, 227);
+}
+
+#[test]
+fn bambu_result_without_change_count_means_zero_changes() {
+    let input = br#"{"sliced_plates": [{
+        "main_predication": 100.0, "total_predication": 120.4, "objects": [{}]
+    }]}"#;
+    assert_eq!(parse_bambu_result(input).unwrap().filament_changes, 0);
+}
+
+#[test]
+fn counts_orca_toolchange_comments() {
+    let input = b"; estimated printing time (normal mode) = 1h 0m 0s\n\
+                  ; toolchange #1\nT1\n; toolchange #2\nT0\n; toolchange #3\nT1\n";
+    assert_eq!(parse_orca_gcode(input, 1).unwrap().filament_changes, 3);
+}
