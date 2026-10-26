@@ -115,7 +115,7 @@ fn run() -> Result<(), String> {
         eprintln!("patch-locked branch; sweep not implemented for it (rare for plates)");
         return Ok(());
     }
-    let mut footprint = silhouette.clone();
+    let footprint = silhouette.clone();
     if let Some(tower) = tower_keepout {
         exclusions.push(tower);
     }

@@ -440,7 +440,7 @@ mod tests {
     fn widened_purge_keepout_rejects_the_position_that_printed_through_the_line() {
         let profile = p1s_profile();
         let keepouts = profile.fixed_keepouts(1.66).unwrap();
-        let mut loops = vec![
+        let loops = vec![
             Point { x: -31.5, y: -26.5 },
             Point { x: 31.5, y: -26.5 },
             Point { x: 31.5, y: 26.5 },
