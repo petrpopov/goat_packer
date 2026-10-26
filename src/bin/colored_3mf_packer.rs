@@ -604,21 +604,25 @@ fn slice_project(
         // to re-run the exact failing command by hand.
         let report_error = slicer_report_error(&output_dir)
             .unwrap_or_else(|| "<slicer wrote no result.json>".to_owned());
+        // Rendered from the Command itself: a hand-written copy dropped `--arrange 0`, and a
+        // rerun without it lets Orca re-arrange the plate, i.e. reproduces a different slice.
+        let rerun = std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
         return Err(format!(
             "{} slicing failed ({})\n\
              slicer report: {report_error}\n\
              slicer output (tail):\n{}\n\
              full log: {}\n\
              output dir: {}\n\
-             rerun manually: {} --slice 1 --outputdir {} {}",
+             rerun manually: {rerun}",
             profile.printer_name,
             output.status,
             output_tail(&output.stdout, &output.stderr, 15),
             log_path.display(),
             output_dir.display(),
-            profile.slicer_path,
-            output_dir.display(),
-            input.display(),
         )
         .into());
     }
