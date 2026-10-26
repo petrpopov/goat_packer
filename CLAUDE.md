@@ -26,6 +26,7 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - `SLICER_KEEPOUT_SAFETY_MM = 4.0` is empirical (false "gcode path conflicts" on dense plates). Don't lower it from a single-object test.
 - `slicer_kind` is inferred from `printer_model`, not 3MF `Application` metadata (Orca forks still say BambuStudio).
 - No prime tower (`parse_prime_tower_bounds` -> `None`) is legitimate, not an error.
+- Every slicer call goes through `slicer_cli::slice_command`, which passes `--arrange 0`: without it Orca re-arranges the plate on slice (25 of 38 sliced on U1).
 
 ## `colored_3mf_packer` (`src/bin/colored_3mf_packer.rs`) invariants
 
