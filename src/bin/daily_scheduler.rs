@@ -5,7 +5,6 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use goat_packer::{
@@ -535,12 +534,9 @@ fn slice_one_count(
     subset_3mf(source, &subset, count, blank_start_gcode)?;
     let slice_dir = work_dir.join(format!("{slug}_{count}_slice"));
     fs::create_dir_all(&slice_dir)?;
-    let output = goat_packer::process_output::bounded_output(Command::new(slicer)
-        .arg("--slice")
-        .arg("1")
-        .arg("--outputdir")
-        .arg(&slice_dir)
-        .arg(&subset))?;
+    let output = goat_packer::process_output::bounded_output(
+        &mut goat_packer::slicer_cli::slice_command(slicer, &[], &slice_dir, &subset),
+    )?;
     fs::write(
         work_dir.join(format!("{slug}_{count}.log")),
         [&output.stdout[..], &output.stderr[..]].concat(),
