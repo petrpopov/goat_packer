@@ -6,7 +6,7 @@ use goat_packer::{
     plate_centre::{
         HeatZone, centre_out_order, loops_bounds, plate_centre, relocate_keepout,
         relocate_wipe_tower_in_3mf, shift_wipe_tower_settings, smallest_containing_zone,
-        tower_centre_error_mm,
+        tower_corner_error_mm,
     },
 };
 use serde_json::json;
@@ -202,9 +202,18 @@ fn smallest_zone_does_not_depend_on_profile_order() {
 // ---- tower verification --------------------------------------------------------------------
 
 #[test]
-fn tower_centre_error_is_the_centre_distance() {
+fn tower_corner_error_is_the_min_corner_distance() {
     let target = Rect::new(145.0, 135.0, 185.0, 185.0);
-    assert_close(tower_centre_error_mm(target, target), 0.0);
-    let measured = Rect::new(148.0, 139.0, 188.0, 189.0); // centre moved by (3, 4)
-    assert_close(tower_centre_error_mm(measured, target), 5.0);
+    assert_close(tower_corner_error_mm(target, target), 0.0);
+    let measured = Rect::new(148.0, 139.0, 188.0, 189.0); // corner moved by (3, 4)
+    assert_close(tower_corner_error_mm(measured, target), 5.0);
+}
+
+#[test]
+fn tower_corner_error_ignores_one_sided_growth() {
+    // wipe_tower_x/y anchors the min corner; a full plate's tower grows away from it (here 30 mm
+    // in y). The centre moves 15 mm, the anchor does not move at all.
+    let target = Rect::new(145.0, 135.0, 185.0, 185.0);
+    let grown = Rect::new(145.0, 135.0, 185.0, 215.0);
+    assert_close(tower_corner_error_mm(grown, target), 0.0);
 }

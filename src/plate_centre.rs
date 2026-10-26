@@ -19,8 +19,8 @@ use crate::{Point, Rect};
 
 const PROJECT_SETTINGS_ENTRY: &str = "Metadata/project_settings.config";
 
-/// Allowed distance between the measured final tower centre and the relocated keepout centre.
-/// A slicer that ignored the relocation leaves the tower at the source position, which is the
+/// Allowed distance between the measured final tower keepout's min corner and the relocated
+/// keepout's min corner (see `tower_corner_error_mm`). A slicer that ignored the relocation leaves the tower at the source position, which is the
 /// whole shift away (well over 100 mm on the A2L koza project); measurement noise is ~1 mm.
 pub const TOWER_TARGET_TOLERANCE_MM: f64 = 5.0;
 
@@ -211,9 +211,10 @@ pub fn smallest_containing_zone(zones: &[HeatZone], bbox: Rect) -> Option<&HeatZ
         .min_by(|a, b| rect_area(a.as_rect()).total_cmp(&rect_area(b.as_rect())))
 }
 
-/// Distance between the centres of a measured tower keepout and the target keepout.
-pub fn tower_centre_error_mm(measured: Rect, target: Rect) -> f64 {
-    let (mx, my) = rect_centre(measured);
-    let (tx, ty) = rect_centre(target);
-    (mx - tx).hypot(my - ty)
+/// Distance between the min corners `(min_x, min_y)` of a measured tower keepout and the target
+/// keepout. `wipe_tower_x/y` anchors the tower's min corner and a full plate's tower grows away
+/// from it (one-sided: more colour changes make it longer/wider, never move the anchor), so the
+/// centre would drift by half the growth and read as an ignored relocation.
+pub fn tower_corner_error_mm(measured: Rect, target: Rect) -> f64 {
+    (measured.min_x - target.min_x).hypot(measured.min_y - target.min_y)
 }

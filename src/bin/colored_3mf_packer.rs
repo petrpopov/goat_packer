@@ -19,7 +19,7 @@ use goat_packer::{
     plate_centre::{
         RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, loops_bounds, plate_centre,
         relocate_keepout, relocate_wipe_tower_in_3mf, smallest_containing_zone,
-        tower_centre_error_mm, union_rect,
+        tower_corner_error_mm, union_rect,
     },
     print_time::{
         TimeCorrection, TimeSample, WindowFit, corrected_seconds, count_for_window,
@@ -138,7 +138,8 @@ struct ColoredPackReport {
     heat_zone: Option<String>,
     /// Centre of the relocated tower keepout (centre-out window plates with a tower).
     tower_relocated_to: Option<[f64; 2]>,
-    /// Measured distance of the first final slice's tower centre from that target.
+    /// Measured distance of the first final slice's tower keepout min corner from the relocated
+    /// keepout's min corner (the corner `wipe_tower_x/y` anchors; growth is one-sided).
     tower_relocation_error_mm: Option<f64>,
     /// The probe's first-layer patch reaches past the mesh silhouette (supports/brim), so the
     /// orientation is locked to the sliced one.
@@ -625,22 +626,18 @@ fn run() -> AppResult<()> {
     // as a "grown" tower and trigger a pointless repack instead of naming the cause.
     let mut tower_relocation_error_mm = None;
     if let (Some(relocated), Some(tower)) = (relocation, final_tower) {
-        let error = tower_centre_error_mm(tower.keepout, relocated.keepout);
-        let (mx, my) = (
-            (tower.keepout.min_x + tower.keepout.max_x) * 0.5,
-            (tower.keepout.min_y + tower.keepout.max_y) * 0.5,
-        );
+        let error = tower_corner_error_mm(tower.keepout, relocated.keepout);
+        let (mx, my) = (tower.keepout.min_x, tower.keepout.min_y);
         if error > TOWER_TARGET_TOLERANCE_MM {
             return Err(format!(
-                "slicer ignored the relocated wipe tower (wipe_tower_x/y): final tower centre \
+                "slicer ignored the relocated wipe tower (wipe_tower_x/y): final tower corner \
                  ({mx:.1}, {my:.1}) is {error:.1} mm from the target ({:.1}, {:.1})",
-                (relocated.keepout.min_x + relocated.keepout.max_x) * 0.5,
-                (relocated.keepout.min_y + relocated.keepout.max_y) * 0.5,
+                relocated.keepout.min_x, relocated.keepout.min_y,
             )
             .into());
         }
         println!(
-            "relocated prime tower confirmed in the final slice: centre ({mx:.1}, {my:.1}), \
+            "relocated prime tower confirmed in the final slice: corner ({mx:.1}, {my:.1}), \
              {error:.1} mm from the target"
         );
         tower_relocation_error_mm = Some(error);

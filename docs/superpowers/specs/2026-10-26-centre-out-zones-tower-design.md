@@ -31,7 +31,9 @@ farthest object first.
    slices (the CLI copy and the output 3MF); other array entries untouched. The reserved keepout
    is the probe keepout shifted by the same vector, clamped inside the usable bed (clamp shrinks
    the shift, never the keepout). Position-independent tower size makes a re-probe unnecessary;
-   the final slice verifies it: if the measured tower centre is more than 5 mm from the target,
+   the final slice verifies it: if the measured tower keepout's min corner (the corner
+   `wipe_tower_x/y` anchors; a grown tower grows away from it, so centres would drift by half the
+   growth) is more than 5 mm from the target keepout's min corner,
    error `slicer ignored the relocated wipe tower (wipe_tower_x/y)` — this also catches the
    `different_settings_to_system` reset trap.
    This is the one documented exception to "project_settings.config copied byte-for-byte";
