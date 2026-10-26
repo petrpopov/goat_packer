@@ -243,10 +243,27 @@ fn fit_window(
             )
             .into());
         }
-        // Slope through the probe and the plate just measured: it overshot because the
-        // first line was too flat here, so this local slope sizes the step better.
-        let slope = (sample.corrected_s - probe.corrected_s) / (count - probe.count) as f64;
-        count = shrink_count(count, sample.corrected_s, window_s, slope);
+        count = shrink_count(count, sample.corrected_s, window_s, shrink_slope(probe, max, sample));
+    }
+}
+
+/// Seconds per object for the shrink step after a window slice overshot. The secant through
+/// that window plate and the max plate, because those two were sliced with identical settings
+/// (both from the assembled output: relocated tower, nozzle-clean wipe), while the probe is
+/// sliced from the source (tower at the source corner, so every colour change travels
+/// differently). Any per-plate offset the probe misses cancels in the secant. The probe line is
+/// only the fallback when no such pair exists (the sample has the max plate's count).
+fn shrink_slope(probe: TimeSample, max: TimeSample, sample: TimeSample) -> f64 {
+    let secant = |a: TimeSample, b: TimeSample| {
+        (a.corrected_s - b.corrected_s) / (a.count as f64 - b.count as f64)
+    };
+    if sample.count != max.count {
+        secant(sample, max)
+    } else if sample.count != probe.count {
+        secant(sample, probe)
+    } else {
+        // No slope information at all; `shrink_count` steps by one on a non-positive slope.
+        0.0
     }
 }
 
@@ -353,8 +370,22 @@ fn run() -> AppResult<()> {
     // standalone STL's keyring-hole position did not match the embedded mesh's.
     let footprint_stl = args.work_dir.join("embedded_source.stl");
     derive_embedded_stl(&args.source_3mf, &footprint_stl)?;
+    // With --nozzle-clean the probe slices a copy carrying the same wipe injection as every
+    // final plate, so its time (and tower) is comparable to theirs; the wipe block is gated on
+    // `layer_num > 0`, so the first-layer patch parsed below is unaffected. The probe still
+    // prints the tower at the source position (the relocation is decided from this very
+    // slice); the window's shrink step uses the window-vs-max secant, which cancels that.
+    let probe_project = match &args.nozzle_clean {
+        Some(spec) => {
+            let copy = args.work_dir.join("probe_source.3mf");
+            inject_nozzle_clean(&profile, &args.source_3mf, &copy, spec)
+                .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
+            copy
+        }
+        None => args.source_3mf.clone(),
+    };
     eprintln!("probing prime tower position (slicing 1 object)...");
-    let probe = slice_project(&profile, &args.source_3mf, 1, &args.work_dir, "probe")?;
+    let probe = slice_project(&profile, &probe_project, 1, &args.work_dir, "probe")?;
     // Spec step 1: with a window, a single object that already overruns it fails here, before
     // the expensive packing.
     let probe_sample = match window_s {
@@ -1091,8 +1122,8 @@ fn build_colored_project(
         eprintln!("wipe tower relocated: wipe_tower_x/y[0] = {x:.3}, {y:.3}");
     }
     // Applied after assembly (both here and on the single repack path): the CLI copies sliced
-    // for probes/final checks derive from this same file, so their timings and tower state
-    // reflect the real, wipe-carrying G-code.
+    // for final/window checks derive from this same file, so their timings and tower state
+    // reflect the real, wipe-carrying G-code (the probe gets its own injected copy in `run`).
     if let Some(spec) = &args.nozzle_clean {
         inject_nozzle_clean(profile, &args.output, &args.output, spec)
             .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
@@ -1901,19 +1932,33 @@ mod tests {
     }
 
     #[test]
-    fn fit_window_shrinks_after_an_overshoot() {
-        // Real plates are slower than the line: 1200 s per object beyond the first.
+    fn fit_window_shrinks_along_the_secant_through_the_window_plate_and_the_max_plate() {
+        // The probe is not comparable to window plates (no relocated tower, possibly no
+        // nozzle-clean wipe): real plates lie on the line through (15, 17800) and (41, 41000),
+        // i.e. 892.3 s per object, well off the probe line.
+        let real = |n: usize| 41_000.0 - (41_000.0 - 17_800.0) / 26.0 * (41 - n) as f64;
         let mut sliced = Vec::new();
         let fit = fit_window(sample(1, 1_000.0), sample(41, 41_000.0), 15_500.0, |n| {
             sliced.push(n);
-            Ok(sample(n, 1_000.0 + 1_200.0 * (n as f64 - 1.0)))
+            Ok(sample(n, real(n)))
         })
         .unwrap()
         .unwrap();
-        // 15 -> 17800 s, excess 2300 over slope 1200 -> step 2 -> 13 (15400 s) fits.
-        assert_eq!(sliced, vec![15, 13]);
-        assert_eq!(fit.count, 13);
-        assert_eq!(fit.samples.last().unwrap().count, 13);
+        // 15 -> 17800 s, excess 2300 over the secant slope 892.3 -> step 3 -> 12 (15123 s)
+        // fits. The probe slope (17800 - 1000) / 14 = 1200 would step 2 to 13 (16015 s) and
+        // overshoot again.
+        assert_eq!(sliced, vec![15, 12]);
+        assert_eq!(fit.count, 12);
+        assert_eq!(fit.samples.last().unwrap().count, 12);
+    }
+
+    #[test]
+    fn shrink_slope_prefers_the_secant_and_falls_back_to_the_probe_line() {
+        let probe = sample(1, 1_000.0);
+        let max = sample(41, 41_000.0);
+        assert!((shrink_slope(probe, max, sample(15, 17_800.0)) - 23_200.0 / 26.0).abs() < 1e-9);
+        // No comparable pair (the sample is the max plate itself): the probe line.
+        assert!((shrink_slope(probe, max, sample(41, 41_000.0)) - 1_000.0).abs() < 1e-9);
     }
 
     #[test]
