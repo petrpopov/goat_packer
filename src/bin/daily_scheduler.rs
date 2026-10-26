@@ -9,6 +9,7 @@ use std::{
 
 use goat_packer::{
     colored_packer::{PrinterProfile, load_printer_profile},
+    print_time::{TimeCorrection, corrected_seconds, slicer_change_seconds},
     scheduler::{
         BatchCurve, BatchTiming, OptimizedSchedule, PlateSpec, ScheduleConfig, SliceEstimate,
         build_schedule_plates_3mf, least_squares_line, next_refinement_count, object_count_3mf,
@@ -38,6 +39,29 @@ struct PrinterInput {
     preparation_minutes: u64,
     preparation_sweep_minutes: Vec<u64>,
     plates_output: Option<PathBuf>,
+    /// `change-s=` override of the profile's `filament_change_seconds`.
+    change_seconds: Option<f64>,
+}
+
+/// Inputs of the AMS change correction for one printer: what the source project's slicer
+/// settings assume per change, and the real duration (`None` = no correction).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ChangeCorrection {
+    slicer_change_s: f64,
+    real_change_s: Option<f64>,
+}
+
+/// Real change duration to use for `printer`: the `change-s=` key wins (and, like the packer's
+/// `--change-seconds`, implies the correction); otherwise the profile value when
+/// `--ams-correction` is on. A profile without the value (tool changer) never corrects.
+fn effective_change_seconds(printer: &PrinterInput, ams_correction: bool) -> Option<f64> {
+    printer.change_seconds.or_else(|| {
+        if ams_correction {
+            printer.profile.filament_change_seconds
+        } else {
+            None
+        }
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +83,7 @@ struct Args {
     horizon_end: u64,
     bench_mode: BenchMode,
     reuse_benchmarks: bool,
+    ams_correction: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -85,6 +110,15 @@ struct BenchmarkRecord {
     /// measured, which is what the default encodes.
     #[serde(default = "measured_origin")]
     origin: BenchmarkOrigin,
+    /// Filament changes in the slice (interpolated rows: interpolated count). Absent in reports
+    /// written before the AMS correction existed; 0 means no correction can be derived.
+    #[serde(default)]
+    filament_changes: u64,
+    /// `changes * (real - slicer assumption)`, already included in `job_seconds` and in the
+    /// timing the optimiser sees; `slicer_total_seconds` stays the raw slicer value. Signed: a
+    /// project assuming a slower AMS than the real one gets a negative correction.
+    #[serde(default)]
+    change_correction_seconds: i64,
 }
 
 fn measured_origin() -> BenchmarkOrigin {
@@ -155,18 +189,46 @@ fn run() -> AppResult<()> {
         counts.push(count);
     }
 
+    // Read once per printer: subsets copy project_settings.config, so the source's per-change
+    // assumption holds for every benchmark slice.
+    let mut changes = Vec::with_capacity(args.printers.len());
+    for printer in &args.printers {
+        let change = ChangeCorrection {
+            slicer_change_s: slicer_change_seconds(&source_project_settings(&printer.source)?),
+            real_change_s: effective_change_seconds(printer, args.ams_correction),
+        };
+        if args.ams_correction && change.real_change_s.is_none() {
+            println!(
+                "{}: profile has no filament_change_seconds (tool changer); no AMS correction",
+                printer.profile.printer_name
+            );
+        }
+        changes.push(change);
+    }
+
     let mut benchmarks = if args.reuse_benchmarks {
         let report_path = args.output_report.as_deref().ok_or(
             "--reuse-benchmarks requires --output-report <path> to read prior benchmarks from",
         )?;
         let previous: PlannerReport = serde_json::from_slice(&fs::read(report_path)?)?;
         println!("Reusing {} prior benchmark rows", previous.benchmarks.len());
-        previous.benchmarks
+        let mut benchmarks = previous.benchmarks;
+        // The correction is a policy over measured change counts, not a measurement: re-derive
+        // it so reused rows follow this run's --ams-correction/change-s settings.
+        for (printer, change) in args.printers.iter().zip(&changes) {
+            for record in benchmarks
+                .iter_mut()
+                .filter(|record| record.printer == printer.profile.printer_name)
+            {
+                apply_change_correction(record, *change);
+            }
+        }
+        benchmarks
     } else {
         Vec::new()
     };
     if !args.reuse_benchmarks {
-        for (printer, &count) in args.printers.iter().zip(&counts) {
+        for ((printer, &count), change) in args.printers.iter().zip(&counts).zip(&changes) {
             let hash = sha256_file(&printer.source)?;
             benchmarks.extend(benchmark_printer(
                 &printer.profile.printer_name,
@@ -177,6 +239,7 @@ fn run() -> AppResult<()> {
                 printer.profile.slicer_kind.as_str(),
                 printer.profile.blank_start_gcode_for_cli,
                 printer.preparation_minutes * 60,
+                *change,
                 &hash,
                 args.bench_mode,
                 work_dir,
@@ -229,10 +292,12 @@ fn run() -> AppResult<()> {
                 BenchMode::Adaptive => "adaptive",
                 BenchMode::Full => "full",
             },
-            "printer_preparation_minutes": args.printers.iter().map(|printer| serde_json::json!({
+            "printer_preparation_minutes": args.printers.iter().zip(&changes).map(|(printer, change)| serde_json::json!({
                 "printer": printer.profile.printer_name,
                 "preparation_minutes": printer.preparation_minutes,
                 "preparation_sweep_minutes": printer.preparation_sweep_minutes,
+                "slicer_change_seconds": change.slicer_change_s,
+                "real_change_seconds": change.real_change_s,
             })).collect::<Vec<_>>(),
             "schedule_semantics": "Day jobs and their final turnaround must finish by the night start. Exactly one final overnight job starts at night start; no jobs start during the night. The overnight job must finish by the horizon end (next day)."
         }),
@@ -322,6 +387,7 @@ fn benchmark_printer(
     slicer_kind: &str,
     blank_start_gcode: bool,
     preparation_seconds: u64,
+    change: ChangeCorrection,
     source_hash: &str,
     bench_mode: BenchMode,
     work_dir: &Path,
@@ -339,6 +405,7 @@ fn benchmark_printer(
                     count,
                     estimate,
                     preparation_seconds,
+                    change,
                     source,
                     source_hash,
                     slicer,
@@ -355,6 +422,7 @@ fn benchmark_printer(
             slicer_kind,
             blank_start_gcode,
             preparation_seconds,
+            change,
             source_hash,
             work_dir,
         ),
@@ -379,6 +447,7 @@ fn adaptive_benchmarks(
     slicer_kind: &str,
     blank_start_gcode: bool,
     preparation_seconds: u64,
+    change: ChangeCorrection,
     source_hash: &str,
     work_dir: &Path,
 ) -> AppResult<Vec<BenchmarkRecord>> {
@@ -476,6 +545,7 @@ fn adaptive_benchmarks(
                 count,
                 estimate.clone(),
                 preparation_seconds,
+                change,
                 source,
                 source_hash,
                 slicer,
@@ -494,6 +564,7 @@ fn adaptive_benchmarks(
             count,
             interpolated,
             preparation_seconds,
+            change,
             source,
             source_hash,
             slicer,
@@ -572,36 +643,68 @@ fn slice_one_count(
     Ok(estimate)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_from_estimate(
     printer: &str,
     count: usize,
     estimate: SliceEstimate,
     preparation_seconds: u64,
+    change: ChangeCorrection,
     source: &Path,
     source_hash: &str,
     slicer: &Path,
 ) -> BenchmarkRecord {
-    let job_seconds = estimate.slicer_total_seconds + preparation_seconds;
-    BenchmarkRecord {
+    let mut record = BenchmarkRecord {
         printer: printer.to_owned(),
         batch_size: count,
         model_seconds: estimate.model_seconds,
         slicer_total_seconds: estimate.slicer_total_seconds,
         preparation_seconds,
-        job_seconds,
+        job_seconds: 0,
         filament_grams: estimate.filament_grams,
-        units_per_job_hour: count as f64 / (job_seconds as f64 / 3600.0),
+        units_per_job_hour: 0.0,
         source_3mf: source.display().to_string(),
         source_sha256: source_hash.to_owned(),
         slicer: slicer.display().to_string(),
         origin: BenchmarkOrigin::Measured,
-    }
+        filament_changes: estimate.filament_changes,
+        change_correction_seconds: 0,
+    };
+    apply_change_correction(&mut record, change);
+    record
+}
+
+/// (Re)computes the change correction of `record` and everything derived from it. Margin and
+/// prep stay out of `corrected_seconds` here: preparation is its own column the sensitivity
+/// sweep varies, and the scheduler has no margin.
+fn apply_change_correction(record: &mut BenchmarkRecord, change: ChangeCorrection) {
+    let raw = record.slicer_total_seconds as f64;
+    let corrected = corrected_seconds(
+        raw,
+        record.filament_changes,
+        change.slicer_change_s,
+        &TimeCorrection {
+            real_change_s: change.real_change_s,
+            prep_s: 0.0,
+            margin: 0.0,
+        },
+    );
+    record.change_correction_seconds = (corrected - raw).round() as i64;
+    record.job_seconds = corrected_slicer_seconds(record) + record.preparation_seconds;
+    record.units_per_job_hour = record.batch_size as f64 / (record.job_seconds as f64 / 3600.0);
+}
+
+/// Slicer time the optimiser must plan with: the raw estimate plus the change correction.
+fn corrected_slicer_seconds(record: &BenchmarkRecord) -> u64 {
+    record
+        .slicer_total_seconds
+        .saturating_add_signed(record.change_correction_seconds)
 }
 
 fn to_timing(record: &BenchmarkRecord) -> BatchTiming {
     BatchTiming::new(
         record.batch_size,
-        record.slicer_total_seconds,
+        corrected_slicer_seconds(record),
         record.preparation_seconds,
         record.filament_grams,
     )
@@ -625,7 +728,7 @@ fn build_sensitivity(
                     .map(|record| {
                         BatchTiming::new(
                             record.batch_size,
-                            record.slicer_total_seconds,
+                            corrected_slicer_seconds(record),
                             preparation * 60,
                             record.filament_grams,
                         )
@@ -797,6 +900,7 @@ fn parse_printer_spec(spec: &str) -> AppResult<PrinterInput> {
     let mut preparation_minutes = 0u64;
     let mut preparation_sweep = None;
     let mut plates_output = None;
+    let mut change_seconds = None;
     for field in spec.split(',') {
         let (key, value) = field
             .split_once('=')
@@ -816,6 +920,15 @@ fn parse_printer_spec(spec: &str) -> AppResult<PrinterInput> {
                 )
             }
             "plates-3mf" => plates_output = Some(PathBuf::from(value)),
+            "change-s" => {
+                let seconds: f64 = value
+                    .parse()
+                    .map_err(|_| format!("bad change-s value: {value}"))?;
+                if !seconds.is_finite() || !(0.0..=600.0).contains(&seconds) {
+                    return Err(format!("change-s must be in [0, 600]; got {value}").into());
+                }
+                change_seconds = Some(seconds);
+            }
             other => return Err(format!("unknown --printer field: {other}").into()),
         }
     }
@@ -832,7 +945,18 @@ fn parse_printer_spec(spec: &str) -> AppResult<PrinterInput> {
         preparation_minutes,
         preparation_sweep_minutes,
         plates_output,
+        change_seconds,
     })
+}
+
+fn source_project_settings(source: &Path) -> AppResult<serde_json::Value> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(source)?)?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut archive.by_name("Metadata/project_settings.config")?,
+        &mut bytes,
+    )?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 /// Parses `HH:MM` into seconds since the start of the planning day. Hours may run past 24 so the
@@ -863,11 +987,17 @@ fn parse_args() -> AppResult<Args> {
     let mut horizon_end = 34 * 3600u64;
     let mut bench_mode = BenchMode::Adaptive;
     let mut reuse_benchmarks = false;
+    let mut ams_correction = false;
     let cli: Vec<String> = std::env::args().skip(1).collect();
     let mut index = 0;
     while index < cli.len() {
         if cli[index] == "--reuse-benchmarks" {
             reuse_benchmarks = true;
+            index += 1;
+            continue;
+        }
+        if cli[index] == "--ams-correction" {
+            ams_correction = true;
             index += 1;
             continue;
         }
@@ -931,6 +1061,7 @@ fn parse_args() -> AppResult<Args> {
         horizon_end,
         bench_mode,
         reuse_benchmarks,
+        ams_correction,
     })
 }
 
@@ -1088,5 +1219,119 @@ mod tests {
         let spec = format!("profile={}", profile_path.display());
         let error = parse_printer_spec(&spec).unwrap_err();
         assert!(error.to_string().contains("source"));
+    }
+
+    fn write_profile(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, fs::read(Path::new("profiles").join(name)).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn parse_printer_spec_reads_change_seconds_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile_path = write_profile(dir.path(), "p1s.json");
+        let plain = parse_printer_spec(&format!("profile={},source=a.3mf", profile_path.display()))
+            .unwrap();
+        assert_eq!(plain.change_seconds, None);
+        let spec = format!("profile={},source=a.3mf,change-s=80", profile_path.display());
+        assert_eq!(parse_printer_spec(&spec).unwrap().change_seconds, Some(80.0));
+        let bad = format!("profile={},source=a.3mf,change-s=-5", profile_path.display());
+        assert!(parse_printer_spec(&bad).is_err());
+    }
+
+    #[test]
+    fn effective_change_seconds_follows_flag_key_and_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile_path = write_profile(dir.path(), "p1s.json");
+        let plain = parse_printer_spec(&format!("profile={},source=a.3mf", profile_path.display()))
+            .unwrap();
+        assert_eq!(effective_change_seconds(&plain, false), None);
+        assert_eq!(effective_change_seconds(&plain, true), Some(91.0));
+        let keyed = parse_printer_spec(&format!(
+            "profile={},source=a.3mf,change-s=70",
+            profile_path.display()
+        ))
+        .unwrap();
+        assert_eq!(effective_change_seconds(&keyed, true), Some(70.0));
+        // The explicit key implies the correction, like the packer's --change-seconds.
+        assert_eq!(effective_change_seconds(&keyed, false), Some(70.0));
+        let u1 = write_profile(dir.path(), "snapmaker_u1.json");
+        let tool_changer =
+            parse_printer_spec(&format!("profile={},source=a.3mf", u1.display())).unwrap();
+        assert_eq!(effective_change_seconds(&tool_changer, true), None);
+    }
+
+    fn estimate(changes: u64) -> SliceEstimate {
+        SliceEstimate {
+            object_count: 5,
+            model_seconds: 9_000,
+            slicer_total_seconds: 10_000,
+            filament_grams: 50.0,
+            filament_changes: changes,
+        }
+    }
+
+    fn record(changes: u64, change: ChangeCorrection) -> BenchmarkRecord {
+        record_from_estimate(
+            "P",
+            5,
+            estimate(changes),
+            600,
+            change,
+            Path::new("a.3mf"),
+            "hash",
+            Path::new("slicer"),
+        )
+    }
+
+    #[test]
+    fn record_adds_change_correction_to_job_and_timing() {
+        let change = ChangeCorrection { slicer_change_s: 23.0, real_change_s: Some(95.0) };
+        let record = record(100, change);
+        assert_eq!(record.filament_changes, 100);
+        assert_eq!(record.change_correction_seconds, 7_200);
+        assert_eq!(record.slicer_total_seconds, 10_000, "raw slicer value is kept");
+        assert_eq!(record.job_seconds, 10_000 + 7_200 + 600);
+        let timing = to_timing(&record);
+        assert_eq!(timing.slicer_seconds, 17_200);
+        assert_eq!(timing.job_seconds(), 17_800);
+    }
+
+    #[test]
+    fn record_without_correction_is_unchanged_and_negative_correction_applies() {
+        let off = record(100, ChangeCorrection { slicer_change_s: 23.0, real_change_s: None });
+        assert_eq!(off.change_correction_seconds, 0);
+        assert_eq!(off.job_seconds, 10_600);
+        let faster = record(10, ChangeCorrection { slicer_change_s: 57.0, real_change_s: Some(30.0) });
+        assert_eq!(faster.change_correction_seconds, -270);
+        assert_eq!(faster.job_seconds, 10_330);
+        assert_eq!(to_timing(&faster).slicer_seconds, 9_730);
+    }
+
+    #[test]
+    fn reused_records_are_recorrected_with_current_settings() {
+        let mut reused = record(100, ChangeCorrection { slicer_change_s: 23.0, real_change_s: None });
+        apply_change_correction(
+            &mut reused,
+            ChangeCorrection { slicer_change_s: 23.0, real_change_s: Some(95.0) },
+        );
+        assert_eq!(reused.change_correction_seconds, 7_200);
+        assert_eq!(reused.job_seconds, 17_800);
+    }
+
+    #[test]
+    fn old_benchmark_records_without_change_fields_still_load() {
+        let old = r#"{
+            "printer": "Bambu Lab P1S", "batch_size": 3, "model_seconds": 100,
+            "slicer_total_seconds": 120, "preparation_seconds": 60, "job_seconds": 180,
+            "filament_grams": 1.5, "units_per_job_hour": 60.0, "source_3mf": "a.3mf",
+            "source_sha256": "x", "slicer": "s"
+        }"#;
+        let record: BenchmarkRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(record.filament_changes, 0);
+        assert_eq!(record.change_correction_seconds, 0);
+        assert_eq!(record.origin, BenchmarkOrigin::Measured);
+        assert_eq!(to_timing(&record).slicer_seconds, 120);
     }
 }
