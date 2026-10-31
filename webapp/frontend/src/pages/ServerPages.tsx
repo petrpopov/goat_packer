@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { ReactNode, FormEvent } from 'react';
+import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, serverApi } from '@/api/http';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 import { useJob } from '@/hooks/useJob';
+import { useLinkHandler } from '@/hooks/useLinkHandler';
 import AmsCalculator from '@/components/AmsCalculator';
 import JobCard from '@/components/JobCard';
 import { calibrationValues } from '@/utils/calibration';
@@ -52,103 +53,14 @@ export function ServerGate({ children }: { children: ReactNode }) {
     );
   return <>{children}</>;
 }
-export function AccountPage() {
-  const session = useSession();
-  const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login');
-  const [login, setLogin] = useState('');
-  const [password, setPassword] = useState('');
-  const [token, setToken] = useState('');
-  const mutation = useMutation({
-    mutationFn: async () => {
-      await serverApi.post(`/auth/${mode}`, mode === 'reset' ? { token, password } : { login, password });
-      setPassword('');
-      location.reload();
-    },
-    onError: (e) => pushToast(e.message, 'error'),
-  });
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    mutation.mutate();
-  };
-  return (
-    <div className="page">
-      <h1 className="page-title">Аккаунт</h1>
-      <section className="card">
-        <p>
-          {session.data?.kind === 'GUEST'
-            ? 'Гостевой доступ: результаты хранятся 24 часа после завершения. Регистрация сохранит ваши текущие задачи.'
-            : `Вы вошли как ${session.data?.login}`}
-        </p>
-        {session.data?.kind === 'USER' ? (
-          <button className="btn" onClick={() => void serverApi.post('/auth/logout').then(() => location.reload())}>
-            Выйти
-          </button>
-        ) : (
-          <form className="stack" onSubmit={submit}>
-            <div className="form-actions">
-              {(['login', 'register', 'reset'] as const).map((m) => (
-                <button
-                  type="button"
-                  className={`btn ${mode === m ? 'btn-primary' : ''}`}
-                  key={m}
-                  onClick={() => setMode(m)}
-                >
-                  {m === 'login' ? 'Войти' : m === 'register' ? 'Регистрация' : 'Сброс пароля'}
-                </button>
-              ))}
-            </div>
-            {mode === 'reset' ? (
-              <label className="field">
-                Одноразовый токен от администратора
-                <input
-                  className="input"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  required
-                  autoComplete="off"
-                />
-              </label>
-            ) : (
-              <label className="field">
-                Имя пользователя
-                <input
-                  className="input"
-                  value={login}
-                  onChange={(e) => setLogin(e.target.value)}
-                  required
-                  minLength={3}
-                  maxLength={120}
-                  autoComplete="username"
-                />
-              </label>
-            )}
-            <label className="field">
-              Пароль (минимум 12 символов)
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={12}
-                maxLength={72}
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              />
-            </label>
-            <button className="btn btn-primary" disabled={mutation.isPending}>
-              Продолжить
-            </button>
-          </form>
-        )}
-      </section>
-    </div>
-  );
-}
 export function HistoryPage() {
   const [page, setPage] = useState(0);
-  const [selected, setSelected] = useState<string | null>(
-    () => /^\/jobs\/([a-z0-9-]+)$/.exec(location.pathname)?.[1] ?? null
-  );
+  // Выбранная задача — это URL (/jobs/:id): ссылку можно скопировать, «назад» закрывает карточку.
+  const route = useUiStore((s) => s.route);
+  const navigate = useUiStore((s) => s.navigate);
+  const selected = route.name === 'job' ? route.id : null;
+  const setSelected = (id: string | null) => navigate(id ? `/jobs/${id}` : '/jobs');
+  const onLink = useLinkHandler();
   const list = useQuery({
     queryKey: ['history', page],
     queryFn: () => serverApi.get<{ items: JobStatusResponse[]; total: number }>(`/jobs?page=${page}`),
@@ -174,7 +86,6 @@ export function HistoryPage() {
     },
     onError: (e) => pushToast(e.message, 'error'),
   });
-  const setTab = useUiStore((s) => s.setTab);
   const send = useUiStore((s) => s.sendToSchedule);
   return (
     <div className="page">
@@ -195,7 +106,15 @@ export function HistoryPage() {
             <tbody>
               {list.data?.items.map((j) => (
                 <tr key={j.jobId}>
-                  <td>{j.originalName ?? j.jobId}</td>
+                  <td>
+                    <a
+                      className="link"
+                      href={`/jobs/${j.jobId}`}
+                      onClick={onLink}
+                    >
+                      {j.originalName ?? <span className="mono">{j.jobId.slice(0, 8)}</span>}
+                    </a>
+                  </td>
                   <td>{j.kind}</td>
                   <td>
                     <StatusPill status={j.status} />
@@ -225,7 +144,7 @@ export function HistoryPage() {
         {!list.data?.items.length && (
           <p>
             Пока нет задач.{' '}
-            <button className="btn" onClick={() => setTab('pack')}>
+            <button className="btn" onClick={() => navigate('/pack')}>
               Упаковать файл
             </button>
           </p>
