@@ -154,4 +154,6 @@ data class JobStatusDto(
     val calibration: CalibrationInfoDto? = null,
     /** Этап упаковки; null — не pack-джоб или этап ещё не начался. */
     val stage: JobStageDto? = null,
+    /** Последняя раскладка пакера (layout-событие как есть); есть и после успеха. null — раскладки нет. */
+    val layout: com.fasterxml.jackson.databind.JsonNode? = null,
 )

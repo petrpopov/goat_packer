@@ -34,6 +34,10 @@ echo "packing (2000 attempts, seed 20270831)..."
 echo "pack_footprint: 240/2000 attempts, best so far: 12 objects"
 echo "pack_footprint: 2000/2000 attempts, best so far: 30 objects"
 echo "pack_footprint: best layout: 30 objects (found at attempt 1800, 2000/2000 attempts run)"
+# layout-событие (как у настоящего пакера) — только при GOAT_LOG_FORMAT=json, в stderr.
+if [[ "${GOAT_LOG_FORMAT:-}" == "json" ]]; then
+  echo '{"event":"layout","source":"pack","objects":2,"bed":[0,0,256,256],"keepouts":[],"tower":null,"footprint":[[[-5,-5],[5,-5],[5,5],[-5,5],[-5,-5]]],"placements":[[20,20,0],[40,20,90]]}' >&2
+fi
 echo "packed 30 objects; assembling 3MF..."
 echo "slicing final plate (30 objects)..."
 

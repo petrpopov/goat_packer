@@ -39,7 +39,9 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
         if(props.runnerMode=="local") {
             check(props.allowLocalRunner && !props.production) {"Local runner forbidden in production"}
             return ProcessBuilder(command).directory(job.directory.toFile()).redirectErrorStream(true)
-                .also {it.environment()["RAYON_NUM_THREADS"]=props.workerCpus.toInt().coerceAtLeast(1).toString()}.start()
+                .also {it.environment()["RAYON_NUM_THREADS"]=props.workerCpus.toInt().coerceAtLeast(1).toString()
+                    // Как docker-ветка (--env GOAT_LOG_FORMAT=json): stage/layout-события нужны трекеру.
+                    it.environment()["GOAT_LOG_FORMAT"]="json"}.start()
         }
         val kind=json.readTree(job.directory.resolve("profile.json").toFile()).path("slicer_kind").asText()
         val ref=job.runtimeImage ?: image(kind);check(ref.isNotBlank())

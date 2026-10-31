@@ -3,7 +3,8 @@ package com.goatpacker.web.job
 import java.io.InputStream
 
 object BoundedLines {
-    fun read(input:InputStream,limit:Int=8192,consume:(String)->Unit) {
+    // 64 КБ: layout-строка пакера по построению ≤ 16 000 байт и не должна обрезаться; предел всё ещё бережёт память.
+    fun read(input:InputStream,limit:Int=65536,consume:(String)->Unit) {
         input.reader(Charsets.UTF_8).use { reader ->
             val buffer=CharArray(4096);val line=StringBuilder();var truncated=false
             while(true) {

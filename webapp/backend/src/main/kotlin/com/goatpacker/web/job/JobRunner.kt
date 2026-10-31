@@ -238,6 +238,8 @@ class JobRunner(
                 (nativeLauncher?.getIfAvailable()?.start(job, command) ?: ProcessBuilder(command)
                     .redirectErrorStream(true)
                     .directory(job.directory.toFile())
+                    // JSON-события (stage, layout) — тот же протокол, что в серверном/docker-режиме.
+                    .also { it.environment()["GOAT_LOG_FORMAT"] = "json" }
                     .start()).also {
                         job.process = it
                         job.update { snap -> snap.copy(status = JobStatus.RUNNING) }
@@ -257,13 +259,16 @@ class JobRunner(
                         writer.write(line);writer.newLine();writer.flush();written += line.toByteArray(StandardCharsets.UTF_8).size + 1
                     }
                     val event = tracker.onLine(line)
-                    if (line.contains("event=") || line.contains("\"event\"")) log.info("jobId={} component=cli message={}", job.id, line.take(8192))
+                    // layout — до 16 КБ на строку: в лог только факт, иначе он забивается контурами.
+                    if (line.contains("\"event\":\"layout\"")) log.info("jobId={} component=cli event=layout bytes={}", job.id, line.length)
+                    else if (line.contains("event=") || line.contains("\"event\"")) log.info("jobId={} component=cli message={}", job.id, line.take(8192))
                     job.update {
                         it.copy(
                             phase = event.phase,
                             progressPercent = event.progressPercent,
                             phaseMessage = event.phaseMessage.ifBlank { it.phaseMessage },
                             stage = event.stage,
+                            layout = event.layout ?: it.layout,
                         )
                     }
                 }

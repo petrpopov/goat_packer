@@ -76,6 +76,9 @@ class PackJobFlowTest(
         assertTrue(body["pack"]["time"].path("windowHours").let { it.isMissingNode || it.isNull }, body["pack"].toString())
         assertEquals(79200.0, body["pack"]["time"]["correctedSeconds"].asDouble(), 1e-9)
         assertEquals(30, body["pack"]["time"]["fullCount"].asInt())
+        // Раскладка пакера (layout-событие) видна и после успеха: по ней рисуется итоговый стол.
+        assertEquals(2, body["layout"]["placements"].size(), "раскладка видна и после успеха")
+        assertEquals("pack", body["layout"]["source"].asText())
         val args = packerArgs(jobId)
         for (flag in listOf("--time-window-hours", "--ams-correction", "--change-seconds", "--time-margin-pct", "--support-overlap-mm")) {
             assertTrue(flag !in args, "$flag не задан пользователем: $args")

@@ -77,6 +77,8 @@ data class JobSnapshot(
     val error: String?,
     val finishedAt: OffsetDateTime?,
     val stage: JobStage? = null,
+    /** Последнее layout-событие пакера (сырой JSON); живёт и после успеха — по нему рисуется стол. */
+    val layout: String? = null,
 )
 
 /** Результат pack-джоба, распарсенный из verification.json после успеха. */

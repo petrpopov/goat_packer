@@ -33,6 +33,7 @@ class JobService(
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(JobService::class.java)
+        private val layoutMapper = com.fasterxml.jackson.databind.ObjectMapper()
 
         private val MEDIA_TYPES = mapOf(
             "3mf" to MediaType.APPLICATION_OCTET_STREAM,
@@ -75,6 +76,8 @@ class JobService(
             progressPercent = snap.progressPercent,
             phaseMessage = snap.phaseMessage,
             stage = snap.stage?.takeIf { snap.status == JobStatus.RUNNING }?.let { com.goatpacker.web.dto.JobStageDto.of(it) },
+            // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
+            layout = snap.layout?.let { runCatching { layoutMapper.readTree(it) }.getOrNull() },
             error = snap.error,
             createdAt = job.createdAt,
             finishedAt = snap.finishedAt,
