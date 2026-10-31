@@ -115,8 +115,10 @@ pub fn expected_reslice_seconds(seconds: f64, measured_objects: usize, objects: 
 }
 
 
-/// Upper bound for one `layout` line. The webapp polls job status every second and the backend
-/// reads packer output with a 64 KiB line cap, so the footprint is simplified until it fits.
+/// Size the packer aims for with one `layout` line. The webapp polls job status every second and
+/// the backend reads packer output with a 64 KiB line cap, so the footprint is simplified until
+/// it fits; with hundreds of objects the placements alone can still exceed it. A line over the
+/// cap is truncated by the backend and then ignored (unparseable), which is harmless.
 pub const LAYOUT_EVENT_MAX_BYTES: usize = 16_000;
 
 /// Which pass produced the layout the webapp should draw.
@@ -140,12 +142,15 @@ impl LayoutSource {
     }
 }
 
-fn round_to(value: f64, step: f64) -> f64 {
-    (value / step).round() * step
+/// Rounds to `decimals` places through an integer scale: `(v / step).round() * step` leaves float
+/// noise in the JSON (`143.67000000000002`).
+fn round_to(value: f64, decimals: i32) -> f64 {
+    let scale = 10f64.powi(decimals);
+    (value * scale).round() / scale
 }
 
 fn rect_json(rect: &crate::Rect) -> serde_json::Value {
-    json!([round_to(rect.min_x, 0.1), round_to(rect.min_y, 0.1), round_to(rect.max_x, 0.1), round_to(rect.max_y, 0.1)])
+    json!([round_to(rect.min_x, 1), round_to(rect.min_y, 1), round_to(rect.max_x, 1), round_to(rect.max_y, 1)])
 }
 
 /// Footprint rings simplified with Ramer–Douglas–Peucker at `epsilon_mm`, rounded to 0.01 mm.
@@ -156,7 +161,7 @@ fn simplified_loops(loops: &[Vec<crate::Point>], epsilon_mm: f64) -> Vec<Vec<[f6
         .filter_map(|ring| {
             let line: LineString<f64> = ring.iter().map(|p| Coord { x: p.x, y: p.y }).collect();
             let simple = line.simplify(epsilon_mm);
-            let points: Vec<[f64; 2]> = simple.0.iter().map(|c| [round_to(c.x, 0.01), round_to(c.y, 0.01)]).collect();
+            let points: Vec<[f64; 2]> = simple.0.iter().map(|c| [round_to(c.x, 2), round_to(c.y, 2)]).collect();
             (points.len() >= 4).then_some(points)
         })
         .collect()
@@ -175,7 +180,7 @@ pub fn layout_event(
 ) -> serde_json::Value {
     let placements_json: Vec<serde_json::Value> = placements
         .iter()
-        .map(|p| json!([round_to(p.x_mm, 0.01), round_to(p.y_mm, 0.01), round_to(p.angle_deg, 0.1)]))
+        .map(|p| json!([round_to(p.x_mm, 2), round_to(p.y_mm, 2), round_to(p.angle_deg, 1)]))
         .collect();
     let mut epsilon_mm = 0.1;
     loop {
@@ -274,6 +279,16 @@ mod tests {
         let ring = event["footprint"][0].as_array().unwrap();
         assert!(ring.len() >= 4 && ring.len() < fixture.loops[0].len(), "simplified: {} points", ring.len());
         assert_eq!(ring.first(), ring.last(), "rings stay closed");
+    }
+
+    #[test]
+    fn layout_event_numbers_serialise_without_float_noise() {
+        let placements = [crate::PackedPlacement { x_mm: 143.67, y_mm: 20.0 + 0.1 + 0.2, angle_deg: 90.0 }];
+        let bed = crate::Rect { min_x: 0.0, min_y: 0.0, max_x: 256.0, max_y: 256.0 };
+        let event = layout_event(LayoutSource::Pack, &[], &placements, bed, &[], None);
+        let x = event["placements"][0][0].to_string();
+        assert!(x.contains("143.67") && !x.contains("143.670000"), "{x}");
+        assert_eq!(event["placements"][0][1].to_string(), "20.3");
     }
 
     #[test]
