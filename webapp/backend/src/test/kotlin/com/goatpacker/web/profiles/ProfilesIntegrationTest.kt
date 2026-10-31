@@ -77,6 +77,9 @@ class ProfilesIntegrationTest(
         assertEquals(256.0, p1s["bedDepthMm"].asDouble(), 1e-9)
         assertTrue(p1s["supportsNozzleClean"].asBoolean(), "у p1s есть nozzle_clean_gcode")
         assertEquals(91.0, p1s["filamentChangeSeconds"].asDouble(), 1e-9)
+        assertEquals(listOf(0.0, 0.0, 256.0, 256.0), p1s["printableArea"].map { it.asDouble() })
+        assertEquals(listOf(listOf(0.0, 0.0, 18.0, 28.0)), p1s["exclusionRectangles"].map { r -> r.map { it.asDouble() } })
+        assertTrue(p1s["plateOutline"].size() >= 8, "P1S plate outline is a polygon")
     }
 
     @Test
@@ -98,6 +101,8 @@ class ProfilesIntegrationTest(
         // 4.0, не 3.5: Orca Snapmaker при spiral lifting требует зазор СТРОГО больше 3.5 мм.
         assertEquals(4.0, u1["edgeMarginMm"].asDouble(), 1e-9)
         assertFalse(u1["supportsNozzleClean"].asBoolean(), "у u1 нет nozzle_clean_gcode")
+        assertEquals(listOf(0.5, 1.0, 270.5, 271.0), u1["printableArea"].map { it.asDouble() })
+        assertTrue(u1["exclusionRectangles"].isEmpty)
         // Тулчейнджер: AMS-смен нет, коррекция не нужна — поле отсутствует (null).
         assertTrue(u1["filamentChangeSeconds"] == null || u1["filamentChangeSeconds"].isNull, u1.toString())
     }

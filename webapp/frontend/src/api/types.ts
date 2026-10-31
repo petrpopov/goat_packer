@@ -12,6 +12,11 @@ export interface PrinterProfile {
   supportsNozzleClean: boolean;
   /** Реальная длительность смены прутка AMS, с; нет/null — принтеру коррекция не нужна (тулчейнджер). */
   filamentChangeSeconds?: number | null;
+  /** [x0, y0, x1, y1], мм. */
+  printableArea: number[];
+  exclusionRectangles: number[][];
+  /** Упрощённый контур пластины; null — прямоугольник области. */
+  plateOutline: number[][] | null;
 }
 
 /** Ответ /api/profiles/detect. printerModel — принтер, записанный в файле (для понятных ошибок). */

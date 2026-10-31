@@ -141,6 +141,13 @@ class ProfileService(
                 bedWidthMm = area.get(2).asDouble() - area.get(0).asDouble(),
                 bedDepthMm = area.get(3).asDouble() - area.get(1).asDouble(),
                 edgeMarginMm = node.path("edge_margin_mm").asDouble(0.0),
+                printableArea = area.map { it.asDouble() },
+                exclusionRectangles = node.path("exclusion_rectangles")
+                    .filter { r -> r.isArray && r.size() == 4 && r.all { it.isNumber } }
+                    .map { r -> r.map { it.asDouble() } },
+                plateOutline = node.get("plate_outline")
+                    ?.takeIf { o -> o.isArray && o.size() >= 3 && o.all { p -> p.isArray && p.size() == 2 && p.all { it.isNumber } } }
+                    ?.map { p -> p.map { it.asDouble() } },
                 supportsNozzleClean = node.path("nozzle_clean_gcode").asText("").isNotBlank(),
                 filamentChangeSeconds = node.get("filament_change_seconds")
                     ?.takeIf { it.isNumber && it.asDouble().isFinite() && it.asDouble() >= 0 }

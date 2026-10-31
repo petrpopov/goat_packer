@@ -17,6 +17,12 @@ data class ProfileDto(
      * null — у принтера нет AMS-смен (тулчейнджер), коррекция времени ему не нужна.
      */
     val filamentChangeSeconds: Double? = null,
+    /** printable_area профиля [x0, y0, x1, y1], мм, координаты стола. */
+    val printableArea: List<Double> = emptyList(),
+    /** exclusion_rectangles профиля — зоны, где печатать нельзя (у P1S угол 18×28). */
+    val exclusionRectangles: List<List<Double>> = emptyList(),
+    /** Упрощённый контур пластины для сцены; null — фронт рисует прямоугольник области. */
+    val plateOutline: List<List<Double>>? = null,
 )
 
 /** Ответ на создание джоба. */
