@@ -64,7 +64,9 @@ export default function SchedulePage() {
   const job = jobQuery.data ?? null;
   const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
   const jobActive =
-    Boolean(jobId) && !jobGone && (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
+    Boolean(jobId) &&
+    !jobGone &&
+    (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
 
   const dayStartValid = clockSeconds(dayStart) !== null;
   const nightStartValid = clockSeconds(nightStart) !== null;
@@ -195,15 +197,12 @@ export default function SchedulePage() {
     </div>
   ) : null;
 
-  return (
-    <div className="page">
-      <div>
-        <h1 className="page-title">Фаза 2 · Расписание</h1>
-        <p className="page-subtitle">Планирование партий печати по окнам дня и ночи</p>
-      </div>
+  const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
 
-      <form className="stack" onSubmit={handleSubmit}>
-        <section className="card">
+  return (
+    <div className="work">
+      <form id="schedule-form" className="form-col" onSubmit={handleSubmit}>
+        <section className="stack">
           <div className="source-switch">
             {packHandoff && (
               <button
@@ -212,7 +211,7 @@ export default function SchedulePage() {
                 disabled={jobActive || startMutation.isPending}
                 onClick={() => setSource('pack')}
               >
-                Из фазы 1
+                Из упаковки
               </button>
             )}
             <button
@@ -227,7 +226,7 @@ export default function SchedulePage() {
 
           {source === 'pack' && packHandoff ? (
             <p className="source-note">
-              Артефакт фазы 1: job <span className="mono">{packHandoff.packJobId}</span>
+              Результат упаковки: job <span className="mono">{packHandoff.packJobId}</span>
               <button
                 type="button"
                 className="btn-ghost"
@@ -248,7 +247,8 @@ export default function SchedulePage() {
           {!timesValid && (
             <div className="error-block">Часы 0–47; начало дня должно быть раньше ночи, а ночь — раньше горизонта.</div>
           )}
-          <div className="form-grid">
+          {/* Колонка формы узкая: поля идут одной колонкой. */}
+          <div className="stack">
             <Field label="Профиль принтера">
               <select className="input" value={profileId} disabled>
                 <option value="">{profilesQuery.isPending ? 'Загрузка…' : '— выберите профиль —'}</option>
@@ -345,23 +345,28 @@ export default function SchedulePage() {
               disabled={jobActive || startMutation.isPending}
             />
           </div>
-
-          <div className="form-actions">
-            <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
-              {startMutation.isPending ? <span className="spinner" aria-hidden="true" /> : null}
-              Построить расписание
-            </button>
-          </div>
         </section>
       </form>
 
-      <JobCard
-        jobId={jobId}
-        onDismiss={() => setJobId(null)}
-        job={job}
-        pollError={jobQuery.isError ? jobQuery.error : undefined}
-        successContent={successContent}
-      />
+      <section className="main-col">
+        <div className="action-bar">
+          <div className="title">
+            <h1>Расписание на сутки</h1>
+            <p>{selectedProfile ? selectedProfile.name : 'Принтер определится по проекту'}</p>
+          </div>
+          <button type="submit" form="schedule-form" className="btn btn-primary btn-lg" disabled={!canSubmit}>
+            {startMutation.isPending ? <span className="spinner" aria-hidden="true" /> : null}
+            Построить
+          </button>
+        </div>
+        <JobCard
+          jobId={jobId}
+          onDismiss={() => setJobId(null)}
+          job={job}
+          pollError={jobQuery.isError ? jobQuery.error : undefined}
+          successContent={successContent}
+        />
+      </section>
     </div>
   );
 }

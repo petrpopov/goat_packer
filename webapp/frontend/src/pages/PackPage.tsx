@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
@@ -6,8 +6,12 @@ import { fetchProfiles, startPackJob } from '@/api/services';
 import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
+import Icon from '@/components/Icon';
 import JobCard from '@/components/JobCard';
-import { buildNozzleClean, buildSupportOverlap, buildTimeFields, numberInRange } from '@/utils/forms';
+import CalibrationPage from '@/pages/CalibrationPage';
+import { parseModel, type ModelMesh } from '@/scene/model3d';
+import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields } from '@/utils/forms';
+import { sceneClip } from '@/utils/progress';
 import { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
@@ -16,8 +20,13 @@ import { useUiStore } from '@/store/useUiStore';
 
 type NozzleCleanMode = 'off' | 'global' | 'from-z';
 
+// three.js тяжёлый: сцена грузится отдельным чанком, только когда известен профиль.
+const BedScene = lazy(() => import('@/scene/BedScene'));
+
 export default function PackPage() {
   const sendToSchedule = useUiStore((state) => state.sendToSchedule);
+  const calibOpen = useUiStore((state) => state.calibOpen);
+  const setCalibOpen = useUiStore((state) => state.setCalibOpen);
 
   const [file, setFile] = useState<File | null>(null);
   const [clearance, setClearance] = useState('0.7');
@@ -33,6 +42,30 @@ export default function PackPage() {
   const [marginPct, setMarginPct] = useState('10');
   const [supportOverlap, setSupportOverlap] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
+  const [model, setModel] = useState<ModelMesh | null>(null);
+
+  // Предпросмотр модели в сцене разбирается в браузере из того же файла, что уйдёт на сервер.
+  useEffect(() => {
+    let cancelled = false;
+    setModel(null);
+    if (!file) return;
+    file
+      .arrayBuffer()
+      .then((buffer) => {
+        if (!cancelled) setModel(parseModel(file.name, buffer));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) pushToast(error instanceof Error ? error.message : 'Не удалось прочитать модель', 'error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
+
+  // Калибровка нужна только для коррекции внутри окна: без окна панель закрывается.
+  useEffect(() => {
+    if (!windowOn) setCalibOpen(false);
+  }, [windowOn, setCalibOpen]);
 
   const profilesQuery = useQuery({ queryKey: ['profiles'], queryFn: fetchProfiles });
   const profiles = useMemo(() => profilesQuery.data ?? [], [profilesQuery.data]);
@@ -54,7 +87,9 @@ export default function PackPage() {
   const job = jobQuery.data ?? null;
   const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
   const jobActive =
-    Boolean(jobId) && !jobGone && (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
+    Boolean(jobId) &&
+    !jobGone &&
+    (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const nozzleCleanAvailable = selectedProfile === null || selectedProfile.supportsNozzleClean;
@@ -101,7 +136,8 @@ export default function PackPage() {
   let timeFields: [string, string][] = [];
   let timeInvalid = false;
   try {
-    timeFields = buildTimeFields(
+    // Коррекция смены прутка влияет только на окно печати: без окна она не шлётся.
+    timeFields = packTimeFields(
       { windowOn, windowHours, marginPct, amsOn: ams.on, changeSeconds: ams.seconds },
       ams.available
     );
@@ -162,270 +198,308 @@ export default function PackPage() {
           className="btn btn-primary"
           onClick={() => sendToSchedule({ packJobId: job.jobId, profileId: job.pack?.profileId ?? profileId })}
         >
-          → В расписание
+          В расписание <Icon name="arrow-right" />
         </button>
       </div>
     ) : null;
 
-  return (
-    <div className="page">
-      <div>
-        <h1 className="page-title">Фаза 1 · Упаковка</h1>
-        <p className="page-subtitle">Укладка объектов из .3mf в пределах стола принтера</p>
-      </div>
+  const busy = jobActive || startMutation.isPending;
+  const running = job?.status === 'RUNNING' || job?.status === 'FINALIZING';
+  const sceneMode = running ? 'running' : job?.status === 'SUCCEEDED' ? 'done' : 'idle';
 
-      <form className="stack" onSubmit={handleSubmit}>
-        <section className="card">
-          <FileDrop file={file} onFileChange={handleFileChange} disabled={jobActive || startMutation.isPending} />
-          {detectionError ? <div className="error-block">{detectionError}</div> : null}
+  const nozzleCleanFields = (
+    <>
+      <Field
+        label="Чистка сопла"
+        hint={nozzleCleanAvailable ? undefined : 'Принтер без кода очистки — чистка недоступна'}
+      >
+        <select
+          className="input"
+          value={cleanMode}
+          onChange={(event) => setCleanMode(event.target.value as NozzleCleanMode)}
+          disabled={!nozzleCleanAvailable || jobActive}
+        >
+          <option value="off">Выкл</option>
+          <option value="global">Всегда (каждый N-й слой)</option>
+          <option value="from-z">С высоты H мм</option>
+        </select>
+      </Field>
 
-          <div className="form-grid">
-            <Field
-              label="Профиль принтера"
-              hint={
-                detection === 'detecting'
-                  ? 'Определяю принтер по файлу…'
-                  : detection === 'ok'
-                    ? 'Определён по файлу — выбор заблокирован'
-                    : detection === 'unknown'
-                      ? 'Профиль не определён'
-                      : undefined
-              }
-            >
-              <select className="input" value={profileId} disabled>
-                <option value="">{profilesQuery.isPending ? 'Загрузка…' : '— выберите профиль —'}</option>
-                {profiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name} · {profile.bedWidthMm}×{profile.bedDepthMm} мм
-                  </option>
-                ))}
-              </select>
-            </Field>
+      {cleanMode === 'global' && (
+        <Field label="Каждый N слой">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            step={1}
+            value={globalEvery}
+            onChange={(event) => setGlobalEvery(event.target.value)}
+            disabled={jobActive || startMutation.isPending}
+          />
+        </Field>
+      )}
 
-            <Field
-              label="Раскладка"
-              hint={
-                layout === 'grid' ? 'Ровная сетка, без поиска — быстро' : 'Плотный подбор с поворотами и нависаниями'
-              }
-            >
-              <select
-                className="input"
-                value={layout}
-                onChange={(event) => setLayout(event.target.value as 'search' | 'grid')}
-                disabled={jobActive || startMutation.isPending}
-              >
-                <option value="search">Подбор (плотнее)</option>
-                <option value="grid">Сетка (быстро, равномерно)</option>
-              </select>
-            </Field>
-
-            <Field
-              label="Чистка сопла"
-              hint={nozzleCleanAvailable ? undefined : 'Принтер без кода очистки — чистка недоступна'}
-            >
-              <select
-                className="input"
-                value={cleanMode}
-                onChange={(event) => setCleanMode(event.target.value as NozzleCleanMode)}
-                disabled={!nozzleCleanAvailable || jobActive}
-              >
-                <option value="off">Выкл</option>
-                <option value="global">Всегда (каждый N-й слой)</option>
-                <option value="from-z">С высоты H мм</option>
-              </select>
-            </Field>
-
-            {cleanMode === 'global' && (
-              <Field label="Каждый N слой">
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={globalEvery}
-                  onChange={(event) => setGlobalEvery(event.target.value)}
-                  disabled={jobActive || startMutation.isPending}
-                />
-              </Field>
-            )}
-
-            {cleanMode === 'from-z' && (
-              <>
-                <Field
-                  label="Высота H, мм"
-                  error={nozzleCleanInvalid}
-                  hint={nozzleCleanInvalid ? 'Укажите высоту' : undefined}
-                >
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={fromZ}
-                    onChange={(event) => setFromZ(event.target.value)}
-                    disabled={jobActive || startMutation.isPending}
-                  />
-                </Field>
-                <Field label="Каждый N слой">
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={fromZEvery}
-                    onChange={(event) => setFromZEvery(event.target.value)}
-                    disabled={jobActive || startMutation.isPending}
-                  />
-                </Field>
-              </>
-            )}
-
-            <div className="field">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={windowOn}
-                  onChange={(event) => setWindowOn(event.target.checked)}
-                  disabled={jobActive || startMutation.isPending}
-                />
-                Уложиться в окно печати
-              </label>
-              <span className="field-hint">стол урезается до числа объектов, которое печатается за окно</span>
-            </div>
-
-            {windowOn && (
-              <>
-                <Field
-                  label="Окно печати, ч"
-                  error={!numberInRange(windowHours, 0.5, 240)}
-                  hint={numberInRange(windowHours, 0.5, 240) ? undefined : '0.5–240 ч'}
-                >
-                  <input
-                    className="input"
-                    type="number"
-                    min={0.5}
-                    max={240}
-                    step="any"
-                    value={windowHours}
-                    onChange={(event) => setWindowHours(event.target.value)}
-                    disabled={jobActive || startMutation.isPending}
-                  />
-                </Field>
-                <Field
-                  label="Запас, %"
-                  error={!numberInRange(marginPct, 0, 50)}
-                  hint={numberInRange(marginPct, 0, 50) ? 'добавляется к оценке слайсера' : '0–50 %'}
-                >
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    max={50}
-                    step="any"
-                    value={marginPct}
-                    onChange={(event) => setMarginPct(event.target.value)}
-                    disabled={jobActive || startMutation.isPending}
-                  />
-                </Field>
-              </>
-            )}
-
-            <AmsCorrectionFields
-              available={ams.available}
-              on={ams.on}
-              onToggle={ams.setOn}
-              seconds={ams.seconds}
-              onSecondsChange={ams.setSeconds}
-              invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
+      {cleanMode === 'from-z' && (
+        <>
+          <Field
+            label="Высота H, мм"
+            error={nozzleCleanInvalid}
+            hint={nozzleCleanInvalid ? 'Укажите высоту' : undefined}
+          >
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step="any"
+              value={fromZ}
+              onChange={(event) => setFromZ(event.target.value)}
               disabled={jobActive || startMutation.isPending}
             />
+          </Field>
+          <Field label="Каждый N слой">
+            <input
+              className="input"
+              type="number"
+              min={1}
+              step={1}
+              value={fromZEvery}
+              onChange={(event) => setFromZEvery(event.target.value)}
+              disabled={jobActive || startMutation.isPending}
+            />
+          </Field>
+        </>
+      )}
+    </>
+  );
+  const windowFields = (
+    <div className="row2">
+      <Field
+        label="Окно, ч"
+        error={!numberInRange(windowHours, 0.5, 240)}
+        hint={numberInRange(windowHours, 0.5, 240) ? undefined : '0.5–240 ч'}
+      >
+        <input
+          className="input"
+          type="number"
+          min={0.5}
+          max={240}
+          step="any"
+          value={windowHours}
+          onChange={(event) => setWindowHours(event.target.value)}
+          disabled={jobActive || startMutation.isPending}
+        />
+      </Field>
+      <Field
+        label="Запас, %"
+        error={!numberInRange(marginPct, 0, 50)}
+        hint={numberInRange(marginPct, 0, 50) ? 'добавляется к оценке слайсера' : '0–50 %'}
+      >
+        <input
+          className="input"
+          type="number"
+          min={0}
+          max={50}
+          step="any"
+          value={marginPct}
+          onChange={(event) => setMarginPct(event.target.value)}
+          disabled={jobActive || startMutation.isPending}
+        />
+      </Field>
+    </div>
+  );
+  const supportOverlapField = (
+    <Field
+      label="Перекрытие поддержек, мм"
+      error={supportInvalid}
+      hint={
+        supportInvalid
+          ? '0–20 мм или пусто'
+          : 'пусто — без ограничений, 0 — поддержки соседей не пересекаются; тело модели никогда не перекрывается'
+      }
+    >
+      <input
+        className="input"
+        type="number"
+        min={0}
+        max={20}
+        step="any"
+        placeholder="без ограничений"
+        value={supportOverlap}
+        onChange={(event) => setSupportOverlap(event.target.value)}
+        disabled={jobActive || startMutation.isPending}
+      />
+    </Field>
+  );
+  const paramsFields = (
+    <>
+      <Field label="Зазор, мм">
+        <input
+          className="input"
+          type="number"
+          min={0.05}
+          step="any"
+          value={clearance}
+          onChange={(event) => setClearance(event.target.value)}
+          disabled={jobActive || startMutation.isPending}
+        />
+      </Field>
+      <Field label="Растр, мм">
+        <input
+          className="input"
+          type="number"
+          min={0.05}
+          step="any"
+          value={resolution}
+          onChange={(event) => setResolution(event.target.value)}
+          disabled={jobActive || startMutation.isPending}
+        />
+      </Field>
+      <Field
+        label="Отступ от края, мм"
+        hint={
+          selectedProfile ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)` : 'пусто — дефолт профиля'
+        }
+      >
+        <input
+          className="input"
+          type="number"
+          min={0}
+          step="any"
+          placeholder={selectedProfile ? String(selectedProfile.edgeMarginMm) : ''}
+          value={edgeMargin}
+          onChange={(event) => setEdgeMargin(event.target.value)}
+          disabled={jobActive || startMutation.isPending}
+        />
+      </Field>
+    </>
+  );
 
-            <Field
-              label="Перекрытие поддержек, мм"
-              error={supportInvalid}
-              hint={
-                supportInvalid
-                  ? '0–20 мм или пусто'
-                  : 'пусто — без ограничений, 0 — поддержки соседей не пересекаются; тело модели никогда не перекрывается'
-              }
-            >
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={20}
-                step="any"
-                placeholder="без ограничений"
-                value={supportOverlap}
-                onChange={(event) => setSupportOverlap(event.target.value)}
-                disabled={jobActive || startMutation.isPending}
-              />
-            </Field>
+  return (
+    <div className={`work${calibOpen ? ' with-side' : ''}`}>
+      <form id="pack-form" className="form-col" onSubmit={handleSubmit}>
+        <FileDrop file={file} onFileChange={handleFileChange} disabled={busy} />
+        {detectionError ? <div className="error-block">{detectionError}</div> : null}
+        {/* Профиль не выбирается: его определяет printer_model в файле, сервер примет только его. */}
+        <Field
+          label="Профиль принтера"
+          hint={
+            detection === 'detecting'
+              ? 'Определяю принтер по файлу…'
+              : detection === 'ok'
+                ? 'Определён по файлу'
+                : detection === 'unknown'
+                  ? 'Профиль не определён'
+                  : undefined
+          }
+        >
+          <div className="input" aria-readonly="true">
+            {selectedProfile ? selectedProfile.name : profilesQuery.isPending ? 'Загрузка…' : '—'}
           </div>
-
-          <details className="params">
-            <summary className="params-summary">Параметры</summary>
-            <div className="form-grid">
-              <Field label="Зазор, мм">
-                <input
-                  className="input"
-                  type="number"
-                  min={0.05}
-                  step="any"
-                  value={clearance}
-                  onChange={(event) => setClearance(event.target.value)}
-                  disabled={jobActive || startMutation.isPending}
-                />
-              </Field>
-              <Field label="Разрешение растра, мм">
-                <input
-                  className="input"
-                  type="number"
-                  min={0.05}
-                  step="any"
-                  value={resolution}
-                  onChange={(event) => setResolution(event.target.value)}
-                  disabled={jobActive || startMutation.isPending}
-                />
-              </Field>
-              <Field
-                label="Отступ от края, мм"
-                hint={
-                  selectedProfile
-                    ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)`
-                    : 'пусто — дефолт профиля'
-                }
-              >
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  step="any"
-                  placeholder={selectedProfile ? String(selectedProfile.edgeMarginMm) : ''}
-                  value={edgeMargin}
-                  onChange={(event) => setEdgeMargin(event.target.value)}
-                  disabled={jobActive || startMutation.isPending}
-                />
-              </Field>
+        </Field>
+        <Field
+          label="Раскладка"
+          hint={layout === 'grid' ? 'быстро и равномерно, без поворотов' : 'подбор с поворотами и нависаниями'}
+        >
+          <div className="seg" role="group" aria-label="Раскладка">
+            <button
+              type="button"
+              aria-pressed={layout === 'search'}
+              onClick={() => setLayout('search')}
+              disabled={busy}
+            >
+              Плотная
+            </button>
+            <button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')} disabled={busy}>
+              Сетка
+            </button>
+          </div>
+        </Field>
+        {nozzleCleanFields}
+        <div className="form-group">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={windowOn}
+              onChange={(event) => setWindowOn(event.target.checked)}
+              disabled={busy}
+            />
+            <span className="check-text">
+              Уложиться в окно печати
+              <small className="field-hint">без окна стол заполняется максимально</small>
+            </span>
+          </label>
+          {windowOn && (
+            <div className="nested">
+              {windowFields}
+              <AmsCorrectionFields
+                available={ams.available}
+                on={ams.on}
+                onToggle={ams.setOn}
+                seconds={ams.seconds}
+                onSecondsChange={ams.setSeconds}
+                invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
+                disabled={busy}
+                onCalibrate={() => setCalibOpen(!calibOpen)}
+              />
             </div>
-          </details>
+          )}
+        </div>
+        <details className="params form-group">
+          <summary className="params-summary">Дополнительно</summary>
+          {supportOverlapField}
+          {paramsFields}
+        </details>
+      </form>
 
-          <div className="form-actions">
-            <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
+      <section className="main-col">
+        <div className="action-bar">
+          <div className="title">
+            <h1>{file ? file.name : 'Модель не выбрана'}</h1>
+            <p>
+              {selectedProfile
+                ? `${selectedProfile.name} · рабочая область ${selectedProfile.bedWidthMm} × ${selectedProfile.bedDepthMm} мм`
+                : 'Загрузите слева проект .3mf с одним объектом'}
+            </p>
+          </div>
+          {job?.status === 'SUCCEEDED' ? (
+            <button type="submit" form="pack-form" className="btn" disabled={!canSubmit}>
+              Упаковать заново
+            </button>
+          ) : (
+            <button type="submit" form="pack-form" className="btn btn-primary btn-lg" disabled={!canSubmit}>
               {startMutation.isPending ? <span className="spinner" aria-hidden="true" /> : null}
               Упаковать
             </button>
-          </div>
-        </section>
-      </form>
+          )}
+        </div>
+        <JobCard
+          jobId={jobId}
+          onDismiss={() => setJobId(null)}
+          job={job}
+          pollError={jobQuery.isError ? jobQuery.error : undefined}
+          successContent={successContent}
+        />
+        {selectedProfile && (
+          <Suspense fallback={<div className="scene" />}>
+            <BedScene
+              profile={selectedProfile}
+              model={model}
+              mode={sceneMode}
+              clip={running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1}
+              caption={
+                sceneMode === 'done' ? 'перетащите, чтобы повернуть' : model ? 'модель и её проекция на стол' : ''
+              }
+              readout={model ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм` : ''}
+            />
+          </Suspense>
+        )}
+      </section>
 
-      <JobCard
-        jobId={jobId}
-        onDismiss={() => setJobId(null)}
-        job={job}
-        pollError={jobQuery.isError ? jobQuery.error : undefined}
-        successContent={successContent}
-      />
+      {calibOpen && (
+        <aside className="side-col">
+          <CalibrationPage embedded onClose={() => setCalibOpen(false)} />
+        </aside>
+      )}
     </div>
   );
 }

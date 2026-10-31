@@ -4,6 +4,9 @@
 .form-col { display: grid; gap: 16px; align-content: start; padding: 18px 18px 28px; border-right: 1px solid var(--border); }
 .form-group { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.check-text { display: grid; gap: 2px; }
+/* Профиль только для чтения (определяется по файлу): div в облике поля, текст по центру высоты. */
+.input[aria-readonly='true'] { display: flex; align-items: center; color: var(--fg-muted); }
 .nested { display: grid; gap: 12px; margin: 2px 0 0 24px; }
 .main-col { display: grid; gap: 16px; align-content: start; min-width: 0; padding: 18px 24px 28px; }
 .side-col { display: grid; gap: 16px; align-content: start; padding: 18px; border-left: 1px solid var(--border); }

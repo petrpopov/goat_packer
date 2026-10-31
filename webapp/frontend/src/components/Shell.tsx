@@ -17,8 +17,6 @@ interface NavItem {
 const WORK_ITEMS: NavItem[] = [
   { path: '/pack', label: 'Упаковка', icon: 'cube', match: ['pack'] },
   { path: '/schedule', label: 'Расписание', icon: 'calendar', match: ['schedule'] },
-  // Временно: план 2 переносит калибровку в боковую панель упаковки и удаляет этот пункт.
-  { path: '/calibration', label: 'Калибровка AMS', icon: 'gauge', match: ['calibration'] },
 ];
 const JOBS_ITEM: NavItem = { path: '/jobs', label: 'Мои задачи', icon: 'list', match: ['jobs', 'job'] };
 const ADMIN_ITEM: NavItem = { path: '/admin', label: 'Администрирование', icon: 'shield', match: ['admin'] };
