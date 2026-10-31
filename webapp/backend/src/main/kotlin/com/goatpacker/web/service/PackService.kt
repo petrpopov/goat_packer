@@ -45,9 +45,10 @@ class PackService(
             throw BadRequestException("Файл .3mf обязателен")
         }
         val fileName = file.originalFilename ?: ""
-        if (!fileName.lowercase().endsWith(".3mf")) {
-            throw BadRequestException("Файл должен иметь расширение .3mf, получено: «$fileName»")
+        if (!StlInputs.isAcceptedUpload(fileName)) {
+            throw BadRequestException("${StlInputs.UPLOAD_EXTENSIONS_MESSAGE}, получено: «$fileName»")
         }
+        StlInputs.rejectUntilConversion(fileName)
         val profileId = form.profileId!!.trim()
         val profile = profileService.require(profileId)
         profileService.requireMatches(projects.inspect(file), profile)

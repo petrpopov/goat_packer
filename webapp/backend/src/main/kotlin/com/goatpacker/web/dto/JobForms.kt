@@ -116,4 +116,6 @@ data class ScheduleJobForm(
 data class DetectProfileDto(
     val profileId: String?,
     val printerModel: String?,
+    /** "3mf" — проект слайсера, "stl" — сетка (не разбирается, принтер выбирает пользователь). */
+    val kind: String = "3mf",
 )

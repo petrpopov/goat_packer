@@ -42,7 +42,7 @@ class ProfileService(
      * сопоставления — из него строится внятное «файл от принтера „X“, профиля для него нет»
      * вместо голого null.
      */
-    data class Detection(val profileId: String?, val printerModel: String?)
+    data class Detection(val profileId: String?, val printerModel: String?, val kind: String = "3mf")
 
     fun list(): List<ProfileDto> = loadAll().map { it.dto }
 
@@ -52,7 +52,15 @@ class ProfileService(
      * вхождение в обе стороны). profileId = null, когда сопоставить не удалось — тогда
      * printerModel говорит, чей это файл, и из него строится понятное сообщение.
      */
-    fun detectFrom3mf(file: MultipartFile): Detection {
+    fun detectUpload(file: MultipartFile): Detection {
+        val name = file.originalFilename
+        if (!StlInputs.isAcceptedUpload(name)) throw BadRequestException(StlInputs.UPLOAD_EXTENSIONS_MESSAGE)
+        // STL — голая сетка без настроек слайсера: принтер всегда выбирает пользователь.
+        if (StlInputs.isStl(name)) {
+            if (file.isEmpty) throw BadRequestException("Файл .stl пуст или не выбран")
+            if (file.size > 200L * 1024 * 1024) throw BadRequestException("Файл больше 200 МБ")
+            return Detection(null, null, kind = "stl")
+        }
         return detect(projects.inspect(file).printerModel)
     }
 

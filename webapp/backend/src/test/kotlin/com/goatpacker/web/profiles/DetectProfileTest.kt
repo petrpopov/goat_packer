@@ -43,10 +43,10 @@ class DetectProfileTest(
         return bytes.toByteArray()
     }
 
-    private fun detect(body: ByteArray): String =
+    private fun detect(body: ByteArray, name: String = "model.3mf"): String =
         mockMvc.perform(
             multipart("/api/profiles/detect").file(
-                MockMultipartFile("file", "model.3mf", "application/octet-stream", body)
+                MockMultipartFile("file", name, "application/octet-stream", body)
             )
         )
             .andExpect(status().isOk)
@@ -111,6 +111,21 @@ class DetectProfileTest(
         mockMvc.perform(multipart("/api/profiles/detect")).andExpect(status().isBadRequest)
         mockMvc.perform(multipart("/api/profiles/detect").file(MockMultipartFile("file", "bad.3mf", "application/octet-stream", byteArrayOf(1,2,3))))
             .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `stl не разбирается — принтер выберет пользователь`() {
+        val response = json.readTree(detect(byteArrayOf(1, 2, 3), "cat.STL"))
+        assertEquals("stl", response["kind"].asText())
+        assertTrue(response["profileId"].isNull && response["printerModel"].isNull, response.toString())
+        assertEquals("3mf", json.readTree(detect(mini3mf("Snapmaker U1")))["kind"].asText())
+    }
+
+    @Test
+    fun `чужое расширение — 400 с подсказкой про 3mf и stl`() {
+        val body = mockMvc.perform(multipart("/api/profiles/detect").file(MockMultipartFile("file", "cat.obj", "application/octet-stream", byteArrayOf(1))))
+            .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
+        assertEquals("Нужен файл .3mf или .stl", json.readTree(body)["message"].asText())
     }
 
     @Test

@@ -41,6 +41,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         val (input,name)=if(request.fileId!=null) {
             val file=uploads.findById(request.fileId).orElse(null)?.takeIf { it.ownerId==ownerId && it.state=="READY" } ?: missing()
             if(file.expiresAt?.isBefore(Instant.now())==true) throw ServerError(410,"EXPIRED","Файл истёк")
+            com.goatpacker.web.service.StlInputs.rejectUntilConversion(file.originalName)
             if(file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
             file.blobId!! to file.originalName
         } else {

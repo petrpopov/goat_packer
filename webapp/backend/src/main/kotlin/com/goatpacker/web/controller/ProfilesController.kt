@@ -23,7 +23,7 @@ class ProfilesController(
     /** Автоопределение профиля по printer_model внутри загруженного 3MF. */
     @PostMapping("/detect", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun detect(@RequestParam("file") file: MultipartFile): DetectProfileDto {
-        val detection = profileService.detectFrom3mf(file)
-        return DetectProfileDto(profileId = detection.profileId, printerModel = detection.printerModel)
+        val detection = profileService.detectUpload(file)
+        return DetectProfileDto(profileId = detection.profileId, printerModel = detection.printerModel, kind = detection.kind)
     }
 }

@@ -66,6 +66,10 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             assertEquals(profile,call("PUT","/api/v2/uploads/$id/content",data,headers=mapOf("Origin" to "http://localhost:3007"))["profileId"].asText())
             return id
         }
+        fun uploadRaw(name:String,data:ByteArray):com.fasterxml.jackson.databind.JsonNode {
+            val id=call("POST","/api/v2/uploads",mapOf("name" to name,"sizeBytes" to data.size))["fileId"].asText()
+            return call("PUT","/api/v2/uploads/$id/content",data,headers=mapOf("Origin" to "http://localhost:3007"))
+        }
         fun job(file:String,key:String=newId(),extra:Map<String,Any> = emptyMap(),expected:Int=200)=call("POST","/api/v2/jobs",mapOf("fileId" to file,"profileId" to "bambu_p1s")+extra,expected,headers=mapOf("Idempotency-Key" to key))
     }
     @BeforeEach fun clearQueue() {
@@ -114,6 +118,13 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         assertTrue(jobs.findById(id).orElseThrow().profileJson.contains("Bambu Lab P1S"))
         a.call("DELETE","/api/v2/jobs/$id")
         assertEquals("CANCELLED",a.call("GET","/api/v2/jobs/$id")["status"].asText())
+    }
+    @Test fun `stl uploads feed the printer picker but packing them is not available yet`() {
+        val c=Client();c.guest()
+        assertEquals("Нужен файл .3mf или .stl",c.call("POST","/api/v2/uploads",mapOf("name" to "cat.obj","sizeBytes" to 10),expected=400)["message"].asText())
+        val stl=c.uploadRaw("cat.stl","solid cat\nendsolid cat\n".toByteArray())
+        assertEquals("READY",stl["state"].asText());assertEquals("stl",stl["kind"].asText());assertTrue(stl["profileId"].isNull,stl.toString())
+        assertEquals("Упаковка STL появится в ближайшем обновлении",c.job(stl["fileId"].asText(),expected=400)["message"].asText())
     }
     @Test fun `concurrent workers cannot exceed global slots or claim same job`() {
         val a=Client();a.guest();a.job(a.upload())

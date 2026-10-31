@@ -88,7 +88,7 @@ class UploadTransactions(private val uploads:UploadRepository,private val blobs:
     private val owners:PrincipalRepository,private val platform:PlatformRepository,private val quotas:Quotas,
     private val props:PlatformProperties,private val jdbc:JdbcTemplate,private val challenges:Challenges) {
     @Transactional fun create(owner:String,name:String,size:Long,challengeId:String?=null,nonce:String?=null):UploadEntity {
-        if(!name.endsWith(".3mf",true)) bad("Нужен файл .3mf")
+        if(!com.goatpacker.web.service.StlInputs.isAcceptedUpload(name)) bad(com.goatpacker.web.service.StlInputs.UPLOAD_EXTENSIONS_MESSAGE)
         if(size !in 1..props.maxUploadBytes) throw ServerError(413,"FILE_TOO_LARGE","Допустимо до ${props.maxUploadBytes/1024/1024} МиБ")
         platform.locked();val principal=owners.locked(owner) ?: missing()
         if(jdbc.queryForObject("select maintenance from operational_state where id=1",Boolean::class.java)==true) throw ServerError(503,"MAINTENANCE","Сервис временно на обслуживании")
@@ -140,7 +140,9 @@ class UploadController(private val tx:UploadTransactions,private val store:Objec
                 while(true) { if(System.nanoTime()>deadline) bad("Время загрузки превышено");val n=input.read(buffer);if(n<0) break;copied+=n;if(copied>upload.expectedBytes) bad("Размер файла превышен");digest.update(buffer,0,n);output.write(buffer,0,n) }
             } }
             if(copied!=upload.expectedBytes) bad("Загрузка неполная")
-            val inspection=inspector.inspect(path);inspector.requireModel(inspection)
+            // STL — сетка без настроек слайсера: не разбирается, принтер выберет пользователь при создании задачи.
+            val stl=com.goatpacker.web.service.StlInputs.isStl(upload.originalName)
+            val inspection=if(stl) Project3mf.Inspection(false,null) else inspector.inspect(path).also(inspector::requireModel)
             val detection=profiles.detect(inspection.printerModel)
             store.put(key,path)
             val (ready,_)=tx.finish(id,owner,digest.digest().joinToString(""){"%02x".format(it)},key,inspection,detection.profileId)
@@ -153,5 +155,6 @@ class UploadController(private val tx:UploadTransactions,private val store:Objec
     @GetMapping fun list()=tx.list(actor().id).map(::view)
     @DeleteMapping("/{id}") fun delete(@PathVariable id:String) {tx.delete(id,actor().id)}
     @GetMapping("/{id}") fun get(@PathVariable id:String)=view(tx.owned(id,actor().id))
-    private fun view(u:UploadEntity)=mapOf("fileId" to u.id,"originalName" to u.originalName,"sizeBytes" to u.expectedBytes,"state" to u.state,"profileId" to u.profileId,"printerModel" to u.printerModel,"expiresAt" to u.expiresAt)
+    private fun view(u:UploadEntity)=mapOf("fileId" to u.id,"originalName" to u.originalName,"sizeBytes" to u.expectedBytes,"state" to u.state,"profileId" to u.profileId,"printerModel" to u.printerModel,
+        "kind" to (if(com.goatpacker.web.service.StlInputs.isStl(u.originalName)) "stl" else "3mf"),"expiresAt" to u.expiresAt)
 }

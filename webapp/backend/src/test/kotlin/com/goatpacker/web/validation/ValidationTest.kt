@@ -38,6 +38,18 @@ class ValidationTest(
     private val goat = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
 
     @Test
+    fun `pack из stl пока отклоняется понятной 400, чужое расширение — подсказкой`() {
+        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, "solid goat\nendsolid goat\n".toByteArray())
+        val body = mockMvc.perform(multipart("/api/pack/jobs").file(stl).param("profileId", "bambu_a2l"))
+            .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
+        org.junit.jupiter.api.Assertions.assertTrue("Упаковка STL появится в ближайшем обновлении" in body, body)
+        val obj = MockMultipartFile("file", "goat.obj", MediaType.APPLICATION_OCTET_STREAM_VALUE, byteArrayOf(1))
+        val other = mockMvc.perform(multipart("/api/pack/jobs").file(obj).param("profileId", "bambu_a2l"))
+            .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
+        org.junit.jupiter.api.Assertions.assertTrue("Нужен файл .3mf или .stl" in other, other)
+    }
+
+    @Test
     fun `pack без файла — 400`() {
         mockMvc.perform(multipart("/api/pack/jobs").param("profileId", "bambu_a2l"))
             .andExpect(status().isBadRequest)

@@ -25,7 +25,11 @@ export interface PrinterProfile {
 export interface DetectProfileResponse {
   profileId: string | null;
   printerModel: string | null;
+  /** 'stl' — сетка без настроек слайсера: принтер выбирает пользователь. Нет поля — старый бэкенд, 3MF. */
+  kind?: UploadKind;
 }
+
+export type UploadKind = '3mf' | 'stl';
 
 export type JobKind = 'pack' | 'schedule' | 'calibration';
 
