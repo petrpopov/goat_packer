@@ -159,6 +159,8 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             // --support-overlap-mm доходит до пакера; поля поддержек отчёта — до ответа.
             assertTrue(response["pack"]["supportsDetected"].asBoolean(),response.toString())
             assertEquals(1.5,response["pack"]["supportOverlapMm"].asDouble(),1e-9)
+            // layout-событие пакера (local runner ставит GOAT_LOG_FORMAT=json) живёт и после успеха.
+            assertEquals(2,response["layout"]["placements"].size(),response.toString())
             assertEquals(1,response["artifacts"].size())
             assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"))
             assertTrue(client.call("GET","/api/v2/jobs/$id?debug=true")["artifacts"].size()>1)

@@ -111,12 +111,15 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
             Files.writeString(job.directory.resolve("profile.json"),mapper.writeValueAsString(profile))
             var last=0L
             var lastStage:Pair<String,Int>?=null
+            var lastLayout:String?=null
             // Не чаще раза в секунду, но смена этапа пишется сразу: после неё вывода может не быть
             // долго (сборка, проверка G-code), и без записи степпер стоял бы на прошлом этапе.
+            // Новая раскладка — тоже сразу и один раз (до 16 КБ: повторно её в БД не гоняем).
             job.onUpdate={snap -> val stageKey=snap.stage?.let { it.id to it.attempt }
-                if(System.nanoTime()-last>TimeUnit.SECONDS.toNanos(1) || snap.status!=JobStatus.RUNNING || stageKey!=lastStage) {
-                last=System.nanoTime();lastStage=stageKey
-                queue.progress(record.id,record.fence,snap.phase.jsonValue(),snap.progressPercent,snap.phaseMessage,snap.stage?.let(mapper::writeValueAsString))
+                val newLayout=snap.layout?.takeIf { it!=lastLayout }
+                if(System.nanoTime()-last>TimeUnit.SECONDS.toNanos(1) || snap.status!=JobStatus.RUNNING || stageKey!=lastStage || newLayout!=null) {
+                last=System.nanoTime();lastStage=stageKey;if(newLayout!=null) lastLayout=newLayout
+                queue.progress(record.id,record.fence,snap.phase.jsonValue(),snap.progressPercent,snap.phaseMessage,snap.stage?.let(mapper::writeValueAsString),newLayout)
             }}
             if(!queue.pulse(record.id,record.fence)) {job.cancel();return}
             val r=mapper.readValue<JobRequest>(record.paramsJson)
