@@ -263,8 +263,28 @@ pub fn rect_from_points(points: &[(f64, f64)]) -> Option<[f64; 4]> {
     (points.len() == 4 && xs.len() == 2 && ys.len() == 2 && xs[1] > xs[0] && ys[1] > ys[0]).then(|| [xs[0], ys[0], xs[1], ys[1]])
 }
 
-/// `bed_exclude_area` → rectangles. One polygon per preset in Orca; a non-rectangular polygon is
-/// kept as its bounding rectangle (conservative), a degenerate one (`"0x0"`) is dropped.
+/// Part of the bed every extruder reaches (`extruder_printable_area`, one point string per
+/// extruder; H2D: `0..325` and `25..350` of a 350 mm bed). A single-filament plate may be mapped to
+/// either extruder, and BambuStudio refuses a plate with objects outside the mapped extruder's area
+/// ("Some filaments cannot be mapped to correct extruders"), so the catalog profile packs into the
+/// intersection. Absent/unparsable → the printable area itself.
+pub fn shared_extruder_area(area: [f64; 4], extruder_areas: Option<&Value>) -> [f64; 4] {
+    let Some(Value::Array(items)) = extruder_areas else { return area };
+    let mut shared = area;
+    for item in items {
+        let Some(rect) = parse_points(item).as_deref().and_then(rect_from_points) else { continue };
+        shared = [shared[0].max(rect[0]), shared[1].max(rect[1]), shared[2].min(rect[2]), shared[3].min(rect[3])];
+    }
+    if shared[2] - shared[0] > 1e-6 && shared[3] - shared[1] > 1e-6 { shared } else { area }
+}
+
+/// `bed_exclude_area` → rectangles. One point list per preset in Orca, but vendors chain several
+/// rectangles into it through zero-area seams (Kobra 3: a 2 mm frame drawn as outer square,
+/// diagonal to the inner square and back; Kobra 3 Max / Qidi X-Plus 4: two strips joined along the
+/// bed edge). Edges traversed both ways cancel; if every remaining edge is axis-aligned the
+/// even-odd interior is decomposed exactly into rectangles. The bounding box of such a list is the
+/// whole bed, which left no room for any placement. A genuinely non-rectilinear polygon is kept as
+/// its bounding rectangle (conservative); a degenerate one (`"0x0"`) is dropped.
 pub fn exclusion_rects(value: Option<&Value>) -> Vec<[f64; 4]> {
     let Some(points) = value.and_then(parse_points) else { return Vec::new() };
     if points.len() < 3 {
@@ -277,7 +297,86 @@ pub fn exclusion_rects(value: Option<&Value>) -> Vec<[f64; 4]> {
     if max_x - min_x < 1e-6 || max_y - min_y < 1e-6 {
         return Vec::new();
     }
-    vec![[min_x, min_y, max_x, max_y]]
+    rectilinear_rects(&points).unwrap_or_else(|| vec![[min_x, min_y, max_x, max_y]])
+}
+
+/// Exact rectangle decomposition of a rectilinear point list (after cancelling seam edges), or
+/// `None` when an edge is not axis-aligned.
+fn rectilinear_rects(points: &[(f64, f64)]) -> Option<Vec<[f64; 4]>> {
+    const EPS: f64 = 1e-6;
+    let same = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < EPS && (a.1 - b.1).abs() < EPS;
+    let mut edges: Vec<((f64, f64), (f64, f64))> = Vec::new();
+    for i in 0..points.len() {
+        let (a, b) = (points[i], points[(i + 1) % points.len()]);
+        if same(a, b) {
+            continue;
+        }
+        // A seam: the same segment walked back cancels the earlier one.
+        if let Some(j) = edges.iter().position(|&(p, q)| same(p, b) && same(q, a)) {
+            edges.swap_remove(j);
+        } else {
+            edges.push((a, b));
+        }
+    }
+    if edges.is_empty() || edges.iter().any(|&(a, b)| (a.0 - b.0).abs() >= EPS && (a.1 - b.1).abs() >= EPS) {
+        return None;
+    }
+    let coords = |f: fn(&(f64, f64)) -> f64| {
+        let mut v: Vec<f64> = edges.iter().flat_map(|(a, b)| [f(a), f(b)]).collect();
+        v.sort_by(f64::total_cmp);
+        v.dedup_by(|a, b| (*a - *b).abs() < EPS);
+        v
+    };
+    let (xs, ys) = (coords(|p| p.0), coords(|p| p.1));
+    // Even-odd: a horizontal ray to +x from the cell centre crosses the vertical edges.
+    let inside = |cx: f64, cy: f64| {
+        edges
+            .iter()
+            .filter(|(a, b)| (a.0 - b.0).abs() < EPS && a.0 > cx && (a.1 > cy) != (b.1 > cy))
+            .count()
+            % 2
+            == 1
+    };
+    let mut rects = Vec::new();
+    // Open rectangles keyed by their x run, extended while the next band has the same run.
+    let mut open: Vec<(f64, f64, f64)> = Vec::new();
+    for j in 0..ys.len().saturating_sub(1) {
+        let cy = (ys[j] + ys[j + 1]) / 2.0;
+        let mut runs = Vec::new();
+        let mut start = None;
+        for i in 0..xs.len() - 1 {
+            let filled = inside((xs[i] + xs[i + 1]) / 2.0, cy);
+            match (filled, start) {
+                (true, None) => start = Some(xs[i]),
+                (false, Some(x0)) => {
+                    runs.push((x0, xs[i]));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(x0) = start {
+            runs.push((x0, xs[xs.len() - 1]));
+        }
+        let mut next = Vec::new();
+        for (x0, x1, y0) in open.drain(..) {
+            if runs.contains(&(x0, x1)) {
+                next.push((x0, x1, y0));
+            } else {
+                rects.push([x0, y0, x1, ys[j]]);
+            }
+        }
+        for &(x0, x1) in &runs {
+            if !next.iter().any(|&(a, b, _)| (a, b) == (x0, x1)) {
+                next.push((x0, x1, ys[j]));
+            }
+        }
+        open = next;
+    }
+    let top = ys[ys.len() - 1];
+    rects.extend(open.into_iter().map(|(x0, x1, y0)| [x0, y0, x1, top]));
+    rects.sort_by(|a, b| a.iter().zip(b).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+    Some(rects)
 }
 
 #[cfg(test)]
@@ -316,6 +415,32 @@ mod tests {
     fn exclusion_polygon_becomes_its_bounding_rect() {
         let tri = serde_json::json!(["0x0", "30x0", "0x20"]);
         assert_eq!(exclusion_rects(Some(&tri)), vec![[0.0, 0.0, 30.0, 20.0]]);
+    }
+
+    #[test]
+    fn seam_chained_exclusions_decompose_into_their_rectangles() {
+        // Orca 2.4.2 presets, verbatim point lists.
+        let kobra3 = serde_json::json!(["0x0", "255x0", "255x255", "0x255", "0x0", "2x2", "2x253", "253x253", "253x2", "2x2"]);
+        assert_eq!(
+            exclusion_rects(Some(&kobra3)),
+            vec![[0.0, 0.0, 255.0, 2.0], [0.0, 2.0, 2.0, 253.0], [0.0, 253.0, 255.0, 255.0], [253.0, 2.0, 255.0, 253.0]]
+        );
+        let kobra3_max = serde_json::json!(["0x0", "3x0", "3x420", "0x420", "0x0", "423x0", "423x0", "423x0", "423x0", "426x0", "426x420", "423x420", "423x0", "0x0", "0x0", "0x0"]);
+        assert_eq!(exclusion_rects(Some(&kobra3_max)), vec![[0.0, 0.0, 3.0, 420.0], [423.0, 0.0, 426.0, 420.0]]);
+        let qidi_x_plus_4 = serde_json::json!(["0x305", "0x302", "35x302", "35x305", "305x305", "305x305", "305x305", "305x20", "293x20", "293x0", "305x0", "305x20", "305x305"]);
+        assert_eq!(exclusion_rects(Some(&qidi_x_plus_4)), vec![[0.0, 302.0, 35.0, 305.0], [293.0, 0.0, 305.0, 20.0]]);
+        // A plain rectangle stays one rectangle.
+        let corner = serde_json::json!(["0x0", "18x0", "18x28", "0x28"]);
+        assert_eq!(exclusion_rects(Some(&corner)), vec![[0.0, 0.0, 18.0, 28.0]]);
+    }
+
+    #[test]
+    fn multi_extruder_bed_shrinks_to_the_area_every_extruder_reaches() {
+        let h2d = serde_json::json!(["0x0,325x0,325x320,0x320", "25x0,350x0,350x320,25x320"]);
+        assert_eq!(shared_extruder_area([0.0, 0.0, 350.0, 320.0], Some(&h2d)), [25.0, 0.0, 325.0, 320.0]);
+        assert_eq!(shared_extruder_area([0.0, 0.0, 256.0, 256.0], None), [0.0, 0.0, 256.0, 256.0]);
+        let single = serde_json::json!(["0x0,256x0,256x256,0x256"]);
+        assert_eq!(shared_extruder_area([0.0, 0.0, 256.0, 256.0], Some(&single)), [0.0, 0.0, 256.0, 256.0]);
     }
 
     #[test]
