@@ -4,7 +4,6 @@ import {
   formatDuration,
   looksLikeJson,
   objectsText,
-  packSteps,
   remainingText,
   sceneClip,
   stageElapsed,
@@ -25,33 +24,6 @@ function stage(partial: Partial<JobStage>): JobStage {
     ...partial,
   };
 }
-
-describe('pack stepper', () => {
-  test('current highlighted, earlier done, optional hidden until visited', () => {
-    const steps = packSteps(stage({ id: 'final_slice', objects: 37, visited: ['probe_slice', 'packing', 'assembling', 'final_slice'] }));
-    expect(steps.map((s) => s.id)).toEqual(['probe_slice', 'packing', 'assembling', 'final_slice', 'writing']);
-    expect(steps.map((s) => s.state)).toEqual(['done', 'done', 'done', 'current', 'pending']);
-    expect(steps[3].label).toBe('Нарезка итоговой пластины (37 объектов)');
-  });
-
-  test('repack and window stages appear once visited; reslice keeps repack done', () => {
-    const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
-    const steps = packSteps(stage({ id: 'final_slice', visited, attempt: 2 }));
-    expect(steps.map((s) => s.id)).toContain('repacking');
-    expect(steps.find((s) => s.id === 'repacking')?.state).toBe('done');
-    expect(steps.find((s) => s.id === 'gcode_check')?.state).toBe('done');
-    expect(steps.find((s) => s.id === 'final_slice')?.state).toBe('current');
-    expect(steps.map((s) => s.id)).not.toContain('window_slice');
-
-    const window = packSteps(stage({ id: 'window_slice', visited: [...visited, 'window_slice'] }));
-    expect(window.find((s) => s.id === 'window_slice')?.state).toBe('current');
-  });
-
-  test('skipped stage before current (grid layout) counts as done', () => {
-    const steps = packSteps(stage({ id: 'assembling', visited: ['probe_slice', 'assembling'] }));
-    expect(steps.find((s) => s.id === 'packing')?.state).toBe('done');
-  });
-});
 
 describe('stage timing text', () => {
   test('durations', () => {
@@ -104,6 +76,14 @@ describe('stageSegments', () => {
     const segs = stageSegments(stage({ id: 'writing', visited: ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check'] }), 97);
     expect(segs.find((s) => s.id === 'repacking')!.state).toBe('skipped');
     expect(segs.find((s) => s.id === 'gcode_check')!.state).toBe('done');
+  });
+  test('visited stages after the current one stay done (re-slice after repack)', () => {
+    const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
+    const segs = stageSegments(stage({ id: 'final_slice', visited, attempt: 2 }), 40);
+    expect(segs.find((s) => s.id === 'final_slice')!.state).toBe('current');
+    expect(segs.find((s) => s.id === 'gcode_check')!.state).toBe('done');
+    expect(segs.find((s) => s.id === 'repacking')!.state).toBe('done');
+    expect(segs.find((s) => s.id === 'window_slice')!.state).toBe('pending');
   });
 });
 

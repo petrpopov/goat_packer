@@ -1,16 +1,8 @@
-/** Этапы упаковки для степпера и строки статуса (протокол stage-событий colored_3mf_packer). */
+/** Этапы упаковки для шкалы и строки статуса (протокол stage-событий colored_3mf_packer). */
 
 import type { JobStage, PackStageId } from '../api/types';
 
-export type StepState = 'done' | 'current' | 'pending';
-
-export interface PackStep {
-  id: PackStageId;
-  label: string;
-  state: StepState;
-}
-
-/** Канонический порядок этапов; необязательные показываются, только если пакер в них заходил. */
+/** Канонический порядок этапов; необязательные — те, в которые пакер заходит не всегда. */
 const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
   { id: 'probe_slice', label: 'Пробная нарезка 1 объекта', optional: false },
   { id: 'packing', label: 'Раскладка', optional: false },
@@ -21,26 +13,6 @@ const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
   { id: 'window_slice', label: 'Подбор под окно времени', optional: true },
   { id: 'writing', label: 'Запись результата', optional: false },
 ];
-
-/**
- * Шаги степпера: текущий этап подсвечен; пройденные — посещённые или стоящие раньше текущего
- * (раскладку «сеткой» пакер пропускает). Повторная нарезка после перепаковки подсвечивает
- * «Нарезку итоговой пластины», а «Перепаковка» остаётся отмеченной пройденной.
- */
-export function packSteps(stage: JobStage): PackStep[] {
-  const visited = new Set(stage.visited);
-  const currentIndex = ORDER.findIndex((step) => step.id === stage.id);
-  return ORDER.filter((step) => !step.optional || visited.has(step.id) || step.id === stage.id).map((step) => {
-    const index = ORDER.indexOf(step);
-    let label = step.label;
-    if (step.id === stage.id && stage.objects != null && (step.id === 'final_slice' || step.id === 'window_slice')) {
-      label += ` (${objectsText(stage.objects)})`;
-    }
-    const state: StepState =
-      step.id === stage.id ? 'current' : visited.has(step.id) || index < currentIndex ? 'done' : 'pending';
-    return { id: step.id, label, state };
-  });
-}
 
 /** «1 объект», «3 объекта», «37 объектов». */
 export function objectsText(count: number): string {
@@ -112,7 +84,11 @@ export interface StageSegment {
   fill: number;
 }
 
-/** Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, — «skipped». */
+/**
+ * Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, — «skipped».
+ * Посещённый этап — «done», даже если стоит после текущего: повторная нарезка после перепаковки
+ * снова идёт через final_slice, а проверка и перепаковка уже пройдены.
+ */
 export function stageSegments(stage: JobStage, percent: number): StageSegment[] {
   const visited = new Set(stage.visited);
   const currentIndex = ORDER.findIndex((step) => step.id === stage.id);
@@ -120,6 +96,7 @@ export function stageSegments(stage: JobStage, percent: number): StageSegment[] 
     const [start, end] = BANDS[step.id];
     let state: SegmentState;
     if (step.id === stage.id) state = 'current';
+    else if (visited.has(step.id)) state = 'done';
     else if (index < currentIndex) state = step.optional && !visited.has(step.id) ? 'skipped' : 'done';
     else state = 'pending';
     const fill = state === 'current' ? Math.min(1, Math.max(0, (percent - start) / (end - start))) : state === 'done' ? 1 : 0;
