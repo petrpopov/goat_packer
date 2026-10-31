@@ -33,6 +33,7 @@ class BlobEntity(@Id var id: String = newId(), var sha256: String = "", var size
 class UploadEntity(
     @Id var id: String = newId(), var ownerId: String = "", var originalName: String = "", var expectedBytes: Long = 0,
     var state: String = "UPLOADING", var blobId: String? = null, var printerModel: String? = null, var profileId: String? = null,
+    @Column(columnDefinition="text") var projectBedJson: String? = null,
     var createdAt: Instant = Instant.now(), var expiresAt: Instant? = Instant.now().plusSeconds(900), @Version var version: Long = 0,
 )
 @Entity @Table(name="queue_jobs")

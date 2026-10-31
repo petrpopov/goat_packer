@@ -27,6 +27,18 @@ export interface DetectProfileResponse {
   printerModel: string | null;
   /** 'stl' — сетка без настроек слайсера: принтер выбирает пользователь. Нет поля — старый бэкенд, 3MF. */
   kind?: UploadKind;
+  /** Стол из настроек 3MF, когда принтер не распознан (profileId = null); иначе null/нет. */
+  projectBed?: ProjectBed | null;
+}
+
+/** Стол, прочитанный из project_settings.config 3MF неизвестного принтера (мм, координаты стола). */
+export interface ProjectBed {
+  /** [x0, y0, x1, y1]. */
+  printableArea: number[];
+  /** Прямоугольники [x0, y0, x1, y1]; многоугольник из проекта — его габарит. */
+  exclusionRectangles: number[][];
+  /** null — высоты в проекте нет. */
+  printableHeight: number | null;
 }
 
 export type UploadKind = '3mf' | 'stl';

@@ -118,4 +118,6 @@ data class DetectProfileDto(
     val printerModel: String?,
     /** "3mf" — проект слайсера, "stl" — сетка (не разбирается, принтер выбирает пользователь). */
     val kind: String = "3mf",
+    /** Стол из настроек 3MF, когда принтер не распознан (profileId = null); иначе null. */
+    val projectBed: com.goatpacker.web.service.ProjectBed? = null,
 )

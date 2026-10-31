@@ -24,6 +24,6 @@ class ProfilesController(
     @PostMapping("/detect", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun detect(@RequestParam("file") file: MultipartFile): DetectProfileDto {
         val detection = profileService.detectUpload(file)
-        return DetectProfileDto(profileId = detection.profileId, printerModel = detection.printerModel, kind = detection.kind)
+        return DetectProfileDto(profileId = detection.profileId, printerModel = detection.printerModel, kind = detection.kind, projectBed = detection.projectBed)
     }
 }

@@ -126,6 +126,16 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         assertEquals("READY",stl["state"].asText());assertEquals("stl",stl["kind"].asText());assertTrue(stl["profileId"].isNull,stl.toString())
         assertEquals("Упаковка STL появится в ближайшем обновлении",c.job(stl["fileId"].asText(),expected=400)["message"].asText())
     }
+    @Test fun `unknown printer upload carries the project bed for the custom-bed form`() {
+        val c=Client();c.guest()
+        val settings=mapOf("printable_area" to listOf("0x0","250x0","250x210","0x210"),"bed_exclude_area" to listOf("0x0","20x0","20x30","0x30"),"printable_height" to "220")
+        val unknown=c.uploadRaw("cat.3mf",descriptorProject3mf("Prusa MK4",settings))
+        assertTrue(unknown["profileId"].isNull);assertEquals("3mf",unknown["kind"].asText())
+        assertEquals(listOf(0.0,0.0,250.0,210.0),unknown["projectBed"]["printableArea"].map { it.asDouble() })
+        assertEquals(listOf(listOf(0.0,0.0,20.0,30.0)),unknown["projectBed"]["exclusionRectangles"].map { r->r.map { it.asDouble() } })
+        assertEquals(unknown["projectBed"],c.call("GET","/api/v2/uploads/${unknown["fileId"].asText()}")["projectBed"])
+        assertTrue(c.uploadRaw("p1s.3mf",descriptorProject3mf("Bambu Lab P1S",settings))["projectBed"].isNull)
+    }
     @Test fun `concurrent workers cannot exceed global slots or claim same job`() {
         val a=Client();a.guest();a.job(a.upload())
         val b=Client();b.guest();b.job(b.upload())

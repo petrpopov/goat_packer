@@ -12,7 +12,8 @@ import java.util.zip.ZipFile
  * for PNG previews, which java.util.zip.ZipInputStream rejects before reaching the settings. */
 @Service
 class Project3mf(private val mapper: ObjectMapper) {
-    data class Inspection(val hasModel: Boolean, val printerModel: String?)
+    /** [projectBed] — стол из настроек проекта (printable_area и пр.); нужен, когда принтер не распознан. */
+    data class Inspection(val hasModel: Boolean, val printerModel: String?, val projectBed: ProjectBed? = null)
 
     fun inspect(file: MultipartFile): Inspection {
         if (file.isEmpty) throw BadRequestException("Файл .3mf пуст или не выбран")
@@ -69,6 +70,7 @@ class Project3mf(private val mapper: ObjectMapper) {
             }
             val settings = zip.getEntry("Metadata/project_settings.config")
             val model = zip.getEntry("3D/3dmodel.model")
+            var bed: ProjectBed? = null
             val printer = settings?.let {
                 val limit = 8 * 1024 * 1024
                 if (it.size > limit) throw BadRequestException("Настройки принтера в 3MF превышают 8 МБ")
@@ -82,13 +84,14 @@ class Project3mf(private val mapper: ObjectMapper) {
                     val active = setting != null && !setting.isNull && (if (setting.isArray) setting.any { item -> item.asText().isNotBlank() } else setting.asText().isNotBlank())
                     if (active) throw BadRequestException("Внешние post-processing scripts в серверном режиме запрещены")
                 }
+                bed = OrcaBed.fromSettings(node)
                 val value = node.get("printer_model")
                 if (value != null && !value.isNull && !value.isTextual) {
                     throw BadRequestException("printer_model в 3MF должен быть строкой")
                 }
                 value?.asText()?.trim()?.takeIf { name -> name.isNotEmpty() }
             }
-            Inspection(model != null && !model.isDirectory && model.size != 0L, printer)
+            Inspection(model != null && !model.isDirectory && model.size != 0L, printer, bed)
         }
     } catch (ex: BadRequestException) {
         throw ex

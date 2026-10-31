@@ -105,14 +105,14 @@ class UploadTransactions(private val uploads:UploadRepository,private val blobs:
         jdbc.update("insert into object_gc(object_key,size_bytes,not_before) values (?,?,now()+interval '2 hours') on conflict do nothing","inputs/$id",upload.expectedBytes)
         return upload
     }
-    @Transactional fun finish(id:String,owner:String,hash:String,key:String,inspection:Project3mf.Inspection,profileId:String?):Pair<UploadEntity,Boolean> {
+    @Transactional fun finish(id:String,owner:String,hash:String,key:String,inspection:Project3mf.Inspection,profileId:String?,projectBedJson:String?=null):Pair<UploadEntity,Boolean> {
         platform.locked();val p=owners.locked(owner) ?: missing();if(p.blocked) throw ServerError(403,"BLOCKED","Доступ заблокирован")
         val upload=owned(id,owner);if(upload.state!="RECEIVING" || upload.expiresAt?.isBefore(Instant.now())==true) bad("Загрузка больше не активна")
         check(jdbc.queryForList("select object_key from object_gc where object_key=? and not deleting and not_before>now() for update",key).isNotEmpty()) {"Upload staging expired"}
         val existing=blobs.findBySha256AndSizeBytes(hash,upload.expectedBytes)
         val blob=existing ?: blobs.save(BlobEntity(sha256=hash,sizeBytes=upload.expectedBytes,objectKey=key))
         if(existing==null) jdbc.update("delete from object_gc where object_key=?",key)
-        upload.blobId=blob.id;upload.state="READY";upload.printerModel=inspection.printerModel;upload.profileId=profileId
+        upload.blobId=blob.id;upload.state="READY";upload.printerModel=inspection.printerModel;upload.profileId=profileId;upload.projectBedJson=projectBedJson
         upload.expiresAt=if(p.kind=="GUEST") Instant.now().plusSeconds(86400) else null
         return upload to (existing!=null)
     }
@@ -123,7 +123,8 @@ class UploadTransactions(private val uploads:UploadRepository,private val blobs:
 }
 @RestController @RequestMapping("/api/v2/uploads") @Profile("server")
 class UploadController(private val tx:UploadTransactions,private val store:ObjectStore,private val inspector:Project3mf,
-    private val profiles:ProfileService,private val limits:AdmissionLimits,private val props:PlatformProperties) {
+    private val profiles:ProfileService,private val limits:AdmissionLimits,private val props:PlatformProperties,
+    private val mapper:com.fasterxml.jackson.databind.ObjectMapper) {
     data class Intent(val name:String="",val sizeBytes:Long=0,val challengeId:String?=null,val nonce:String?=null)
     @PostMapping fun create(@RequestBody input:Intent,request:HttpServletRequest):Map<String,Any?> {
         val user=actor();limits.hit("uploads:${request.remoteAddr}",10,3600);limits.hit("upload-global",100,3600)
@@ -143,9 +144,9 @@ class UploadController(private val tx:UploadTransactions,private val store:Objec
             // STL — сетка без настроек слайсера: не разбирается, принтер выберет пользователь при создании задачи.
             val stl=com.goatpacker.web.service.StlInputs.isStl(upload.originalName)
             val inspection=if(stl) Project3mf.Inspection(false,null) else inspector.inspect(path).also(inspector::requireModel)
-            val detection=profiles.detect(inspection.printerModel)
+            val detection=profiles.detect(inspection)
             store.put(key,path)
-            val (ready,_)=tx.finish(id,owner,digest.digest().joinToString(""){"%02x".format(it)},key,inspection,detection.profileId)
+            val (ready,_)=tx.finish(id,owner,digest.digest().joinToString(""){"%02x".format(it)},key,inspection,detection.profileId,detection.projectBed?.let(mapper::writeValueAsString))
             return view(ready)
         } catch(ex:Exception) {
             // Only durable GC may delete: finish may have committed despite a lost DB reply.
@@ -156,5 +157,6 @@ class UploadController(private val tx:UploadTransactions,private val store:Objec
     @DeleteMapping("/{id}") fun delete(@PathVariable id:String) {tx.delete(id,actor().id)}
     @GetMapping("/{id}") fun get(@PathVariable id:String)=view(tx.owned(id,actor().id))
     private fun view(u:UploadEntity)=mapOf("fileId" to u.id,"originalName" to u.originalName,"sizeBytes" to u.expectedBytes,"state" to u.state,"profileId" to u.profileId,"printerModel" to u.printerModel,
+        "projectBed" to u.projectBedJson?.let { runCatching { mapper.readTree(it) }.getOrNull() },
         "kind" to (if(com.goatpacker.web.service.StlInputs.isStl(u.originalName)) "stl" else "3mf"),"expiresAt" to u.expiresAt)
 }

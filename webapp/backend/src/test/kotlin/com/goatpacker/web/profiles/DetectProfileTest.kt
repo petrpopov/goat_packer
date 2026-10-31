@@ -114,6 +114,21 @@ class DetectProfileTest(
     }
 
     @Test
+    fun `неизвестный принтер отдаёт стол из проекта, известный — нет`() {
+        val bytes = ByteArrayOutputStream()
+        ZipOutputStream(bytes).use { zip ->
+            zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
+            zip.write("""{"printer_model":"Prusa MK4","printable_area":"0x0,250x0,250x210,0x210","bed_exclude_area":["0x0"],"printable_height":"220"}""".toByteArray())
+            zip.closeEntry()
+        }
+        val bed = json.readTree(detect(bytes.toByteArray()))["projectBed"]
+        assertEquals(listOf(0.0, 0.0, 250.0, 210.0), bed["printableArea"].map { it.asDouble() })
+        assertTrue(bed["exclusionRectangles"].isEmpty)
+        assertEquals(220.0, bed["printableHeight"].asDouble(), 1e-9)
+        assertTrue(json.readTree(detect(mini3mf("Snapmaker U1")))["projectBed"].isNull)
+    }
+
+    @Test
     fun `stl не разбирается — принтер выберет пользователь`() {
         val response = json.readTree(detect(byteArrayOf(1, 2, 3), "cat.STL"))
         assertEquals("stl", response["kind"].asText())

@@ -42,7 +42,7 @@ class ProfileService(
      * сопоставления — из него строится внятное «файл от принтера „X“, профиля для него нет»
      * вместо голого null.
      */
-    data class Detection(val profileId: String?, val printerModel: String?, val kind: String = "3mf")
+    data class Detection(val profileId: String?, val printerModel: String?, val kind: String = "3mf", val projectBed: ProjectBed? = null)
 
     fun list(): List<ProfileDto> = loadAll().map { it.dto }
 
@@ -61,8 +61,12 @@ class ProfileService(
             if (file.size > 200L * 1024 * 1024) throw BadRequestException("Файл больше 200 МБ")
             return Detection(null, null, kind = "stl")
         }
-        return detect(projects.inspect(file).printerModel)
+        return detect(projects.inspect(file))
     }
+
+    /** Стол из проекта отдаётся только неизвестному принтеру: у распознанного геометрия — из профиля. */
+    fun detect(inspection: Project3mf.Inspection): Detection =
+        detect(inspection.printerModel).let { if (it.profileId == null) it.copy(projectBed = inspection.projectBed) else it }
 
     fun detect(printerModel: String?): Detection {
         if (printerModel.isNullOrBlank()) return Detection(null, null)
