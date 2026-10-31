@@ -65,8 +65,10 @@ qualify_one() {
   if [ -n "$bin_dir" ]; then bin=/catalog-bin; mounts+=(-v "$bin_dir:/catalog-bin:ro"); fi
   run() { # <kind> <stage>
     # timeout внутри контейнера: зависший слайсер не держит слот бесконечно (пакер делает несколько срезов).
+    # -w "$work": Orca CLI пишет свой лог 00000.log в текущий каталог; WORKDIR образа (/work) не записываем
+    # для не-root пользователя, и без -w экспорт падал у всех принтеров (boost filesystem_error, exit 134).
     docker run --rm --init --network none --cpus 2 --memory 4g --user "$docker_user" \
-      -e HOME="$work/home" "${mounts[@]}" "goat-packer-runner-$1:$tag" \
+      -w "$work" -e HOME="$work/home" "${mounts[@]}" "goat-packer-runner-$1:$tag" \
       timeout 2400 "$bin/printer_catalog" qualify --draft "/drafts/$file" --orca /orca \
       --packer "$bin/colored_3mf_packer" --verify "$bin/verify_outputs" \
       --work "$work" --out /out/profiles --report /out/report.md --stage "$2" \
