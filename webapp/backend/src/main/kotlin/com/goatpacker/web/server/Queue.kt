@@ -133,12 +133,13 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
     @Transactional fun stageObject(key:String,bytes:Long) {
         jdbc.update("insert into object_gc(object_key,size_bytes,not_before) values (?,?,now()+interval '2 hours') on conflict do nothing",key,bytes)
     }
-    @Transactional fun progress(id:String,fence:Long,phase:String,percent:Int,message:String?,stageJson:String?=null,layoutJson:String?=null) {
-        val j=jobs.locked(id) ?: return;if(j.fence!=fence || j.status !in setOf("RUNNING","FINALIZING")) return
+    @Transactional fun progress(id:String,fence:Long,phase:String,percent:Int,message:String?,stageJson:String?=null,layoutJson:String?=null):Boolean {
+        val j=jobs.locked(id) ?: return false;if(j.fence!=fence || j.status !in setOf("RUNNING","FINALIZING")) return false
         j.phase=phase;j.progress=percent.coerceIn(0,99);j.message=message?.take(1000);j.leaseUntil=Instant.now().plusSeconds(60)
         j.stageJson=stageJson?.take(4000)
-        // Раскладку не обрезаем (≤ 16 КБ по построению: обрезанный JSON не разобрать); null — прежняя остаётся.
+        // Раскладку не обрезаем (обрезанный JSON не разобрать; пакер целится в ≤ 16 КБ, но при сотнях объектов строка может быть длиннее — такую трекер уже отбросил как неразбираемую); null — прежняя остаётся.
         if(layoutJson!=null) j.layoutJson=layoutJson
+        return true
     }
     @Transactional fun pulse(id:String,fence:Long):Boolean {
         val j=jobs.locked(id) ?: return false
@@ -276,7 +277,7 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
     @GetMapping("/jobs") fun list(@RequestParam(defaultValue="0") page:Int):Any {
         if(page !in 0..10000) bad("Некорректная страница")
         val rows=jobs.findAllByOwnerId(actor().id,PageRequest.of(page,20,org.springframework.data.domain.Sort.by("createdAt").descending()))
-        return mapOf("items" to rows.content.map { view(it,false) },"total" to rows.totalElements)
+        return mapOf("items" to rows.content.map { view(it,false,withLayout=false) },"total" to rows.totalElements)
     }
     @GetMapping("/jobs/{id}") fun get(@PathVariable id:String,@RequestParam(defaultValue="false") debug:Boolean,
         @RequestHeader(name="X-Job-Token",required=false) token:String?)=view(queue.readable(id,actor().id,token),debug)
@@ -297,7 +298,8 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
         try { store.get(a.objectKey,tmp);return org.springframework.http.ResponseEntity.ok().header("Content-Disposition",org.springframework.http.ContentDisposition.attachment().filename(a.downloadName,Charsets.UTF_8).build().toString()).body(Files.readAllBytes(tmp)) }
         finally { Files.deleteIfExists(tmp) }
     }
-    private fun view(j:QueueJobEntity,debug:Boolean):Map<String,Any?> {
+    // withLayout=false — для списка: раскладка до десятков КБ на строку, а список опрашивается каждые 5 с.
+    private fun view(j:QueueJobEntity,debug:Boolean,withLayout:Boolean=true):Map<String,Any?> {
         val ahead=if(j.status in setOf("QUEUED","RETRY_WAIT")) jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RETRY_WAIT') and (created_at,id)<(?,?)",Long::class.java,java.sql.Timestamp.from(j.createdAt),j.id)!! else null
         val capacity=jdbc.queryForObject("select coalesce(sum(capacity),0) from worker_nodes where last_seen_at>now()-interval '30 seconds'",Int::class.java)!!
         val configured=jdbc.queryForObject("select case when paused then 0 else max_parallel end from platform_config where id=1",Int::class.java)!!
@@ -323,7 +325,7 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
             "pack" to if(j.kind=="PACK") result else null,"schedule" to if(j.kind=="SCHEDULE") result else null,
             "calibration" to if(j.kind=="CALIBRATION") result else null,"stage" to stageView(j),
             // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
-            "layout" to j.layoutJson?.let { runCatching { mapper.readTree(it) }.getOrNull() })
+            ) + if(withLayout) mapOf("layout" to j.layoutJson?.let { runCatching { mapper.readTree(it) }.getOrNull() }) else emptyMap()
     }
     /** Этап пакера для статуса: прошедшее время считается сейчас (по часам API, startedAtMs — исполнителя). */
     private fun stageView(j:QueueJobEntity):com.goatpacker.web.dto.JobStageDto? =

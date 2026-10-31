@@ -161,6 +161,9 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             assertEquals(1.5,response["pack"]["supportOverlapMm"].asDouble(),1e-9)
             // layout-событие пакера (local runner ставит GOAT_LOG_FORMAT=json) живёт и после успеха.
             assertEquals(2,response["layout"]["placements"].size(),response.toString())
+            // Список не тащит раскладку (до десятков КБ на строку при опросе раз в 5 с); одиночный статус — тащит.
+            val listed=client.call("GET","/api/v2/jobs").get("items").first { it["jobId"].asText()==id }
+            assertTrue(listed["layout"]==null || listed["layout"].isNull,listed.toString())
             assertEquals(1,response["artifacts"].size())
             assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"))
             assertTrue(client.call("GET","/api/v2/jobs/$id?debug=true")["artifacts"].size()>1)

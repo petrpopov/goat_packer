@@ -96,6 +96,14 @@ class JobRunner(
         /** Сколько последних строк лога идёт в error при FAILED. */
         private const val ERROR_TAIL_LINES = 15
 
+        /** JSON-событие пакера (stage, layout, slicer_progress ...): строка вида `{... "event" ...}`. */
+        internal fun isEventLine(line: String): Boolean {
+            val t = line.trim()
+            return t.startsWith("{") && t.contains("\"event\"")
+        }
+
+        internal fun isLayoutEvent(line: String): Boolean = line.contains("\"event\":\"layout\"")
+
         private val PACK_REQUIRED = listOf("packed.3mf")
         private val SCHEDULE_REQUIRED = listOf("schedule.csv", "plates.3mf")
         private val CALIBRATION_REQUIRED = listOf(
@@ -255,12 +263,15 @@ class JobRunner(
             ).use { writer ->
                 var written = 0L
                 com.goatpacker.web.job.BoundedLines.read(process.inputStream) { line ->
-                    if (written < 10L * 1024 * 1024) {
+                    // layout-строки (до десятков КБ) в файл не пишем: они съедают лимит 10 МБ, а в логе не нужны.
+                    if (written < 10L * 1024 * 1024 && !isLayoutEvent(line)) {
                         writer.write(line);writer.newLine();writer.flush();written += line.toByteArray(StandardCharsets.UTF_8).size + 1
                     }
                     val event = tracker.onLine(line)
-                    // layout — до 16 КБ на строку: в лог только факт, иначе он забивается контурами.
-                    if (line.contains("\"event\":\"layout\"")) log.info("jobId={} component=cli event=layout bytes={}", job.id, line.length)
+                    // layout — крупная строка: в лог только факт, иначе он забивается контурами.
+                    // slicer_output/slicer_progress сыплются каждые пару секунд — на DEBUG.
+                    if (isLayoutEvent(line)) log.info("jobId={} component=cli event=layout bytes={}", job.id, line.length)
+                    else if (line.contains("\"event\":\"slicer_")) log.debug("jobId={} component=cli message={}", job.id, line.take(8192))
                     else if (line.contains("event=") || line.contains("\"event\"")) log.info("jobId={} component=cli message={}", job.id, line.take(8192))
                     job.update {
                         it.copy(
@@ -456,6 +467,8 @@ class JobRunner(
             Files.newBufferedReader(logFile, StandardCharsets.UTF_8).useLines { stream ->
                 stream.forEach { line ->
                     if (tail.size == lines) tail.removeFirst()
+                    // JSON-события (stage, slicer_progress) не показываем: ошибка должна объясняться человеческими строками.
+                    if (isEventLine(line)) return@forEach
                     tail.addLast(line.takeLast(4096))
                 }
             }
