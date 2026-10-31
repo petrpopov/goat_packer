@@ -119,40 +119,39 @@ impl PresetIndex {
 
     /// The process preset for a catalog probe / STL build of `machine` (vendor-scoped):
     /// 1. an instantiable process of the vendor whose `compatible_printers` lists the machine
-    ///    (BBL style), `0.20mm Standard` > `0.20mm` > the rest, then by name;
-    /// 2. else a `0.20mm` process whose `@<suffix>` names the machine (Prusa, Creality: they
+    ///    (BBL style), best `process_rank`, then by name;
+    /// 2. else a 0.20 mm process whose `@<suffix>` names the machine (Prusa, Creality: they
     ///    match by `compatible_printers_condition`, which the CLI ignores), `Standard` first;
     /// 3. else the vendor's base process (`fdm_process_common`, else the first root process).
     /// Returns the process name (it lives in `vendor`).
     pub fn select_process(&self, vendor: &str, machine: &str) -> Option<String> {
         let processes: Vec<(&str, &Map<String, Value>)> =
             self.of_type("process").filter(|(v, _, _)| *v == vendor).map(|(_, n, m)| (n, m)).collect();
-        let instantiable = |m: &Map<String, Value>| m.get("instantiation").and_then(Value::as_str) == Some("true");
-        let rank = |name: &str| if name.contains("0.20mm Standard") { 0 } else if name.contains("0.20mm") { 1 } else { 2 };
-        let listed = processes
+        // Instantiable processes, resolved once, with their rank (layer height from the merged
+        // `layer_height`, not the name: Volumic names read `Compatible speed - 0.20mm`).
+        let mut candidates: Vec<((u8, u8), &str, Map<String, Value>)> = processes
             .iter()
-            .filter(|(n, m)| {
-                instantiable(m)
-                    && self.resolve(vendor, n).ok().is_some_and(|r| {
-                        r.get("compatible_printers")
-                            .and_then(Value::as_array)
-                            .is_some_and(|list| list.iter().any(|p| p.as_str() == Some(machine)))
-                    })
+            .filter(|(_, m)| m.get("instantiation").and_then(Value::as_str) == Some("true"))
+            .filter_map(|(n, _)| {
+                let resolved = self.resolve(vendor, n).ok()?;
+                let layer = resolved.get("layer_height").and_then(first_number).or_else(|| layer_height(n));
+                Some((process_rank(n, layer), *n, resolved))
             })
-            .min_by_key(|(n, _)| (rank(n), *n));
-        if let Some((name, _)) = listed {
+            .collect();
+        candidates.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        let listed = candidates.iter().find(|(_, _, r)| {
+            r.get("compatible_printers")
+                .and_then(Value::as_array)
+                .is_some_and(|list| list.iter().any(|p| p.as_str() == Some(machine)))
+        });
+        if let Some((_, name, _)) = listed {
             return Some((*name).to_owned());
         }
         let keys = machine_keys(vendor, machine);
-        let named = processes
-            .iter()
-            .filter(|(n, m)| {
-                instantiable(m)
-                    && n.contains("0.20mm")
-                    && n.split_once('@').is_some_and(|(_, suffix)| keys.contains(&normalize(suffix)))
-            })
-            .min_by_key(|(n, _)| (rank(n), *n));
-        if let Some((name, _)) = named {
+        let named = candidates.iter().find(|(rank, n, _)| {
+            rank.0 == 0 && n.split_once('@').is_some_and(|(_, suffix)| keys.contains(&normalize(suffix)))
+        });
+        if let Some((_, name, _)) = named {
             return Some((*name).to_owned());
         }
         let roots = || processes.iter().filter(|(_, m)| m.get("inherits").and_then(Value::as_str).is_none_or(str::is_empty));
@@ -163,6 +162,44 @@ impl PresetIndex {
     pub fn cli_preset(&self, vendor: &str, name: &str, machine: &str) -> Result<Map<String, Value>, String> {
         Ok(flatten_for_cli(self.resolve(vendor, name)?, machine))
     }
+}
+
+/// Orca numbers: `"0.2"`, `["0.2"]` or a JSON number.
+fn first_number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse().ok(),
+        Value::Array(a) => a.first().and_then(first_number),
+        _ => None,
+    }
+}
+
+/// The leading layer height of a process name: `0.20mm Standard @X` and Snapmaker's
+/// `0.20 Standard @Snapmaker (0.4 nozzle)` → 0.2.
+fn layer_height(name: &str) -> Option<f64> {
+    let head: String = name.trim().chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    head.parse().ok()
+}
+
+/// Lower is better. First key: 0.20 mm layers before everything else. Second: `Standard`, then
+/// everyday variants (Prusa has no Standard: `SPEED`/`STRUCTURAL`), then other ones, then
+/// material- or toolhead-specific ones (`SOLUBLE FULL`, `TPU`, `MMU`). Ties go by name.
+fn process_rank(name: &str, layer_height: Option<f64>) -> (u8, u8) {
+    let layer = u8::from(layer_height.is_none_or(|h| (h - 0.2).abs() > 1e-9));
+    let lower = name.to_ascii_lowercase();
+    let variant = lower.split('@').next().unwrap_or("");
+    let words: Vec<&str> = variant.split_whitespace().skip(1).collect();
+    let has = |list: &[&str]| list.iter().any(|w| words.iter().any(|v| v.starts_with(w)));
+    let kind = if has(&["soluble", "tpu", "pet", "mmu", "mm", "support", "interface"]) {
+        3
+    } else if has(&["standard"]) {
+        0
+    } else if has(&["speed", "structural", "quality", "optimal", "balanced", "fine"]) {
+        1
+    } else {
+        2
+    };
+    (layer, kind)
 }
 
 /// Lowercase ASCII alphanumerics only: `Ender-3 V3 SE` and `Ender3V3SE` compare equal.
@@ -346,6 +383,21 @@ mod tests {
         let index = fixture();
         assert_eq!(index.select_process("Zeta", "Zeta Cube 0.4 nozzle").as_deref(), Some("fdm_process_common"));
         assert_eq!(index.select_process("Nobody", "X 0.4 nozzle"), None);
+    }
+
+    #[test]
+    fn process_rank_prefers_everyday_profiles() {
+        assert_eq!(process_rank("0.20mm Standard @BBL X1C", layer_height("0.20mm Standard @BBL X1C")), (0, 0));
+        assert_eq!(process_rank("0.20 Standard @Snapmaker (0.4 nozzle)", layer_height("0.20 Standard @Snapmaker (0.4 nozzle)")), (0, 0));
+        assert_eq!(process_rank("0.20mm SPEED @MK4S 0.4", layer_height("0.20mm SPEED @MK4S 0.4")), (0, 1));
+        assert_eq!(process_rank("0.20mm Strength @X", layer_height("0.20mm Strength @X")), (0, 2));
+        assert_eq!(process_rank("0.20mm SOLUBLE FULL @MK4S 0.4", layer_height("0.20mm SOLUBLE FULL @MK4S 0.4")), (0, 3));
+        assert_eq!(process_rank("0.20mm PET-CF 0.4 Nozzle Standard @X", layer_height("0.20mm PET-CF 0.4 Nozzle Standard @X")), (0, 3));
+        assert_eq!(process_rank("0.24mm Standard @X 0.8 nozzle", layer_height("0.24mm Standard @X 0.8 nozzle")), (1, 0));
+        assert!(process_rank("0.08 Extra Fine @Snapmaker (0.4 nozzle)", layer_height("0.08 Extra Fine @Snapmaker (0.4 nozzle)")) > process_rank("0.20 Standard @Snapmaker (0.4 nozzle)", layer_height("0.20 Standard @Snapmaker (0.4 nozzle)")));
+        assert_eq!(process_rank("fdm_process_common", None), (1, 2));
+        assert_eq!(process_rank("Compatible speed - 0.20mm", Some(0.2)), (0, 1));
+        assert!(process_rank("0.20mm SPEED @MK4S 0.4", layer_height("0.20mm SPEED @MK4S 0.4")) < process_rank("0.20mm SOLUBLE FULL @MK4S 0.4", layer_height("0.20mm SOLUBLE FULL @MK4S 0.4")));
     }
 
     #[test]
