@@ -52,6 +52,11 @@ impl PresetIndex {
         }
     }
 
+    /// The raw preset (no `inherits` merge) with this exact name, any type (e.g. `machine_model`).
+    pub fn get(&self, name: &str) -> Option<(&str, &Map<String, Value>)> {
+        self.by_name.get(name).map(|(vendor, map)| (vendor.as_str(), map))
+    }
+
     /// Instantiable machine presets (what Orca shows in its printer list), sorted by vendor, name.
     pub fn machines(&self) -> impl Iterator<Item = MachineEntry<'_>> {
         let mut list: Vec<_> = self

@@ -28,7 +28,17 @@ fn triangles(stl: &[u8]) -> Option<Vec<[[f64; 3]; 3]>> {
 
 pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>> {
     let tris = triangles(stl)?;
-    let z_top = tris.iter().flatten().map(|v| v[2]).fold(f64::NEG_INFINITY, f64::max);
+    // Real bed models carry small raised details (logos, clips) above the plate: the plate face is
+    // the horizontal level with the largest total area, not the topmost one.
+    let mut level_area: Vec<(f64, f64)> = Vec::new();
+    for t in tris.iter().filter(|t| t.iter().all(|v| (v[2] - t[0][2]).abs() < 1e-3)) {
+        let area = ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])).abs() / 2.0;
+        match level_area.iter_mut().find(|(z, _)| (*z - t[0][2]).abs() < 1e-3) {
+            Some((_, a)) => *a += area,
+            None => level_area.push((t[0][2], area)),
+        }
+    }
+    let z_top = level_area.iter().max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0))).map(|l| l.0)?;
     let key = |v: &[f64; 3]| -> Key { ((v[0] * 100.0).round() as i64, (v[1] * 100.0).round() as i64) };
     let mut edges: HashMap<(Key, Key), u32> = HashMap::new();
     for t in tris.iter().filter(|t| t.iter().all(|v| (v[2] - z_top).abs() < 1e-3)) {
