@@ -16,6 +16,7 @@ pub mod plate_centre;
 pub mod plate_preview;
 pub mod print_time;
 pub mod progress;
+pub mod purge_detect;
 pub mod scheduler;
 pub mod process_output;
 pub mod slicer_cli;
