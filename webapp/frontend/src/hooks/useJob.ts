@@ -17,7 +17,9 @@ export function useJob(jobId: string | null) {
     enabled: jobId !== null,
     queryFn: ({ signal }) => {
       if (!jobId) throw new Error('Идентификатор задачи не задан');
-      return getJob(jobId, signal);
+      // Момент получения — точка отсчёта для локального таймера этапа между опросами
+      // (часы клиента и сервера не сравниваются).
+      return getJob(jobId, signal).then((job) => ({ ...job, receivedAtMs: Date.now() }));
     },
     retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
     refetchInterval: (query) => {

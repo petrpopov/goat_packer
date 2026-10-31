@@ -14,7 +14,7 @@ import java.time.Instant
 
 val activeStates=setOf("QUEUED","RUNNING","FINALIZING","LOST","RETRY_WAIT")
 data class JobRequest(val kind:String="PACK",val fileId:String?=null,val packJobId:String?=null,val profileId:String="",
-    val clearance:Double=0.7,val resolution:Double=0.25,val attempts:Long=4800,val edgeMargin:Double?=null,
+    val clearance:Double=0.7,val resolution:Double=0.25,val attempts:Long=16000,val edgeMargin:Double?=null,
     val layout:String="search",val nozzleClean:String="",val dayStart:String="10:00",val nightStart:String="23:00",
     val horizonEnd:String="34:00",val turnaroundMin:Int=10,val prepMin:Int=10,val benchMode:String="adaptive",
     // Время печати (упаковка) и коррекция смены прутка AMS (упаковка и расписание); null = не задано.
@@ -133,9 +133,10 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
     @Transactional fun stageObject(key:String,bytes:Long) {
         jdbc.update("insert into object_gc(object_key,size_bytes,not_before) values (?,?,now()+interval '2 hours') on conflict do nothing",key,bytes)
     }
-    @Transactional fun progress(id:String,fence:Long,phase:String,percent:Int,message:String?) {
+    @Transactional fun progress(id:String,fence:Long,phase:String,percent:Int,message:String?,stageJson:String?=null) {
         val j=jobs.locked(id) ?: return;if(j.fence!=fence || j.status !in setOf("RUNNING","FINALIZING")) return
         j.phase=phase;j.progress=percent.coerceIn(0,99);j.message=message?.take(1000);j.leaseUntil=Instant.now().plusSeconds(60)
+        j.stageJson=stageJson?.take(4000)
     }
     @Transactional fun pulse(id:String,fence:Long):Boolean {
         val j=jobs.locked(id) ?: return false
@@ -214,7 +215,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         jdbc.update("update job_attempts set status='LOST',finished_at=now(),message=? where job_id=? and fence=?",reason.take(2000),j.id,j.fence)
         if(j.cancelRequested || owners.findById(j.ownerId).orElseThrow().blocked) {terminal(j,"CANCELLED",null);return}
         if(j.attemptCount>=props.maxRetries+1 || j.computeReservedSeconds<=0) {terminal(j,"FAILED",reason);return}
-        j.status="RETRY_WAIT";j.message="Повтор после сбоя исполнителя";j.error=null;j.workerId=null;j.leaseUntil=null;j.startedAt=null;j.deadlineAt=null;j.progress=0;j.availableAt=Instant.now().plusSeconds(10)
+        j.status="RETRY_WAIT";j.message="Повтор после сбоя исполнителя";j.stageJson=null;j.error=null;j.workerId=null;j.leaseUntil=null;j.startedAt=null;j.deadlineAt=null;j.progress=0;j.availableAt=Instant.now().plusSeconds(10)
     }
     private fun reserveCompute(owner:PrincipalEntity,day:java.time.LocalDate,seconds:Long) {
         for((key,limit) in listOf(owner.id to (if(owner.kind=="GUEST") props.guestComputeSeconds else props.accountComputeSeconds),"GLOBAL" to props.globalComputeSeconds)) {
@@ -318,6 +319,10 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
             "estimateReason" to (if(slots==0) "Нет доступных исполнителей или очередь на паузе" else if(estimate==null) "Недостаточно измерений для надёжной оценки" else "Приблизительно по медиане последних задач; фактическое время может отличаться"),
             "artifacts" to artifacts.findAllByJobId(j.id).filter { debug || !it.debug }.map { mapOf("id" to it.id,"name" to it.downloadName,"sizeBytes" to it.sizeBytes,"downloadUrl" to "/api/v2/jobs/${j.id}/artifacts/${it.id}/download") },
             "pack" to if(j.kind=="PACK") result else null,"schedule" to if(j.kind=="SCHEDULE") result else null,
-            "calibration" to if(j.kind=="CALIBRATION") result else null)
+            "calibration" to if(j.kind=="CALIBRATION") result else null,"stage" to stageView(j))
     }
+    /** Этап пакера для статуса: прошедшее время считается сейчас (по часам API, startedAtMs — исполнителя). */
+    private fun stageView(j:QueueJobEntity):com.goatpacker.web.dto.JobStageDto? =
+        if(j.status !in setOf("RUNNING","FINALIZING")) null
+        else j.stageJson?.let { runCatching { com.goatpacker.web.dto.JobStageDto.of(mapper.readValue(it,com.goatpacker.web.job.JobStage::class.java)) }.getOrNull() }
 }

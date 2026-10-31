@@ -43,6 +43,8 @@ class QueueJobEntity(
     @Column(columnDefinition="text") var paramsJson: String = "{}",
     var requestKey: String = "", var requestHash: String = "", var readTokenHash: String? = null,
     var phase: String = "upload", var progress: Int = 0, var message: String? = null, var error: String? = null,
+    // Текущий этап пакера (JSON com.goatpacker.web.job.JobStage); null — этапа нет (V3).
+    @Column(columnDefinition="text") var stageJson: String? = null,
     @Column(columnDefinition="text") var resultJson: String? = null,
     var createdAt: Instant = Instant.now(), var startedAt: Instant? = null, var finishedAt: Instant? = null, var expiresAt: Instant? = null,
     var workerId: String? = null, var fence: Long = 0, var leaseUntil: Instant? = null, var deadlineAt: Instant? = null,

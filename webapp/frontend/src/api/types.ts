@@ -36,6 +36,34 @@ export type JobPhase =
   | 'writing'
   | 'cleanup';
 
+/** Этапы colored_3mf_packer (stage-события протокола прогресса). */
+export type PackStageId =
+  | 'probe_slice'
+  | 'packing'
+  | 'assembling'
+  | 'final_slice'
+  | 'gcode_check'
+  | 'repacking'
+  | 'window_slice'
+  | 'writing';
+
+/** Текущий этап упаковки (только pack-задачи, пока задача выполняется). */
+export interface JobStage {
+  id: PackStageId | string;
+  startedAtMs: number;
+  /** Сколько этап идёт на момент ответа сервера, с. */
+  elapsedSeconds: number;
+  /** Оценка длительности этапа от пакера, с; null — оценки нет. */
+  expectedSeconds: number | null;
+  objects: number | null;
+  /** Номер захода в этап (нарезки под окно времени повторяются). */
+  attempt: number;
+  /** Пройденные этапы в порядке первого захода, включая текущий. */
+  visited: string[];
+  /** Последняя английская строка пакера — вторичная подробность. */
+  detail: string | null;
+}
+
 export interface JobArtifact {
   name: string;
   sizeBytes: number;
@@ -130,6 +158,9 @@ export interface JobStatusResponse {
   pack: PackJobInfo | null;
   schedule: ScheduleInfo | null;
   calibration?: CalibrationInfo | null;
+  stage?: JobStage | null;
+  /** Когда клиент получил этот ответ (Date.now()); проставляет useJob для локального отсчёта времени. */
+  receivedAtMs?: number;
 }
 
 export interface StartJobResponse {

@@ -74,6 +74,7 @@ class JobService(
             phase = snap.phase.jsonValue(),
             progressPercent = snap.progressPercent,
             phaseMessage = snap.phaseMessage,
+            stage = snap.stage?.takeIf { snap.status == JobStatus.RUNNING }?.let { com.goatpacker.web.dto.JobStageDto.of(it) },
             error = snap.error,
             createdAt = job.createdAt,
             finishedAt = snap.finishedAt,

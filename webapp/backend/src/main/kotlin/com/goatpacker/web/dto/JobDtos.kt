@@ -102,6 +102,34 @@ data class ScheduleInfoDto(
     val plates: List<PlateDto>,
 )
 
+/**
+ * Текущий этап упаковки для степпера и строки статуса. [elapsedSeconds] посчитан при выдаче
+ * статуса (фронт досчитывает время локально между опросами).
+ */
+data class JobStageDto(
+    val id: String,
+    val startedAtMs: Long,
+    val elapsedSeconds: Long,
+    val expectedSeconds: Double?,
+    val objects: Int?,
+    val attempt: Int,
+    val visited: List<String>,
+    val detail: String?,
+) {
+    companion object {
+        fun of(stage: com.goatpacker.web.job.JobStage, nowMs: Long = System.currentTimeMillis()) = JobStageDto(
+            id = stage.id,
+            startedAtMs = stage.startedAtMs,
+            elapsedSeconds = ((nowMs - stage.startedAtMs) / 1000).coerceAtLeast(0),
+            expectedSeconds = stage.expectedSeconds,
+            objects = stage.objects,
+            attempt = stage.attempt,
+            visited = stage.visited,
+            detail = stage.detail,
+        )
+    }
+}
+
 /** Статусная сводка джоба — то, что фронтенд поллит раз в секунду. */
 @JsonInclude(JsonInclude.Include.ALWAYS)
 data class JobStatusDto(
@@ -118,4 +146,6 @@ data class JobStatusDto(
     val pack: PackInfoDto?,
     val schedule: ScheduleInfoDto?,
     val calibration: CalibrationInfoDto? = null,
+    /** Этап упаковки; null — не pack-джоб или этап ещё не начался. */
+    val stage: JobStageDto? = null,
 )

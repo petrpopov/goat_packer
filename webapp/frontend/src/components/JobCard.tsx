@@ -5,8 +5,10 @@ import { pushToast } from '@/store/useToastStore';
 import type { ReactNode } from 'react';
 import type { JobStatusResponse } from '@/api/types';
 import { formatHoursMinutes, packTimeLines } from '@/utils/format';
+import { looksLikeJson } from '@/utils/progress';
 import ArtifactList from './ArtifactList';
 import MarkdownView from './MarkdownView';
+import PackProgress from './PackProgress';
 import ProgressBar from './ProgressBar';
 import StatusPill from './StatusPill';
 
@@ -121,7 +123,19 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
         </div>
       )}
       {active && job.canManage !== false && cancelButton}
-      {active && <ProgressBar percent={job.progressPercent} message={job.phaseMessage ?? undefined} />}
+      {active && job.kind === 'pack' && job.stage ? (
+        <PackProgress
+          percent={job.progressPercent}
+          stage={job.stage}
+          message={job.phaseMessage}
+          receivedAtMs={job.receivedAtMs}
+        />
+      ) : active ? (
+        <ProgressBar
+          percent={job.progressPercent}
+          message={job.phaseMessage && !looksLikeJson(job.phaseMessage) ? job.phaseMessage : undefined}
+        />
+      ) : null}
 
       {job.status === 'FAILED' && job.error ? <JobError error={job.error} /> : null}
       {job.status === 'FAILED' && !job.error ? <div className="error-block">Задача завершилась с ошибкой</div> : null}

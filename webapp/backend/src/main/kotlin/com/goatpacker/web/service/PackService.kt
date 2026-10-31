@@ -61,8 +61,10 @@ class PackService(
             profilePath = profile.file,
             clearance = form.clearance ?: 0.7,
             resolution = form.resolution ?: 0.25,
-            // The deterministic solver uses an effort portfolio, not seed-dependent restarts.
-            attempts = form.attempts ?: 4800,
+            // Дефолт CLI. Фронт поле больше не шлёт: с поддержками поиск всё равно перебирает
+            // фиксированные 64 варианта, ползунок усилия ни на что не влиял. Поле принимается
+            // ради совместимости API.
+            attempts = form.attempts ?: 16_000,
             candidates = form.candidates ?: 2400,
             seed = form.seed ?: 20_270_831,
             edgeMargin = form.edgeMargin,

@@ -16,21 +16,12 @@ import { useUiStore } from '@/store/useUiStore';
 
 type NozzleCleanMode = 'off' | 'global' | 'from-z';
 
-/** Finite deterministic search portfolio; higher effort includes all earlier strategies. */
-const EFFORT_LEVELS = [
-  { label: 'Быстро', attempts: 500 },
-  { label: 'Стандарт', attempts: 2000 },
-  { label: 'Сильно', attempts: 4800 },
-  { label: 'Максимум', attempts: 12000 },
-] as const;
-
 export default function PackPage() {
   const sendToSchedule = useUiStore((state) => state.sendToSchedule);
 
   const [file, setFile] = useState<File | null>(null);
   const [clearance, setClearance] = useState('0.7');
   const [resolution, setResolution] = useState('0.25');
-  const [effort, setEffort] = useState(EFFORT_LEVELS.length - 2);
   const [cleanMode, setCleanMode] = useState<NozzleCleanMode>('off');
   const [layout, setLayout] = useState<'search' | 'grid'>('search');
   const [edgeMargin, setEdgeMargin] = useState('');
@@ -148,7 +139,8 @@ export default function PackPage() {
     form.append('profileId', profileId);
     form.append('clearance', clearance);
     form.append('resolution', resolution);
-    form.append('attempts', String(EFFORT_LEVELS[effort].attempts));
+    // attempts не шлём: действует дефолт бэкенда (= CLI). Ползунок усилия убран — с поддержками
+    // поиск всегда перебирает фиксированные 64 варианта, число попыток ни на что не влияло.
     form.append('nozzleClean', nozzleSpec);
     form.append('layout', layout);
     // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки).
@@ -395,31 +387,6 @@ export default function PackPage() {
                   onChange={(event) => setResolution(event.target.value)}
                   disabled={jobActive || startMutation.isPending}
                 />
-              </Field>
-              <Field
-                label="Усилие поиска"
-                hint={`${EFFORT_LEVELS[effort].attempts} — усилие детерминированного поиска`}
-              >
-                <div className="effort-slider">
-                  <input
-                    className="effort-range"
-                    type="range"
-                    min={0}
-                    max={EFFORT_LEVELS.length - 1}
-                    step={1}
-                    value={effort}
-                    onChange={(event) => setEffort(Number(event.target.value))}
-                    disabled={jobActive || startMutation.isPending}
-                    aria-label="Усилие поиска"
-                  />
-                  <div className="effort-labels">
-                    {EFFORT_LEVELS.map((level, index) => (
-                      <span key={level.label} className={index === effort ? 'effort-label active' : 'effort-label'}>
-                        {level.label}
-                      </span>
-                    ))}
-                  </div>
-                </div>
               </Field>
               <Field
                 label="Отступ от края, мм"

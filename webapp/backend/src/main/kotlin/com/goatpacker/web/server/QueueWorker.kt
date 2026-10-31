@@ -110,8 +110,13 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
             }
             Files.writeString(job.directory.resolve("profile.json"),mapper.writeValueAsString(profile))
             var last=0L
-            job.onUpdate={snap -> if(System.nanoTime()-last>TimeUnit.SECONDS.toNanos(1) || snap.status!=JobStatus.RUNNING) {
-                last=System.nanoTime();queue.progress(record.id,record.fence,snap.phase.jsonValue(),snap.progressPercent,snap.phaseMessage)
+            var lastStage:Pair<String,Int>?=null
+            // Не чаще раза в секунду, но смена этапа пишется сразу: после неё вывода может не быть
+            // долго (сборка, проверка G-code), и без записи степпер стоял бы на прошлом этапе.
+            job.onUpdate={snap -> val stageKey=snap.stage?.let { it.id to it.attempt }
+                if(System.nanoTime()-last>TimeUnit.SECONDS.toNanos(1) || snap.status!=JobStatus.RUNNING || stageKey!=lastStage) {
+                last=System.nanoTime();lastStage=stageKey
+                queue.progress(record.id,record.fence,snap.phase.jsonValue(),snap.progressPercent,snap.phaseMessage,snap.stage?.let(mapper::writeValueAsString))
             }}
             if(!queue.pulse(record.id,record.fence)) {job.cancel();return}
             val r=mapper.readValue<JobRequest>(record.paramsJson)

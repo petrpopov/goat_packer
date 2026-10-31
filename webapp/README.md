@@ -53,7 +53,7 @@ bun run dev
 
 - `GET /api/profiles` — профили принтеров из `profiles/` (`filamentChangeSeconds` нет — коррекция смены не нужна).
 - `POST /api/pack/jobs` — multipart: `file` (.3mf, один объект) + `profileId`, `clearance`,
-  `resolution`, `attempts`, `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
+  `resolution`, `attempts` (необязательно, дефолт 16000 как у CLI; фронт не шлёт), `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
   (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
   (0–50 %, дефолт CLI 10), `supportOverlapMm` (0–20 мм; пусто — без ограничений, флаг
   `--support-overlap-mm` не передаётся) → `{"jobId"}`. В результате `pack.time` — оценка времени стола
@@ -68,7 +68,12 @@ bun run dev
 - `POST /api/schedule/jobs` — multipart: `file` или `packJobId` (артефакт фазы 1) +
   `profileId`, `dayStart`, `nightStart`, `horizonEnd` (HH:MM, часы могут быть >24),
   `turnaroundMin`, `prepMin`, `benchMode` (`adaptive`|`full`), `amsCorrection`, `changeSeconds` → `{"jobId"}`.
-- `GET /api/jobs/{id}` — статус/прогресс/результат (поллинг).
+- `GET /api/jobs/{id}` — статус/прогресс/результат (поллинг). У выполняющейся упаковки есть `stage`:
+  текущий этап пакера (`id` — `probe_slice|packing|assembling|final_slice|gcode_check|repacking|window_slice|writing`,
+  `elapsedSeconds`, `expectedSeconds` из stage-события или null, `objects`, `attempt`, `visited`, `detail` — последняя
+  английская строка). `progressPercent` — полосы этапов (проба 1–15, раскладка 15–30, сборка 30–33, итоговая нарезка
+  33–78, проверка G-code 78–82, перепаковка 82–86, окно времени 86–95, запись 95–99) с интерполяцией по времени,
+  монотонно; `phaseMessage` — русское описание этапа, JSON-события слайсера сообщением не бывают.
 - `GET /api/jobs/{id}/artifacts/{name}` — скачивание артефакта.
 - `DELETE /api/jobs/{id}` — отменить и удалить.
 

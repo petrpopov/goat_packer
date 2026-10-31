@@ -457,6 +457,77 @@ select.input {
   transition: width 0.3s ease;
 }
 
+/* Прогресс упаковки: строка статуса, подробность и список этапов. */
+.pack-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.stage-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.stage-status-text {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stage-status-time {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.stage-detail {
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.stage-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--fg-dim);
+}
+
+.stage-marker {
+  width: 1em;
+  text-align: center;
+}
+
+.stage-step-done .stage-marker {
+  color: var(--accent);
+}
+
+.stage-step-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stage-step-current .stage-marker {
+  color: var(--accent);
+}
+
+.stage-step-pending {
+  opacity: 0.6;
+}
+
 /* ── Tables ────────────────────────────────────────────────────────────── */
 
 .table-wrap {
@@ -836,39 +907,6 @@ td.num {
   .toast {
     animation: none;
   }
-}
-
-/* Ползунок усилия поиска (вместо двух числовых полей попытки/кандидаты). */
-.effort-slider {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: var(--row-h);
-  justify-content: center;
-}
-
-.effort-range {
-  width: 100%;
-  height: 4px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.effort-range:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.effort-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--fg-dim);
-}
-
-.effort-label.active {
-  color: var(--accent);
-  font-weight: 600;
 }
 
 /* Галочка с подписью в строке формы. */

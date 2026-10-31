@@ -262,7 +262,8 @@ class JobRunner(
                         it.copy(
                             phase = event.phase,
                             progressPercent = event.progressPercent,
-                            phaseMessage = event.phaseMessage,
+                            phaseMessage = event.phaseMessage.ifBlank { it.phaseMessage },
+                            stage = event.stage,
                         )
                     }
                 }
