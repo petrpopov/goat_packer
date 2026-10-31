@@ -1,0 +1,2 @@
+{ "type": "machine", "name": "Acme Ring 0.4 nozzle", "inherits": "fdm_acme_common", "from": "system",
+  "instantiation": "true", "printer_model": "Acme Ring", "printable_area": "0x0,300x0,300x300,0x300", "bed_exclude_area": "0x0" }

@@ -1,0 +1,2 @@
+{ "type": "machine", "name": "Acme Box 0.4 nozzle", "inherits": "fdm_acme_common", "from": "system",
+  "instantiation": "true", "printer_model": "Acme Box", "bed_exclude_area": ["0x0", "18x0", "18x28", "0x28"] }
