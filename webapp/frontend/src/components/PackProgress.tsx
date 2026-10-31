@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { JobStage } from '@/api/types';
-import { looksLikeJson, packSteps, stageElapsed, stageTimeLine } from '@/utils/progress';
-import ProgressBar from './ProgressBar';
+import { looksLikeJson, stageElapsed, stageSegments, stageTimeLine } from '@/utils/progress';
 
 interface PackProgressProps {
   percent: number;
@@ -13,10 +12,12 @@ interface PackProgressProps {
 }
 
 const TICK_MS = 1000;
+/** Этапы, в которые пакер заходит не всегда: пока не наступили — «если понадобится». */
+const OPTIONAL = new Set(['gcode_check', 'repacking', 'window_slice']);
 
 /**
- * Прогресс упаковки: шкала, строка статуса с временем этапа и списком этапов. Время этапа
- * досчитывается локально раз в секунду между опросами, процент — только с сервера.
+ * Одна шкала из сегментов этапов (ширина = полоса процента этапа) + строка статуса + этапы.
+ * Время этапа досчитывается локально раз в секунду между опросами, процент — только с сервера.
  */
 export default function PackProgress({ percent, stage, message, receivedAtMs }: PackProgressProps) {
   const [now, setNow] = useState(receivedAtMs ?? 0);
@@ -24,30 +25,47 @@ export default function PackProgress({ percent, stage, message, receivedAtMs }: 
     const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
-
   const elapsed = stageElapsed(stage, receivedAtMs, Math.max(now, receivedAtMs ?? 0));
-  const steps = packSteps(stage);
+  const segments = stageSegments(stage, percent);
   const detail = stage.detail && !looksLikeJson(stage.detail) ? stage.detail : null;
-  const status = message && !looksLikeJson(message) ? message : null;
+  const status = message && !looksLikeJson(message) ? message : segments.find((s) => s.state === 'current')?.label;
 
   return (
-    <div className="pack-progress">
-      <ProgressBar percent={percent} />
+    <div className="pack-progress" role="group" aria-label="Ход упаковки">
       <div className="stage-status">
-        {status ? <span className="stage-status-text">{status}</span> : null}
-        <span className="stage-status-time mono">{stageTimeLine(elapsed, stage.expectedSeconds)}</span>
+        <span className="stage-status-text">{status}</span>
+        <span className="stage-status-time mono">
+          {Math.round(percent)}% · {stageTimeLine(elapsed, stage.expectedSeconds)}
+        </span>
+      </div>
+      <div
+        className="stage-bar"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(percent)}
+      >
+        {segments.map((s) => (
+          <span
+            key={s.id}
+            className={s.state}
+            style={{ flex: s.weight, ['--fill' as string]: `${Math.round(s.fill * 100)}%` }}
+          />
+        ))}
       </div>
       {detail ? <div className="stage-detail mono">{detail}</div> : null}
-      <ol className="stage-list">
-        {steps.map((step) => (
-          <li key={step.id} className={`stage-step stage-step-${step.state}`}>
-            <span className="stage-marker" aria-hidden="true">
-              {step.state === 'done' ? '✓' : step.state === 'current' ? '●' : '○'}
-            </span>
-            <span className="stage-label">{step.label}</span>
-          </li>
-        ))}
-      </ol>
+      <ul className="stage-chips">
+        {segments.map((s) => {
+          const optional = OPTIONAL.has(s.id) && s.state === 'pending';
+          return (
+            <li key={s.id} className={optional ? 'optional' : s.state}>
+              <i aria-hidden="true" />
+              {s.label}
+              {s.state === 'skipped' ? ' · не понадобилась' : optional ? ' · если понадобится' : ''}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

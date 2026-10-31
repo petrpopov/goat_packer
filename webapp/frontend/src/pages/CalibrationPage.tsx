@@ -6,6 +6,7 @@ import { fetchProfiles, startCalibrationJob } from '@/api/services';
 import AmsCalculator from '@/components/AmsCalculator';
 import Field from '@/components/Field';
 import FileDrop from '@/components/FileDrop';
+import Icon from '@/components/Icon';
 import JobCard from '@/components/JobCard';
 import { useJob } from '@/hooks/useJob';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
@@ -24,8 +25,9 @@ const ACTIVE = ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'];
 /**
  * «Калибровка AMS»: из своего проекта получить два тестовых кубика (A без смен, B со сменами),
  * напечатать их и по четырём временам посчитать реальную длительность смены прутка.
+ * `embedded` — боковая панель упаковки: заголовок с крестиком и поля в одну колонку.
  */
-export default function CalibrationPage() {
+export default function CalibrationPage({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
   const [chosenProfileId, setChosenProfileId] = useState('');
   const [variant, setVariant] = useState<Variant>('normal');
   const [file, setFile] = useState<File | null>(null);
@@ -87,18 +89,28 @@ export default function CalibrationPage() {
   const calculatorInitial = result ? calibrationValues(result) : profileId ? readStoredCalibration(profileId) : null;
 
   return (
-    <div className="page">
-      <div>
-        <h1 className="page-title">Калибровка AMS</h1>
-        <p className="page-subtitle">
-          Слайсер занижает время смены прутка. Две короткие печати из вашего проекта покажут, сколько смена длится на
-          самом деле — это значение уточнит оценки упаковки и расписания.
-        </p>
-      </div>
+    <div className={embedded ? 'stack' : 'page'}>
+      {embedded ? (
+        <div className="side-head">
+          <h2>Калибровка смены прутка</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть" title="Закрыть">
+            <Icon name="x" />
+          </button>
+        </div>
+      ) : (
+        <div>
+          <h1 className="page-title">Калибровка AMS</h1>
+          <p className="page-subtitle">
+            Слайсер занижает время смены прутка. Две короткие печати из вашего проекта покажут, сколько смена длится на
+            самом деле — это значение уточнит оценки упаковки и расписания.
+          </p>
+        </div>
+      )}
 
       <form className="stack" onSubmit={handleSubmit}>
         <section className="card">
-          <div className="form-grid">
+          {/* В узкой панели поля идут в одну колонку. */}
+          <div className={embedded ? 'stack' : 'form-grid'}>
             <Field
               label="Профиль принтера"
               hint={detectedProfileId ? 'Определён по файлу — выбор заблокирован' : undefined}

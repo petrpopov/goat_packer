@@ -8,6 +8,8 @@ interface AmsCorrectionFieldsProps {
   onSecondsChange: (value: string) => void;
   invalid?: boolean;
   disabled?: boolean;
+  /** Открыть панель калибровки (только в упаковке). */
+  onCalibrate?: () => void;
 }
 
 /** Галочка коррекции смены прутка AMS + длительность смены, с (по умолчанию — из профиля). */
@@ -19,6 +21,7 @@ export default function AmsCorrectionFields({
   onSecondsChange,
   invalid = false,
   disabled = false,
+  onCalibrate,
 }: AmsCorrectionFieldsProps) {
   return (
     <>
@@ -30,10 +33,10 @@ export default function AmsCorrectionFields({
             onChange={(event) => onToggle(event.target.checked)}
             disabled={!available || disabled}
           />
-          Коррекция времени смены прутка (AMS)
+          Учитывать реальную смену прутка
         </label>
         <span className="field-hint">
-          {available ? 'слайсер занижает время смены — учесть реальное' : 'для этого принтера коррекция не нужна'}
+          {available ? 'слайсер занижает время смены AMS — окно считается точнее' : 'для этого принтера коррекция не нужна'}
         </span>
       </div>
       {on && (
@@ -49,6 +52,11 @@ export default function AmsCorrectionFields({
             disabled={disabled}
           />
         </Field>
+      )}
+      {on && onCalibrate && (
+        <button type="button" className="link" style={{ justifySelf: 'start' }} onClick={onCalibrate}>
+          Откалибровать…
+        </button>
       )}
     </>
   );

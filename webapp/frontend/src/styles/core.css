@@ -364,7 +364,7 @@ select.input {
   transition: width 0.3s ease;
 }
 
-/* Прогресс упаковки: строка статуса, подробность и список этапов. */
+/* Прогресс упаковки: строка статуса и подробность (шкала и этапы — workspace.css). */
 .pack-progress {
   display: grid;
   gap: 8px;
@@ -395,44 +395,6 @@ select.input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.stage-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.stage-step {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--fg-dim);
-}
-
-.stage-marker {
-  width: 1em;
-  text-align: center;
-}
-
-.stage-step-done .stage-marker {
-  color: var(--accent);
-}
-
-.stage-step-current {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.stage-step-current .stage-marker {
-  color: var(--accent);
-}
-
-.stage-step-pending {
-  opacity: 0.6;
 }
 
 /* ── Tables ────────────────────────────────────────────────────────────── */

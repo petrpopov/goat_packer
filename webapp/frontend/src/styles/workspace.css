@@ -1,0 +1,56 @@
+/* Рабочее пространство упаковки/расписания: форма слева, действие, прогресс и сцена справа. */
+.work { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+.work.with-side { grid-template-columns: 320px minmax(0, 1fr) 340px; }
+.form-col { display: grid; gap: 16px; align-content: start; padding: 18px 18px 28px; border-right: 1px solid var(--border); }
+.form-group { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nested { display: grid; gap: 12px; margin: 2px 0 0 24px; }
+.main-col { display: grid; gap: 16px; align-content: start; min-width: 0; padding: 18px 24px 28px; }
+.side-col { display: grid; gap: 16px; align-content: start; padding: 18px; border-left: 1px solid var(--border); }
+.side-head { display: flex; align-items: center; justify-content: space-between; }
+.side-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.action-bar { display: flex; align-items: center; gap: 16px; }
+.action-bar .title { flex: 1; min-width: 0; }
+.action-bar h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.action-bar p { margin: 2px 0 0; color: var(--fg-dim); }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); }
+.seg button { height: 26px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); font: 500 12.5px var(--font-ui); cursor: pointer; }
+.seg button[aria-pressed='true'] { background: var(--panel); color: var(--fg); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+
+/* Прогресс: сегменты пропорциональны полосам этапов */
+.stage-bar { display: flex; gap: 2px; height: 8px; overflow: hidden; border-radius: 4px; background: var(--panel-2); }
+.stage-bar span { height: 100%; background: var(--border-strong); opacity: 0.35; }
+.stage-bar span.done { background: var(--signal); opacity: 1; }
+.stage-bar span.current { opacity: 1; background: linear-gradient(90deg, var(--signal) var(--fill), var(--border-strong) var(--fill)); }
+.stage-bar span.skipped { background: repeating-linear-gradient(135deg, var(--border-strong) 0 3px, transparent 3px 6px); opacity: 0.5; }
+.stage-chips { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; color: var(--fg-dim); font-size: 12px; }
+.stage-chips li { display: inline-flex; align-items: center; gap: 5px; }
+.stage-chips i { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
+.stage-chips .done { color: var(--fg-muted); }
+.stage-chips .done i { background: var(--signal); }
+.stage-chips .current { color: var(--fg); font-weight: 500; }
+.stage-chips .current i { background: var(--signal); box-shadow: 0 0 0 3px var(--accent-soft); }
+.stage-chips .skipped i, .stage-chips .optional i { background: transparent; border: 1px dashed var(--border-strong); }
+
+/* Сцена */
+.scene { position: relative; aspect-ratio: 16 / 9.4; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--scene-bg); }
+.scene canvas { display: block; width: 100% !important; height: 100% !important; }
+.scene-labels { position: absolute; inset: 0; pointer-events: none; }
+.scene-dim { position: absolute; transform: translate(-50%, -50%); padding: 1px 5px; border-radius: 3px; background: var(--scene-bg); color: var(--fg-muted); font: 500 11.5px var(--font-mono); white-space: nowrap; }
+.scene-legend { position: absolute; top: 12px; right: 14px; display: grid; gap: 4px; color: var(--fg-dim); font-size: 12px; pointer-events: none; }
+.scene-legend span { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.swatch { width: 12px; height: 9px; border-radius: 2px; }
+.swatch-keepout { background: var(--keepout); opacity: 0.8; }
+.swatch-footprint { border: 2px solid var(--accent-2); }
+.scene-tag { position: absolute; color: var(--fg-dim); font-size: 12px; pointer-events: none; }
+.scene-tag-bl { left: 14px; bottom: 12px; }
+.scene-tag-br { right: 14px; bottom: 12px; text-align: right; }
+
+@media (max-width: 1180px) {
+  .work, .work.with-side { grid-template-columns: 300px minmax(0, 1fr); }
+  .side-col { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 760px) {
+  .work, .work.with-side { grid-template-columns: 1fr; }
+  .form-col { border-right: 0; border-bottom: 1px solid var(--border); }
+}

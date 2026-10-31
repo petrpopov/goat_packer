@@ -46,10 +46,13 @@ interface UiState {
   rail: boolean;
   /** Результат упаковки, переданный в расписание («В расписание»). */
   packHandoff: PackHandoff | null;
+  /** Открыта боковая панель калибровки смены прутка в упаковке. */
+  calibOpen: boolean;
   toggleTheme: () => void;
   toggleRail: () => void;
   navigate: (path: string, options?: { replace?: boolean }) => void;
   sendToSchedule: (handoff: PackHandoff) => void;
+  setCalibOpen: (open: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -57,6 +60,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   route: parseRoute(typeof location === 'undefined' ? '/' : location.pathname),
   rail: readStored(RAIL_KEY) === '1',
   packHandoff: null,
+  calibOpen: false,
   toggleTheme: () => {
     const next: Theme = get().theme === 'dark' ? 'light' : 'dark';
     applyTheme(next);
@@ -80,4 +84,5 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ packHandoff: handoff });
     get().navigate('/schedule');
   },
+  setCalibOpen: (open) => set({ calibOpen: open }),
 }));
