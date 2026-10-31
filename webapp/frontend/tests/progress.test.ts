@@ -6,7 +6,9 @@ import {
   objectsText,
   packSteps,
   remainingText,
+  sceneClip,
   stageElapsed,
+  stageSegments,
   stageTimeLine,
 } from '../src/utils/progress';
 
@@ -86,5 +88,33 @@ describe('stage timing text', () => {
     expect(looksLikeJson('{"event":"slicer_output","stream":"stdout","message":"x"}')).toBe(true);
     expect(looksLikeJson('[Bambu Lab A2L] slicing sample 1/5: batch 8/30')).toBe(false);
     expect(looksLikeJson(null)).toBe(false);
+  });
+});
+
+describe('stageSegments', () => {
+  test('weights follow the backend bands; current stage is filled by percent', () => {
+    const segs = stageSegments(stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'assembling', 'final_slice'] }), 55.5);
+    expect(segs.map((s) => [s.id, s.weight, s.state])).toEqual([
+      ['probe_slice', 14, 'done'], ['packing', 15, 'done'], ['assembling', 3, 'done'], ['final_slice', 45, 'current'],
+      ['gcode_check', 4, 'pending'], ['repacking', 4, 'pending'], ['window_slice', 9, 'pending'], ['writing', 4, 'pending'],
+    ]);
+    expect(segs[3].fill).toBeCloseTo(0.5);
+  });
+  test('optional stages passed without a visit are skipped', () => {
+    const segs = stageSegments(stage({ id: 'writing', visited: ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check'] }), 97);
+    expect(segs.find((s) => s.id === 'repacking')!.state).toBe('skipped');
+    expect(segs.find((s) => s.id === 'gcode_check')!.state).toBe('done');
+  });
+});
+
+describe('sceneClip', () => {
+  test('probe and final slice raise the cut plane through the stage band', () => {
+    expect(sceneClip('probe_slice', 8)).toBeCloseTo(0.5);
+    expect(sceneClip('final_slice', 33)).toBeCloseTo(0);
+    expect(sceneClip('final_slice', 78)).toBeCloseTo(1);
+  });
+  test('other stages show whole objects', () => {
+    expect(sceneClip('packing', 20)).toBe(1);
+    expect(sceneClip('writing', 97)).toBe(1);
   });
 });

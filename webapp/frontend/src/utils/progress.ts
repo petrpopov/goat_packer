@@ -88,3 +88,48 @@ export function stageTimeLine(elapsedSeconds: number, expectedSeconds: number | 
 export function looksLikeJson(text: string | null | undefined): boolean {
   return (text?.trim() ?? '').startsWith('{');
 }
+
+/** Полосы процента этапов — те же, что у бэкенда (ProgressTracker.PackStage). */
+const BANDS: Record<PackStageId, [number, number]> = {
+  probe_slice: [1, 15],
+  packing: [15, 30],
+  assembling: [30, 33],
+  final_slice: [33, 78],
+  gcode_check: [78, 82],
+  repacking: [82, 86],
+  window_slice: [86, 95],
+  writing: [95, 99],
+};
+
+export type SegmentState = 'done' | 'current' | 'pending' | 'skipped';
+export interface StageSegment {
+  id: PackStageId;
+  label: string;
+  /** Доля ширины полосы = ширина полосы этапа в процентах. */
+  weight: number;
+  state: SegmentState;
+  /** Заполнение текущего сегмента 0..1. */
+  fill: number;
+}
+
+/** Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, — «skipped». */
+export function stageSegments(stage: JobStage, percent: number): StageSegment[] {
+  const visited = new Set(stage.visited);
+  const currentIndex = ORDER.findIndex((step) => step.id === stage.id);
+  return ORDER.map((step, index) => {
+    const [start, end] = BANDS[step.id];
+    let state: SegmentState;
+    if (step.id === stage.id) state = 'current';
+    else if (index < currentIndex) state = step.optional && !visited.has(step.id) ? 'skipped' : 'done';
+    else state = 'pending';
+    const fill = state === 'current' ? Math.min(1, Math.max(0, (percent - start) / (end - start))) : state === 'done' ? 1 : 0;
+    return { id: step.id, label: step.label, weight: end - start, state, fill };
+  });
+}
+
+/** Высота плоскости среза в сцене как доля высоты модели (1 — модель целиком). */
+export function sceneClip(stageId: string, percent: number): number {
+  if (stageId !== 'probe_slice' && stageId !== 'final_slice') return 1;
+  const [start, end] = BANDS[stageId];
+  return Math.min(1, Math.max(0, (percent - start) / (end - start)));
+}
