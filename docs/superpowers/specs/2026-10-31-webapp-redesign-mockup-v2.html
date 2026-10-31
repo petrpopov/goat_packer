@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-palette="e">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goat Packer — упаковщик 3D-объектов для печати с максимальной плотностью</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/",
+  "fflate": "https://unpkg.com/fflate@0.8.2/esm/browser.js"
+} }
+</script>
+<style>
+/* ── Палитры: A «Phosphor Instrument» (Oxide/Zoox/Sauce Labs), B «Cobalt Schematic + Acid» (Analogue/ClickHouse/Parallel/teenage engineering) ── */
+:root {
+  --font-ui: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
+  --bg: #edf4f2;
+  --bg-chrome: #e4eeea;
+  --panel: #ffffff;
+  --panel-2: #e1ebe7;
+  --row-hover: #d8e5e0;
+  --border: #c9d6d1;
+  --border-strong: #a9bab4;
+  --fg: #0d1212;
+  --fg-muted: #565959;
+  --fg-dim: #5f6766;
+  --accent: #007a55;
+  --accent-fill: #007a55;
+  --accent-ink: #ffffff;
+  --accent-soft: #007a551f;
+  --signal: #64d5b3;
+  --accent-2: #6b3fd1;
+  --accent-2-soft: #6b3fd11f;
+  --ok: #1f7a3a;
+  --ok-soft: #1f7a3a1f;
+  --warn: #9a5b00;
+  --warn-soft: #9a5b001f;
+  --crit: #c42847;
+  --crit-soft: #c428471a;
+  --scene-bg: #e6efec;
+  --plate: #2c3433;
+  --plate-top: #f7faf9;
+  --plate-grid: #d3dfdb;
+  --keepout: #7f8c89;
+  --object: #9fb0ab;
+}
+:root[data-palette="a"][data-theme="light"] {
+  --bg: #edf4f2;
+  --bg-chrome: #e4eeea;
+  --panel: #ffffff;
+  --panel-2: #e1ebe7;
+  --row-hover: #d8e5e0;
+  --border: #c9d6d1;
+  --border-strong: #a9bab4;
+  --fg: #0d1212;
+  --fg-muted: #565959;
+  --fg-dim: #5f6766;
+  --accent: #007a55;
+  --accent-fill: #007a55;
+  --accent-ink: #ffffff;
+  --accent-soft: #007a551f;
+  --signal: #64d5b3;
+  --accent-2: #6b3fd1;
+  --accent-2-soft: #6b3fd11f;
+  --ok: #1f7a3a;
+  --ok-soft: #1f7a3a1f;
+  --warn: #9a5b00;
+  --warn-soft: #9a5b001f;
+  --crit: #c42847;
+  --crit-soft: #c428471a;
+  --scene-bg: #e6efec;
+  --plate: #2c3433;
+  --plate-top: #f7faf9;
+  --plate-grid: #d3dfdb;
+  --keepout: #7f8c89;
+  --object: #9fb0ab;
+}
+:root[data-palette="a"][data-theme="dark"] {
+  --bg: #0b0e12;
+  --bg-chrome: #0e1115;
+  --panel: #181a1d;
+  --panel-2: #1f2124;
+  --row-hover: #25282b;
+  --border: #303235;
+  --border-strong: #3f4246;
+  --fg: #dedede;
+  --fg-muted: #9a9fa1;
+  --fg-dim: #80868a;
+  --accent: #00d892;
+  --accent-fill: #00d892;
+  --accent-ink: #002923;
+  --accent-soft: #00d89221;
+  --signal: #00d892;
+  --accent-2: #c58aff;
+  --accent-2-soft: #c58aff29;
+  --ok: #3ddc91;
+  --ok-soft: #3ddc911f;
+  --warn: #ffcd48;
+  --warn-soft: #ffcd4824;
+  --crit: #ff6285;
+  --crit-soft: #ff628524;
+  --scene-bg: #101317;
+  --plate: #05070a;
+  --plate-top: #1b1f23;
+  --plate-grid: #272c31;
+  --keepout: #e8ecef;
+  --object: #b9c2c6;
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+:root[data-palette="e"][data-theme="dark"] {
+  --bg: #121110;
+  --bg-chrome: #0f0e0d;
+  --panel: #1b1918;
+  --panel-2: #23201e;
+  --row-hover: #2a2724;
+  --border: #34302c;
+  --border-strong: #45403a;
+  --fg: #ece8e3;
+  --fg-muted: #a49d95;
+  --fg-dim: #958e86;
+  --accent: #ff9640;
+  --accent-fill: #ff9640;
+  --accent-ink: #1a0d00;
+  --accent-soft: #ff964024;
+  --signal: #ff9640;
+  --accent-2: #3ddc91;
+  --accent-2-soft: #3ddc9124;
+  --ok: #3ddc91;
+  --ok-soft: #3ddc911f;
+  --warn: #ffcd48;
+  --warn-soft: #ffcd4824;
+  --crit: #ff6285;
+  --crit-soft: #ff628524;
+  --scene-bg: #161413;
+  --plate: #070606;
+  --plate-top: #221f1c;
+  --plate-grid: #302c28;
+  --keepout: #ece8e3;
+  --object: #c2bbb3;
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+:root[data-palette="e"][data-theme="light"] {
+  --bg: #ebe7e2;
+  --bg-chrome: #e3ded8;
+  --panel: #f8f6f3;
+  --panel-2: #e0dbd5;
+  --row-hover: #d9d3cc;
+  --border: #cdc6be;
+  --border-strong: #aba299;
+  --accent-fill: #ff7a1a;
+  --accent-soft: #ff7a1a26;
+  --signal: #ff7a1a;
+  --scene-bg: #e4dfd9;
+  --plate: #2b2724;
+  --plate-top: #faf8f5;
+  --plate-grid: #e2dcd4;
+  --keepout: #8f877e;
+  --object: #aea69c;
+  --fg: #1b1916;
+  --fg-muted: #5a5249;
+  --fg-dim: #5a5249;
+  --accent: #9c3d00;
+  --accent-ink: #1a0d00;
+  --accent-2: #006b4a;
+  --accent-2-soft: #006b4a1f;
+  --ok: #1f7a3a;
+  --ok-soft: #1f7a3a1f;
+  --warn: #9a5b00;
+  --warn-soft: #9a5b001f;
+  --crit: #c42847;
+  --crit-soft: #c428471a;
+}
+:root[data-palette="k"][data-theme="dark"] {
+  --bg: #121110;
+  --bg-chrome: #0f0e0d;
+  --panel: #1b1918;
+  --panel-2: #23201e;
+  --row-hover: #2a2724;
+  --border: #34302c;
+  --border-strong: #45403a;
+  --fg: #ece8e3;
+  --fg-muted: #a49d95;
+  --fg-dim: #958e86;
+  --accent: #ff9640;
+  --accent-fill: #ff9640;
+  --accent-ink: #1a0d00;
+  --accent-soft: #ff964024;
+  --signal: #ff9640;
+  --accent-2: #3ddc91;
+  --accent-2-soft: #3ddc9124;
+  --ok: #3ddc91;
+  --ok-soft: #3ddc911f;
+  --warn: #ffcd48;
+  --warn-soft: #ffcd4824;
+  --crit: #ff6285;
+  --crit-soft: #ff628524;
+  --scene-bg: #161413;
+  --plate: #070606;
+  --plate-top: #221f1c;
+  --plate-grid: #302c28;
+  --keepout: #ece8e3;
+  --object: #c2bbb3;
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+:root[data-palette="k"][data-theme="light"] {
+  --bg: #e4d9c8;
+  --bg-chrome: #dbcfbc;
+  --panel: #f7f2ea;
+  --panel-2: #d9ccb8;
+  --row-hover: #d2c4ae;
+  --border: #c7b8a1;
+  --border-strong: #a8977e;
+  --accent-fill: #ff6b00;
+  --accent-soft: #ff6b0024;
+  --signal: #ff6b00;
+  --scene-bg: #ddd1bf;
+  --plate: #2a241d;
+  --plate-top: #f8f3ea;
+  --plate-grid: #e3d8c6;
+  --keepout: #8c7f6c;
+  --object: #a89c8a;
+  --fg: #1b1916;
+  --fg-muted: #5a5249;
+  --fg-dim: #5a5249;
+  --accent: #9c3d00;
+  --accent-ink: #1a0d00;
+  --accent-2: #006b4a;
+  --accent-2-soft: #006b4a1f;
+  --ok: #1f7a3a;
+  --ok-soft: #1f7a3a1f;
+  --warn: #9a5b00;
+  --warn-soft: #9a5b001f;
+  --crit: #c42847;
+  --crit-soft: #c428471a;
+}
+:root[data-palette="c"][data-theme="dark"] {
+  --bg: #121110;
+  --bg-chrome: #0f0e0d;
+  --panel: #1b1918;
+  --panel-2: #23201e;
+  --row-hover: #2a2724;
+  --border: #34302c;
+  --border-strong: #45403a;
+  --fg: #ece8e3;
+  --fg-muted: #a49d95;
+  --fg-dim: #958e86;
+  --accent: #ff9640;
+  --accent-fill: #ff9640;
+  --accent-ink: #1a0d00;
+  --accent-soft: #ff964024;
+  --signal: #ff9640;
+  --accent-2: #3ddc91;
+  --accent-2-soft: #3ddc9124;
+  --ok: #3ddc91;
+  --ok-soft: #3ddc911f;
+  --warn: #ffcd48;
+  --warn-soft: #ffcd4824;
+  --crit: #ff6285;
+  --crit-soft: #ff628524;
+  --scene-bg: #161413;
+  --plate: #070606;
+  --plate-top: #221f1c;
+  --plate-grid: #302c28;
+  --keepout: #ece8e3;
+  --object: #c2bbb3;
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+:root[data-palette="c"][data-theme="light"] {
+  --bg: #dcd7d0;
+  --bg-chrome: #d2ccc4;
+  --panel: #fbfaf8;
+  --panel-2: #d3cdc5;
+  --row-hover: #cbc4bb;
+  --border: #c0b9af;
+  --border-strong: #a0988d;
+  --accent-fill: #ff7a1a;
+  --accent-soft: #ff7a1a26;
+  --signal: #ff7a1a;
+  --scene-bg: #d6d0c8;
+  --plate: #26221f;
+  --plate-top: #fbfaf8;
+  --plate-grid: #dfd9d1;
+  --keepout: #857d73;
+  --object: #a59d93;
+  --fg: #1b1916;
+  --fg-muted: #5a5249;
+  --fg-dim: #5a5249;
+  --accent: #9c3d00;
+  --accent-ink: #1a0d00;
+  --accent-2: #006b4a;
+  --accent-2-soft: #006b4a1f;
+  --ok: #1f7a3a;
+  --ok-soft: #1f7a3a1f;
+  --warn: #9a5b00;
+  --warn-soft: #9a5b001f;
+  --crit: #c42847;
+  --crit-soft: #c428471a;
+}
+:root[data-palette="b"][data-theme="light"] {
+  --bg: #f6f8f7;
+  --bg-chrome: #eef1f0;
+  --panel: #ffffff;
+  --panel-2: #ededed;
+  --row-hover: #e6e9e8;
+  --border: #d6d8d8;
+  --border-strong: #b9bcbc;
+  --fg: #171717;
+  --fg-muted: #696969;
+  --fg-dim: #6b6b6b;
+  --accent: #002fff;
+  --accent-fill: #002fff;
+  --accent-ink: #ffffff;
+  --accent-soft: #002fff17;
+  --signal: #e4f222;
+  --accent-2: #5c6400;
+  --accent-2-soft: #e4f22259;
+  --ok: #007a3d;
+  --ok-soft: #007a3d1a;
+  --warn: #a85a00;
+  --warn-soft: #a85a001f;
+  --crit: #d0002c;
+  --crit-soft: #d0002c17;
+  --scene-bg: #eceff0;
+  --plate: #26282c;
+  --plate-top: #fbfcfc;
+  --plate-grid: #dfe3e3;
+  --keepout: #8d9397;
+  --object: #a9b0bd;
+}
+:root[data-palette="b"][data-theme="dark"] {
+  --bg: #0e0f11;
+  --bg-chrome: #0b0c0e;
+  --panel: #17181b;
+  --panel-2: #212327;
+  --row-hover: #272a2f;
+  --border: #33363b;
+  --border-strong: #43474d;
+  --fg: #e8e8e6;
+  --fg-muted: #9a9c9f;
+  --fg-dim: #8a8c90;
+  --accent: #6f8cff;
+  --accent-fill: #2f55ff;
+  --accent-ink: #ffffff;
+  --accent-soft: #6f8cff26;
+  --signal: #faff69;
+  --accent-2: #faff69;
+  --accent-2-soft: #faff6924;
+  --ok: #4cd17a;
+  --ok-soft: #4cd17a21;
+  --warn: #ffb020;
+  --warn-soft: #ffb02024;
+  --crit: #ff5a52;
+  --crit-soft: #ff5a5224;
+  --scene-bg: #121316;
+  --plate: #060708;
+  --plate-top: #1d1f23;
+  --plate-grid: #2a2d32;
+  --keepout: #e9eaec;
+  --object: #b4bccb;
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.45 var(--font-ui); letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; }
+::selection { background: var(--accent-soft); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Каркас: топбар + сворачиваемый сайдбар ── */
+.topbar { position: sticky; top: 0; z-index: 30; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px 0 10px; background: var(--bg-chrome); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; color: var(--fg); text-decoration: none; letter-spacing: -0.01em; }
+.brand svg { width: 22px; height: 22px; }
+.spacer { flex: 1; }
+.top-actions { display: flex; align-items: center; gap: 6px; }
+.shell { display: grid; grid-template-columns: 208px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+.shell.rail { grid-template-columns: 56px minmax(0, 1fr); }
+.sidebar { position: sticky; top: 52px; height: calc(100vh - 52px); background: var(--bg-chrome); border-right: 1px solid var(--border); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.nav-item { display: flex; align-items: center; gap: 11px; height: 34px; padding: 0 11px; border-radius: 6px; color: var(--fg-muted); text-decoration: none; font-weight: 500; white-space: nowrap; overflow: hidden; }
+.nav-item:hover { background: var(--row-hover); color: var(--fg); }
+.nav-item.active { background: var(--accent-soft); color: var(--fg); }
+.nav-item.active .ic { color: var(--accent); }
+.nav-sep { height: 1px; background: var(--border); margin: 8px 4px; }
+.shell.rail .nav-label { display: none; }
+.shell.rail .nav-item { justify-content: center; padding: 0; }
+.content { min-width: 0; }
+.icon-btn { width: 32px; height: 32px; display: inline-grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--fg-muted); cursor: pointer; }
+.icon-btn:hover { background: var(--row-hover); color: var(--fg); }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 12px; border: 0; cursor: pointer; }
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 230px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 6px; z-index: 40; }
+.menu-head { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.menu-head b { display: block; font-weight: 600; }
+.menu-head span { color: var(--fg-dim); font-size: 12px; }
+.menu a, .menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; color: var(--fg); text-decoration: none; border-radius: 4px; font: inherit; cursor: pointer; text-align: left; }
+.menu a:hover, .menu button:hover { background: var(--row-hover); }
+.menu .ic { color: var(--fg-dim); }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
+
+/* ── Кнопки и поля ── */
+.btn { height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--panel); color: var(--fg); font: 500 13px var(--font-ui); cursor: pointer; text-decoration: none; white-space: nowrap; }
+.btn:hover { background: var(--row-hover); }
+.btn-primary { border: 0; color: var(--accent-ink); background: var(--accent-fill); box-shadow: var(--shadow-sm); }
+.btn-primary:hover { background: var(--accent-fill); filter: brightness(1.06); }
+.btn-primary[disabled] { opacity: .45; cursor: not-allowed; }
+.btn-lg { height: 40px; padding: 0 20px; font-size: 14px; }
+.btn-block { width: 100%; }
+.link { color: var(--accent); text-decoration: none; font-weight: 500; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.field { display: grid; gap: 5px; }
+.field-label { display: flex; justify-content: space-between; align-items: baseline; font-weight: 500; color: var(--fg); }
+.hint { color: var(--fg-dim); font-size: 12px; }
+.input, .select { height: 32px; width: 100%; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--panel); color: var(--fg); font: 13px var(--font-ui); }
+.input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.input-suffix { position: relative; }
+.input-suffix .input { padding-right: 36px; }
+.input-suffix .icon-btn { position: absolute; right: 1px; top: 0; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+.seg button { height: 26px; border: 0; border-radius: 4px; background: transparent; color: var(--fg-muted); font: 500 12.5px var(--font-ui); cursor: pointer; }
+.seg button.on { background: var(--panel); color: var(--fg); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+.check { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-weight: 500; }
+.check input { margin: 2px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
+.check small { display: block; font-weight: 400; color: var(--fg-dim); font-size: 12px; margin-top: 1px; }
+.nested { margin: 2px 0 0 24px; display: grid; gap: 12px; }
+
+/* ── Рабочая раскладка ── */
+.work { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+.work.with-side { grid-template-columns: 320px minmax(0, 1fr) 340px; }
+.form-col { border-right: 1px solid var(--border); padding: 18px 18px 28px; display: grid; gap: 16px; align-content: start; }
+.group { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.disclosure { display: flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--fg-muted); font: 600 12px var(--font-ui); cursor: pointer; }
+.disclosure .ic { width: 14px; height: 14px; transition: transform .2s; }
+.disclosure.open .ic { transform: rotate(180deg); }
+.drop { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px dashed var(--border-strong); border-radius: 10px; background: var(--panel); cursor: pointer; color: var(--fg-muted); }
+.drop:hover, .drop.over { border-color: var(--accent); color: var(--fg); }
+.drop b { display: block; color: var(--fg); font-weight: 500; }
+.drop input { display: none; }
+.file-chip { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.file-chip .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip .meta { color: var(--fg-dim); font-size: 12px; }
+.file-chip > div { min-width: 0; flex: 1; }
+.main-col { padding: 18px 24px 28px; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.action-bar { display: flex; align-items: center; gap: 16px; }
+.action-bar .title { min-width: 0; flex: 1; }
+.action-bar h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.action-bar p { margin: 2px 0 0; color: var(--fg-dim); }
+.side-col { border-left: 1px solid var(--border); padding: 18px; display: grid; gap: 16px; align-content: start; }
+.side-col h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.side-head { display: flex; align-items: center; justify-content: space-between; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; counter-reset: s; }
+.steps > li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; counter-increment: s; }
+.steps > li::before { content: counter(s); width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--border); font: 600 11px var(--font-mono); color: var(--fg-muted); }
+.steps > li > div { display: grid; gap: 10px; }
+.steps b { font-weight: 600; }
+.calc-out { display: flex; align-items: baseline; justify-content: space-between; padding: 12px; border-radius: 6px; background: var(--accent-soft); }
+.calc-out .mono { font-size: 20px; font-weight: 500; }
+
+/* ── Прогресс ── */
+.progress { display: grid; gap: 8px; }
+.bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--panel-2); gap: 2px; }
+.bar span { height: 100%; background: var(--border-strong); opacity: .35; }
+.bar span.done { background: var(--signal); opacity: 1; }
+.bar span.cur { background: linear-gradient(90deg, var(--signal) var(--p), transparent var(--p)), var(--border-strong); opacity: 1; }
+.bar span.skip { background: repeating-linear-gradient(135deg, var(--border-strong) 0 3px, transparent 3px 6px); opacity: .5; }
+.progress-line { display: flex; justify-content: space-between; gap: 16px; }
+.progress-line b { font-weight: 600; }
+.progress-line .mono { color: var(--fg-muted); }
+.stage-list { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--fg-dim); font-size: 12px; }
+.stage-list span { display: inline-flex; align-items: center; gap: 5px; }
+.stage-list i { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
+.stage-list .done { color: var(--fg-muted); } .stage-list .done i { background: var(--signal); }
+.stage-list .cur { color: var(--fg); font-weight: 500; } .stage-list .cur i { background: var(--signal); box-shadow: 0 0 0 3px var(--accent-soft); }
+.stage-list .opt i { background: transparent; border: 1px dashed var(--border-strong); }
+
+/* ── Сцена ── */
+.figure { position: relative; border: 1px solid var(--border); border-radius: 10px; background: var(--scene-bg); overflow: hidden; aspect-ratio: 16 / 9.4; }
+.figure canvas { display: block; width: 100% !important; height: 100% !important; }
+.fig-tag { position: absolute; font-size: 12px; color: var(--fg-dim); pointer-events: none; z-index: 2; }
+.fig-tag.tl { top: 12px; left: 14px; } .fig-tag.br { bottom: 12px; right: 14px; text-align: right; }
+.fig-tag.bl { bottom: 12px; left: 14px; }
+.fig-tag b { color: var(--fg); font-weight: 500; }
+.legend { position: absolute; top: 12px; right: 14px; display: grid; gap: 4px; font-size: 12px; color: var(--fg-dim); z-index: 2; pointer-events: none; }
+.legend span { display: flex; align-items: center; gap: 7px; justify-content: flex-end; }
+.legend i { width: 12px; height: 9px; border-radius: 2px; }
+.dims { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.dim { position: absolute; transform: translate(-50%, -50%); font: 500 11.5px var(--font-mono); color: var(--fg-muted); background: var(--scene-bg); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+
+.result { display: flex; align-items: center; gap: 16px; padding: 14px 16px; border-radius: 10px; background: var(--ok-soft); }
+.result.err { background: var(--crit-soft); }
+.result > .ic { width: 20px; height: 20px; color: var(--ok); }
+.result.err > .ic { color: var(--crit); }
+.result { flex-wrap: wrap; }
+.result > div { flex: 1 1 260px; }
+.result b { font-weight: 600; font-size: 14px; }
+.result p { margin: 2px 0 0; color: var(--fg-muted); }
+.stats { display: flex; gap: 28px; flex-wrap: wrap; }
+.stats div { display: grid; }
+.stats span { color: var(--fg-dim); font-size: 12px; }
+.stats b { font: 500 15px var(--font-mono); }
+
+/* ── Страницы ── */
+.page { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; gap: 16px; }
+.page h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.015em; }
+.crumbs { color: var(--fg-dim); display: flex; gap: 6px; align-items: center; }
+.crumbs a { color: var(--fg-muted); text-decoration: none; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+th { text-align: left; font-weight: 500; color: var(--fg-dim); font-size: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+td { padding: 0 14px; height: 44px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--row-hover); }
+td a.mono { color: var(--accent); text-decoration: none; font-weight: 500; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.run { background: var(--accent-soft); color: var(--accent); }
+.pill.err { background: var(--crit-soft); color: var(--crit); }
+.pill.q { background: var(--panel-2); color: var(--fg-muted); }
+.toolbar { display: flex; gap: 10px; }
+.toolbar .select { width: auto; }
+.gantt { display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.gantt-row { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 12px; }
+.gantt-track { position: relative; height: 22px; background: var(--panel-2); border-radius: 4px; }
+.gantt-track i { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--accent-fill); }
+.gantt-track i.night { background: var(--accent-2); opacity: .7; }
+.gantt-axis { display: grid; grid-template-columns: 90px 1fr; gap: 12px; color: var(--fg-dim); font-size: 11px; }
+.gantt-axis div { display: flex; justify-content: space-between; }
+.auth { min-height: calc(100vh - 52px); display: grid; place-items: center; padding: 32px 16px; }
+.auth-card { width: 100%; max-width: 380px; display: grid; gap: 18px; }
+.auth-card h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.auth-card .sub { margin: -10px 0 0; color: var(--fg-muted); }
+.auth-card form { display: grid; gap: 14px; }
+.auth-foot { text-align: center; color: var(--fg-muted); margin: 0; }
+.note { padding: 10px 12px; border-radius: 6px; background: var(--panel-2); color: var(--fg-muted); font-size: 12.5px; }
+.stub { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 11px; font-weight: 600; }
+
+.mock { position: fixed; right: 14px; bottom: 14px; z-index: 50; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 10px 12px; display: grid; gap: 8px; font-size: 12px; width: 300px; }
+.mock b { font-size: 11px; color: var(--fg-dim); font-weight: 600; }
+@media (max-width: 1180px) {
+  .work, .work.with-side { grid-template-columns: 300px minmax(0, 1fr); }
+  .side-col { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 760px) {
+  .shell, .shell.rail { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .work, .work.with-side { grid-template-columns: 1fr; }
+  .form-col { border-right: 0; border-bottom: 1px solid var(--border); }
+  .mock { display: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/></symbol>
+  <symbol id="menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="upload" viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="cube" viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></symbol>
+  <symbol id="calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/></symbol>
+  <symbol id="logout" viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></symbol>
+  <symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+  <symbol id="file" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7l-4-4Z"/><path d="M14 3v4h4"/></symbol>
+</svg>
+
+<div id="app"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { unzipSync, strFromU8 } from 'fflate';
+
+// Статичный макет: вся разметка — собственные строки. Фрагмент разбирается
+// в контексте элемента, поэтому SVG получает правильный namespace.
+function setHtml(el, html) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  el.replaceChildren(range.createContextualFragment(html));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Профили принтеров: то, что лежит в profiles/*.json + контур пластины.
+// Контуры P1S/A2L сняты с моделей столов слайсера для макета; в продукте —
+// свой упрощённый контур в профиле (ассеты слайсеров под AGPL).
+// ─────────────────────────────────────────────────────────────
+const PRINTERS = {
+  p1s: {
+    name: 'Bambu Lab P1S', area: [0, 0, 256, 256], margin: 0, exclusions: [[0, 0, 18, 28]], tower: [214, 214, 246, 246],
+    plate: [[104.1,266.0],[154.4,266.0],[156.8,265.1],[162.9,259.2],[165.6,258.0],[251.0,258.0],[254.6,256.8],[257.1,254.1],[258.0,250.5],[258.0,-2.5],[257.7,-4.6],[256.8,-6.5],[254.1,-9.1],[250.5,-10.0],[83.6,-10.0],[81.2,-9.1],[73.1,-1.2],[70.8,-0.1],[7.0,0.0],[3.5,1.2],[0.9,3.9],[0.0,7.5],[0.0,250.5],[0.5,253.1],[1.5,255.0],[3.0,256.5],[4.9,257.5],[7.0,258.0],[92.4,258.0],[95.1,259.2],[101.2,265.1]],
+  },
+  a2l: {
+    name: 'Bambu Lab A2L', area: [0, 0, 330, 320], margin: 0, exclusions: [], tower: [290, 280, 322, 312],
+    plate: [[-1.3,-16.8],[0.4,-18.1],[2.5,-18.5],[107.6,-18.5],[109.4,-17.8],[110.5,-17.0],[123.5,-4.0],[124.7,-3.4],[126.6,-3.0],[204.1,-3.0],[206.5,-4.0],[219.5,-17.0],[220.6,-17.8],[222.4,-18.5],[327.5,-18.5],[329.6,-18.1],[331.3,-16.8],[332.3,-14.9],[332.5,-13.5],[332.5,325.0],[332.2,326.2],[331.5,327.3],[329.5,328.0],[301.2,328.0],[299.8,327.4],[295.7,323.3],[295.0,323.0],[35.0,323.0],[34.3,323.3],[30.2,327.4],[28.8,328.0],[0.5,328.0],[-0.8,327.7],[-1.8,327.0],[-2.5,325.0],[-2.5,-13.5],[-2.3,-14.9]],
+  },
+  u1: {
+    name: 'Snapmaker U1', area: [0.5, 1, 270.5, 271], margin: 4, exclusions: [], tower: null,
+    plate: roundedRect(-4.5, -10.5, 275.5, 282.5, 9),
+  },
+};
+function roundedRect(x0, y0, x1, y1, r) {
+  const out = [];
+  const corners = [[x1 - r, y0 + r, -90], [x1 - r, y1 - r, 0], [x0 + r, y1 - r, 90], [x0 + r, y0 + r, 180]];
+  for (const [cx, cy, a0] of corners) for (let i = 0; i <= 6; i++) { const a = ((a0 + i * 15) * Math.PI) / 180; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Состояние макета (в продукте его задают бэкенд и пользователь)
+// ─────────────────────────────────────────────────────────────
+const S = {
+  route: location.hash.slice(1) || '/pack',
+  job: 'idle', role: 'guest', rail: false,
+  printer: 'p1s', layout: 'search',
+  windowOn: false, amsOn: true, advOpen: false, calibOpen: false,
+  schedSource: 'pack', menuOpen: false, showPw: false,
+  model: null,               // { name, meta, geometry }
+  t0: performance.now(),
+};
+const Q = new URLSearchParams(location.search);
+if (Q.get('job')) S.job = Q.get('job');
+if (Q.get('role')) S.role = Q.get('role');
+if (Q.get('printer')) S.printer = Q.get('printer');
+S.calibOpen = Q.has('calib'); S.advOpen = Q.has('adv'); S.windowOn = Q.has('window') || Q.has('calib'); S.rail = Q.has('rail');
+if (Q.has('menu')) S.menuOpen = true;
+if (Q.get('theme')) document.documentElement.dataset.theme = Q.get('theme');
+if (Q.get('palette')) document.documentElement.dataset.palette = Q.get('palette');
+if (Q.get('t')) S.t0 = performance.now() - Number(Q.get('t')) * 1000;
+
+const icon = (id) => `<svg class="ic" aria-hidden="true"><use href="#${id}"/></svg>`;
+const STAGES = [
+  ['Пробная нарезка', 14], ['Раскладка', 15], ['Сборка', 3], ['Нарезка стола', 45],
+  ['Проверка поддержек', 4, true], ['Перепаковка', 4, true], ['Окно времени', 9, true], ['Запись', 4],
+];
+const LOOP = 22, STARTS = [0, 3, 6.5, 9, 16, 18, 18, 18, 22];
+function stageNow() {
+  const t = ((performance.now() - S.t0) / 1000) % LOOP;
+  let idx = STARTS.findIndex((s, i) => t >= s && t < STARTS[i + 1] && STARTS[i + 1] > s);
+  if (idx < 0) idx = 7;
+  return { idx, t, frac: (t - STARTS[idx]) / (STARTS[idx + 1] - STARTS[idx]) };
+}
+
+// ── Каркас ────────────────────────────────────────────────────
+function topbar() {
+  const theme = document.documentElement.dataset.theme;
+  const themeBtn = `<button class="icon-btn" data-act="theme" title="${theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}" aria-label="Переключить тему">${icon(theme === 'dark' ? 'sun' : 'moon')}</button>`;
+  const account = S.role === 'guest'
+    ? `<a class="btn" href="#/login">Войти</a>
+       <div class="menu-wrap"><button class="icon-btn" data-act="menu" aria-haspopup="menu" aria-expanded="${S.menuOpen}" aria-label="Меню">${icon('menu')}</button>
+       ${S.menuOpen ? `<div class="menu" role="menu"><div class="menu-head"><b>Гостевая сессия</b><span>результаты хранятся 24 часа</span></div>
+         <a href="#/jobs" role="menuitem">${icon('list')}Мои задачи</a><a href="#/login/register" role="menuitem">${icon('user')}Создать аккаунт</a></div>` : ''}</div>`
+    : `<div class="menu-wrap"><button class="avatar" data-act="menu" aria-haspopup="menu" aria-expanded="${S.menuOpen}" aria-label="Аккаунт: petr">PE</button>
+       ${S.menuOpen ? `<div class="menu" role="menu"><div class="menu-head"><b>petr</b><span>${S.role === 'admin' ? 'администратор' : 'аккаунт'}</span></div>
+         <a href="#/jobs" role="menuitem">${icon('list')}Мои задачи</a><hr><button data-act="logout" role="menuitem">${icon('logout')}Выйти</button></div>` : ''}</div>`;
+  return `<header class="topbar">
+    <button class="icon-btn" data-act="rail" aria-label="${S.rail ? 'Развернуть меню' : 'Свернуть меню'}" aria-pressed="${S.rail}">${icon('sidebar')}</button>
+    <a class="brand" href="#/pack" title="Goat Packer — упаковщик 3D-объектов для печати с максимальной плотностью">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/><path d="M4 7.5 12 12l8-4.5M12 12v9" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      Goat Packer</a>
+    <div class="spacer"></div><div class="top-actions">${themeBtn}${account}</div></header>`;
+}
+function sidebar() {
+  const item = (href, ic, label) => `<a class="nav-item ${S.route.startsWith(href) ? 'active' : ''}" href="#${href}" title="${label}">${icon(ic)}<span class="nav-label">${label}</span></a>`;
+  return `<nav class="sidebar" aria-label="Разделы">
+    ${item('/pack', 'cube', 'Упаковка')}${item('/schedule', 'calendar', 'Расписание')}${item('/jobs', 'list', 'Мои задачи')}
+    ${S.role === 'admin' ? `<div class="nav-sep"></div>${item('/admin', 'shield', 'Администрирование')}` : ''}
+  </nav>`;
+}
+
+// ── Упаковка ──────────────────────────────────────────────────
+function packForm() {
+  const m = S.model;
+  const fileBlock = m
+    ? `<div class="file-chip">${icon('file')}<div><div class="name">${m.name}</div><div class="meta">${m.meta}</div></div>
+        <label class="icon-btn" title="Заменить модель" aria-label="Заменить модель">${icon('upload')}<input type="file" accept=".stl,.3mf" data-file hidden></label></div>`
+    : `<label class="drop" data-drop>${icon('upload')}<div><b>Выберите .3mf или .stl</b>или перетащите сюда · до 200 МБ</div><input type="file" accept=".stl,.3mf" data-file></label>`;
+  return `<aside class="form-col">
+    ${fileBlock}
+    <div class="field"><span class="field-label">Профиль принтера</span>
+      <select class="select" data-printer>${Object.entries(PRINTERS).map(([k, p]) => `<option value="${k}" ${k === S.printer ? 'selected' : ''}>${p.name}</option>`).join('')}</select></div>
+    <div class="field"><span class="field-label">Раскладка</span>
+      <div class="seg"><button class="${S.layout === 'search' ? 'on' : ''}" data-act="layout:search">Плотная</button><button class="${S.layout === 'grid' ? 'on' : ''}" data-act="layout:grid">Сетка</button></div>
+      <span class="hint">${S.layout === 'search' ? 'подбор с поворотами и нависаниями' : 'быстро и равномерно, без поворотов'}</span></div>
+    <div class="field"><span class="field-label">Чистка сопла</span>
+      <select class="select"><option>Выкл</option><option>Каждый N-й слой</option><option>С высоты H мм</option></select></div>
+    <div class="group">
+      <label class="check"><input type="checkbox" data-act="window" ${S.windowOn ? 'checked' : ''}><span>Уложиться в окно печати<small>без окна стол заполняется максимально</small></span></label>
+      ${S.windowOn ? `<div class="nested">
+        <div class="row2"><div class="field"><span class="field-label">Окно, ч</span><input class="input mono" value="8"></div>
+        <div class="field"><span class="field-label">Запас, %</span><input class="input mono" value="10"></div></div>
+        <label class="check"><input type="checkbox" data-act="ams" ${S.amsOn ? 'checked' : ''}><span>Учитывать реальную смену прутка<small>слайсер занижает время смены AMS — окно считается точнее</small></span></label>
+        ${S.amsOn ? `<div class="field"><span class="field-label">Смена прутка, с</span><input class="input mono" value="52"><span class="hint">из калибровки · 12 окт · <button class="link" data-act="calib">${S.calibOpen ? 'скрыть калибровку' : 'откалибровать заново…'}</button></span></div>` : ''}
+      </div>` : ''}
+    </div>
+    <div class="group">
+      <button class="disclosure ${S.advOpen ? 'open' : ''}" data-act="adv">Дополнительно ${icon('chev')}</button>
+      ${S.advOpen ? `
+        <div class="field"><span class="field-label">Перекрытие поддержек, мм</span><input class="input mono" placeholder="без ограничений"><span class="hint">0 — поддержки соседей не пересекаются; тело модели не перекрывается никогда</span></div>
+        <div class="row2"><div class="field"><span class="field-label">Зазор, мм</span><input class="input mono" value="1.0"></div>
+        <div class="field"><span class="field-label">Растр, мм</span><input class="input mono" value="0.25"></div></div>` : ''}
+    </div>
+  </aside>`;
+}
+
+function packMain() {
+  const p = PRINTERS[S.printer], m = S.model;
+  const running = S.job === 'running';
+  const n = Scene.count();
+  const btn = running ? `<button class="btn" data-act="job:idle">Отменить</button>`
+    : S.job === 'done' ? `<button class="btn" data-act="job:running">Упаковать заново</button>`
+    : `<button class="btn btn-primary btn-lg" data-act="job:running" ${m ? '' : 'disabled'}>Упаковать</button>`;
+  const w = p.area[2] - p.area[0], h = p.area[3] - p.area[1];
+  let below = '';
+  if (S.job === 'done') below = `
+    <div class="result">${icon('check')}<div><b>Упаковано <span data-count>${n}</span> объектов</b><p>поддержки соседей не пересекаются · G-code проверен по всем слоям</p></div>
+      <a class="btn" href="#/schedule">В расписание ${icon('arrow')}</a><button class="btn btn-primary">${icon('download')}Скачать 3MF</button></div>
+    <div class="stats"><div><span>Объектов</span><b data-count>${n}</b></div><div><span>Время стола</span><b>11 ч 42 мин</b></div><div><span>Заполнение</span><b>71%</b></div><div><span>Задача</span><b><a class="link mono" href="#/jobs/7f3a9c">7f3a9c</a></b></div></div>`;
+  if (S.job === 'error') below = `
+    <div class="result err">${icon('alert')}<div><b>Башня очистки не помещается в центр стола</b><p>Отключите «центр стола» в дополнительных параметрах или уменьшите окно печати.</p></div>
+      <button class="btn" data-act="job:running">Повторить</button></div>`;
+  return `<section class="main-col">
+    <div class="action-bar"><div class="title"><h1>${m ? m.name : 'Модель не выбрана'}</h1><p>${p.name} · рабочая область ${w} × ${h} мм</p></div>${btn}</div>
+    ${running ? '<div class="progress" id="progress"></div>' : ''}
+    ${below}
+    <div class="figure" id="scene-host">
+      <div class="dims" id="dims"></div>
+      <div class="legend">
+        <span>нельзя печатать <i style="background:var(--keepout);opacity:.8"></i></span>
+        ${p.tower ? '<span>башня очистки <i style="background:var(--accent-2-soft);border:1px dashed var(--accent-2)"></i></span>' : ''}
+        <span>контур проекции <i style="border:2px solid var(--accent-2);background:transparent"></i></span>
+      </div>
+      <div class="fig-tag bl" id="fig-hint"></div>
+      <div class="fig-tag br" id="readout"></div>
+    </div>
+  </section>`;
+}
+
+function calibSide() {
+  if (!S.calibOpen) return '';
+  return `<aside class="side-col">
+    <div class="side-head"><h2>Калибровка смены прутка</h2><button class="icon-btn" data-act="calib" aria-label="Закрыть">${icon('x')}</button></div>
+    <p class="hint" style="margin:0">Слайсер считает смену AMS быстрее, чем она идёт на самом деле. Два коротких теста дают точное время для этого принтера.</p>
+    <ol class="steps">
+      <li><div><b>Сгенерируйте тесты</b><div class="seg"><button class="on">10 смен</button><button>30 смен · точнее</button></div>
+        <span class="hint">из вашего проекта: те же филаменты и настройки</span><button class="btn">Сгенерировать</button></div></li>
+      <li><div><b>Напечатайте A и B</b><span class="hint">запишите оценку слайсера и фактическое время каждой печати</span></div></li>
+      <li><div><b>Введите время</b>
+        <div class="row2"><div class="field"><span class="field-label">A, факт</span><input class="input mono" value="24:10"></div><div class="field"><span class="field-label">B, факт</span><input class="input mono" value="41:55"></div></div>
+        <div class="calc-out"><span>Смена прутка</span><span class="mono">52 с</span></div><button class="btn btn-primary">Подставить в упаковку</button></div></li>
+    </ol></aside>`;
+}
+
+function renderProgress() {
+  const el = document.getElementById('progress');
+  if (!el) return;
+  const { idx, t, frac } = stageNow();
+  const skipped = (i) => (i === 5 || i === 6) && idx > i;
+  const bar = STAGES.map(([, w], i) => `<span class="${skipped(i) ? 'skip' : i < idx ? 'done' : i === idx ? 'cur' : ''}" style="flex:${w};--p:${Math.round(frac * 100)}%"></span>`).join('');
+  const pct = Math.round(STAGES.slice(0, idx).reduce((a, s) => a + s[1], 0) + STAGES[idx][1] * frac);
+  const list = STAGES.map(([l, , opt], i) => {
+    const cls = skipped(i) ? 'opt' : i < idx ? 'done' : i === idx ? 'cur' : opt ? 'opt' : '';
+    return `<span class="${cls}"><i></i>${l}${skipped(i) ? ' · не понадобилась' : opt && i > idx ? ' · если понадобится' : ''}</span>`;
+  }).join('');
+  setHtml(el, `<div class="progress-line"><b>${STAGES[idx][0]}…</b><span class="mono">${pct}% · идёт ${Math.floor(t / 6)}:${String(Math.floor((t * 10) % 60)).padStart(2, '0')} · осталось ~3 мин</span></div><div class="bar">${bar}</div><div class="stage-list">${list}</div>`);
+}
+
+// ── Остальные страницы (как в v1) ─────────────────────────────
+function schedulePage() {
+  const rows = [['P1S #1', [[0, 47, ''], [49, 98, 'night']]], ['P1S #2', [[2, 50, ''], [52, 96, 'night']]], ['U1', [[0, 33, ''], [35, 68, ''], [70, 99, 'night']]]];
+  const gantt = rows.map(([nm, bars]) => `<div class="gantt-row"><span>${nm}</span><div class="gantt-track">${bars.map(([a, b, c]) => `<i class="${c}" style="left:${a}%;width:${b - a}%"></i>`).join('')}</div></div>`).join('');
+  return `<div class="work"><aside class="form-col">
+      <div class="field"><span class="field-label">Источник</span><div class="seg"><button class="${S.schedSource === 'pack' ? 'on' : ''}" data-act="src:pack">Из упаковки</button><button class="${S.schedSource === 'file' ? 'on' : ''}" data-act="src:file">Файл</button></div></div>
+      ${S.schedSource === 'pack' ? `<div class="file-chip">${icon('file')}<div><div class="name">последняя упаковка</div><div class="meta">задача <span class="mono">7f3a9c</span> · сегодня 14:02</div></div></div>` : `<label class="drop">${icon('upload')}<div><b>Выберите .3mf</b>одна плотная пластина</div></label>`}
+      <div class="field"><span class="field-label">Профиль принтера</span><select class="select"><option>Bambu Lab P1S</option></select></div>
+      <div class="group"><div class="row2"><div class="field"><span class="field-label">Начало дня</span><input class="input mono" value="09:00"></div><div class="field"><span class="field-label">Начало ночи</span><input class="input mono" value="22:00"></div></div>
+        <div class="field"><span class="field-label">Горизонт</span><input class="input mono" value="33:00"><span class="hint">ЧЧ:ММ от начала дня, можно больше 24</span></div>
+        <div class="row2"><div class="field"><span class="field-label">Смена партий, мин</span><input class="input mono" value="10"></div><div class="field"><span class="field-label">Подготовка, мин</span><input class="input mono" value="5"></div></div></div>
+    </aside><section class="main-col">
+      <div class="action-bar"><div class="title"><h1>Расписание на сутки</h1><p>3 принтера · 09:00 → 18:00 следующего дня</p></div><button class="btn btn-primary btn-lg">Построить</button></div>
+      <div class="result">${icon('check')}<div><b>7 столов за 33 часа</b><p>ночью — длинные столы, днём — короткие</p></div><button class="btn">XLSX</button><button class="btn btn-primary">${icon('download')}Мультипластинный 3MF</button></div>
+      <div class="gantt"><div class="gantt-axis"><span></span><div><span>09:00</span><span>15:00</span><span>21:00</span><span>03:00</span><span>09:00</span><span>18:00</span></div></div>${gantt}</div>
+    </section></div>`;
+}
+const JOBS = [['7f3a9c', 'Упаковка', 'gear_demo.stl', 'ok', 'Готово', 'сегодня 14:02', '6:48'], ['b81e04', 'Расписание', '7f3a9c → 3 принтера', 'run', 'Идёт · 40%', 'сегодня 14:11', '1:12'], ['2c95d1', 'Калибровка AMS', 'project.3mf', 'ok', 'Готово', 'вчера 19:30', '1:40'], ['e04a77', 'Упаковка', 'bracket.3mf', 'err', 'Ошибка', 'вчера 18:05', '2:03']];
+const jobsPage = () => `<div class="page"><h1>Мои задачи</h1>
+  ${S.role === 'guest' ? '<div class="note">Гостевые задачи хранятся 24 часа. <a class="link" href="#/login/register">Создайте аккаунт</a> — они перейдут в него.</div>' : ''}
+  <div class="toolbar"><select class="select"><option>Все типы</option><option>Упаковка</option><option>Расписание</option><option>Калибровка AMS</option></select><select class="select"><option>Любой статус</option></select></div>
+  <table><thead><tr><th>ID</th><th>Тип</th><th>Исходник</th><th>Статус</th><th>Создана</th><th>Длилась</th></tr></thead><tbody>
+  ${JOBS.map(([id, k, f, c, st, at, d]) => `<tr><td><a class="mono" href="#/jobs/${id}">${id}</a></td><td>${k}</td><td>${f}</td><td><span class="pill ${c}">${st}</span></td><td>${at}</td><td class="mono">${d}</td></tr>`).join('')}</tbody></table></div>`;
+const jobDetail = (id) => `<div class="page"><div class="crumbs"><a href="#/jobs">Мои задачи</a><span>/</span><span class="mono">${id}</span></div>
+  <div class="action-bar"><div class="title"><h1>Упаковка · gear_demo.stl</h1><p>сегодня 14:02 · длилась 6 мин 48 с</p></div><span class="pill ok">Готово</span><button class="btn">Повторить с этими параметрами</button></div>
+  <div class="note">Здесь — та же сцена готового стола, файлы, параметры и тайминги этапов (см. v1).</div></div>`;
+function pw(label, ac, link) {
+  return `<div class="field"><span class="field-label"><label for="pw">${label}</label>${link || ''}</span>
+    <div class="input-suffix"><input id="pw" class="input" type="${S.showPw ? 'text' : 'password'}" autocomplete="${ac}"><button type="button" class="icon-btn" data-act="pw" aria-label="${S.showPw ? 'Скрыть пароль' : 'Показать пароль'}">${icon('eye')}</button></div>
+    ${ac === 'new-password' ? '<span class="hint">минимум 12 символов</span>' : ''}</div>`;
+}
+function authPage(sub) {
+  const back = '<p class="auth-foot"><a class="link" href="#/login">Вернуться ко входу</a></p>';
+  const bodies = {
+    register: `<h1>Создать аккаунт</h1><p class="sub">Задачи будут храниться без ограничения 24 часа</p><form onsubmit="return false">
+      <div class="field"><label class="field-label" for="lg">Логин</label><input id="lg" class="input" autocomplete="username"></div>
+      <div class="field"><label class="field-label" for="em">Email <span class="hint">необязательно</span></label><input id="em" class="input" type="email" autocomplete="email"><span class="hint">для восстановления пароля <span class="stub">скоро</span></span></div>
+      ${pw('Пароль', 'new-password')}<button class="btn btn-primary btn-lg btn-block">Создать аккаунт</button></form>
+      <p class="auth-foot">Уже есть аккаунт? <a class="link" href="#/login">Войти</a></p>`,
+    forgot: `<h1>Восстановление пароля</h1><p class="sub">Пришлём ссылку для нового пароля на email аккаунта</p><form onsubmit="location.hash='/login/sent';return false">
+      <div class="field"><label class="field-label" for="lg">Логин или email</label><input id="lg" class="input" autocomplete="username"></div><button class="btn btn-primary btn-lg btn-block">Отправить ссылку</button></form>
+      <div class="note">Есть одноразовый код от администратора? <a class="link" href="#/login/code">Ввести код</a></div>${back}`,
+    sent: `<h1>Проверьте почту</h1><p class="sub">Если у аккаунта указан email, ссылка уже в пути. Она действует 1 час.</p>
+      <div class="note"><span class="stub">заготовка</span> Письма пока не отправляются. Сейчас пароль сбрасывает администратор — <a class="link" href="#/login/code">ввести его код</a>.</div>
+      <button class="btn btn-block" disabled>Отправить ещё раз · 0:59</button>${back}`,
+    code: `<h1>Новый пароль</h1><p class="sub">Код выдаёт администратор, он одноразовый</p><form onsubmit="return false">
+      <div class="field"><label class="field-label" for="tk">Код</label><input id="tk" class="input mono" autocomplete="one-time-code"></div>${pw('Новый пароль', 'new-password')}
+      <button class="btn btn-primary btn-lg btn-block">Сохранить и войти</button></form>${back}`,
+  };
+  const body = bodies[sub] ?? `<h1>Вход</h1><p class="sub">Goat Packer — упаковка 3D-объектов для печати</p><form onsubmit="return false">
+      <div class="field"><label class="field-label" for="lg">Логин</label><input id="lg" class="input" autocomplete="username"></div>
+      ${pw('Пароль', 'current-password', '<a class="link" href="#/login/forgot" style="font-size:12px">Забыли пароль?</a>')}
+      <button class="btn btn-primary btn-lg btn-block">Войти</button></form>
+      <p class="auth-foot">Нет аккаунта? <a class="link" href="#/login/register">Создать аккаунт</a></p>
+      <div class="note">Можно работать и без входа: гостевые задачи хранятся 24 часа. <a class="link" href="#/pack">К упаковке</a></div>`;
+  return `<main class="auth"><div class="auth-card">${body}</div></main>`;
+}
+const adminPage = () => `<div class="page"><h1>Администрирование</h1><div class="note">Текущая AdminPage переносится без изменений.</div></div>`;
+
+function mockPanel() {
+  const seg = (key, opts) => `<div class="seg">${opts.map(([v, l]) => `<button class="${S[key] === v ? 'on' : ''}" data-act="set:${key}:${v}">${l}</button>`).join('')}</div>`;
+  return `<div class="mock"><b>МАКЕТ · состояние</b>${seg('job', [['idle', 'Пусто'], ['running', 'Идёт'], ['done', 'Готово'], ['error', 'Ошибка']])}${seg('role', [['guest', 'Гость'], ['user', 'Юзер'], ['admin', 'Админ']])}<div class="seg"><button class="${document.documentElement.dataset.palette === 'e' ? 'on' : ''}" data-act="palette:e">Камень</button><button class="${document.documentElement.dataset.palette === 'k' ? 'on' : ''}" data-act="palette:k">Крафт</button><button class="${document.documentElement.dataset.palette === 'c' ? 'on' : ''}" data-act="palette:c">Бетон</button></div></div>`;
+}
+
+function render() {
+  const r = S.route;
+  let page;
+  if (r.startsWith('/login')) page = authPage(r.split('/')[2]);
+  else if (r === '/schedule') page = schedulePage();
+  else if (r.startsWith('/jobs/')) page = jobDetail(r.split('/')[2]);
+  else if (r === '/jobs') page = jobsPage();
+  else if (r === '/admin') page = adminPage();
+  else page = `<div class="work ${S.calibOpen ? 'with-side' : ''}">${packForm()}${packMain()}${calibSide()}</div>`;
+  setHtml(document.getElementById('app'), topbar() + `<div class="shell ${S.rail ? 'rail' : ''}">${sidebar()}<main class="content">${page}</main></div>` + mockPanel());
+  Scene.attach(document.getElementById('scene-host'));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Модель: STL (binary/ascii) или 3MF (zip + XML) из браузера. Любая модель.
+// ─────────────────────────────────────────────────────────────
+function parseStl(buf) {
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  const pos = [];
+  if (84 + n * 50 === buf.byteLength) {
+    for (let i = 0; i < n; i++) { const o = 84 + i * 50 + 12; for (let k = 0; k < 9; k++) pos.push(dv.getFloat32(o + k * 4, true)); }
+  } else {
+    const txt = new TextDecoder().decode(buf);
+    for (const m of txt.matchAll(/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g)) pos.push(+m[1], +m[2], +m[3]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  return g;
+}
+function parse3mf(buf) {
+  const files = unzipSync(new Uint8Array(buf));
+  const pos = [];
+  for (const [name, data] of Object.entries(files)) {
+    if (!name.toLowerCase().endsWith('.model')) continue;
+    const doc = new DOMParser().parseFromString(strFromU8(data), 'application/xml');
+    for (const mesh of doc.getElementsByTagNameNS('*', 'mesh')) {
+      const vs = [...mesh.getElementsByTagNameNS('*', 'vertex')].map((v) => [+v.getAttribute('x'), +v.getAttribute('y'), +v.getAttribute('z')]);
+      for (const t of mesh.getElementsByTagNameNS('*', 'triangle')) for (const a of ['v1', 'v2', 'v3']) pos.push(...vs[+t.getAttribute(a)]);
+      if (pos.length) break;                                    // макет: первый объект
+    }
+    if (pos.length) break;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  return g;
+}
+function normalize(g) {
+  g.computeBoundingBox();
+  const b = g.boundingBox;
+  g.translate(-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, -b.min.z);
+  g.computeVertexNormals();
+  g.computeBoundingBox();
+  return g;
+}
+function gearDemo() {                                           // нейтральная модель по умолчанию
+  const teeth = 18, ro = 21, ri = 17.5, shape = new THREE.Shape();
+  for (let i = 0; i < teeth * 4; i++) {
+    const a = (i / (teeth * 4)) * Math.PI * 2, r = i % 4 < 2 ? ro : ri;
+    i ? shape.lineTo(r * Math.cos(a), r * Math.sin(a)) : shape.moveTo(r, 0);
+  }
+  const hole = new THREE.Path(); hole.absarc(0, 0, 4, 0, Math.PI * 2, true); shape.holes.push(hole);
+  const hub = new THREE.Shape(); hub.absarc(0, 0, 9, 0, Math.PI * 2, false);
+  const h2 = new THREE.Path(); h2.absarc(0, 0, 4, 0, Math.PI * 2, true); hub.holes.push(h2);
+  const g1 = new THREE.ExtrudeGeometry(shape, { depth: 6, bevelEnabled: false, curveSegments: 24 });
+  const g2 = new THREE.ExtrudeGeometry(hub, { depth: 14, bevelEnabled: false, curveSegments: 24 });
+  const tab = new THREE.Shape(); tab.moveTo(18, -5); tab.lineTo(34, -5); tab.lineTo(34, 5); tab.lineTo(18, 5); tab.closePath();
+  const g3 = new THREE.ExtrudeGeometry(tab, { depth: 3, bevelEnabled: false });
+  return normalize(mergeGeometries([g1, g2, g3].map((g) => g.toNonIndexed())));
+}
+async function loadModelFile(file) {
+  const buf = await file.arrayBuffer();
+  const g = normalize(file.name.toLowerCase().endsWith('.3mf') ? parse3mf(buf) : parseStl(buf));
+  setModel(file.name, g);
+}
+function setModel(name, g) {
+  const s = new THREE.Vector3(); g.boundingBox.getSize(s);
+  const tris = g.attributes.position.count / 3;
+  S.model = { name, meta: `${s.x.toFixed(0)} × ${s.y.toFixed(0)} × ${s.z.toFixed(0)} мм · ${tris.toLocaleString('ru')} треуг.`, geometry: g };
+  if (S.model.initial !== true && !initialLoad) S.job = 'idle';
+  Scene.setModel(g);
+  render();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Сцена three.js: стол по профилю, проекция + контур, меши, срез.
+// ─────────────────────────────────────────────────────────────
+const Scene = (() => {
+  let renderer, camera, scene, controls, host, dims;
+  let bedGroup, modelGeo, projTex, projSize, layout = [], solid, cap, single, singleCap, ghosts, projPlanes, slicePlane;
+  const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1000);
+  const mats = {};
+  function css(name) {                                          // oklch → sRGB через canvas
+    const c = document.createElement('canvas'); c.width = c.height = 1;
+    const x = c.getContext('2d', { willReadFrequently: true }); x.fillStyle = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); x.fillRect(0, 0, 1, 1);
+    const d = x.getImageData(0, 0, 1, 1).data; return new THREE.Color(d[0] / 255, d[1] / 255, d[2] / 255).convertSRGBToLinear();
+  }
+  function cssStr(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function init() {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.localClippingEnabled = true;
+    scene = new THREE.Scene();
+    camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2000);
+    camera.up.set(0, 0, 1);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x666677, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(-150, -260, 420); scene.add(sun);
+    mats.obj = new THREE.MeshLambertMaterial({ clippingPlanes: [clip], flatShading: false });
+    mats.cap = new THREE.MeshBasicMaterial({ side: THREE.BackSide, clippingPlanes: [clip] });
+    mats.ghost = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.55, depthWrite: false });
+    dims = document.createElement('div');
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableZoom = true; controls.enablePan = false; controls.enabled = false;
+    new ResizeObserver(fit).observe(renderer.domElement);
+  }
+  function attach(el) {
+    if (!el) { host = null; return; }
+    if (!renderer) init();
+    host = el;
+    el.prepend(renderer.domElement);
+    dims = el.querySelector('#dims');
+    buildBed(); applyTheme(); fit();
+  }
+  function fit() {
+    if (!host) return;
+    const w = host.clientWidth, h = host.clientHeight; if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    const p = PRINTERS[S.printer], cx = (p.area[0] + p.area[2]) / 2, cy = (p.area[1] + p.area[3]) / 2, span = Math.max(p.area[2] - p.area[0], p.area[3] - p.area[1]);
+    const half = span * 0.5, aspect = w / h;
+    camera.left = -half * aspect; camera.right = half * aspect; camera.top = half; camera.bottom = -half;
+    if (!controls.enabled) { camera.position.set(cx + 420, cy - 420, 360); controls.target.set(cx, cy, 0); }
+    camera.lookAt(cx, cy, 0); camera.updateProjectionMatrix(); controls.update();
+  }
+  function shapeOf(pts) { const s = new THREE.Shape(); pts.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y))); s.closePath(); return s; }
+  function rectPts(x0, y0, x1, y1) { return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]; }
+  function buildBed() {
+    if (bedGroup) scene.remove(bedGroup);
+    bedGroup = new THREE.Group();
+    const p = PRINTERS[S.printer], [ax0, ay0, ax1, ay1] = p.area;
+    const plate = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeOf(p.plate), { depth: 3, bevelEnabled: false }), new THREE.MeshLambertMaterial());
+    plate.position.z = -3.8; plate.userData.color = '--plate'; bedGroup.add(plate);
+    // Без вырезов (у P1S край области совпадает с краем пластины — earcut ломается):
+    // вся пластина — цвет запретной зоны, рабочая область за вычетом отступа — поверх.
+    const fz = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(p.plate)), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.55, depthWrite: false }));
+    fz.position.z = -0.3; fz.userData.color = '--keepout'; bedGroup.add(fz);
+    const m = p.margin;
+    const top = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(rectPts(ax0 + m, ay0 + m, ax1 - m, ay1 - m))), new THREE.MeshBasicMaterial());
+    top.position.z = -0.2; top.userData.color = '--plate-top'; bedGroup.add(top);
+    // сетка 32 мм внутри рабочей области
+    const gp = [];
+    for (let x = Math.ceil(ax0 / 32) * 32; x <= ax1; x += 32) gp.push(x, ay0 + m, 0, x, ay1 - m, 0);
+    for (let y = Math.ceil(ay0 / 32) * 32; y <= ay1; y += 32) gp.push(ax0 + m, y, 0, ax1 - m, y, 0);
+    const grid = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(gp, 3)), new THREE.LineBasicMaterial({ transparent: true, opacity: 0.7 }));
+    grid.position.z = -0.1; grid.userData.color = '--plate-grid'; bedGroup.add(grid);
+    for (const [x0, y0, x1, y1] of p.exclusions) {
+      const ex = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(rectPts(x0, y0, x1, y1))), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, depthWrite: false }));
+      ex.position.z = 0.02; ex.userData.color = '--keepout'; bedGroup.add(ex);
+    }
+    if (p.tower) {
+      const [x0, y0, x1, y1] = p.tower;
+      const tw = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(rectPts(x0, y0, x1, y1))), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.35, depthWrite: false }));
+      tw.position.z = 0.03; tw.userData.color = '--accent-2'; bedGroup.add(tw);
+    }
+    // размерные линии вдоль передней и правой сторон
+    const off = 22, dl = [];
+    const yf = Math.min(...p.plate.map((q) => q[1])) - off, xr = Math.max(...p.plate.map((q) => q[0])) + off;
+    dl.push(ax0, yf, 0, ax1, yf, 0, ax0, yf - 4, 0, ax0, yf + 4, 0, ax1, yf - 4, 0, ax1, yf + 4, 0);
+    dl.push(xr, ay0, 0, xr, ay1, 0, xr - 4, ay0, 0, xr + 4, ay0, 0, xr - 4, ay1, 0, xr + 4, ay1, 0);
+    const dim = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(dl, 3)), new THREE.LineBasicMaterial());
+    dim.userData.color = '--fg-dim'; bedGroup.add(dim);
+    bedGroup.userData.labels = [
+      { at: new THREE.Vector3((ax0 + ax1) / 2, yf, 0), text: `${ax1 - ax0} мм` },
+      { at: new THREE.Vector3(xr, (ay0 + ay1) / 2, 0), text: `${ay1 - ay0} мм` },
+      ...(m ? [{ at: new THREE.Vector3(ax0 + m / 2 + 18, ay1 - m / 2, 0), text: `отступ ${m} мм` }] : []),
+      ...p.exclusions.map(([x0, y0, x1, y1]) => ({ at: new THREE.Vector3(x1 + 22, (y0 + y1) / 2, 0), text: `${x1 - x0}×${y1 - y0}` })),
+    ];
+    scene.add(bedGroup);
+    if (modelGeo) buildLayout();
+  }
+  // Проекция модели на стол: заливка + контур, растр 0.25 мм
+  function buildProjection() {
+    const b = modelGeo.boundingBox, res = 4, pad = 3;
+    const w = Math.ceil((b.max.x - b.min.x + pad * 2) * res), h = Math.ceil((b.max.y - b.min.y + pad * 2) * res);
+    const sil = document.createElement('canvas'); sil.width = w; sil.height = h;
+    const sx = sil.getContext('2d'); sx.fillStyle = '#fff';
+    const pa = modelGeo.attributes.position.array;
+    const X = (x) => (x - b.min.x + pad) * res, Y = (y) => h - (y - b.min.y + pad) * res;
+    for (let i = 0; i < pa.length; i += 9) { sx.beginPath(); sx.moveTo(X(pa[i]), Y(pa[i + 1])); sx.lineTo(X(pa[i + 3]), Y(pa[i + 4])); sx.lineTo(X(pa[i + 6]), Y(pa[i + 7])); sx.closePath(); sx.fill(); sx.stroke(); }
+    const tint = (color) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.drawImage(sil, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = color; x.fillRect(0, 0, w, h); return c; };
+    const out = document.createElement('canvas'); out.width = w; out.height = h; const ox = out.getContext('2d');
+    const ring = tint(cssStr('--accent-2')), r = 1.6 * res / 2;
+    for (let a = 0; a < 16; a++) ox.drawImage(ring, Math.cos((a / 16) * Math.PI * 2) * r, Math.sin((a / 16) * Math.PI * 2) * r);
+    ox.globalCompositeOperation = 'destination-out'; ox.drawImage(sil, 0, 0); ox.globalCompositeOperation = 'source-over';
+    ox.globalAlpha = 0.28; ox.drawImage(tint(cssStr('--accent-2')), 0, 0); ox.globalAlpha = 1;
+    projTex?.dispose(); projTex = new THREE.CanvasTexture(out); projTex.colorSpace = THREE.SRGBColorSpace;
+    projSize = [w / res, h / res, (b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2];
+  }
+  // Демо-раскладка: полки по габариту с зазором. В продукте — позиции из события layout пакера.
+  function buildLayout() {
+    for (const o of [solid, cap, single, singleCap, ghosts, projPlanes]) if (o) { scene.remove(o); o.dispose?.(); }
+    const p = PRINTERS[S.printer], b = modelGeo.boundingBox, gap = 2;
+    const w = b.max.x - b.min.x, d = b.max.y - b.min.y, m = p.margin;
+    const [ax0, ay0, ax1, ay1] = [p.area[0] + m, p.area[1] + m, p.area[2] - m, p.area[3] - m];
+    const hits = (x0, y0, x1, y1, r) => r && x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1];
+    layout = [];
+    for (let y = ay0; y + d <= ay1; y += d + gap) for (let x = ax0; x + w <= ax1; x += w + gap) {
+      if (p.exclusions.some((r) => hits(x, y, x + w, y + d, r)) || hits(x, y, x + w, y + d, p.tower)) continue;
+      layout.push({ x: x + w / 2, y: y + d / 2 });
+    }
+    const c = [(p.area[0] + p.area[2]) / 2, (p.area[1] + p.area[3]) / 2];
+    layout.sort((a, q) => Math.hypot(a.x - c[0], a.y - c[1]) - Math.hypot(q.x - c[0], q.y - c[1]));
+    layout.forEach((q, i) => (q.order = i));
+    const N = layout.length;
+    solid = new THREE.InstancedMesh(modelGeo, mats.obj, N); cap = new THREE.InstancedMesh(modelGeo, mats.cap, N);
+    single = new THREE.Mesh(modelGeo, mats.obj); singleCap = new THREE.Mesh(modelGeo, mats.cap);
+    single.position.set(c[0], c[1], 0); singleCap.position.copy(single.position);
+    buildProjection();
+    const pg = new THREE.PlaneGeometry(projSize[0], projSize[1]);
+    projPlanes = new THREE.InstancedMesh(pg, new THREE.MeshBasicMaterial({ map: projTex, transparent: true, depthWrite: false }), N);
+    ghosts = new THREE.InstancedMesh(pg, mats.ghost, N); mats.ghost.map = projTex; mats.ghost.needsUpdate = true;
+    const mtx = new THREE.Matrix4();
+    layout.forEach((q, i) => { mtx.makeTranslation(q.x, q.y, 0.06); projPlanes.setMatrixAt(i, mtx); });
+    scene.add(solid, cap, single, singleCap, projPlanes, ghosts);
+    if (!slicePlane) {
+      slicePlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.06, depthWrite: false, side: THREE.DoubleSide }));
+      scene.add(slicePlane);
+    }
+  }
+  function applyTheme() {
+    if (!bedGroup) return;
+    bedGroup.traverse((o) => o.userData.color && o.material.color.copy(css(o.userData.color)));
+    mats.obj.color.copy(css('--object')); mats.cap.color.copy(css('--signal'));
+    if (modelGeo) { buildProjection(); projPlanes.material.map = projTex; projPlanes.material.needsUpdate = true; mats.ghost.map = projTex; mats.ghost.needsUpdate = true; }
+  }
+  function setModel(g) { modelGeo = g; if (scene) buildLayout(); }
+  const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, 1), v = new THREE.Vector3();
+  function frame() {
+    if (!host || !modelGeo || !solid) return;
+    const mode = S.job, N = layout.length, H = modelGeo.boundingBox.max.z;
+    const p = PRINTERS[S.printer];
+    let read = '', hint = '';
+    let showSingle = false, showSolid = false, showProj = false, showGhost = false, clipZ = 1e4, planeZ = null, planeColor = '--signal';
+    solid.count = N; cap.count = N;
+    if (mode === 'idle') { showSingle = true; showProj = true; projPlanes.count = 0; hint = 'модель и её проекция на стол · раскладка появится после запуска'; read = `проекция ${S.model.meta.split(' · ')[0]}`; }
+    else if (mode === 'done' || mode === 'error') { showSolid = true; showProj = true; projPlanes.count = N; hint = mode === 'done' ? 'перетащите, чтобы повернуть' : 'последняя удачная раскладка'; read = `<b>${N}</b> объектов на столе`; }
+    else {
+      const { idx, frac, t } = stageNow();
+      hint = 'позиции — раскладка пакера (в макете — демо)';
+      if (idx === 0) { showSingle = true; showProj = true; projPlanes.count = 0; clipZ = Math.max(0.2, frac * H); planeZ = clipZ; read = `проба · слой <b>${Math.round(clipZ / 0.2)}</b> / ${Math.round(H / 0.2)}`; }
+      else if (idx === 1) {
+        showGhost = true; const k = Math.floor(t * 5);
+        let g = 0;
+        layout.forEach((l, i) => { if ((i * 7 + k) % 4) return; q.setFromAxisAngle(v.set(0, 0, 1), ((k + i) % 4) * 0.5); mtx.compose(v.set(l.x + Math.sin(k + i) * 6, l.y + Math.cos(k * 2 + i) * 6, 0.07), q, sc); ghosts.setMatrixAt(g++, mtx); });
+        ghosts.count = g; ghosts.instanceMatrix.needsUpdate = true; read = `перебор раскладок · угол <b>${(k * 37) % 360}°</b>`;
+      } else if (idx === 2) {
+        showSolid = true; showProj = true;
+        let placed = 0;
+        layout.forEach((l, i) => { const loc = Math.min(1, Math.max(0, frac * 1.7 - (l.order / N) * 0.9)); if (loc > 0) placed++; const e = 1 - (1 - loc) ** 3; mtx.makeTranslation(l.x, l.y, loc > 0 ? (1 - e) * 120 : -9999); solid.setMatrixAt(i, mtx); cap.setMatrixAt(i, mtx); });
+        projPlanes.count = N; read = `ставим <b>${placed}</b> / ${N}`;
+      } else {
+        showSolid = true; showProj = true; projPlanes.count = N;
+        if (idx === 3) { clipZ = Math.max(0.2, frac * H); planeZ = clipZ; read = `слой <b>${Math.round(clipZ / 0.2)}</b> / ${Math.round(H / 0.2)}`; }
+        else if (idx === 4) { planeZ = frac * H; planeColor = '--accent-2'; read = 'поддержки против соседей, слой за слоем'; }
+        else read = 'запись 3MF';
+      }
+    }
+    if (!(S.job === 'running' && stageNow().idx === 2)) layout.forEach((l, i) => { mtx.makeTranslation(l.x, l.y, 0); solid.setMatrixAt(i, mtx); cap.setMatrixAt(i, mtx); });
+    solid.instanceMatrix.needsUpdate = true; cap.instanceMatrix.needsUpdate = true;
+    single.visible = singleCap.visible = showSingle; solid.visible = cap.visible = showSolid;
+    projPlanes.visible = showProj; ghosts.visible = showGhost;
+    if (showSingle) { projPlanes.count = 1; mtx.makeTranslation(single.position.x, single.position.y, 0.06); projPlanes.setMatrixAt(0, mtx); }
+    else layout.forEach((l, i) => { mtx.makeTranslation(l.x, l.y, 0.06); projPlanes.setMatrixAt(i, mtx); });
+    projPlanes.instanceMatrix.needsUpdate = true;
+    clip.constant = clipZ;
+    slicePlane.visible = planeZ !== null;
+    if (planeZ !== null) {
+      const [ax0, ay0, ax1, ay1] = p.area; slicePlane.scale.set(ax1 - ax0 + 16, ay1 - ay0 + 16, 1); slicePlane.position.set((ax0 + ax1) / 2, (ay0 + ay1) / 2, planeZ);
+      slicePlane.material.color.copy(css(planeColor));
+    }
+    const wantOrbit = mode === 'done';
+    if (controls.enabled !== wantOrbit) { controls.enabled = wantOrbit; fit(); }
+    renderer.render(scene, camera);
+    // подписи размеров
+    const w = host.clientWidth, h = host.clientHeight;
+    setHtml(dims, bedGroup.userData.labels.map(({ at, text }) => { v.copy(at).project(camera); return `<span class="dim" style="left:${((v.x + 1) / 2) * w}px;top:${((1 - v.y) / 2) * h}px">${text}</span>`; }).join(''));
+    const ro = document.getElementById('readout'), hi = document.getElementById('fig-hint');
+    if (ro) setHtml(ro, read); if (hi) hi.textContent = hint;
+    for (const c of document.querySelectorAll('[data-count]')) c.textContent = N;
+  }
+  return { attach, frame, setModel, applyTheme, rebuild: () => { if (renderer && host) { buildBed(); applyTheme(); fit(); } }, count: () => layout.length || 0 };
+})();
+
+// ── События ───────────────────────────────────────────────────
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) { if (S.menuOpen && !e.target.closest('.menu')) { S.menuOpen = false; render(); } return; }
+  const [a, b, c] = el.dataset.act.split(':');
+  switch (a) {
+    case 'theme': document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; S.menuOpen = false; render(); Scene.applyTheme(); return;
+    case 'palette': document.documentElement.dataset.palette = b; S.menuOpen = false; render(); Scene.applyTheme(); return;
+    case 'rail': S.rail = !S.rail; break;
+    case 'menu': S.menuOpen = !S.menuOpen; render(); return;
+    case 'logout': S.role = 'guest'; break;
+    case 'layout': S.layout = b; break;
+    case 'window': S.windowOn = !S.windowOn; if (!S.windowOn) S.calibOpen = false; break;
+    case 'ams': S.amsOn = !S.amsOn; if (!S.amsOn) S.calibOpen = false; break;
+    case 'calib': S.calibOpen = !S.calibOpen; break;
+    case 'adv': S.advOpen = !S.advOpen; break;
+    case 'job': S.job = b; S.t0 = performance.now(); break;
+    case 'src': S.schedSource = b; break;
+    case 'pw': S.showPw = !S.showPw; break;
+    case 'set': S[b] = c; if (b === 'job') S.t0 = performance.now(); break;
+  }
+  S.menuOpen = false;
+  render();
+});
+document.addEventListener('change', (e) => {
+  if (e.target.matches('[data-printer]')) { S.printer = e.target.value; render(); Scene.rebuild(); }
+  if (e.target.matches('[data-file]') && e.target.files[0]) loadModelFile(e.target.files[0]);
+});
+document.addEventListener('dragover', (e) => { e.preventDefault(); document.querySelector('[data-drop]')?.classList.add('over'); });
+document.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && /\.(stl|3mf)$/i.test(f.name)) loadModelFile(f); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.menuOpen) { S.menuOpen = false; render(); } });
+addEventListener('hashchange', () => { S.route = location.hash.slice(1) || '/pack'; S.menuOpen = false; render(); scrollTo(0, 0); });
+
+let initialLoad = true;
+setModel('gear_demo.stl', gearDemo());
+initialLoad = false;
+let last = 0;
+(function loop(now = 0) {
+  if (now - last > 33) { last = now; if (S.job === 'running') renderProgress(); Scene.frame(); }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

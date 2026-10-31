@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goat Packer — упаковщик 3D-объектов для печати с максимальной плотностью</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── Токены: 1:1 из ozonware/frontend/src/styles/tokens.css ── */
+:root {
+  --font-ui: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --bg: oklch(0.972 0.004 260); --bg-chrome: oklch(0.955 0.006 260);
+  --panel: oklch(0.995 0.0015 260); --panel-2: oklch(0.962 0.005 260);
+  --row-hover: oklch(0.948 0.008 262);
+  --border: oklch(0.902 0.008 258); --border-strong: oklch(0.83 0.012 258);
+  --fg: oklch(0.21 0.014 262); --fg-muted: oklch(0.44 0.016 260); --fg-dim: oklch(0.53 0.014 260);
+  --accent: oklch(0.545 0.125 56); --accent-fill: oklch(0.80 0.15 70);
+  --accent-hi: oklch(0.835 0.135 74); --accent-lo: oklch(0.765 0.155 64);
+  --accent-ink: oklch(0.2 0.02 262); --accent-soft: oklch(0.80 0.15 70 / 0.18);
+  --accent-edge-hi: oklch(0.97 0.06 90 / 0.6);
+  --accent-2: oklch(0.50 0.13 244); --accent-2-soft: oklch(0.50 0.13 244 / 0.11);
+  --ok: oklch(0.52 0.15 150); --ok-soft: oklch(0.52 0.15 150 / 0.12);
+  --warn: oklch(0.58 0.13 92); --warn-soft: oklch(0.58 0.13 92 / 0.14);
+  --crit: oklch(0.55 0.20 29); --crit-soft: oklch(0.55 0.20 29 / 0.12);
+  --shadow-lg: 0 16px 48px oklch(0.25 0.03 262 / 0.12), 0 2px 8px oklch(0.25 0.03 262 / 0.08);
+  --shadow-sm: 0 1px 2px oklch(0.25 0.03 262 / 0.06);
+  --radius-sm: 4px; --radius: 6px; --radius-lg: 10px;
+  /* сцена стола */
+  --bed-top: oklch(0.90 0.006 260); --bed-side-l: oklch(0.80 0.008 260); --bed-side-r: oklch(0.72 0.010 260);
+  --bed-grid: oklch(0.83 0.008 260);
+  --obj-top: oklch(0.93 0.03 80); --obj-l: oklch(0.80 0.05 70); --obj-r: oklch(0.68 0.06 62);
+  --obj-line: oklch(0.45 0.04 60);
+}
+:root[data-theme="dark"] {
+  --bg: oklch(0.153 0.012 260); --bg-chrome: oklch(0.135 0.012 260);
+  --panel: oklch(0.20 0.013 264); --panel-2: oklch(0.235 0.015 264);
+  --row-hover: oklch(0.255 0.018 262);
+  --border: oklch(0.282 0.019 254); --border-strong: oklch(0.36 0.022 254);
+  --fg: oklch(0.944 0.010 252); --fg-muted: oklch(0.71 0.022 258); --fg-dim: oklch(0.62 0.018 258);
+  --accent: oklch(0.78 0.155 54); --accent-fill: var(--accent);
+  --accent-hi: oklch(0.835 0.135 58); --accent-lo: oklch(0.735 0.16 49);
+  --accent-ink: oklch(0.155 0.012 260); --accent-soft: oklch(0.78 0.155 54 / 0.16);
+  --accent-edge-hi: oklch(0.95 0.06 80 / 0.55);
+  --accent-2: oklch(0.70 0.12 235); --accent-2-soft: oklch(0.70 0.12 235 / 0.16);
+  --ok: oklch(0.74 0.12 150); --ok-soft: oklch(0.74 0.12 150 / 0.16);
+  --warn: oklch(0.704 0.134 82); --warn-soft: oklch(0.704 0.134 82 / 0.16);
+  --crit: oklch(0.683 0.191 29); --crit-soft: oklch(0.683 0.191 29 / 0.18);
+  --shadow-lg: 0 16px 48px oklch(0 0 0 / 0.4), 0 2px 8px oklch(0 0 0 / 0.25);
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.25);
+  --bed-top: oklch(0.30 0.014 262); --bed-side-l: oklch(0.25 0.013 262); --bed-side-r: oklch(0.21 0.012 262);
+  --bed-grid: oklch(0.35 0.016 262);
+  --obj-top: oklch(0.86 0.05 78); --obj-l: oklch(0.66 0.08 66); --obj-r: oklch(0.52 0.08 58);
+  --obj-line: oklch(0.30 0.03 60);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.45 var(--font-ui); letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; }
+::selection { background: var(--accent-soft); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Топбар ── */
+.topbar { position: sticky; top: 0; z-index: 20; height: 52px; display: flex; align-items: center; gap: 24px; padding: 0 20px; background: var(--bg-chrome); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; color: var(--fg); text-decoration: none; letter-spacing: -0.01em; }
+.brand svg { width: 22px; height: 22px; }
+.nav { display: flex; gap: 2px; height: 100%; }
+.nav a { display: flex; align-items: center; padding: 0 12px; color: var(--fg-muted); text-decoration: none; font-weight: 500; position: relative; }
+.nav a:hover { color: var(--fg); }
+.nav a.active { color: var(--fg); }
+.nav a.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
+.spacer { flex: 1; }
+.top-actions { display: flex; align-items: center; gap: 6px; }
+.icon-btn { width: 32px; height: 32px; display: inline-grid; place-items: center; border: 0; border-radius: var(--radius); background: transparent; color: var(--fg-muted); cursor: pointer; }
+.icon-btn:hover { background: var(--row-hover); color: var(--fg); }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 12px; border: 0; cursor: pointer; }
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 230px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 6px; }
+.menu-head { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.menu-head b { display: block; font-weight: 600; }
+.menu-head span { color: var(--fg-dim); font-size: 12px; }
+.menu a, .menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; color: var(--fg); text-decoration: none; border-radius: var(--radius-sm); font: inherit; cursor: pointer; text-align: left; }
+.menu a:hover, .menu button:hover { background: var(--row-hover); }
+.menu .ic { color: var(--fg-dim); }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
+
+/* ── Кнопки и поля ── */
+.btn { height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--panel); color: var(--fg); font: 500 13px var(--font-ui); cursor: pointer; text-decoration: none; white-space: nowrap; }
+.btn:hover { background: var(--row-hover); }
+.btn-primary { border: 0; color: var(--accent-ink); background: linear-gradient(var(--accent-hi), var(--accent-lo)); box-shadow: inset 0 1px 0 var(--accent-edge-hi), var(--shadow-sm); }
+.btn-primary:hover { filter: brightness(1.04); background: linear-gradient(var(--accent-hi), var(--accent-lo)); }
+.btn-primary[disabled] { opacity: .45; cursor: not-allowed; filter: grayscale(.4); }
+.btn-lg { height: 40px; padding: 0 20px; font-size: 14px; }
+.btn-block { width: 100%; }
+.link { color: var(--accent); text-decoration: none; font-weight: 500; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.field { display: grid; gap: 5px; }
+.field-label { display: flex; justify-content: space-between; align-items: baseline; font-weight: 500; color: var(--fg); }
+.hint { color: var(--fg-dim); font-size: 12px; }
+.input, .select { height: 32px; width: 100%; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--panel); color: var(--fg); font: 13px var(--font-ui); }
+.input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.input-suffix { position: relative; }
+.input-suffix .input { padding-right: 36px; }
+.input-suffix .icon-btn { position: absolute; right: 1px; top: 0; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); }
+.seg button { height: 26px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); font: 500 12.5px var(--font-ui); cursor: pointer; }
+.seg button.on { background: var(--panel); color: var(--fg); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+.check { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-weight: 500; }
+.check input { margin: 2px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
+.check small { display: block; font-weight: 400; color: var(--fg-dim); font-size: 12px; margin-top: 1px; }
+.nested { margin: 2px 0 0 24px; display: grid; gap: 10px; }
+
+/* ── Рабочая раскладка ── */
+.work { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+.work.with-side { grid-template-columns: 340px minmax(0, 1fr) 360px; }
+.form-col { border-right: 1px solid var(--border); background: var(--bg-chrome); padding: 18px 18px 28px; display: grid; gap: 16px; align-content: start; }
+.side-col h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.group { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.disclosure { display: flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--fg-muted); font: 600 12px var(--font-ui); cursor: pointer; }
+.disclosure .ic { width: 14px; height: 14px; transition: transform .2s; }
+.disclosure.open .ic { transform: rotate(180deg); }
+.drop { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--panel); cursor: pointer; color: var(--fg-muted); }
+.drop:hover { border-color: var(--accent); color: var(--fg); }
+.drop b { display: block; color: var(--fg); font-weight: 500; }
+.file-chip { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); }
+.file-chip .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip .meta { color: var(--fg-dim); font-size: 12px; }
+.file-chip > div { min-width: 0; flex: 1; }
+.main-col { padding: 18px 24px 28px; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.action-bar { display: flex; align-items: center; gap: 16px; }
+.action-bar .title { min-width: 0; flex: 1; }
+.action-bar h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.action-bar p { margin: 2px 0 0; color: var(--fg-dim); }
+.side-col { border-left: 1px solid var(--border); background: var(--bg-chrome); padding: 18px; display: grid; gap: 16px; align-content: start; }
+.side-head { display: flex; align-items: center; justify-content: space-between; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; counter-reset: s; }
+.steps > li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; counter-increment: s; }
+.steps > li::before { content: counter(s); width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--border); font: 600 11px var(--font-mono); color: var(--fg-muted); }
+.steps > li > div { display: grid; gap: 10px; }
+.steps b { font-weight: 600; }
+.calc-out { display: flex; align-items: baseline; justify-content: space-between; padding: 12px; border-radius: var(--radius); background: var(--accent-soft); }
+.calc-out .mono { font-size: 20px; font-weight: 500; color: var(--fg); }
+
+/* ── Прогресс ── */
+.progress { display: grid; gap: 8px; }
+.bar { position: relative; display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--panel-2); gap: 2px; }
+.bar span { height: 100%; background: var(--border-strong); opacity: .35; }
+.bar span.done { background: var(--accent); opacity: 1; }
+.bar span.cur { background: linear-gradient(90deg, var(--accent) var(--p), transparent var(--p)), var(--border-strong); opacity: 1; }
+.bar span.skip { background: repeating-linear-gradient(135deg, var(--border-strong) 0 3px, transparent 3px 6px); opacity: .5; }
+.progress-line { display: flex; justify-content: space-between; gap: 16px; }
+.progress-line b { font-weight: 600; }
+.progress-line .mono { color: var(--fg-muted); }
+.stage-list { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--fg-dim); font-size: 12px; }
+.stage-list span { display: inline-flex; align-items: center; gap: 5px; }
+.stage-list i { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
+.stage-list .done { color: var(--fg-muted); } .stage-list .done i { background: var(--accent); }
+.stage-list .cur { color: var(--fg); font-weight: 500; } .stage-list .cur i { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.stage-list .opt i { background: transparent; border: 1px dashed var(--border-strong); }
+
+/* ── Сцена ── */
+.figure { position: relative; border: 1px solid var(--border); border-radius: var(--radius-lg); background: radial-gradient(120% 90% at 50% 40%, var(--panel), var(--bg)); overflow: hidden; }
+.figure svg { display: block; width: 100%; height: auto; }
+.fig-tag { position: absolute; font-size: 12px; color: var(--fg-dim); }
+.fig-tag.tl { top: 12px; left: 14px; } .fig-tag.br { bottom: 12px; right: 14px; text-align: right; }
+.fig-tag.bl { bottom: 12px; left: 14px; }
+.fig-tag b { color: var(--fg); font-weight: 500; }
+.mesh-note { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); padding: 4px 10px; border-radius: 999px; background: var(--accent-2-soft); color: var(--accent-2); font-size: 12px; font-weight: 500; white-space: nowrap; }
+
+.result { display: flex; align-items: center; gap: 16px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--ok-soft); }
+.result.err { background: var(--crit-soft); }
+.result .ic { width: 20px; height: 20px; color: var(--ok); }
+.result.err .ic { color: var(--crit); }
+.result > div { flex: 1; }
+.result b { font-weight: 600; font-size: 14px; }
+.result p { margin: 2px 0 0; color: var(--fg-muted); }
+.stats { display: flex; gap: 28px; flex-wrap: wrap; }
+.stats div { display: grid; }
+.stats span { color: var(--fg-dim); font-size: 12px; }
+.stats b { font: 500 15px var(--font-mono); }
+
+/* ── Таблицы / страницы ── */
+.page { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; gap: 16px; }
+.page h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.015em; }
+.crumbs { color: var(--fg-dim); display: flex; gap: 6px; align-items: center; }
+.crumbs a { color: var(--fg-muted); text-decoration: none; } .crumbs a:hover { color: var(--fg); }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+th { text-align: left; font-weight: 500; color: var(--fg-dim); font-size: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+td { padding: 0 14px; height: 44px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--row-hover); }
+td a.mono { color: var(--accent); text-decoration: none; font-weight: 500; }
+td a.mono:hover { text-decoration: underline; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.run { background: var(--accent-soft); color: var(--accent); }
+.pill.err { background: var(--crit-soft); color: var(--crit); }
+.pill.q { background: var(--panel-2); color: var(--fg-muted); }
+.toolbar { display: flex; gap: 10px; align-items: center; }
+.toolbar .select { width: auto; }
+.detail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--fg-dim); } .kv dd { margin: 0; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; display: grid; gap: 12px; }
+.panel h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.artifact { display: flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; padding: 6px 0; }
+.artifact:hover { color: var(--accent); }
+.artifact span:last-child { margin-left: auto; color: var(--fg-dim); font-size: 12px; }
+
+/* ── Гант расписания ── */
+.gantt { display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px; }
+.gantt-row { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 12px; }
+.gantt-track { position: relative; height: 22px; background: var(--panel-2); border-radius: var(--radius-sm); }
+.gantt-track i { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--accent-fill); opacity: .85; }
+.gantt-track i.night { background: var(--accent-2); opacity: .6; }
+.gantt-axis { display: grid; grid-template-columns: 90px 1fr; gap: 12px; color: var(--fg-dim); font-size: 11px; }
+.gantt-axis div { display: flex; justify-content: space-between; }
+
+/* ── Вход ── */
+.auth { min-height: calc(100vh - 52px); display: grid; place-items: center; padding: 32px 16px; }
+.auth-card { width: 100%; max-width: 380px; display: grid; gap: 18px; }
+.auth-card h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.auth-card .sub { margin: -10px 0 0; color: var(--fg-muted); }
+.auth-card form { display: grid; gap: 14px; }
+.auth-foot { text-align: center; color: var(--fg-muted); margin: 0; }
+.note { padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); color: var(--fg-muted); font-size: 12.5px; }
+.stub { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 11px; font-weight: 600; vertical-align: 1px; }
+
+/* ── Пульт макета (не часть продукта) ── */
+.mock { position: fixed; right: 14px; bottom: 14px; z-index: 50; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 10px 12px; display: grid; gap: 8px; font-size: 12px; width: 260px; }
+.mock b { font-size: 11px; color: var(--fg-dim); font-weight: 600; }
+.mock .seg button { font-size: 11.5px; }
+@media (max-width: 1100px) {
+  .work, .work.with-side { grid-template-columns: 300px minmax(0, 1fr); }
+  .side-col { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 760px) {
+  .work, .work.with-side { grid-template-columns: 1fr; }
+  .form-col { border-right: 0; border-bottom: 1px solid var(--border); }
+  .nav a { padding: 0 8px; } .topbar { gap: 12px; padding: 0 12px; }
+  .brand span { display: none; }
+  .detail { grid-template-columns: 1fr; }
+  .mock { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/></symbol>
+  <symbol id="menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="upload" viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/></symbol>
+  <symbol id="logout" viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></symbol>
+  <symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+  <symbol id="file" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7l-4-4Z"/><path d="M14 3v4h4"/></symbol>
+</svg>
+
+<div id="app"></div>
+
+<script>
+// Статичный макет: вся разметка — собственные строки, пользовательского ввода нет.
+// Фрагмент разбирается в контексте элемента, поэтому SVG получает правильный namespace.
+function setHtml(el, html) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  el.replaceChildren(range.createContextualFragment(html));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Состояние макета. Пульт справа внизу переключает то, что в продукте
+// задаёт бэкенд (статус задачи, роль пользователя).
+// ─────────────────────────────────────────────────────────────
+const S = {
+  route: location.hash.slice(1) || '/pack',
+  job: 'idle',            // idle | running | done | error
+  role: 'guest',          // guest | user | admin
+  file: true,
+  layout: 'search',
+  windowOn: false, amsOn: true, advOpen: false, calibOpen: false,
+  schedSource: 'pack',
+  menuOpen: false, showPw: false,
+  t0: performance.now(),
+};
+// ?job=done&role=user&calib=1&adv=1&window=1&theme=light&t=12 — для скриншотов
+const Q = new URLSearchParams(location.search);
+if (Q.get('job')) S.job = Q.get('job');
+if (Q.get('role')) S.role = Q.get('role');
+S.calibOpen = Q.has('calib'); S.advOpen = Q.has('adv'); S.windowOn = Q.has('window');
+if (Q.has('nofile')) S.file = false;
+if (Q.has('menu')) S.menuOpen = true;
+if (Q.get('theme')) document.documentElement.dataset.theme = Q.get('theme');
+if (Q.get('t')) S.t0 = performance.now() - Number(Q.get('t')) * 1000;
+const icon = (id, cls = 'ic') => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+const STAGES = [
+  ['probe_slice', 'Пробная нарезка', 14], ['packing', 'Раскладка', 15], ['assembling', 'Сборка', 3],
+  ['final_slice', 'Нарезка стола', 45], ['gcode_check', 'Проверка поддержек', 4, true],
+  ['repacking', 'Перепаковка', 4, true], ['window_slice', 'Окно времени', 9, true], ['writing', 'Запись', 4],
+];
+
+function topbar() {
+  const r = S.route;
+  const nav = [['/pack', 'Упаковка'], ['/schedule', 'Расписание'], ['/jobs', 'Мои задачи']]
+    .map(([h, l]) => `<a href="#${h}" class="${r.startsWith(h) ? 'active' : ''}">${l}</a>`).join('');
+  const theme = document.documentElement.dataset.theme;
+  const themeBtn = `<button class="icon-btn" data-act="theme" title="${theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}" aria-label="Переключить тему">${icon(theme === 'dark' ? 'sun' : 'moon')}</button>`;
+  let account;
+  if (S.role === 'guest') {
+    account = `
+      <a class="btn" href="#/login">Войти</a>
+      <div class="menu-wrap">
+        <button class="icon-btn" data-act="menu" aria-haspopup="menu" aria-expanded="${S.menuOpen}" aria-label="Меню">${icon('menu')}</button>
+        ${S.menuOpen ? `<div class="menu" role="menu">
+          <div class="menu-head"><b>Гостевая сессия</b><span>результаты хранятся 24 часа</span></div>
+          <a href="#/jobs" role="menuitem">${icon('list')}Мои задачи</a>
+          <a href="#/login/register" role="menuitem">${icon('user')}Создать аккаунт</a>
+        </div>` : ''}
+      </div>`;
+  } else {
+    account = `
+      <div class="menu-wrap">
+        <button class="avatar" data-act="menu" aria-haspopup="menu" aria-expanded="${S.menuOpen}" aria-label="Аккаунт: petr">PE</button>
+        ${S.menuOpen ? `<div class="menu" role="menu">
+          <div class="menu-head"><b>petr</b><span>${S.role === 'admin' ? 'администратор' : 'аккаунт'}</span></div>
+          <a href="#/jobs" role="menuitem">${icon('list')}Мои задачи</a>
+          ${S.role === 'admin' ? `<a href="#/admin" role="menuitem">${icon('shield')}Администрирование</a>` : ''}
+          <hr><button data-act="logout" role="menuitem">${icon('logout')}Выйти</button>
+        </div>` : ''}
+      </div>`;
+  }
+  return `<header class="topbar">
+    <a class="brand" href="#/pack" title="Goat Packer — упаковщик 3D-объектов для печати с максимальной плотностью">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/><path d="M4 7.5 12 12l8-4.5M12 12v9" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <span>Goat Packer</span></a>
+    <nav class="nav" aria-label="Разделы">${nav}</nav>
+    <div class="spacer"></div>
+    <div class="top-actions">${themeBtn}${account}</div>
+  </header>`;
+}
+
+// ── Упаковка ──────────────────────────────────────────────────
+function packForm() {
+  const fileBlock = S.file
+    ? `<div class="file-chip">${icon('file')}<div><div class="name">goat_lying_4color.3mf</div><div class="meta">4,2 МБ · 1 объект · 4 филамента</div></div>
+        <button class="icon-btn" data-act="nofile" aria-label="Убрать файл">${icon('x')}</button></div>`
+    : `<label class="drop" data-act="file">${icon('upload')}<div><b>Выберите .3mf</b>или перетащите сюда · до 200 МБ</div></label>`;
+  return `<aside class="form-col">
+    ${fileBlock}
+    <div class="field"><span class="field-label">Профиль принтера</span>
+      <select class="select"><option>Bambu Lab P1S · 256 × 256</option><option>Snapmaker U1</option><option>Bambu Lab A1</option></select></div>
+    <div class="field"><span class="field-label">Раскладка</span>
+      <div class="seg"><button class="${S.layout === 'search' ? 'on' : ''}" data-act="layout:search">Плотная</button><button class="${S.layout === 'grid' ? 'on' : ''}" data-act="layout:grid">Сетка</button></div>
+      <span class="hint">${S.layout === 'search' ? 'подбор с поворотами и нависаниями' : 'быстро и равномерно, без поворотов'}</span></div>
+    <div class="field"><span class="field-label">Чистка сопла</span>
+      <select class="select"><option>Выкл</option><option>Каждый N-й слой</option><option>С высоты H мм</option></select></div>
+
+    <div class="group">
+      <label class="check"><input type="checkbox" data-act="window" ${S.windowOn ? 'checked' : ''}><span>Уложиться в окно печати<small>стол урезается до числа объектов, которое печатается за окно</small></span></label>
+      ${S.windowOn ? `<div class="nested row2">
+        <div class="field"><span class="field-label">Окно, ч</span><input class="input mono" value="8"></div>
+        <div class="field"><span class="field-label">Запас, %</span><input class="input mono" value="10"></div></div>` : ''}
+      <label class="check"><input type="checkbox" data-act="ams" ${S.amsOn ? 'checked' : ''}><span>Учитывать реальную смену прутка<small>слайсер занижает время смены AMS</small></span></label>
+      ${S.amsOn ? `<div class="nested">
+        <div class="field"><span class="field-label">Смена прутка, с</span><input class="input mono" value="52"><span class="hint">из калибровки P1S · 12 окт</span></div>
+        <button class="link" data-act="calib" style="justify-self:start">${S.calibOpen ? 'Скрыть калибровку' : 'Откалибровать заново…'}</button></div>` : ''}
+    </div>
+
+    <div class="group">
+      <button class="disclosure ${S.advOpen ? 'open' : ''}" data-act="adv">Дополнительно ${icon('chev')}</button>
+      ${S.advOpen ? `
+        <div class="field"><span class="field-label">Перекрытие поддержек, мм</span><input class="input mono" placeholder="без ограничений"><span class="hint">0 — поддержки соседей не пересекаются; тело модели не перекрывается никогда</span></div>
+        <div class="row2"><div class="field"><span class="field-label">Зазор, мм</span><input class="input mono" value="1.0"></div>
+        <div class="field"><span class="field-label">Растр, мм</span><input class="input mono" value="0.25"></div></div>
+        <div class="field"><span class="field-label">Отступ от края, мм</span><input class="input mono" value="по профилю"></div>` : ''}
+    </div>
+  </aside>`;
+}
+
+function stageIndex() {
+  // макет: этапы крутятся по кругу ~22 с
+  const t = ((performance.now() - S.t0) / 1000) % 22;
+  const bounds = [3, 6.5, 9, 16, 18, 18, 18, 22];
+  return { idx: bounds.findIndex((b) => t < b), t };
+}
+
+function renderProgress() {
+  const el = document.getElementById('progress');
+  if (!el) return;
+  const { idx, t } = stageIndex();
+  const starts = [0, 3, 6.5, 9, 16, 18, 18, 18, 22];
+  const frac = Math.min(1, (t - starts[idx]) / Math.max(0.5, starts[idx + 1] - starts[idx]));
+  const skipped = (i) => i === 5 || i === 6; // перепаковка и окно не понадобились
+  const bar = STAGES.map(([, , w], i) => {
+    const cls = skipped(i) && idx > i ? 'skip' : i < idx ? 'done' : i === idx ? 'cur' : '';
+    return `<span class="${cls}" style="flex:${w};--p:${Math.round(frac * 100)}%"></span>`;
+  }).join('');
+  const pct = Math.round(STAGES.slice(0, idx).reduce((a, s) => a + s[2], 0) + STAGES[idx][2] * frac);
+  const list = STAGES.map(([, l, , opt], i) => {
+    const cls = skipped(i) && idx > i ? 'opt' : i < idx ? 'done' : i === idx ? 'cur' : opt ? 'opt' : '';
+    const tail = skipped(i) && idx > i ? ' · не понадобилась' : opt && i > idx ? ' · если понадобится' : '';
+    return `<span class="${cls}"><i></i>${l}${tail}</span>`;
+  }).join('');
+  setHtml(el, `<div class="progress-line"><b>${STAGES[idx][1]}…</b><span class="mono">${pct}% · идёт ${Math.floor(t / 6)}:${String(Math.floor((t * 10) % 60)).padStart(2, '0')} · осталось ~3 мин</span></div>
+    <div class="bar">${bar}</div><div class="stage-list">${list}</div>`);
+}
+
+function packMain() {
+  const running = S.job === 'running';
+  const btn = running
+    ? `<button class="btn" data-act="job:idle">Отменить</button>`
+    : S.job === 'done' ? `<button class="btn" data-act="job:running">Упаковать заново</button>` : `<button class="btn btn-primary btn-lg" data-act="job:running" ${S.file ? '' : 'disabled'}>Упаковать</button>`;
+  const title = S.file ? 'goat_lying_4color.3mf' : 'Файл не выбран';
+  const sub = S.file ? 'Bambu Lab P1S · стол 256 × 256 мм · плотная раскладка' : 'Загрузите слева проект с одним объектом';
+  let below = '';
+  if (S.job === 'done') below = `
+    <div class="result">${icon('check')}<div><b>Упаковано ${N} объектов</b><p>поддержки соседей не пересекаются · G-code проверен по всем слоям</p></div>
+      <a class="btn" href="#/schedule">В расписание ${icon('arrow')}</a>
+      <button class="btn btn-primary">${icon('download')}Скачать 3MF</button></div>
+    <div class="stats"><div><span>Объектов</span><b>${N}</b></div><div><span>Время стола</span><b>11 ч 42 мин</b></div><div><span>Плотность</span><b>71%</b></div><div><span>Сетка дала бы</span><b>${Math.round(N * 0.8)}</b></div><div><span>Задача</span><b><a class="link mono" href="#/jobs/7f3a9c">7f3a9c</a></b></div></div>`;
+  if (S.job === 'error') below = `
+    <div class="result err">${icon('alert')}<div><b>Башня очистки не помещается в центр стола</b><p>Отключите «центр стола» в дополнительных параметрах или уменьшите окно печати.</p></div>
+      <button class="btn" data-act="job:running">Повторить</button></div>`;
+  const hintText = S.job === 'idle' ? (S.file ? 'силуэт объекта · раскладка появится после запуска' : '') : S.job === 'done' ? 'перетащите, чтобы повернуть' : 'позиции — реальная раскладка пакера';
+  return `<section class="main-col">
+    <div class="action-bar"><div class="title"><h1>${title}</h1><p>${sub}</p></div>${btn}</div>
+    ${running ? '<div class="progress" id="progress"></div>' : ''}
+    ${below}
+    <div class="figure">
+      <svg id="scene" viewBox="0 0 900 520" role="img" aria-label="Стол принтера"></svg>
+      <div class="fig-tag tl">Стол · <b>Bambu Lab P1S</b></div>
+      <div class="fig-tag br" id="readout"></div>
+      ${S.job === 'done' ? '<div class="mesh-note">в готовом результате здесь настоящий меш (three.js)</div>' : ''}
+      <div class="fig-tag bl">${hintText}</div>
+    </div>
+  </section>`;
+}
+
+function calibSide() {
+  if (!S.calibOpen) return '';
+  return `<aside class="side-col">
+    <div class="side-head"><h2>Калибровка смены прутка</h2><button class="icon-btn" data-act="calib" aria-label="Закрыть">${icon('x')}</button></div>
+    <p class="hint" style="margin:0">Слайсер считает смену AMS быстрее, чем она идёт на самом деле. Два коротких теста дают точное время для этого принтера.</p>
+    <ol class="steps">
+      <li><div><b>Сгенерируйте тесты</b>
+        <div class="seg"><button class="on">10 смен</button><button>30 смен · точнее</button></div>
+        <span class="hint">из вашего проекта: те же филаменты и настройки</span>
+        <button class="btn">Сгенерировать</button></div></li>
+      <li><div><b>Напечатайте A и B</b><span class="hint">запишите оценку слайсера и фактическое время каждой печати</span></div></li>
+      <li><div><b>Введите время</b>
+        <div class="row2"><div class="field"><span class="field-label">A, факт</span><input class="input mono" value="24:10"></div>
+        <div class="field"><span class="field-label">B, факт</span><input class="input mono" value="41:55"></div></div>
+        <div class="calc-out"><span>Смена прутка</span><span class="mono">52 с</span></div>
+        <button class="btn btn-primary">Подставить в упаковку</button></div></li>
+    </ol>
+  </aside>`;
+}
+
+const packPage = () => `<div class="work ${S.calibOpen ? 'with-side' : ''}">${packForm()}${packMain()}${calibSide()}</div>`;
+
+// ── Расписание ────────────────────────────────────────────────
+function schedulePage() {
+  const rows = [['P1S #1', [[0, 47, ''], [49, 98, 'night']]], ['P1S #2', [[2, 50, ''], [52, 96, 'night']]], ['U1', [[0, 33, ''], [35, 68, ''], [70, 99, 'night']]]];
+  const gantt = rows.map(([n, bars]) => `<div class="gantt-row"><span>${n}</span><div class="gantt-track">${bars.map(([a, b, c]) => `<i class="${c}" style="left:${a}%;width:${b - a}%"></i>`).join('')}</div></div>`).join('');
+  return `<div class="work">
+    <aside class="form-col">
+      <div class="field"><span class="field-label">Источник</span>
+        <div class="seg"><button class="${S.schedSource === 'pack' ? 'on' : ''}" data-act="src:pack">Из упаковки</button><button class="${S.schedSource === 'file' ? 'on' : ''}" data-act="src:file">Файл</button></div></div>
+      ${S.schedSource === 'pack'
+        ? `<div class="file-chip">${icon('file')}<div><div class="name">goat_lying_4color · 38 объектов</div><div class="meta">задача <span class="mono">7f3a9c</span> · сегодня 14:02</div></div></div>`
+        : `<label class="drop">${icon('upload')}<div><b>Выберите .3mf</b>одна плотная пластина</div></label>`}
+      <div class="field"><span class="field-label">Профиль принтера</span><select class="select"><option>Bambu Lab P1S</option></select></div>
+      <div class="group">
+        <div class="row2"><div class="field"><span class="field-label">Начало дня</span><input class="input mono" value="09:00"></div>
+        <div class="field"><span class="field-label">Начало ночи</span><input class="input mono" value="22:00"></div></div>
+        <div class="field"><span class="field-label">Горизонт</span><input class="input mono" value="33:00"><span class="hint">ЧЧ:ММ от начала дня, можно больше 24</span></div>
+        <div class="row2"><div class="field"><span class="field-label">Смена партий, мин</span><input class="input mono" value="10"></div>
+        <div class="field"><span class="field-label">Подготовка, мин</span><input class="input mono" value="5"></div></div>
+      </div>
+      <div class="group"><button class="disclosure">Дополнительно ${icon('chev')}</button></div>
+    </aside>
+    <section class="main-col">
+      <div class="action-bar"><div class="title"><h1>Расписание на сутки</h1><p>3 принтера · 09:00 → 18:00 следующего дня</p></div>
+        <button class="btn btn-primary btn-lg">Построить</button></div>
+      <div class="result">${icon('check')}<div><b>7 столов за 33 часа</b><p>ночью — длинные столы, днём — короткие</p></div>
+        <button class="btn">XLSX</button><button class="btn btn-primary">${icon('download')}Мультипластинный 3MF</button></div>
+      <div class="gantt"><div class="gantt-axis"><span></span><div><span>09:00</span><span>15:00</span><span>21:00</span><span>03:00</span><span>09:00</span><span>18:00</span></div></div>${gantt}</div>
+      <table><thead><tr><th>Стол</th><th>Принтер</th><th>Объектов</th><th>Старт</th><th>Длительность</th></tr></thead><tbody>
+        <tr><td class="mono">1</td><td>P1S #1</td><td class="mono">38</td><td class="mono">09:00</td><td class="mono">11:42</td></tr>
+        <tr><td class="mono">2</td><td>P1S #2</td><td class="mono">38</td><td class="mono">09:40</td><td class="mono">11:42</td></tr>
+        <tr><td class="mono">3</td><td>U1</td><td class="mono">22</td><td class="mono">09:00</td><td class="mono">06:58</td></tr></tbody></table>
+    </section>
+  </div>`;
+}
+
+// ── Мои задачи ────────────────────────────────────────────────
+const JOBS = [
+  ['7f3a9c', 'Упаковка', 'goat_lying_4color.3mf', 'ok', 'Готово', 'сегодня 14:02', '6:48'],
+  ['b81e04', 'Расписание', '7f3a9c → 3 принтера', 'run', 'Идёт · 40%', 'сегодня 14:11', '1:12'],
+  ['2c95d1', 'Калибровка AMS', 'goat_lying_4color.3mf', 'ok', 'Готово', 'вчера 19:30', '1:40'],
+  ['e04a77', 'Упаковка', 'sheep_standing.3mf', 'err', 'Ошибка', 'вчера 18:05', '2:03'],
+  ['91d0c2', 'Упаковка', 'goat_lying_4color.3mf', 'q', 'В очереди', 'вчера 18:01', '—'],
+];
+function jobsPage() {
+  const rows = JOBS.map(([id, kind, file, cls, st, at, dur]) => `<tr>
+    <td><a class="mono" href="#/jobs/${id}">${id}</a></td><td>${kind}</td><td>${file}</td>
+    <td><span class="pill ${cls}">${st}</span></td><td>${at}</td><td class="mono">${dur}</td></tr>`).join('');
+  return `<div class="page">
+    <h1>Мои задачи</h1>
+    ${S.role === 'guest' ? `<div class="note">Гостевые задачи хранятся 24 часа. <a class="link" href="#/login/register">Создайте аккаунт</a> — они перейдут в него.</div>` : ''}
+    <div class="toolbar"><select class="select"><option>Все типы</option><option>Упаковка</option><option>Расписание</option><option>Калибровка AMS</option></select>
+      <select class="select"><option>Любой статус</option></select></div>
+    <table><thead><tr><th>ID</th><th>Тип</th><th>Исходник</th><th>Статус</th><th>Создана</th><th>Длилась</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
+function jobDetail(id) {
+  return `<div class="page">
+    <div class="crumbs"><a href="#/jobs">Мои задачи</a><span>/</span><span class="mono">${id}</span></div>
+    <div class="action-bar"><div class="title"><h1>Упаковка · goat_lying_4color.3mf</h1><p>сегодня 14:02 · длилась 6 мин 48 с</p></div>
+      <span class="pill ok">Готово</span><button class="btn">Повторить с этими параметрами</button></div>
+    <div class="detail">
+      <div class="figure"><svg id="scene" viewBox="0 0 900 520" role="img" aria-label="Готовый стол"></svg>
+        <div class="fig-tag tl">Стол · <b>Bambu Lab P1S</b></div><div class="fig-tag br" id="readout"></div>
+        <div class="mesh-note">настоящий меш (three.js)</div></div>
+      <div style="display:grid;gap:16px">
+        <div class="panel"><h3>Файлы</h3>
+          <a class="artifact" href="#">${icon('download')}<span>packed.3mf</span><span>18,4 МБ</span></a>
+          <a class="artifact" href="#">${icon('download')}<span>report.json</span><span>12 КБ</span></a>
+          <a class="btn" href="#/schedule">В расписание ${icon('arrow')}</a></div>
+        <div class="panel"><h3>Параметры</h3><dl class="kv">
+          <dt>Принтер</dt><dd>Bambu Lab P1S</dd><dt>Раскладка</dt><dd>Плотная</dd>
+          <dt>Смена прутка</dt><dd class="mono">52 с</dd><dt>Зазор</dt><dd class="mono">1.0 мм</dd></dl></div>
+        <div class="panel"><h3>Этапы</h3><dl class="kv mono">
+          <dt>0:41</dt><dd>Пробная нарезка</dd><dt>1:05</dt><dd>Раскладка</dd><dt>0:06</dt><dd>Сборка</dd>
+          <dt>4:20</dt><dd>Нарезка стола</dd><dt>0:31</dt><dd>Проверка поддержек</dd><dt>0:05</dt><dd>Запись</dd></dl></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Вход ──────────────────────────────────────────────────────
+function pw(label, ac, link) {
+  return `<div class="field"><span class="field-label"><label for="pw">${label}</label>${link || ''}</span>
+    <div class="input-suffix"><input id="pw" class="input" type="${S.showPw ? 'text' : 'password'}" autocomplete="${ac}" ${ac === 'new-password' ? 'minlength="12"' : ''}>
+    <button type="button" class="icon-btn" data-act="pw" aria-label="${S.showPw ? 'Скрыть пароль' : 'Показать пароль'}">${icon('eye')}</button></div>
+    ${ac === 'new-password' ? '<span class="hint">минимум 12 символов</span>' : ''}</div>`;
+}
+function authPage(sub) {
+  let body;
+  if (sub === 'register') body = `
+    <h1>Создать аккаунт</h1><p class="sub">Задачи будут храниться без ограничения 24 часа</p>
+    <form onsubmit="return false">
+      <div class="field"><label class="field-label" for="lg">Логин</label><input id="lg" class="input" autocomplete="username"></div>
+      <div class="field"><label class="field-label" for="em">Email <span class="hint">необязательно</span></label><input id="em" class="input" type="email" autocomplete="email">
+        <span class="hint">для восстановления пароля <span class="stub">скоро</span></span></div>
+      ${pw('Пароль', 'new-password')}
+      <button class="btn btn-primary btn-lg btn-block">Создать аккаунт</button>
+    </form>
+    ${S.role === 'guest' ? '<div class="note">Ваши гостевые задачи перейдут в новый аккаунт.</div>' : ''}
+    <p class="auth-foot">Уже есть аккаунт? <a class="link" href="#/login">Войти</a></p>`;
+  else if (sub === 'forgot') body = `
+    <h1>Восстановление пароля</h1><p class="sub">Пришлём ссылку для нового пароля на email аккаунта</p>
+    <form onsubmit="location.hash='/login/sent';return false">
+      <div class="field"><label class="field-label" for="lg">Логин или email</label><input id="lg" class="input" autocomplete="username" value="petr"></div>
+      <button class="btn btn-primary btn-lg btn-block">Отправить ссылку</button>
+    </form>
+    <div class="note">Есть одноразовый код от администратора? <a class="link" href="#/login/code">Ввести код</a></div>
+    <p class="auth-foot"><a class="link" href="#/login">Вернуться ко входу</a></p>`;
+  else if (sub === 'sent') body = `
+    <h1>Проверьте почту</h1><p class="sub">Если у аккаунта <b>petr</b> указан email, ссылка уже в пути. Она действует 1 час.</p>
+    <div class="note"><span class="stub">заготовка</span> Письма пока не отправляются. Сейчас пароль сбрасывает администратор — <a class="link" href="#/login/code">ввести его код</a>.</div>
+    <button class="btn btn-block" disabled>Отправить ещё раз · 0:59</button>
+    <p class="auth-foot"><a class="link" href="#/login">Вернуться ко входу</a></p>`;
+  else if (sub === 'code') body = `
+    <h1>Новый пароль</h1><p class="sub">Код выдаёт администратор, он одноразовый</p>
+    <form onsubmit="return false">
+      <div class="field"><label class="field-label" for="tk">Код</label><input id="tk" class="input mono" autocomplete="one-time-code"></div>
+      ${pw('Новый пароль', 'new-password')}
+      <button class="btn btn-primary btn-lg btn-block">Сохранить и войти</button>
+    </form>
+    <p class="auth-foot"><a class="link" href="#/login">Вернуться ко входу</a></p>`;
+  else body = `
+    <h1>Вход</h1><p class="sub">Goat Packer — упаковка 3D-объектов для печати</p>
+    <form onsubmit="return false">
+      <div class="field"><label class="field-label" for="lg">Логин</label><input id="lg" class="input" autocomplete="username"></div>
+      ${pw('Пароль', 'current-password', '<a class="link" href="#/login/forgot" style="font-size:12px">Забыли пароль?</a>')}
+      <button class="btn btn-primary btn-lg btn-block">Войти</button>
+    </form>
+    <p class="auth-foot">Нет аккаунта? <a class="link" href="#/login/register">Создать аккаунт</a></p>
+    <div class="note">Можно работать и без входа: гостевые задачи хранятся 24 часа. <a class="link" href="#/pack">К упаковке</a></div>`;
+  return `<main class="auth"><div class="auth-card">${body}</div></main>`;
+}
+
+const adminPage = () => `<div class="page"><h1>Администрирование</h1><div class="note">Содержимое текущей AdminPage переносится без изменений: очередь, пользователи и гости, выдача кодов сброса пароля, журнал.</div></div>`;
+
+// ── Пульт макета ──────────────────────────────────────────────
+function mockPanel() {
+  const seg = (key, opts) => `<div class="seg">${opts.map(([v, l]) => `<button class="${S[key] === v ? 'on' : ''}" data-act="set:${key}:${v}">${l}</button>`).join('')}</div>`;
+  return `<div class="mock"><b>МАКЕТ · состояние</b>
+    ${seg('job', [['idle', 'Пусто'], ['running', 'Идёт'], ['done', 'Готово'], ['error', 'Ошибка']])}
+    ${seg('role', [['guest', 'Гость'], ['user', 'Юзер'], ['admin', 'Админ']])}</div>`;
+}
+
+function render() {
+  const r = S.route;
+  let page;
+  if (r.startsWith('/login')) page = authPage(r.split('/')[2]);
+  else if (r === '/schedule') page = schedulePage();
+  else if (r.startsWith('/jobs/')) page = jobDetail(r.split('/')[2]);
+  else if (r === '/jobs') page = jobsPage();
+  else if (r === '/admin') page = adminPage();
+  else page = packPage();
+  setHtml(document.getElementById('app'), topbar() + page + mockPanel());
+}
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) { if (S.menuOpen && !e.target.closest('.menu')) { S.menuOpen = false; render(); } return; }
+  const [a, b, c] = el.dataset.act.split(':');
+  switch (a) {
+    case 'theme': document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; break;
+    case 'menu': S.menuOpen = !S.menuOpen; render(); return;
+    case 'logout': S.role = 'guest'; break;
+    case 'file': S.file = true; break;
+    case 'nofile': S.file = false; S.job = 'idle'; break;
+    case 'layout': S.layout = b; break;
+    case 'window': S.windowOn = !S.windowOn; break;
+    case 'ams': S.amsOn = !S.amsOn; if (!S.amsOn) S.calibOpen = false; break;
+    case 'calib': S.calibOpen = !S.calibOpen; break;
+    case 'adv': S.advOpen = !S.advOpen; break;
+    case 'job': S.job = b; S.t0 = performance.now(); break;
+    case 'src': S.schedSource = b; break;
+    case 'pw': S.showPw = !S.showPw; break;
+    case 'set': S[b] = c; if (b === 'job') S.t0 = performance.now(); break;
+  }
+  S.menuOpen = false;
+  render();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.menuOpen) { S.menuOpen = false; render(); } });
+addEventListener('hashchange', () => { S.route = location.hash.slice(1) || '/pack'; S.menuOpen = false; render(); scrollTo(0, 0); });
+
+// ─────────────────────────────────────────────────────────────
+// Изометрическая сцена. В продукте: каркас принтера — статичная
+// anatomy-фигура, а силуэт, высота и позиции приходят из события
+// layout пакера. Здесь силуэт и раскладка — правдоподобная заглушка.
+// ─────────────────────────────────────────────────────────────
+const BED = 256, H = 24, BED_T = 7;
+const C45 = Math.SQRT1_2, K = 1.55;
+const P = ([x, y, z]) => [450 + (x - y) * C45 * K, 105 + (x + y) * C45 * 0.5 * K - z * 0.866 * K];
+const pts = (a) => a.map((p) => P(p).map((v) => v.toFixed(1)).join(',')).join(' ');
+// силуэт лежащей козы сверху, мм, центр в 0; обход против часовой
+const GOAT = (() => {
+  const out = [];
+  for (let i = 0; i < 28; i++) {
+    const t = (i / 28) * Math.PI * 2;
+    let x = Math.cos(t) * 14, y = Math.sin(t) * 8.5;
+    const head = Math.max(0, Math.cos(t - 0.5)) ** 6;      // голова вперёд-вбок
+    x += head * 7; y += head * 3.5;
+    y -= Math.max(0, -Math.sin(t)) ** 8 * 3;              // поджатые ноги
+    out.push([x, y]);
+  }
+  return out;
+})();
+const PLACE = (() => {
+  const list = [], px = 37, py = 21.5, m = 6;
+  for (let row = 0, y = m + 10; y <= BED - m - 10; row++, y += py)
+    for (let x = m + 15 + (row % 2) * 16; x <= BED - m - 22; x += px) {
+      if (x > 195 && y > 200) continue;                        // башня очистки
+      list.push({ x, y, rot: row % 2 ? Math.PI : 0 });
+    }
+  const c = BED / 2;
+  return list.sort((a, b) => Math.hypot(a.x - c, a.y - c) - Math.hypot(b.x - c, b.y - c));
+})();
+const N = PLACE.length;
+const shapeAt = ({ x, y, rot }) => GOAT.map(([gx, gy]) => [x + gx * Math.cos(rot) - gy * Math.sin(rot), y + gx * Math.sin(rot) + gy * Math.cos(rot)]);
+
+function prism(poly, z0, h, top = 'var(--obj-top)') {
+  const n = poly.length, faces = [];
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    const nx = b[1] - a[1], ny = -(b[0] - a[0]);              // внешняя нормаль
+    if (nx + ny <= 0) continue;                                // грань смотрит от зрителя
+    const tone = nx > ny ? 'var(--obj-r)' : 'var(--obj-l)';
+    faces.push({ d: a[0] + b[0] + a[1] + b[1], el: `<polygon points="${pts([[a[0], a[1], z0], [b[0], b[1], z0], [b[0], b[1], z0 + h], [a[0], a[1], z0 + h]])}" fill="${tone}" stroke="${tone}" stroke-width=".6"/>` });
+  }
+  return faces.sort((p, q) => p.d - q.d).map((f) => f.el).join('')
+    + `<polygon points="${pts(poly.map(([x, y]) => [x, y, z0 + h]))}" fill="${top}" stroke="var(--obj-line)" stroke-width=".7" stroke-opacity=".5"/>`;
+}
+const ghost = (poly, z) => `<polygon points="${pts(poly.map(([x, y]) => [x, y, z]))}" fill="none" stroke="var(--fg-dim)" stroke-width=".8" stroke-dasharray="3 3" opacity=".7"/>`;
+const plane = (z, fill, stroke) => `<polygon points="${pts([[-6, -6, z], [BED + 6, -6, z], [BED + 6, BED + 6, z], [-6, BED + 6, z]])}" fill="${fill}" stroke="${stroke}" stroke-width=".8" opacity=".6"/>`;
+
+function bedSvg() {
+  let s = `<ellipse cx="450" cy="${P([BED, BED, 0])[1] - 10}" rx="320" ry="60" fill="black" opacity=".14" filter="blur(18px)"/>`;
+  s += `<polygon points="${pts([[0, BED, 0], [BED, BED, 0], [BED, BED, -BED_T], [0, BED, -BED_T]])}" fill="var(--bed-side-l)"/>`;
+  s += `<polygon points="${pts([[BED, 0, 0], [BED, BED, 0], [BED, BED, -BED_T], [BED, 0, -BED_T]])}" fill="var(--bed-side-r)"/>`;
+  s += `<polygon points="${pts([[0, 0, 0], [BED, 0, 0], [BED, BED, 0], [0, BED, 0]])}" fill="var(--bed-top)" stroke="var(--border-strong)" stroke-width="1"/>`;
+  for (let g = 32; g < BED; g += 32) {
+    s += `<polyline points="${pts([[g, 0, 0], [g, BED, 0]])}" stroke="var(--bed-grid)" stroke-width=".7" fill="none"/>`;
+    s += `<polyline points="${pts([[0, g, 0], [BED, g, 0]])}" stroke="var(--bed-grid)" stroke-width=".7" fill="none"/>`;
+  }
+  for (let t = 0; t <= BED; t += 8) s += `<polyline points="${pts([[t, BED, -BED_T * 0.3], [t, BED, -BED_T * (t % 32 ? 0.6 : 0.85)]])}" stroke="var(--fg-dim)" stroke-width=".8" fill="none"/>`;
+  s += `<polygon points="${pts([[203, 208, 0], [245, 208, 0], [245, 245, 0], [203, 245, 0]])}" fill="var(--accent-2-soft)" stroke="var(--accent-2)" stroke-dasharray="4 3" stroke-width="1"/>`;
+  return s;
+}
+
+function sceneFrame() {
+  const svg = document.getElementById('scene');
+  if (!svg) return;
+  const ro = document.getElementById('readout');
+  const mode = S.route.startsWith('/jobs/') ? 'done' : S.job;
+  let s = bedSvg(), read = '';
+  const sorted = PLACE.map((p, i) => ({ ...p, i })).sort((a, b) => a.x + a.y - (b.x + b.y));
+  if (mode === 'idle') {
+    const poly = shapeAt({ x: 128, y: 128, rot: 0 });
+    s += S.file ? prism(poly, 0, H) : ghost(poly, 0);
+    read = S.file ? 'силуэт <b>32 × 19</b> мм · высота <b>24</b> мм' : '';
+  } else if (mode === 'done' || mode === 'error') {
+    sorted.forEach((p) => (s += prism(shapeAt(p), 0, H)));
+    read = mode === 'error' ? 'последняя удачная раскладка' : `<b>${N}</b> объектов · 11 ч 42 мин`;
+  } else {
+    const { idx, t } = stageIndex();
+    if (idx === 0) {                                            // проба: режем один объект
+      const z = Math.min(H, (t / 3) * H);
+      const poly = shapeAt({ x: 128, y: 128, rot: 0 });
+      s += prism(poly, 0, Math.max(0.01, z), 'var(--accent)') + ghost(poly, H);
+      read = `проба · слой <b>${Math.round(z / 0.2)}</b> / 120`;
+    } else if (idx === 1) {                                     // раскладка: перебор, победителя ещё нет
+      const k = Math.floor(t * 6);
+      sorted.forEach((p, j) => { if ((j * 7 + k) % 5 === 0) s += ghost(shapeAt({ ...p, rot: p.rot + ((k + j) % 3) * 0.4 }), 0); });
+      read = `перебор раскладок · угол <b>${(k * 37) % 360}°</b>`;
+    } else if (idx === 2) {                                     // сборка: реальные позиции падают от центра
+      const k = (t - 6.5) / 2.5;
+      sorted.forEach((p) => {
+        const local = Math.min(1, Math.max(0, k * 1.6 - (p.i / N) * 0.9));
+        if (local > 0) s += prism(shapeAt(p), (1 - (1 - (1 - local) ** 3)) * 60, H);
+      });
+      read = `ставим <b>${Math.min(N, Math.ceil(k * N))}</b> / ${N}`;
+    } else {                                                    // нарезка: плоскость среза поднимается
+      const z = idx === 3 ? Math.min(H, ((t - 9) / 7) * H) : H;
+      sorted.forEach((p) => {
+        const poly = shapeAt(p);
+        s += prism(poly, 0, Math.max(0.01, z), idx === 3 ? 'var(--accent)' : 'var(--obj-top)');
+        if (z < H) s += ghost(poly, H);
+      });
+      if (idx === 3) s += plane(z, 'var(--accent-soft)', 'var(--accent)');
+      if (idx === 4) s += plane(((t - 16) / 2) * H, 'var(--accent-2-soft)', 'var(--accent-2)');
+      read = idx === 3 ? `слой <b>${Math.round(z / 0.2)}</b> / 120` : idx === 4 ? 'поддержки против соседей, слой за слоем' : 'запись 3MF';
+    }
+  }
+  setHtml(svg, s);
+  if (ro) setHtml(ro, read);
+}
+
+let last = 0;
+function loop(now) {
+  if (now - last > 40) {                                        // ~25 к/с хватает макету
+    last = now;
+    if (S.job === 'running') renderProgress();
+    sceneFrame();
+  }
+  requestAnimationFrame(loop);
+}
+render();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
