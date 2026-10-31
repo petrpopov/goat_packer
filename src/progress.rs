@@ -2,6 +2,7 @@
 //! "Progress protocol"). The human line always goes to stderr; with `GOAT_LOG_FORMAT=json` a
 //! machine-readable `{"event":"stage",...}` follows it, so the job view can name the stage and
 //! interpolate a long slice by its expected duration instead of parsing English log lines.
+use geo::{Coord, LineString, Simplify};
 use serde_json::json;
 
 /// Stage ids the webapp maps to its own labels; keep in sync with `ProgressTracker.kt`.
@@ -113,6 +114,106 @@ pub fn expected_reslice_seconds(seconds: f64, measured_objects: usize, objects: 
     seconds * objects as f64 / measured_objects.max(1) as f64
 }
 
+
+/// Upper bound for one `layout` line. The webapp polls job status every second and the backend
+/// reads packer output with a 64 KiB line cap, so the footprint is simplified until it fits.
+pub const LAYOUT_EVENT_MAX_BYTES: usize = 16_000;
+
+/// Which pass produced the layout the webapp should draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutSource {
+    /// First winning layout.
+    Pack,
+    /// Layout after a repack (grown tower, support contact/strict, corner tower failed).
+    Repack,
+    /// Prefix kept for the print-time window.
+    Window,
+}
+
+impl LayoutSource {
+    pub fn id(self) -> &'static str {
+        match self {
+            LayoutSource::Pack => "pack",
+            LayoutSource::Repack => "repack",
+            LayoutSource::Window => "window",
+        }
+    }
+}
+
+fn round_to(value: f64, step: f64) -> f64 {
+    (value / step).round() * step
+}
+
+fn rect_json(rect: &crate::Rect) -> serde_json::Value {
+    json!([round_to(rect.min_x, 0.1), round_to(rect.min_y, 0.1), round_to(rect.max_x, 0.1), round_to(rect.max_y, 0.1)])
+}
+
+/// Footprint rings simplified with Ramer–Douglas–Peucker at `epsilon_mm`, rounded to 0.01 mm.
+/// Rings that collapse below a triangle are dropped.
+fn simplified_loops(loops: &[Vec<crate::Point>], epsilon_mm: f64) -> Vec<Vec<[f64; 2]>> {
+    loops
+        .iter()
+        .filter_map(|ring| {
+            let line: LineString<f64> = ring.iter().map(|p| Coord { x: p.x, y: p.y }).collect();
+            let simple = line.simplify(epsilon_mm);
+            let points: Vec<[f64; 2]> = simple.0.iter().map(|c| [round_to(c.x, 0.01), round_to(c.y, 0.01)]).collect();
+            (points.len() >= 4).then_some(points)
+        })
+        .collect()
+}
+
+/// The `layout` event: footprint loops once (centred on the mesh bbox centre, mm) plus
+/// `[x_mm, y_mm, angle_deg]` per placement — the webapp rotates the loops by the angle and
+/// translates them, the same math as `placement_world_loops`.
+pub fn layout_event(
+    source: LayoutSource,
+    loops: &[Vec<crate::Point>],
+    placements: &[crate::PackedPlacement],
+    bed: crate::Rect,
+    keepouts: &[crate::Rect],
+    tower: Option<crate::Rect>,
+) -> serde_json::Value {
+    let placements_json: Vec<serde_json::Value> = placements
+        .iter()
+        .map(|p| json!([round_to(p.x_mm, 0.01), round_to(p.y_mm, 0.01), round_to(p.angle_deg, 0.1)]))
+        .collect();
+    let mut epsilon_mm = 0.1;
+    loop {
+        let event = json!({
+            "event": "layout",
+            "source": source.id(),
+            "objects": placements.len(),
+            "bed": rect_json(&bed),
+            "keepouts": keepouts.iter().map(rect_json).collect::<Vec<_>>(),
+            "tower": tower.as_ref().map(rect_json),
+            "footprint": simplified_loops(loops, epsilon_mm),
+            "placements": placements_json,
+            "epsilon_mm": epsilon_mm,
+        });
+        // A coarse contour is still a faithful picture of where things stand; give up shrinking
+        // past 5 mm (hundreds of tiny objects) and let the backend's 64 KiB line cap decide.
+        if event.to_string().len() <= LAYOUT_EVENT_MAX_BYTES || epsilon_mm >= 5.0 {
+            return event;
+        }
+        epsilon_mm *= 2.0;
+    }
+}
+
+/// Prints the layout event for the webapp (machine-readable mode only; the human log already
+/// says how many objects were packed).
+pub fn layout(
+    source: LayoutSource,
+    loops: &[Vec<crate::Point>],
+    placements: &[crate::PackedPlacement],
+    bed: crate::Rect,
+    keepouts: &[crate::Rect],
+    tower: Option<crate::Rect>,
+) {
+    if structured() {
+        eprintln!("{}", layout_event(source, loops, placements, bed, keepouts, tower));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +243,43 @@ mod tests {
         assert_eq!(expected_slice_seconds(22.0, 0), 22.0);
         assert_eq!(expected_reslice_seconds(136.0, 43, 42), 136.0 * 42.0 / 43.0);
         assert_eq!(expected_reslice_seconds(10.0, 0, 3), 30.0);
+    }
+
+    #[test]
+    fn layout_event_fits_the_line_budget_and_keeps_every_placement() {
+        #[derive(serde::Deserialize)]
+        struct Loops {
+            loops: Vec<Vec<crate::Point>>,
+        }
+        let fixture: Loops = serde_json::from_str(include_str!("../tests/fixtures/goat4.json")).unwrap();
+        let placements: Vec<crate::PackedPlacement> = (0..60)
+            .map(|i| crate::PackedPlacement {
+                x_mm: 20.0 + (i % 6) as f64 * 37.5,
+                y_mm: 20.0 + (i / 6) as f64 * 21.25,
+                angle_deg: if i % 2 == 0 { 0.0 } else { 180.0 },
+            })
+            .collect();
+        let bed = crate::Rect { min_x: 0.0, min_y: 0.0, max_x: 256.0, max_y: 256.0 };
+        let corner = crate::Rect { min_x: 0.0, min_y: 0.0, max_x: 22.0, max_y: 32.0 };
+        let event = layout_event(LayoutSource::Pack, &fixture.loops, &placements, bed, &[corner], None);
+
+        assert!(event.to_string().len() <= LAYOUT_EVENT_MAX_BYTES, "{} bytes", event.to_string().len());
+        assert_eq!(event["event"], "layout");
+        assert_eq!(event["source"], "pack");
+        assert_eq!(event["objects"], 60);
+        assert_eq!(event["placements"].as_array().unwrap().len(), 60);
+        assert_eq!(event["placements"][1], serde_json::json!([57.5, 20.0, 180.0]));
+        assert_eq!(event["bed"], serde_json::json!([0.0, 0.0, 256.0, 256.0]));
+        assert!(event["tower"].is_null());
+        let ring = event["footprint"][0].as_array().unwrap();
+        assert!(ring.len() >= 4 && ring.len() < fixture.loops[0].len(), "simplified: {} points", ring.len());
+        assert_eq!(ring.first(), ring.last(), "rings stay closed");
+    }
+
+    #[test]
+    fn layout_source_ids() {
+        assert_eq!(LayoutSource::Pack.id(), "pack");
+        assert_eq!(LayoutSource::Repack.id(), "repack");
+        assert_eq!(LayoutSource::Window.id(), "window");
     }
 }
