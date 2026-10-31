@@ -55,6 +55,29 @@ output.input { display: flex; align-items: center; color: var(--fg-muted); }
 .scene-tag-bl { left: 14px; bottom: 12px; }
 .scene-tag-br { right: 14px; bottom: 12px; text-align: right; }
 
+/* Выбор принтера (PrinterPicker): поле-поиск и всплывающий список, сгруппированный по производителю. */
+.printer-picker { position: relative; }
+.printer-picker-input { padding-right: 34px; text-overflow: ellipsis; }
+.printer-picker-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; display: grid; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 0 var(--radius) var(--radius) 0; background: transparent; color: var(--fg-muted); cursor: pointer; }
+.printer-picker-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
+.printer-picker-toggle .ic { transition: transform 0.15s ease-out; }
+.printer-picker.open .printer-picker-toggle .ic { transform: rotate(180deg); }
+.printer-picker-locked { gap: 10px; justify-content: space-between; }
+.printer-picker-value { min-width: 0; overflow: hidden; color: var(--fg); white-space: nowrap; text-overflow: ellipsis; }
+.printer-picker-note { flex-shrink: 0; color: var(--fg-dim); font-size: 12px; }
+.printer-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; padding: 0 6px 6px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-lg); }
+/* Липкий заголовок производителя: следующий группы выталкивает предыдущий (sticky внутри своей группы). */
+.printer-group-head { position: sticky; top: 0; z-index: 1; margin: 0 -6px; padding: 8px 16px 4px; background: var(--panel); color: var(--fg-dim); font-size: 12px; font-weight: 500; }
+.printer-option { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border-radius: var(--radius-sm); color: var(--fg); cursor: pointer; }
+.printer-option.active { background: var(--row-hover); }
+.printer-option[aria-selected='true'] { font-weight: 500; }
+.printer-option .ic { flex-shrink: 0; margin-left: auto; color: var(--accent); }
+.printer-option-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.printer-option.custom { margin-top: 2px; color: var(--fg-muted); }
+.printer-option.custom.active { color: var(--fg); }
+.printer-list-sep { height: 1px; margin: 6px 4px 4px; background: var(--border); }
+.printer-list-empty { padding: 10px 10px 4px; color: var(--fg-dim); }
+
 @media (max-width: 1180px) {
   .work, .work.with-side { grid-template-columns: 300px minmax(0, 1fr); }
   .side-col { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
