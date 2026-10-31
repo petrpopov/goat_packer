@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { serverApi } from '@/api/http';
 import Icon from '@/components/Icon';
 import { useLinkHandler } from '@/hooks/useLinkHandler';
@@ -58,7 +58,6 @@ export default function LoginPage({ step }: { step: LoginStep }) {
   const [error, setError] = useState<string | null>(null);
   const navigate = useUiStore((s) => s.navigate);
   const onLink = useLinkHandler();
-  const queryClient = useQueryClient();
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -73,8 +72,9 @@ export default function LoginPage({ step }: { step: LoginStep }) {
         navigate('/login');
         return;
       }
-      await queryClient.invalidateQueries({ queryKey: ['session'] });
-      navigate('/pack');
+      // Полная загрузка, а не navigate: кэш и сторы гостя/прошлого пользователя не должны пережить
+      // смену учётной записи (как перезагрузка в master).
+      location.assign('/pack');
     },
     onError: (e) => setError(e instanceof Error ? e.message : 'Не удалось выполнить запрос'),
   });
@@ -109,7 +109,7 @@ export default function LoginPage({ step }: { step: LoginStep }) {
     body = (
       <>
         <h1>Создать аккаунт</h1>
-        <p className="auth-sub">Задачи будут храниться без ограничения 24 часа</p>
+        <p className="auth-sub">Задачи хранятся без 24-часового ограничения</p>
         <form onSubmit={submit}>
           {loginField('Логин')}
           <div className="field">
@@ -165,7 +165,7 @@ export default function LoginPage({ step }: { step: LoginStep }) {
           </div>
           <PasswordField label="Новый пароль" autoComplete="new-password" value={password} onChange={setPassword} />
           {errorBlock}
-          {submitButton('Сохранить и войти')}
+          {submitButton('Сохранить пароль')}
         </form>
         {back}
       </>

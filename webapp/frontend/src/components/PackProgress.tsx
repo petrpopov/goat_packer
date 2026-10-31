@@ -28,7 +28,8 @@ export default function PackProgress({ percent, stage, message, receivedAtMs }: 
   const elapsed = stageElapsed(stage, receivedAtMs, Math.max(now, receivedAtMs ?? 0));
   const segments = stageSegments(stage, percent);
   const detail = stage.detail && !looksLikeJson(stage.detail) ? stage.detail : null;
-  const status = message && !looksLikeJson(message) ? message : segments.find((s) => s.state === 'current')?.label;
+  const current = segments.find((s) => s.state === 'current');
+  const status = message && !looksLikeJson(message) ? message : current?.label;
 
   return (
     <div className="pack-progress" role="group" aria-label="Ход упаковки">
@@ -41,9 +42,11 @@ export default function PackProgress({ percent, stage, message, receivedAtMs }: 
       <div
         className="stage-bar"
         role="progressbar"
+        aria-label="Ход упаковки"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(percent)}
+        aria-valuetext={`${current?.label ?? ''} · ${Math.round(percent)}%`}
       >
         {segments.map((s) => (
           <span

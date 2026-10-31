@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { serverApi } from '@/api/http';
 import Icon from '@/components/Icon';
 import { useLinkHandler } from '@/hooks/useLinkHandler';
 import type { Session } from '@/pages/ServerPages';
 import { pushToast } from '@/store/useToastStore';
-import { useUiStore } from '@/store/useUiStore';
 
 /** «petr» → «PE», «petr.popov» → «PP». */
 export function initialsOf(login: string): string {
@@ -24,8 +22,6 @@ export default function AccountMenu({ user }: { user?: Session }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const onLink = useLinkHandler();
-  const navigate = useUiStore((s) => s.navigate);
-  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!open) return;
@@ -55,8 +51,9 @@ export default function AccountMenu({ user }: { user?: Session }) {
     setOpen(false);
     try {
       await serverApi.post('/auth/logout');
-      await queryClient.invalidateQueries({ queryKey: ['session'] });
-      navigate('/pack');
+      // Полная загрузка, а не navigate: кэш react-query и сторы прошлого пользователя (его задачи)
+      // иначе ещё мгновение видны следующему — как перезагрузка в master.
+      location.assign('/pack');
     } catch (e) {
       pushToast(e instanceof Error ? e.message : 'Не удалось выйти', 'error');
     }
@@ -74,7 +71,6 @@ export default function AccountMenu({ user }: { user?: Session }) {
           ref={triggerRef}
           type="button"
           className={guest ? 'icon-btn' : 'avatar'}
-          aria-haspopup="menu"
           aria-expanded={open}
           aria-label={guest ? 'Меню' : `Аккаунт: ${user.login ?? ''}`}
           title={guest ? 'Меню' : (user.login ?? '')}
@@ -83,30 +79,31 @@ export default function AccountMenu({ user }: { user?: Session }) {
           {guest ? <Icon name="menu" /> : initialsOf(user.login ?? '?')}
         </button>
         {open && (
-          <div className="menu" role="menu">
+          // Простое раскрытие со ссылками и кнопкой: role="menu" обязывал бы к стрелочной навигации.
+          <div className="menu">
             <div className="menu-head">
               <b>{guest ? 'Гостевая сессия' : user.login}</b>
               <span>{guest ? 'результаты хранятся 24 часа' : user.role === 'ADMIN' ? 'администратор' : 'аккаунт'}</span>
             </div>
-            <a className="menu-item" role="menuitem" href="/jobs" onClick={go}>
+            <a className="menu-item" href="/jobs" onClick={go}>
               <Icon name="list" />
               Мои задачи
             </a>
             {guest ? (
-              <a className="menu-item" role="menuitem" href="/login/register" onClick={go}>
+              <a className="menu-item" href="/login/register" onClick={go}>
                 <Icon name="user" />
                 Создать аккаунт
               </a>
             ) : (
               <>
                 {user.role === 'ADMIN' && (
-                  <a className="menu-item" role="menuitem" href="/admin" onClick={go}>
+                  <a className="menu-item" href="/admin" onClick={go}>
                     <Icon name="shield" />
                     Администрирование
                   </a>
                 )}
-                <div className="menu-sep" role="separator" />
-                <button type="button" className="menu-item" role="menuitem" onClick={() => void logout()}>
+                <div className="menu-sep" aria-hidden="true" />
+                <button type="button" className="menu-item" onClick={() => void logout()}>
                   <Icon name="logout" />
                   Выйти
                 </button>
