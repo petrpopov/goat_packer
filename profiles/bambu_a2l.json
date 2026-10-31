@@ -2,6 +2,7 @@
   "download_slug": "a2l",
   "id": "bambu_a2l",
   "printer_name": "Bambu Lab A2L",
+  "vendor": "Bambu Lab",
   "slicer_kind": "bambu",
   "slicer_path": "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
   "blank_start_gcode_for_cli": false,

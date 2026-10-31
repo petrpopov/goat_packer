@@ -23,6 +23,12 @@ data class ProfileDto(
     val exclusionRectangles: List<List<Double>> = emptyList(),
     /** Упрощённый контур пластины для сцены; null — фронт рисует прямоугольник области. */
     val plateOutline: List<List<Double>>? = null,
+    /**
+     * Производитель для группировки в выборе принтера: поле vendor профиля, иначе printer_name
+     * без последнего слова (у импортированных из Orca vendor есть всегда; у ручных P1S/A2L/U1 он
+     * прописан явно — для многословных моделей правило «минус слово» ошиблось бы).
+     */
+    val vendor: String = "",
 )
 
 /** Ответ на создание джоба. */

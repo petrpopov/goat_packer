@@ -5,7 +5,7 @@ export type SlicerKind = string;
 export interface PrinterProfile {
   id: string;
   name: string;
-  /** Производитель для группировки в выборе принтера; пока бэкенд его не отдаёт — см. utils/printers vendorOf. */
+  /** Производитель для группировки в выборе принтера; бэкенд отдаёт всегда, опционально ради старых ответов (запасной путь — utils/printers vendorOf). */
   vendor?: string;
   slicerKind: SlicerKind;
   bedWidthMm: number;

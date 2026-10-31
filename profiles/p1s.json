@@ -2,6 +2,7 @@
   "download_slug": "p1s",
   "id": "bambu_p1s",
   "printer_name": "Bambu Lab P1S",
+  "vendor": "Bambu Lab",
   "slicer_kind": "bambu",
   "slicer_path": "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
   "blank_start_gcode_for_cli": false,

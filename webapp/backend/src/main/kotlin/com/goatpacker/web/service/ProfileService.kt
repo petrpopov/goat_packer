@@ -127,6 +127,12 @@ class ProfileService(
         }
     }
 
+    private fun vendorOf(node: JsonNode): String {
+        node.path("vendor").asText("").trim().takeIf { it.isNotEmpty() }?.let { return it }
+        val name = node.path("printer_name").asText("").trim()
+        return name.substringBeforeLast(' ', name).trim()
+    }
+
     private fun parseProfile(file: Path): ResolvedProfile? = try {
         val node: JsonNode = objectMapper.readTree(file.toFile())
         val area = node.get("printable_area")
@@ -137,6 +143,7 @@ class ProfileService(
             val dto = ProfileDto(
                 id = node.path("id").asText(file.fileName.toString().removeSuffix(".json")),
                 name = node.path("printer_name").asText(""),
+                vendor = vendorOf(node),
                 slicerKind = node.path("slicer_kind").asText(""),
                 bedWidthMm = area.get(2).asDouble() - area.get(0).asDouble(),
                 bedDepthMm = area.get(3).asDouble() - area.get(1).asDouble(),
