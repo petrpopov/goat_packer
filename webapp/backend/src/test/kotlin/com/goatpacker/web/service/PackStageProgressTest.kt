@@ -305,4 +305,18 @@ class PackStageProgressTest {
         val done = t.onLine("  \"changes_sliced\": 10,")
         assertEquals(JobPhase.WRITING to 95, done.phase to done.progressPercent)
     }
+
+    @Test
+    fun `layout-событие запоминается как есть и не трогает этап и сообщение`() {
+        val t = tracker(FakeClock())
+        val packing = t.onLine(stage("packing", 20.0, null))
+        val layout = """{"event":"layout","source":"pack","objects":2,"bed":[0,0,256,256],"keepouts":[],"tower":null,"footprint":[[[0,0],[1,0],[1,1],[0,0]]],"placements":[[10,10,0],[40,10,180]]}"""
+
+        val event = t.onLine(layout)
+
+        assertEquals(layout, event.layout)
+        assertEquals(packing.stage?.id, event.stage?.id)
+        assertEquals(packing.phaseMessage, event.phaseMessage)
+        assertEquals(layout, t.onLine(stage("assembling", null, 2)).layout, "раскладка живёт до следующей")
+    }
 }

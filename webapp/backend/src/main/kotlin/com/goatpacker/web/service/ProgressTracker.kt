@@ -14,6 +14,8 @@ data class ProgressEvent(
     val phaseMessage: String,
     /** Текущий этап упаковки (только pack-джобы); null — этап ещё не начался или не пакер. */
     val stage: JobStage? = null,
+    /** Последнее layout-событие пакера (сырой JSON) — для сцены стола; null — раскладки ещё нет. */
+    val layout: String? = null,
 )
 
 /**
@@ -252,6 +254,8 @@ class ProgressTracker(
     private val visited = LinkedHashSet<String>()
     private val attempts = HashMap<PackStage, Int>()
     private var exactPercent = 0.0
+    /** Сырая строка последнего layout-события: отдаётся как есть, разбирать её — дело сцены. */
+    private var layoutJson: String? = null
 
     /** Текущий этап пакера (для статусной сводки); null — ещё не начался. */
     val currentStage: JobStage?
@@ -276,6 +280,11 @@ class ProgressTracker(
 
         val event = structuredEvent(line)
         if (kind == JobKind.PACK) {
+            // Раскладка — не этап и не сообщение: только запоминается (живёт до следующей).
+            if (event != null && event.path("event").asText() == "layout") {
+                layoutJson = line.trim()
+                return snapshot()
+            }
             if (event != null) onPackEvent(event) else if (!looksLikeJson(line)) onPackText(line.trim())
             recompute()
             return snapshot()
@@ -304,7 +313,7 @@ class ProgressTracker(
         return snapshot()
     }
 
-    private fun snapshot() = ProgressEvent(phase, percent, message.orEmpty(), currentStage)
+    private fun snapshot() = ProgressEvent(phase, percent, message.orEmpty(), currentStage, layoutJson)
 
     private fun looksLikeJson(line: String): Boolean {
         val trimmed = line.trim()
