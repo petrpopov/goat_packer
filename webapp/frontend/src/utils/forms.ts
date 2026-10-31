@@ -75,3 +75,11 @@ export function buildTimeFields(state: TimeFormState, amsAvailable: boolean): [s
   }
   return fields;
 }
+
+/**
+ * Поля времени для упаковки: без окна стол заполняется максимально и время не влияет на
+ * результат, поэтому коррекция смены прутка шлётся только вместе с окном печати.
+ */
+export function packTimeFields(state: TimeFormState, amsAvailable: boolean): [string, string][] {
+  return buildTimeFields({ ...state, amsOn: state.windowOn && state.amsOn }, amsAvailable);
+}

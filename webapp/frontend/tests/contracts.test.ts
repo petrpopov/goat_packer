@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { api, ApiError } from '../src/api/http';
 import { detectProfile, deleteJob } from '../src/api/services';
-import { buildNozzleClean, buildTimeFields, clockSeconds, numberInRange, validTimeWindow } from '../src/utils/forms';
+import { buildNozzleClean, buildTimeFields, clockSeconds, numberInRange, packTimeFields, validTimeWindow } from '../src/utils/forms';
 import { formatHoursMinutes, packTimeLines } from '../src/utils/format';
 
 const originalFetch = globalThis.fetch;
@@ -51,6 +51,15 @@ describe('time window and AMS correction', () => {
     ]);
     // Пустая длительность — значение профиля, отдельно не шлётся.
     expect(buildTimeFields({ ...base, amsOn: true, changeSeconds: ' ' }, true)).toEqual([['amsCorrection', 'true']]);
+  });
+  test('pack: AMS correction is sent only together with the print window', () => {
+    expect(packTimeFields({ ...base, amsOn: true, changeSeconds: '80' }, true)).toEqual([]);
+    expect(packTimeFields({ ...base, windowOn: true, amsOn: true, changeSeconds: '80' }, true)).toEqual([
+      ['timeWindowHours', '12'],
+      ['timeMarginPct', '10'],
+      ['amsCorrection', 'true'],
+      ['changeSeconds', '80'],
+    ]);
   });
   test('AMS correction is dropped for a printer without change time (tool changer)', () => {
     expect(buildTimeFields({ ...base, amsOn: true }, false)).toEqual([]);
