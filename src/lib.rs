@@ -7,6 +7,7 @@ mod packing_search;
 
 pub mod ams_calibration;
 pub mod assemble;
+pub mod bed_outline;
 pub mod colored_packer;
 pub mod embedded_mesh;
 pub mod gcode_collisions;
