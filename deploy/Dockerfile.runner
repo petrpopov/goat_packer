@@ -10,7 +10,7 @@ ENV CARGO_BUILD_JOBS=3
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/build/target \
     cargo build --locked --release --bins && mkdir -p /out \
     && cp target/release/colored_3mf_packer target/release/daily_scheduler target/release/verify_outputs \
-       target/release/ams_calibration /out/
+       target/release/ams_calibration target/release/printer_catalog /out/
 
 FROM ${SLICER_IMAGE}
 LABEL goat-packer=1
