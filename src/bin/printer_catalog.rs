@@ -26,7 +26,7 @@ use goat_packer::{
     bed_outline::outline_from_stl,
     embedded_mesh::write_binary_stl,
     orca_presets::{
-        DEFAULT_FILAMENT, FILAMENT_LIBRARY, PresetIndex, exclusion_rects, parse_points,
+        DEFAULT_FILAMENT, FILAMENT_LIBRARY, PresetIndex, exclusion_rects, parse_points, shared_extruder_area,
         rect_from_points,
     },
     process_output::bounded_output,
@@ -268,7 +268,10 @@ fn build_drafts(
         draft.insert("slicer_path".into(), json!(path));
         draft.insert("blank_start_gcode_for_cli".into(), json!(false));
         draft.insert("no_check_for_final_tower_probe".into(), json!(false));
-        draft.insert("printable_area".into(), json!(area));
+        draft.insert(
+            "printable_area".into(),
+            json!(shared_extruder_area(area, merged.get("extruder_printable_area"))),
+        );
         draft.insert("printable_height".into(), json!(height));
         if let Some(d) = first_number(merged.get("nozzle_diameter")) {
             draft.insert("nozzle_diameter".into(), json!(d));
@@ -467,8 +470,11 @@ fn draft_str<'a>(draft: &'a Value, key: &str) -> AppResult<&'a str> {
         .ok_or_else(|| format!("draft has no {key}").into())
 }
 
-/// Spike 2026-11-01: flattened machine/process/filament + `--arrange 1` (centres the cube) +
-/// `--export-3mf`. A 20×20×10 mm cube generated here: single colour, so no prime tower and
+/// Spike 2026-11-01: flattened machine/process/filament + `--arrange 0` + `--export-3mf`. The cube
+/// is generated already at the centre of the draft's printable area (off its exclusions): with
+/// `--arrange 1` Orca's arrange misreads seam-chained `bed_exclude_area` lists (Kobra 3, Qidi
+/// X-Plus 4) and put the cube off the bed (y = -61), so the probe slice saw an empty plate.
+/// `--arrange 0` keeps the STL position. A 20×20×10 mm cube generated here: single colour, so no prime tower and
 /// the tower is not qualified (the packer measures it per job from the user's own probe).
 fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()> {
     let orca = args.orca.as_ref().ok_or("missing --orca")?;
@@ -494,7 +500,12 @@ fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()
         serde_json::to_vec_pretty(&json!({"machine": machine, "process": process, "filament": DEFAULT_FILAMENT}))?,
     )?;
     let cube = args.work.join("cube.stl");
-    write_binary_stl(&cube, &cube_triangles(20.0, 20.0, 10.0))?;
+    let (ox, oy) = probe_origin(draft, PROBE_CUBE_MM);
+    let triangles: Vec<_> = cube_triangles(PROBE_CUBE_MM, PROBE_CUBE_MM, 10.0)
+        .into_iter()
+        .map(|t| t.map(|(x, y, z)| (x + ox, y + oy, z)))
+        .collect();
+    write_binary_stl(&cube, &triangles)?;
     let export_dir = args.work.join("export");
     reset_dir(&export_dir)?;
     let mut command = std::process::Command::new(&args.orca_slicer);
@@ -503,7 +514,7 @@ fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()
         .arg(format!("{};{}", machine_json.display(), process_json.display()))
         .arg("--load-filaments")
         .arg(&filament_json)
-        .args(["--arrange", "1", "--export-3mf", "probe.3mf", "--outputdir"])
+        .args(["--arrange", "0", "--export-3mf", "probe.3mf", "--outputdir"])
         .arg(&export_dir)
         .arg(&cube);
     run_logged(&mut command, &args.work.join("export.log"), "probe export")?;
@@ -716,6 +727,34 @@ fn read_gcode(dir: &Path) -> AppResult<String> {
     Ok(text)
 }
 
+const PROBE_CUBE_MM: f64 = 20.0;
+
+/// Lower-left corner for the probe cube: centred in the draft's printable area, or the first spot
+/// of a 10 mm scan (centre-out) whose square clears every exclusion rectangle.
+fn probe_origin(draft: &Value, size: f64) -> (f64, f64) {
+    let area: [f64; 4] =
+        serde_json::from_value(draft.get("printable_area").cloned().unwrap_or_default()).unwrap_or([0.0, 0.0, size, size]);
+    let exclusions: Vec<[f64; 4]> =
+        serde_json::from_value(draft.get("exclusion_rectangles").cloned().unwrap_or_default()).unwrap_or_default();
+    let centre = ((area[0] + area[2] - size) / 2.0, (area[1] + area[3] - size) / 2.0);
+    let fits = |(x, y): (f64, f64)| {
+        x >= area[0] && y >= area[1] && x + size <= area[2] && y + size <= area[3]
+            && exclusions.iter().all(|r| x + size <= r[0] || x >= r[2] || y + size <= r[1] || y >= r[3])
+    };
+    let mut spots: Vec<(f64, f64)> = Vec::new();
+    let steps = ((area[2] - area[0]).max(area[3] - area[1]) / 10.0).ceil() as i32;
+    for i in -steps..=steps {
+        for j in -steps..=steps {
+            spots.push((centre.0 + f64::from(i) * 10.0, centre.1 + f64::from(j) * 10.0));
+        }
+    }
+    spots.sort_by(|a, b| {
+        let d = |p: &(f64, f64)| (p.0 - centre.0).hypot(p.1 - centre.1);
+        d(a).total_cmp(&d(b))
+    });
+    spots.into_iter().find(|&p| fits(p)).unwrap_or(centre)
+}
+
 /// Closed box `[0,w]×[0,d]×[0,h]`, 12 triangles wound counter-clockwise seen from outside.
 fn cube_triangles(w: f64, d: f64, h: f64) -> Vec<[(f64, f64, f64); 3]> {
     let v = |i: usize| {
@@ -871,6 +910,17 @@ mod tests {
             vec![("Acme", "orca", "/opt/slicers/orca/AppRun"), ("BBL", "bambu", "/opt/slicers/bambu/AppRun")]
         );
         assert_eq!(slicer_for("SomeFork", "Bambu Lab X1"), ("bambu", "/opt/slicers/bambu/AppRun"));
+    }
+
+    #[test]
+    fn probe_cube_sits_centred_and_off_exclusions() {
+        let plain = json!({"printable_area": [0.0, 0.0, 256.0, 256.0], "exclusion_rectangles": []});
+        assert_eq!(probe_origin(&plain, 20.0), (118.0, 118.0));
+        let blocked = json!({"printable_area": [0.0, 0.0, 256.0, 256.0], "exclusion_rectangles": [[100.0, 100.0, 156.0, 156.0]]});
+        let (x, y) = probe_origin(&blocked, 20.0);
+        assert!(x + 20.0 <= 100.0 || x >= 156.0 || y + 20.0 <= 100.0 || y >= 156.0, "({x}, {y})");
+        let h2d = json!({"printable_area": [25.0, 0.0, 325.0, 320.0]});
+        assert_eq!(probe_origin(&h2d, 20.0), (165.0, 150.0));
     }
 
     #[test]

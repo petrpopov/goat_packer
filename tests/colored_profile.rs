@@ -52,6 +52,30 @@ fn profiles_carry_real_filament_change_duration() {
     assert_eq!(load("profiles/snapmaker_u1.json").filament_change_seconds, None);
 }
 
+/// Every `profiles/*.json` (hand-made and catalog-generated) must load, and ids / printer names
+/// must be unique: the webapp detects a project's profile by `printer_name`, so two profiles for
+/// one printer would make detection ambiguous.
+#[test]
+fn every_repo_profile_loads_with_unique_id_and_printer_name() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("profiles");
+    let mut ids = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    let mut count = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let profile = load_printer_profile(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let id = raw["id"].as_str().unwrap_or_else(|| panic!("{}: no id", path.display())).to_owned();
+        assert!(ids.insert(id.clone()), "duplicate id {id}");
+        assert!(names.insert(profile.printer_name.clone()), "duplicate printer_name {}", profile.printer_name);
+        count += 1;
+    }
+    assert!(count >= 3, "expected at least the three hand-made profiles, found {count}");
+}
+
 mod cli_settings {
     use goat_packer::colored_packer::{
         apply_cli_settings_workarounds, load_printer_profile, normalize_flush_volumes_matrix,

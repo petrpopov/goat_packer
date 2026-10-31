@@ -47,7 +47,9 @@ Per draft, in a container `--network none --cpus 2 --memory 4g` (stage timeout 4
    `compatible_printers` lists the machine, else a 0.20 mm one named `@<machine>`, else the
    vendor base) and `Generic PLA @System`; write them flattened for the CLI
    (`work/<id>/presets/`);
-2. export `probe.3mf` from a generated 20×20×10 mm cube with the Orca CLI (`--arrange 1`);
+2. export `probe.3mf` from a generated 20×20×10 mm cube, placed at the centre of the draft's printable area
+   off its exclusions, with the Orca CLI (`--arrange 0`: Orca's arrange misreads seam-chained
+   `bed_exclude_area` lists and put the cube off the bed);
 3. slice it with the draft's slicer (`slicer_cli::slice_command`, `--arrange 0`) and detect the
    start-G-code purge (`purge_detect`);
 4. run `colored_3mf_packer` on the probe with the draft as profile (dense plate, final slice), then
