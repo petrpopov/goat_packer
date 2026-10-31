@@ -141,6 +141,22 @@ export interface ScheduleInfo {
   plates: SchedulePlate[];
 }
 
+/** layout-событие пакера: контур (мм, вокруг центра габарита модели) и позиции копий. */
+export interface PackLayout {
+  source: 'pack' | 'repack' | 'window';
+  objects: number;
+  /** usable bed [x0, y0, x1, y1], мм. */
+  bed: number[];
+  keepouts: number[][];
+  tower: number[] | null;
+  /** Замкнутые кольца even-odd, крупнейшее первым. */
+  footprint: [number, number][][];
+  /** [x_mm, y_mm, angle_deg] — центр габарита модели и поворот против часовой. */
+  placements: [number, number, number][];
+  /** Допуск упрощения контура (RDP), мм. */
+  epsilon_mm?: number;
+}
+
 export interface JobStatusResponse {
   canManage?: boolean;
   originalName?: string;
@@ -164,6 +180,8 @@ export interface JobStatusResponse {
   schedule: ScheduleInfo | null;
   calibration?: CalibrationInfo | null;
   stage?: JobStage | null;
+  /** Последняя раскладка пакера; остаётся и после успеха. */
+  layout?: PackLayout | null;
   /** Когда клиент получил этот ответ (Date.now()); проставляет useJob для локального отсчёта времени. */
   receivedAtMs?: number;
 }

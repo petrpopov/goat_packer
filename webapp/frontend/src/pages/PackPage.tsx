@@ -9,9 +9,10 @@ import Field from '@/components/Field';
 import Icon from '@/components/Icon';
 import JobCard from '@/components/JobCard';
 import CalibrationPage from '@/pages/CalibrationPage';
+import { sceneLayout } from '@/scene/layout';
 import { parseModel, type ModelMesh } from '@/scene/model3d';
 import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields } from '@/utils/forms';
-import { sceneClip } from '@/utils/progress';
+import { objectsText, sceneClip } from '@/utils/progress';
 import { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
@@ -205,6 +206,9 @@ export default function PackPage() {
 
   const busy = jobActive || startMutation.isPending;
   const running = job?.status === 'RUNNING' || job?.status === 'FINALIZING';
+  // Ссылка на layout стабильна между опросами (structural sharing react-query) — сцена не перестраивается зря.
+  const jobLayout = job?.layout;
+  const placed = useMemo(() => sceneLayout(jobLayout), [jobLayout]);
   const sceneMode = running ? 'running' : job?.status === 'SUCCEEDED' ? 'done' : 'idle';
 
   const nozzleCleanFields = (
@@ -489,7 +493,16 @@ export default function PackPage() {
               caption={
                 sceneMode === 'done' ? 'перетащите, чтобы повернуть' : model ? 'модель и её проекция на стол' : ''
               }
-              readout={model ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм` : ''}
+              placements={placed.placements}
+              footprintLoops={placed.footprintLoops}
+              tower={placed.tower}
+              readout={
+                placed.placements.length
+                  ? `${objectsText(placed.placements.length)} на столе`
+                  : model
+                    ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм`
+                    : ''
+              }
             />
           </Suspense>
         )}

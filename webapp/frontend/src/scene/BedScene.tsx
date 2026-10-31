@@ -3,10 +3,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { PrinterProfile } from '@/api/types';
 import { useUiStore } from '@/store/useUiStore';
-import { bedSpec, type BedSpec } from './bed';
+import { bedSpec, type BedSpec, type Rect } from './bed';
+import type { Placement } from './layout';
 import type { ModelMesh } from './model3d';
-
-export interface Placement { x: number; y: number; angleDeg: number }
 
 export interface BedSceneProps {
   profile: PrinterProfile;
@@ -19,12 +18,17 @@ export interface BedSceneProps {
   placements?: Placement[];
   /** Контур для подложки, мм, вокруг центра модели (из пакера); нет — проекция меша. */
   footprintLoops?: [number, number][][] | null;
+  /** Зона башни очистки (из раскладки пакера) — принадлежит задаче, не принтеру. */
+  tower?: Rect | null;
   /** Подписи в углах сцены. */
   caption?: string;
   readout?: string;
 }
 
 const LAYER_MM = 0.2;
+/** Падение копий на стол после раскладки: общая длительность и высота старта, мм. */
+const DROP_MS = 1400;
+const DROP_FROM_MM = 120;
 
 /** oklch/hex CSS-переменная → THREE.Color (через canvas: THREE не понимает oklch). */
 function cssColor(name: string): THREE.Color {
@@ -147,9 +151,12 @@ export default function BedScene(props: BedSceneProps) {
     let solid: THREE.InstancedMesh | null = null;
     let cap: THREE.InstancedMesh | null = null;
     let footprints: THREE.InstancedMesh | null = null;
+    let towerMesh: THREE.Mesh | null = null;
     let footprintSource: { polygons: [number, number][][]; evenOdd: boolean } | null = null;
     let height = 1;
-    let built = { profile: null as PrinterProfile | null, model: null as ModelMesh | null, placements: '', loops: null as unknown, theme: '' };
+    let spots: Placement[] = [];
+    let dropStart = 0;
+    let built = { profile: null as PrinterProfile | null, model: null as ModelMesh | null, placements: '', copies: '', loops: null as unknown, theme: '' };
 
     const colored = <T extends THREE.Mesh | THREE.LineSegments>(mesh: T, token: string): T => {
       mesh.userData.token = token;
@@ -160,6 +167,7 @@ export default function BedScene(props: BedSceneProps) {
         const token = o.userData.token as string | undefined;
         if (token) ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).color.copy(cssColor(token));
       });
+      if (towerMesh) (towerMesh.material as THREE.MeshBasicMaterial).color.copy(cssColor('--accent-2'));
       objectMaterial.color.copy(cssColor('--object'));
       capMaterial.color.copy(cssColor('--signal'));
       sliceMaterial.color.copy(cssColor('--signal'));
@@ -212,6 +220,7 @@ export default function BedScene(props: BedSceneProps) {
 
     const disposeObjects = () => {
       for (const o of [solid, cap, footprints]) if (o) { scene.remove(o); o.dispose(); }
+      if (towerMesh) { scene.remove(towerMesh); disposeTree(towerMesh); }
       if (footprints) {
         footprints.geometry.dispose();
         const material = footprints.material as THREE.MeshBasicMaterial;
@@ -221,20 +230,47 @@ export default function BedScene(props: BedSceneProps) {
       modelGeometry?.dispose(); // общая для solid и cap; материалы общие на всю сцену
       modelGeometry = null;
       solid = cap = footprints = null;
+      towerMesh = null;
       footprintSource = null;
+      dropStart = 0;
     };
 
-    const buildObjects = () => {
+    /** Матрицы копий: progress 0..1 — время падения (1 — все на столе). */
+    const placeCopies = (progress: number) => {
+      if (!solid || !cap) return;
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), z = new THREE.Vector3(0, 0, 1);
+      spots.forEach((p, i) => {
+        // По порядку пакера — от центра наружу; каждая копия падает за ~40 % общего времени.
+        const local = progress >= 1 ? 1 : Math.min(1, Math.max(0, (progress - (i / spots.length) * 0.6) / 0.4));
+        const eased = 1 - (1 - local) ** 3;
+        q.setFromAxisAngle(z, (p.angleDeg * Math.PI) / 180);
+        // Ещё не начавшая падать копия — за дальней плоскостью камеры.
+        m.compose(new THREE.Vector3(p.x, p.y, progress >= 1 || local > 0 ? (1 - eased) * DROP_FROM_MM : -9999), q, s);
+        solid!.setMatrixAt(i, m);
+        cap!.setMatrixAt(i, m);
+      });
+      solid.instanceMatrix.needsUpdate = true;
+      cap.instanceMatrix.needsUpdate = true;
+    };
+
+    const buildObjects = (drop: boolean) => {
       disposeObjects();
-      const { model, placements = [], footprintLoops } = propsRef.current;
+      const { model, placements = [], footprintLoops, tower } = propsRef.current;
+      if (tower) {
+        towerMesh = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(rectPoints(tower))), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.35, depthWrite: false }));
+        towerMesh.position.z = 0.04;
+        scene.add(towerMesh);
+      }
       if (!model || !bed) return;
       const geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(model.positions, 3));
       geometry.computeVertexNormals();
       modelGeometry = geometry;
       height = Math.max(model.size[2], 0.2);
-      const spots = placements.length ? placements : [{ x: (bed.usable.x0 + bed.usable.x1) / 2, y: (bed.usable.y0 + bed.usable.y1) / 2, angleDeg: 0 }];
+      spots = placements.length ? placements : [{ x: (bed.usable.x0 + bed.usable.x1) / 2, y: (bed.usable.y0 + bed.usable.y1) / 2, angleDeg: 0 }];
       solid = new THREE.InstancedMesh(geometry, objectMaterial, spots.length);
       cap = new THREE.InstancedMesh(geometry, capMaterial, spots.length);
+      // Сфера отсечения InstancedMesh считается один раз — по кадру падения она была бы неверной.
+      solid.frustumCulled = cap.frustumCulled = false;
       const evenOdd = Boolean(footprintLoops?.length);
       const polygons: [number, number][][] = footprintLoops?.length
         ? footprintLoops
@@ -244,14 +280,14 @@ export default function BedScene(props: BedSceneProps) {
       footprints = new THREE.InstancedMesh(new THREE.PlaneGeometry(fp.size[0], fp.size[1]), new THREE.MeshBasicMaterial({ map: fp.texture, transparent: true, depthWrite: false }), spots.length);
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), z = new THREE.Vector3(0, 0, 1);
       spots.forEach((p, i) => {
+        // Контур — сразу на месте: копии падают на свои подложки.
         q.setFromAxisAngle(z, (p.angleDeg * Math.PI) / 180);
-        m.compose(new THREE.Vector3(p.x, p.y, 0), q, s);
-        solid!.setMatrixAt(i, m);
-        cap!.setMatrixAt(i, m);
         const offset = new THREE.Vector3(fp.center[0], fp.center[1], 0).applyQuaternion(q);
         m.compose(new THREE.Vector3(p.x + offset.x, p.y + offset.y, 0.06), q, s);
         footprints!.setMatrixAt(i, m);
       });
+      placeCopies(drop ? 0 : 1);
+      dropStart = drop ? performance.now() : 0;
       scene.add(solid, cap, footprints);
     };
 
@@ -275,11 +311,20 @@ export default function BedScene(props: BedSceneProps) {
       const p = propsRef.current;
       const orbit = p.mode === 'done';
       if (controls.enabled !== orbit) { controls.enabled = orbit; fit(); }
-      const clipZ = p.mode === 'running' ? Math.max(LAYER_MM, p.clip * height) : 1e4;
+      let dropping = false;
+      if (dropStart) {
+        const t = (performance.now() - dropStart) / DROP_MS;
+        placeCopies(t);
+        if (t >= 1) dropStart = 0;
+        else dropping = true;
+      }
+      // Падение — показ готовой раскладки: срез слоя на это время снят, иначе копии в воздухе не видны.
+      // clip = 1 — без среза: плоскость ровно на верхней грани даёт z-fighting верха копий.
+      const clipZ = p.mode === 'running' && !dropping && p.clip < 1 ? Math.max(LAYER_MM, p.clip * height) : 1e4;
       clipPlane.constant = clipZ;
       // Без среза изнанка не нужна: иначе её край просвечивает оранжевым по контуру модели.
       if (cap) cap.visible = clipZ < height;
-      slicePlane.visible = p.mode === 'running' && p.clip < 1 && bed !== null;
+      slicePlane.visible = p.mode === 'running' && !dropping && p.clip < 1 && bed !== null;
       if (bed && slicePlane.visible) {
         const a = bed.area;
         slicePlane.scale.set(a.x1 - a.x0 + 16, a.y1 - a.y0 + 16, 1);
@@ -300,21 +345,27 @@ export default function BedScene(props: BedSceneProps) {
           })
         );
       }
+      if (dropping) invalidate();
     };
-    // Анимации своей нет: кадр — по смене пропсов, размера или вращению мышью.
+    // Постоянного цикла нет: кадр — по смене пропсов, размера, вращению мышью и, пока идёт, падению копий.
     const invalidate = () => {
       if (!frame) frame = requestAnimationFrame(draw);
     };
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
     const rebuild = (themeKey: string) => {
       const p = propsRef.current;
       const profileChanged = p.profile !== built.profile;
       if (profileChanged) buildBed(p.profile);
-      const key = JSON.stringify(p.placements ?? []);
+      const key = JSON.stringify([p.placements ?? [], p.tower ?? null]);
+      const copies = JSON.stringify(p.placements ?? []);
       const objectsChanged = profileChanged || p.model !== built.model || key !== built.placements || p.footprintLoops !== built.loops;
-      if (objectsChanged) buildObjects();
+      // Падают только новые копии задачи, которая ещё идёт: после успеха (в т. ч. перезагрузка
+      // страницы) и при prefers-reduced-motion сразу итоговый стол.
+      const drop = copies !== built.copies && Boolean(p.placements?.length) && p.mode !== 'done' && !reducedMotion.matches;
+      if (objectsChanged) buildObjects(drop);
       else if (themeKey !== built.theme) paintFootprints();
-      built = { profile: p.profile, model: p.model, placements: key, loops: p.footprintLoops, theme: themeKey };
+      built = { profile: p.profile, model: p.model, placements: key, copies, loops: p.footprintLoops, theme: themeKey };
       paint();
       fit();
       invalidate();
@@ -345,7 +396,7 @@ export default function BedScene(props: BedSceneProps) {
   // (тема уже применена к <html> до обновления стора — цвета токенов читаются свежими).
   useEffect(() => {
     apiRef.current?.rebuild(theme);
-  }, [props.profile, props.model, props.placements, props.footprintLoops, theme]);
+  }, [props.profile, props.model, props.placements, props.footprintLoops, props.tower, theme]);
 
   return (
     <div className="scene" ref={hostRef}>
@@ -353,6 +404,7 @@ export default function BedScene(props: BedSceneProps) {
       <div className="scene-legend">
         <span>нельзя печатать <i className="swatch swatch-keepout" /></span>
         <span>контур проекции <i className="swatch swatch-footprint" /></span>
+        {props.tower && <span>башня очистки <i className="swatch swatch-tower" /></span>}
       </div>
       {props.caption && <div className="scene-tag scene-tag-bl">{props.caption}</div>}
       {props.readout && <div className="scene-tag scene-tag-br">{props.readout}</div>}

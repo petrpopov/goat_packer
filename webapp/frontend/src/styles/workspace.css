@@ -45,6 +45,7 @@
 .swatch { width: 12px; height: 9px; border-radius: 2px; }
 .swatch-keepout { background: var(--keepout); opacity: 0.8; }
 .swatch-footprint { border: 2px solid var(--accent-2); }
+.swatch-tower { background: var(--accent-2-soft); border: 1px dashed var(--accent-2); }
 .scene-tag { position: absolute; color: var(--fg-dim); font-size: 12px; pointer-events: none; }
 .scene-tag-bl { left: 14px; bottom: 12px; }
 .scene-tag-br { right: 14px; bottom: 12px; text-align: right; }
