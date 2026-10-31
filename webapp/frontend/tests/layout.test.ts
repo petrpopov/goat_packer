@@ -19,7 +19,11 @@ describe('sceneLayout', () => {
     expect(sceneLayout(layout).tower).toEqual({ x0: 214, y0: 214, x1: 246, y1: 246 });
     expect(sceneLayout({ ...layout, tower: null }).tower).toBeNull();
     expect(sceneLayout({ ...layout, footprint: [] }).footprintLoops).toBeNull();
-    expect(sceneLayout(null)).toEqual({ placements: [], footprintLoops: null, tower: null });
-    expect(sceneLayout(undefined)).toEqual({ placements: [], footprintLoops: null, tower: null });
+    expect(sceneLayout(null)).toEqual({ placements: [], footprintLoops: null, tower: null, bed: null });
+    expect(sceneLayout(undefined)).toEqual({ placements: [], footprintLoops: null, tower: null, bed: null });
+  });
+  test('usable bed comes from the packer (user edge margin), not the profile', () => {
+    expect(sceneLayout({ ...layout, bed: [10, 10, 246, 246] }).bed).toEqual({ x0: 10, y0: 10, x1: 246, y1: 246 });
+    expect(sceneLayout({ ...layout, bed: [] }).bed).toBeNull();
   });
 });

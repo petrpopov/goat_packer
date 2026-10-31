@@ -4,13 +4,15 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
 import { fetchProfiles, startPackJob } from '@/api/services';
 import AmsCorrectionFields from '@/components/AmsCorrectionFields';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import Icon from '@/components/Icon';
 import JobCard from '@/components/JobCard';
 import CalibrationPage from '@/pages/CalibrationPage';
 import { sceneLayout } from '@/scene/layout';
-import { parseModel, type ModelMesh } from '@/scene/model3d';
+import type { ModelMesh } from '@/scene/model3d';
+import { parseModelInWorker, PREVIEW_MAX_BYTES } from '@/scene/parseModelAsync';
 import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields } from '@/utils/forms';
 import { objectsText, sceneClip } from '@/utils/progress';
 import { useAmsCorrection } from '@/hooks/useAmsCorrection';
@@ -22,7 +24,8 @@ import { useUiStore } from '@/store/useUiStore';
 type NozzleCleanMode = 'off' | 'global' | 'from-z';
 
 // three.js тяжёлый: сцена грузится отдельным чанком, только когда известен профиль.
-const BedScene = lazy(() => import('@/scene/BedScene'));
+// Одна повторная попытка: сетевой сбой при загрузке чанка иначе сразу уводит в заглушку.
+const BedScene = lazy(() => import('@/scene/BedScene').catch(() => import('@/scene/BedScene')));
 
 export default function PackPage() {
   const sendToSchedule = useUiStore((state) => state.sendToSchedule);
@@ -45,21 +48,33 @@ export default function PackPage() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [model, setModel] = useState<ModelMesh | null>(null);
 
-  // Предпросмотр модели в сцене разбирается в браузере из того же файла, что уйдёт на сервер.
+  // Слишком большой файл — без предпросмотра (без тоста: упаковать его всё равно можно).
+  const modelTooLarge = file !== null && file.size > PREVIEW_MAX_BYTES;
+
+  // Предпросмотр модели в сцене разбирается в браузере из того же файла, что уйдёт на сервер —
+  // в воркере, чтобы разбор крупного 3MF не замораживал страницу.
   useEffect(() => {
     let cancelled = false;
+    let cancelParse: (() => void) | null = null;
     setModel(null);
-    if (!file) return;
+    if (!file || file.size > PREVIEW_MAX_BYTES) return;
     file
       .arrayBuffer()
       .then((buffer) => {
-        if (!cancelled) setModel(parseModel(file.name, buffer));
+        if (cancelled) return null;
+        const parse = parseModelInWorker(file.name, buffer);
+        cancelParse = parse.cancel;
+        return parse.promise;
+      })
+      .then((mesh) => {
+        if (!cancelled && mesh) setModel(mesh);
       })
       .catch((error: unknown) => {
         if (!cancelled) pushToast(error instanceof Error ? error.message : 'Не удалось прочитать модель', 'error');
       });
     return () => {
       cancelled = true;
+      cancelParse?.();
     };
   }, [file]);
 
@@ -82,8 +97,6 @@ export default function PackPage() {
 
   const detectMutation = useProfileDetection(file);
   const profileId = detectMutation.data?.profileId ?? '';
-  const handleFileChange = (next: File | null) => setFile(next);
-
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? null;
   const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
@@ -91,6 +104,12 @@ export default function PackPage() {
     Boolean(jobId) &&
     !jobGone &&
     (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
+  // Новый файл без идущей задачи: раскладка прошлой задачи к нему не относится — сцена не должна
+  // ставить новую модель на её места.
+  const handleFileChange = (next: File | null) => {
+    setFile(next);
+    if (!jobActive) setJobId(null);
+  };
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const nozzleCleanAvailable = selectedProfile === null || selectedProfile.supportsNozzleClean;
@@ -396,9 +415,9 @@ export default function PackPage() {
                   : undefined
           }
         >
-          <div className="input" aria-readonly="true">
+          <output className="input">
             {selectedProfile ? selectedProfile.name : profilesQuery.isPending ? 'Загрузка…' : '—'}
-          </div>
+          </output>
         </Field>
         <Field
           label="Раскладка"
@@ -484,35 +503,49 @@ export default function PackPage() {
           successContent={successContent}
         />
         {selectedProfile && (
-          <Suspense fallback={<div className="scene" />}>
-            <BedScene
-              profile={selectedProfile}
-              model={model}
-              mode={sceneMode}
-              clip={running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1}
-              caption={
-                sceneMode === 'done' ? 'перетащите, чтобы повернуть' : model ? 'модель и её проекция на стол' : ''
-              }
-              placements={placed.placements}
-              footprintLoops={placed.footprintLoops}
-              tower={placed.tower}
-              readout={
-                placed.placements.length
-                  ? `${objectsText(placed.placements.length)} на столе`
-                  : model
-                    ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм`
-                    : ''
-              }
-            />
-          </Suspense>
+          <ErrorBoundary
+            fallback={
+              <div className="scene scene-fallback">
+                Не удалось показать стол: браузер без WebGL или устаревшая версия страницы — обновите страницу
+              </div>
+            }
+          >
+            <Suspense fallback={<div className="scene" />}>
+              <BedScene
+                profile={selectedProfile}
+                model={model}
+                mode={sceneMode}
+                clip={running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1}
+                caption={
+                  modelTooLarge
+                    ? 'Модель слишком большая для предпросмотра'
+                    : sceneMode === 'done'
+                      ? 'перетащите, чтобы повернуть'
+                      : model
+                        ? 'модель и её проекция на стол'
+                        : ''
+                }
+                placements={placed.placements}
+                footprintLoops={placed.footprintLoops}
+                tower={placed.tower}
+                usableOverride={placed.bed}
+                readout={
+                  placed.placements.length
+                    ? `${objectsText(placed.placements.length)} на столе`
+                    : model
+                      ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм`
+                      : ''
+                }
+              />
+            </Suspense>
+          </ErrorBoundary>
         )}
       </section>
 
-      {calibOpen && (
-        <aside className="side-col">
-          <CalibrationPage embedded onClose={() => setCalibOpen(false)} />
-        </aside>
-      )}
+      {/* Скрыта, а не размонтирована: jobId калибровки живёт в её состоянии и терялся при закрытии. */}
+      <aside className="side-col" hidden={!calibOpen}>
+        <CalibrationPage embedded onClose={() => setCalibOpen(false)} />
+      </aside>
     </div>
   );
 }

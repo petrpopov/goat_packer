@@ -20,6 +20,9 @@ export interface BedSceneProps {
   footprintLoops?: [number, number][][] | null;
   /** Зона башни очистки (из раскладки пакера) — принадлежит задаче, не принтеру. */
   tower?: Rect | null;
+  /** Рабочая область из раскладки пакера (учтён отступ от края, заданный пользователем) — вместо
+   *  области профиля; подписи стола остаются по профилю. */
+  usableOverride?: Rect | null;
   /** Подписи в углах сцены. */
   caption?: string;
   readout?: string;
@@ -81,8 +84,19 @@ function footprintTexture(polygons: [number, number][][], evenOdd: boolean): { t
     for (const poly of polygons) poly.forEach(([x, y], i) => (i ? sx.lineTo(X(x), Y(y)) : sx.moveTo(X(x), Y(y))));
     sx.fill('evenodd');
   } else {
-    // Треугольники меша по одному: обводка закрывает щели антиалиасинга между ними.
-    for (const poly of polygons) { sx.beginPath(); poly.forEach(([x, y], i) => (i ? sx.lineTo(X(x), Y(y)) : sx.moveTo(X(x), Y(y)))); sx.closePath(); sx.fill(); sx.stroke(); }
+    // Все треугольники меша — подпути ОДНОГО пути с одной заливкой: по пути на треугольник
+    // (заливка + обводка от щелей антиалиасинга) на сотнях тысяч граней canvas работал секундами.
+    // nonzero объединяет подпути, только если обход у всех один: нижние грани в проекции идут
+    // по часовой и вычли бы верхние — такие треугольники обходятся в обратном порядке.
+    sx.beginPath();
+    for (const [[ax, ay], [bx, by], [cx, cy]] of polygons) {
+      const ccw = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) >= 0;
+      sx.moveTo(X(ax), Y(ay));
+      if (ccw) { sx.lineTo(X(bx), Y(by)); sx.lineTo(X(cx), Y(cy)); }
+      else { sx.lineTo(X(cx), Y(cy)); sx.lineTo(X(bx), Y(by)); }
+      sx.closePath();
+    }
+    sx.fill('nonzero');
   }
   const tint = (color: string) => {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -156,7 +170,7 @@ export default function BedScene(props: BedSceneProps) {
     let height = 1;
     let spots: Placement[] = [];
     let dropStart = 0;
-    let built = { profile: null as PrinterProfile | null, model: null as ModelMesh | null, placements: '', copies: '', loops: null as unknown, theme: '' };
+    let built = { profile: null as PrinterProfile | null, usable: '', model: null as ModelMesh | null, placements: '', copies: '', loops: null as unknown, theme: '' };
 
     const colored = <T extends THREE.Mesh | THREE.LineSegments>(mesh: T, token: string): T => {
       mesh.userData.token = token;
@@ -173,11 +187,13 @@ export default function BedScene(props: BedSceneProps) {
       sliceMaterial.color.copy(cssColor('--signal'));
     };
 
-    const buildBed = (profile: PrinterProfile) => {
+    const buildBed = (profile: PrinterProfile, usableOverride: Rect | null) => {
       scene.remove(bedGroup);
       disposeTree(bedGroup);
       bedGroup = new THREE.Group();
-      bed = bedSpec(profile);
+      const spec = bedSpec(profile);
+      // Отступ от края пользователь может задать свой: реальная рабочая область — из раскладки.
+      bed = usableOverride ? { ...spec, usable: usableOverride } : spec;
       const plate = colored(new THREE.Mesh(new THREE.ExtrudeGeometry(shapeOf(bed.plate), { depth: 3, bevelEnabled: false }), new THREE.MeshLambertMaterial()), '--plate');
       plate.position.z = -3.8;
       // Без вырезов (край области может совпадать с краем пластины — триангуляция ломается):
@@ -355,8 +371,9 @@ export default function BedScene(props: BedSceneProps) {
 
     const rebuild = (themeKey: string) => {
       const p = propsRef.current;
-      const profileChanged = p.profile !== built.profile;
-      if (profileChanged) buildBed(p.profile);
+      const usable = JSON.stringify(p.usableOverride ?? null);
+      const profileChanged = p.profile !== built.profile || usable !== built.usable;
+      if (profileChanged) buildBed(p.profile, p.usableOverride ?? null);
       const key = JSON.stringify([p.placements ?? [], p.tower ?? null]);
       const copies = JSON.stringify(p.placements ?? []);
       const objectsChanged = profileChanged || p.model !== built.model || key !== built.placements || p.footprintLoops !== built.loops;
@@ -365,7 +382,7 @@ export default function BedScene(props: BedSceneProps) {
       const drop = copies !== built.copies && Boolean(p.placements?.length) && p.mode !== 'done' && !reducedMotion.matches;
       if (objectsChanged) buildObjects(drop);
       else if (themeKey !== built.theme) paintFootprints();
-      built = { profile: p.profile, model: p.model, placements: key, copies, loops: p.footprintLoops, theme: themeKey };
+      built = { profile: p.profile, usable, model: p.model, placements: key, copies, loops: p.footprintLoops, theme: themeKey };
       paint();
       fit();
       invalidate();
@@ -387,6 +404,9 @@ export default function BedScene(props: BedSceneProps) {
       sliceMaterial.dispose();
       objectMaterial.dispose();
       capMaterial.dispose();
+      // Контекст отпускается сразу, не дожидаясь GC: иначе после нескольких заходов на страницу
+      // браузер упирается в лимит WebGL-контекстов и роняет самый старый.
+      renderer.forceContextLoss();
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -396,7 +416,7 @@ export default function BedScene(props: BedSceneProps) {
   // (тема уже применена к <html> до обновления стора — цвета токенов читаются свежими).
   useEffect(() => {
     apiRef.current?.rebuild(theme);
-  }, [props.profile, props.model, props.placements, props.footprintLoops, props.tower, theme]);
+  }, [props.profile, props.usableOverride, props.model, props.placements, props.footprintLoops, props.tower, theme]);
 
   return (
     <div className="scene" ref={hostRef}>

@@ -5,11 +5,14 @@
 .form-group { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .check-text { display: grid; gap: 2px; }
-/* Профиль только для чтения (определяется по файлу): div в облике поля, текст по центру высоты. */
-.input[aria-readonly='true'] { display: flex; align-items: center; color: var(--fg-muted); }
+/* Профиль только для чтения (определяется по файлу): <output> внутри label поля — подпись связана
+   с ним без id; в облике поля, текст по центру высоты. */
+output.input { display: flex; align-items: center; color: var(--fg-muted); }
 .nested { display: grid; gap: 12px; margin: 2px 0 0 24px; }
 .main-col { display: grid; gap: 16px; align-content: start; min-width: 0; padding: 18px 24px 28px; }
 .side-col { display: grid; gap: 16px; align-content: start; padding: 18px; border-left: 1px solid var(--border); }
+/* Панель калибровки скрыта, а не размонтирована (задача калибровки не теряется): колонку не занимает. */
+.side-col[hidden] { display: none; }
 .side-head { display: flex; align-items: center; justify-content: space-between; }
 .side-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .action-bar { display: flex; align-items: center; gap: 16px; }
@@ -37,6 +40,8 @@
 
 /* Сцена */
 .scene { position: relative; aspect-ratio: 16 / 9.4; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--scene-bg); }
+/* Заглушка вместо сцены (нет WebGL / не загрузился чанк): тот же блок, текст по центру. */
+.scene-fallback { display: grid; place-items: center; padding: 24px; color: var(--fg-muted); font-size: 13px; text-align: center; }
 .scene canvas { display: block; width: 100% !important; height: 100% !important; }
 .scene-labels { position: absolute; inset: 0; pointer-events: none; }
 .scene-dim { position: absolute; transform: translate(-50%, -50%); padding: 1px 5px; border-radius: 3px; background: var(--scene-bg); color: var(--fg-muted); font: 500 11.5px var(--font-mono); white-space: nowrap; }

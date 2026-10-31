@@ -9,6 +9,11 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    // Порог по умолчанию (500 КБ) срабатывает на чанк three.js; он ленивый (сцена грузится только
+    // на странице упаковки), главный бандл от него не растёт.
+    chunkSizeWarningLimit: 700,
+  },
   server: {
     port: 3007,
     proxy: {
