@@ -1,0 +1,1 @@
+{ "type": "filament", "name": "Zeta PLA", "inherits": "fdm_filament_pla", "from": "system", "instantiation": "true" }

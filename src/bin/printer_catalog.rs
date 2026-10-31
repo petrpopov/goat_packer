@@ -199,7 +199,7 @@ fn build_drafts(
             skip("protected hand-made profile");
             continue;
         }
-        let Ok(merged) = index.resolve(&machine.name) else {
+        let Ok(merged) = index.resolve(&machine.vendor, &machine.name) else {
             skip("unresolvable inherits");
             continue;
         };
@@ -266,7 +266,7 @@ fn plate_outline(
     model: &str,
     area: [f64; 4],
 ) -> Option<Vec<[f64; 2]>> {
-    let (_, preset) = index.get(model)?;
+    let preset = index.get(vendor, model)?;
     if preset.get("type").and_then(Value::as_str) != Some("machine_model") {
         return None;
     }

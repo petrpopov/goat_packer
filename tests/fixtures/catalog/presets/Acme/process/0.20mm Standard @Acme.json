@@ -1,0 +1,2 @@
+{ "type": "process", "name": "0.20mm Standard @Acme", "inherits": "fdm_process_common", "from": "system",
+  "instantiation": "true", "compatible_printers": ["Acme Box 0.4 nozzle"] }

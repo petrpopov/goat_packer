@@ -2,13 +2,22 @@
 //! pinned OrcaSlicer checkout (`resources/profiles/<Vendor>/{machine,process,filament}/*.json`);
 //! the installed app ships binary caches instead. Only numbers leave this module — the presets
 //! are AGPL and are never copied (spec 2026-11-01-printer-catalog-and-stl-design, «Licensing»).
-use std::{collections::HashMap, fs, io, path::Path};
+use std::{collections::BTreeMap, fs, io, path::Path};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
+/// Orca's shared filament vendor: `inherits` of a vendor filament falls back here.
+pub const FILAMENT_LIBRARY: &str = "OrcaFilamentLibrary";
+/// Default filament for catalog probes and STL builds (spec «Upload scenarios»).
+pub const DEFAULT_FILAMENT: &str = "Generic PLA @System";
+
+/// Presets keyed by (vendor folder, name). Names are NOT unique across vendors: ~130 repeat at
+/// Orca 2.4.2 (`fdm_machine_common`, `fdm_filament_pla`, …) with different contents, and a
+/// name-only map silently picked another vendor's base (CLI spike 2026-11-01: a wrong 3.9 kB
+/// Creality machine). A BTreeMap keeps iteration (and the any-vendor fallback) deterministic.
 #[derive(Default)]
 pub struct PresetIndex {
-    by_name: HashMap<String, (String, Map<String, Value>)>,
+    presets: BTreeMap<(String, String), Map<String, Value>>,
 }
 
 pub struct MachineEntry<'a> {
@@ -47,40 +56,57 @@ impl PresetIndex {
     pub fn insert(&mut self, vendor: &str, value: Value) {
         if let Value::Object(map) = value {
             if let Some(name) = map.get("name").and_then(Value::as_str) {
-                self.by_name.insert(name.to_owned(), (vendor.to_owned(), map));
+                self.presets.insert((vendor.to_owned(), name.to_owned()), map);
             }
         }
     }
 
-    /// The raw preset (no `inherits` merge) with this exact name, any type (e.g. `machine_model`).
-    pub fn get(&self, name: &str) -> Option<(&str, &Map<String, Value>)> {
-        self.by_name.get(name).map(|(vendor, map)| (vendor.as_str(), map))
+    /// The raw preset (no `inherits` merge) of this vendor with this exact name, any type
+    /// (e.g. `machine_model`).
+    pub fn get(&self, vendor: &str, name: &str) -> Option<&Map<String, Value>> {
+        self.presets.get(&(vendor.to_owned(), name.to_owned()))
+    }
+
+    /// Where a reference to `name` made from `vendor` lands: the same vendor first, then
+    /// Orca's filament library, then any vendor (alphabetical) as a last resort.
+    fn locate(&self, vendor: &str, name: &str) -> Option<(&str, &Map<String, Value>)> {
+        for v in [vendor, FILAMENT_LIBRARY] {
+            if let Some(((v, _), map)) = self.presets.get_key_value(&(v.to_owned(), name.to_owned())) {
+                return Some((v.as_str(), map));
+            }
+        }
+        self.presets.iter().find(|((_, n), _)| n == name).map(|((v, _), map)| (v.as_str(), map))
+    }
+
+    fn of_type<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = (&'a str, &'a str, &'a Map<String, Value>)> + 'a {
+        self.presets
+            .iter()
+            .filter(move |(_, m)| m.get("type").and_then(Value::as_str) == Some(kind))
+            .map(|((v, n), m)| (v.as_str(), n.as_str(), m))
     }
 
     /// Instantiable machine presets (what Orca shows in its printer list), sorted by vendor, name.
     pub fn machines(&self) -> impl Iterator<Item = MachineEntry<'_>> {
-        let mut list: Vec<_> = self
-            .by_name
-            .iter()
-            .filter(|(_, (_, m))| m.get("type").and_then(Value::as_str) == Some("machine") && m.get("instantiation").and_then(Value::as_str) == Some("true"))
-            .map(|(name, (vendor, raw))| MachineEntry { vendor: vendor.clone(), name: name.clone(), raw })
-            .collect();
-        list.sort_by(|a, b| (&a.vendor, &a.name).cmp(&(&b.vendor, &b.name)));
-        list.into_iter()
+        self.of_type("machine")
+            .filter(|(_, _, m)| m.get("instantiation").and_then(Value::as_str) == Some("true"))
+            .map(|(vendor, name, raw)| MachineEntry { vendor: vendor.to_owned(), name: name.to_owned(), raw })
     }
 
-    /// The preset with its `inherits` chain merged (child keys win). Errors on a missing parent
-    /// or a cycle.
-    pub fn resolve(&self, name: &str) -> Result<Map<String, Value>, String> {
-        let mut chain = Vec::new();
-        let mut current = Some(name.to_owned());
-        while let Some(n) = current {
-            if chain.iter().any(|(seen, _): &(String, &Map<String, Value>)| *seen == n) {
-                return Err(format!("inherits cycle at {n}"));
+    /// The preset with its `inherits` chain merged (child keys win). Each parent is looked up
+    /// from the vendor of the preset naming it (see `locate`). Errors on a missing preset or
+    /// parent, or a cycle.
+    pub fn resolve(&self, vendor: &str, name: &str) -> Result<Map<String, Value>, String> {
+        let first = self.get(vendor, name).ok_or_else(|| format!("preset not found: {vendor}/{name}"))?;
+        let mut chain: Vec<(&str, &Map<String, Value>)> = Vec::new();
+        let mut current = (vendor, first);
+        loop {
+            let (v, map) = current;
+            if chain.iter().any(|(sv, sm)| *sv == v && std::ptr::eq(*sm, map)) {
+                return Err(format!("inherits cycle at {v}/{}", map.get("name").and_then(Value::as_str).unwrap_or_default()));
             }
-            let (_, map) = self.by_name.get(&n).ok_or_else(|| format!("preset not found: {n}"))?;
-            current = map.get("inherits").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
-            chain.push((n, map));
+            chain.push(current);
+            let Some(parent) = map.get("inherits").and_then(Value::as_str).filter(|s| !s.is_empty()) else { break };
+            current = self.locate(v, parent).ok_or_else(|| format!("preset not found: {parent} (inherited in {v})"))?;
         }
         let mut merged = Map::new();
         for (_, map) in chain.into_iter().rev() {
@@ -90,6 +116,87 @@ impl PresetIndex {
         }
         Ok(merged)
     }
+
+    /// The process preset for a catalog probe / STL build of `machine` (vendor-scoped):
+    /// 1. an instantiable process of the vendor whose `compatible_printers` lists the machine
+    ///    (BBL style), `0.20mm Standard` > `0.20mm` > the rest, then by name;
+    /// 2. else a `0.20mm` process whose `@<suffix>` names the machine (Prusa, Creality: they
+    ///    match by `compatible_printers_condition`, which the CLI ignores), `Standard` first;
+    /// 3. else the vendor's base process (`fdm_process_common`, else the first root process).
+    /// Returns the process name (it lives in `vendor`).
+    pub fn select_process(&self, vendor: &str, machine: &str) -> Option<String> {
+        let processes: Vec<(&str, &Map<String, Value>)> =
+            self.of_type("process").filter(|(v, _, _)| *v == vendor).map(|(_, n, m)| (n, m)).collect();
+        let instantiable = |m: &Map<String, Value>| m.get("instantiation").and_then(Value::as_str) == Some("true");
+        let rank = |name: &str| if name.contains("0.20mm Standard") { 0 } else if name.contains("0.20mm") { 1 } else { 2 };
+        let listed = processes
+            .iter()
+            .filter(|(n, m)| {
+                instantiable(m)
+                    && self.resolve(vendor, n).ok().is_some_and(|r| {
+                        r.get("compatible_printers")
+                            .and_then(Value::as_array)
+                            .is_some_and(|list| list.iter().any(|p| p.as_str() == Some(machine)))
+                    })
+            })
+            .min_by_key(|(n, _)| (rank(n), *n));
+        if let Some((name, _)) = listed {
+            return Some((*name).to_owned());
+        }
+        let keys = machine_keys(vendor, machine);
+        let named = processes
+            .iter()
+            .filter(|(n, m)| {
+                instantiable(m)
+                    && n.contains("0.20mm")
+                    && n.split_once('@').is_some_and(|(_, suffix)| keys.contains(&normalize(suffix)))
+            })
+            .min_by_key(|(n, _)| (rank(n), *n));
+        if let Some((name, _)) = named {
+            return Some((*name).to_owned());
+        }
+        let roots = || processes.iter().filter(|(_, m)| m.get("inherits").and_then(Value::as_str).is_none_or(str::is_empty));
+        roots().find(|(n, _)| *n == "fdm_process_common").or_else(|| roots().next()).map(|(n, _)| (*n).to_owned())
+    }
+
+    /// The resolved preset ready for `--load-settings`/`--load-filaments` (see `flatten_for_cli`).
+    pub fn cli_preset(&self, vendor: &str, name: &str, machine: &str) -> Result<Map<String, Value>, String> {
+        Ok(flatten_for_cli(self.resolve(vendor, name)?, machine))
+    }
+}
+
+/// Lowercase ASCII alphanumerics only: `Ender-3 V3 SE` and `Ender3V3SE` compare equal.
+fn normalize(text: &str) -> String {
+    text.chars().filter(char::is_ascii_alphanumeric).flat_map(|c| c.to_lowercase()).collect()
+}
+
+/// The ways a process `@suffix` can name a machine preset: its name without ` nozzle`, also
+/// without the first word or the vendor folder name (`Prusa MK4S 0.4 nozzle` → `mk4s04`).
+fn machine_keys(vendor: &str, machine: &str) -> Vec<String> {
+    let stem = machine.trim().strip_suffix(" nozzle").unwrap_or(machine.trim());
+    let mut keys = vec![normalize(stem)];
+    if let Some((_, rest)) = stem.split_once(' ') {
+        keys.push(normalize(rest));
+    }
+    if let Some(rest) = stem.strip_prefix(vendor) {
+        keys.push(normalize(rest));
+    }
+    keys
+}
+
+/// A merged preset as the Orca CLI accepts it for `--load-settings` (spike 2026-11-01): no
+/// `inherits`, `from: system`, `instantiation: true`, and `compatible_printers` set to exactly
+/// the machine — the CLI compares only that list with the printer and ignores
+/// `compatible_printers_condition` (return code -17 "printer is not compatible with the process
+/// preset" otherwise). Harmless on the machine and the filament.
+pub fn flatten_for_cli(mut merged: Map<String, Value>, machine: &str) -> Map<String, Value> {
+    merged.remove("inherits");
+    merged.insert("from".into(), json!("system"));
+    merged.insert("instantiation".into(), json!("true"));
+    if merged.get("type").and_then(Value::as_str) != Some("machine") {
+        merged.insert("compatible_printers".into(), json!([machine]));
+    }
+    merged
 }
 
 /// Orca point lists: `["0x0","256x0",…]` or one string `"0x0,220x0,…"`.
@@ -147,7 +254,7 @@ mod tests {
 
     #[test]
     fn child_overrides_parent_and_keeps_inherited_keys() {
-        let box_preset = fixture().resolve("Acme Box 0.4 nozzle").unwrap();
+        let box_preset = fixture().resolve("Acme", "Acme Box 0.4 nozzle").unwrap();
         assert_eq!(box_preset.get("printer_model").and_then(|v| v.as_str()), Some("Acme Box"));
         assert_eq!(box_preset.get("printable_height").and_then(|v| v.as_str()), Some("250"));
         assert_eq!(rect_from_points(&parse_points(&box_preset["printable_area"]).unwrap()), Some([0.0, 0.0, 220.0, 220.0]));
@@ -163,7 +270,7 @@ mod tests {
 
     #[test]
     fn comma_string_points_and_degenerate_exclusions() {
-        let ring = fixture().resolve("Acme Ring 0.4 nozzle").unwrap();
+        let ring = fixture().resolve("Acme", "Acme Ring 0.4 nozzle").unwrap();
         assert_eq!(rect_from_points(&parse_points(&ring["printable_area"]).unwrap()), Some([0.0, 0.0, 300.0, 300.0]));
         assert_eq!(exclusion_rects(ring.get("bed_exclude_area")), Vec::<[f64; 4]>::new());
     }
@@ -185,6 +292,93 @@ mod tests {
         let mut index = PresetIndex::default();
         index.insert("Acme", serde_json::json!({"name": "a", "inherits": "b", "type": "machine"}));
         index.insert("Acme", serde_json::json!({"name": "b", "inherits": "a", "type": "machine"}));
-        assert!(index.resolve("a").is_err());
+        assert!(index.resolve("Acme", "a").is_err());
+    }
+
+    #[test]
+    fn inherits_resolve_inside_the_vendor_first() {
+        // Acme and Zeta both define `fdm_machine_common` with different values; Zeta sorts
+        // last, so a global name lookup would hand it Acme's.
+        let index = fixture();
+        let zeta = index.resolve("Zeta", "Zeta Cube 0.4 nozzle").unwrap();
+        assert_eq!(zeta["gcode_flavor"], "marlin");
+        let acme = index.resolve("Acme", "Acme Box 0.4 nozzle").unwrap();
+        assert_eq!(acme["gcode_flavor"], "klipper");
+    }
+
+    #[test]
+    fn filament_parents_fall_back_to_the_library_before_other_vendors() {
+        let index = fixture();
+        // Acme has its own fdm_filament_pla (999); Zeta has none → OrcaFilamentLibrary (220),
+        // not Acme's.
+        assert_eq!(index.resolve("Acme", "Acme PLA").unwrap()["nozzle_temperature"], json!(["999"]));
+        assert_eq!(index.resolve("Zeta", "Zeta PLA").unwrap()["nozzle_temperature"], json!(["220"]));
+        let generic = index.resolve(FILAMENT_LIBRARY, DEFAULT_FILAMENT).unwrap();
+        assert_eq!(generic["filament_type"], json!(["PLA"]));
+    }
+
+    #[test]
+    fn any_vendor_is_the_last_resort() {
+        let mut index = PresetIndex::default();
+        index.insert("Other", json!({"name": "base", "type": "machine", "k": "v"}));
+        index.insert("Acme", json!({"name": "leaf", "inherits": "base", "type": "machine"}));
+        assert_eq!(index.resolve("Acme", "leaf").unwrap()["k"], "v");
+        assert!(index.resolve("Acme", "missing").is_err());
+    }
+
+    #[test]
+    fn process_listing_the_machine_wins_and_prefers_0_20mm_standard() {
+        let index = fixture();
+        // Both `0.20mm Standard @Acme` and `0.12mm Fine @Acme` list the Box; the Ring
+        // processes don't.
+        assert_eq!(index.select_process("Acme", "Acme Box 0.4 nozzle").as_deref(), Some("0.20mm Standard @Acme"));
+    }
+
+    #[test]
+    fn process_named_after_the_machine_and_nozzle_when_none_lists_it() {
+        let index = fixture();
+        // Ring processes match by condition only (empty list); the 0.6 one is another nozzle.
+        assert_eq!(index.select_process("Acme", "Acme Ring 0.4 nozzle").as_deref(), Some("0.20mm Speed @Acme Ring 0.4"));
+    }
+
+    #[test]
+    fn vendor_base_process_is_the_fallback() {
+        let index = fixture();
+        assert_eq!(index.select_process("Zeta", "Zeta Cube 0.4 nozzle").as_deref(), Some("fdm_process_common"));
+        assert_eq!(index.select_process("Nobody", "X 0.4 nozzle"), None);
+    }
+
+    #[test]
+    fn machine_keys_match_orca_suffix_spellings() {
+        let keys = machine_keys("Creality", "Creality Ender-3 V3 SE 0.4 nozzle");
+        assert!(keys.contains(&normalize("Creality Ender3V3SE 0.4")));
+        let keys = machine_keys("Prusa", "Prusa MK4S HF0.4 nozzle");
+        assert!(keys.contains(&normalize("MK4S HF0.4")));
+        assert!(!keys.contains(&normalize("MK4S 0.4")));
+    }
+
+    #[test]
+    fn cli_presets_are_flat_system_presets_compatible_with_the_machine() {
+        let index = fixture();
+        let machine = "Acme Ring 0.4 nozzle";
+        let process = index.cli_preset("Acme", "0.20mm Speed @Acme Ring 0.4", machine).unwrap();
+        assert!(process.get("inherits").is_none());
+        assert_eq!(process["from"], "system");
+        assert_eq!(process["instantiation"], "true");
+        assert_eq!(process["compatible_printers"], json!([machine]));
+        assert_eq!(process["layer_height"], "0.2");
+        let printer = index.cli_preset("Acme", machine, machine).unwrap();
+        assert!(printer.get("inherits").is_none() && printer.get("compatible_printers").is_none());
+        assert_eq!(printer["printable_height"], "250");
+        let filament = index.cli_preset(FILAMENT_LIBRARY, DEFAULT_FILAMENT, machine).unwrap();
+        assert_eq!(filament["compatible_printers"], json!([machine]));
+    }
+
+    #[test]
+    fn empty_bed_exclude_area_list_has_no_rectangles() {
+        // Orca writes an empty exclusion as `["0x0"]` in exported 3MFs (spike 2026-11-01).
+        assert!(exclusion_rects(Some(&json!(["0x0"]))).is_empty());
+        assert!(exclusion_rects(Some(&json!([]))).is_empty());
+        assert!(exclusion_rects(None).is_empty());
     }
 }

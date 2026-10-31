@@ -1,0 +1,2 @@
+{ "type": "machine", "name": "Zeta Cube 0.4 nozzle", "inherits": "fdm_machine_common", "from": "system",
+  "instantiation": "false", "printer_model": "Zeta Cube", "printable_area": ["0x0", "180x0", "180x180", "0x180"], "printable_height": "180" }

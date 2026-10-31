@@ -1,0 +1,2 @@
+{ "type": "process", "name": "0.20mm Speed @Acme Ring 0.6", "inherits": "fdm_process_common", "from": "system",
+  "instantiation": "true", "compatible_printers": [], "compatible_printers_condition": "printer_model==\"Acme Ring\" and nozzle_diameter[0]==0.6" }
