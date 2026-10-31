@@ -111,6 +111,12 @@ class ProfileService(
         }
     }
 
+    /** Разовый профиль своего стола (см. [CustomProfile]); слайсер — локальный Orca из настроек. */
+    fun custom(bed: com.goatpacker.web.dto.CustomBed, projectBed: ProjectBed?): CustomProfile.Built {
+        bed.validate()
+        return CustomProfile.build(objectMapper, bed, projectBed, properties.orcaSlicer)
+    }
+
     fun exists(profileId: String): Boolean = findById(profileId) != null
 
     fun require(profileId: String): ResolvedProfile =
