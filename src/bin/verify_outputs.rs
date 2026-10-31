@@ -43,6 +43,8 @@ use zip::ZipArchive;
 
 const CORE: &str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
 const PRODUCTION: &str = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06";
+/// Float slack for the printable-area containment check only (see its use).
+const EDGE_TOLERANCE_MM: f64 = 1e-6;
 
 /// A verifier failure. `Assertion` is a failed check (the Python raised `AssertionError` with the
 /// same message); `Error` is a tooling failure (the Python crashed with a different exception).
@@ -329,7 +331,17 @@ fn verify(args: &Args) -> Result<Report, Failure> {
             py_f64(args.edge_margin)
         )));
     }
-    let safe_printable = rect_polygon(safe_min_x, safe_min_y, safe_max_x, safe_max_y);
+    // The containment test gets EDGE_TOLERANCE_MM of slack: an object whose flat side sits
+    // exactly on the margin line comes out a few ulps outside after rotation (cos 270° ≈
+    // -1.8e-16; spike 2026-11-01 reported clearance 0.4999999999999982 against a 0.5 margin)
+    // and a strict `covers` rejected a correct layout. 1e-6 mm is far below any printable
+    // distance, so a real violation still fails.
+    let safe_printable = rect_polygon(
+        safe_min_x - EDGE_TOLERANCE_MM,
+        safe_min_y - EDGE_TOLERANCE_MM,
+        safe_max_x + EDGE_TOLERANCE_MM,
+        safe_max_y + EDGE_TOLERANCE_MM,
+    );
     let printable_boundary = LineString::from(closed_ring(&printable_points));
     let exclusion = settings
         .get("bed_exclude_area")
@@ -1120,6 +1132,28 @@ mod tests {
             message.contains("placement 0 violates 0.000 mm printable-area margin"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn placement_touching_the_bed_edge_passes_despite_float_noise() {
+        // Spike 2026-11-01: a flat side exactly on the bed edge at 270° comes out at
+        // x ≈ -1e-15 (cos 270° ≈ -1.8e-16), which a strict `covers` rejected as a margin
+        // violation. The square is 10 mm wide, so x_mm = 5 puts its side on x = 0.
+        let dir = TempDir::new().unwrap();
+        let fixture = write_fixture(&dir, &[(5.0, 70.0, 270.0), (150.0, 160.0, 90.0)], |_, t| t);
+        let report = run(&fixture, 0.5).unwrap();
+        assert!(report.all_inside_printable_area);
+        assert!(report.minimum_edge_clearance_mm < 1e-9);
+    }
+
+    #[test]
+    fn placement_beyond_the_tolerance_still_fails() {
+        let dir = TempDir::new().unwrap();
+        let fixture = write_fixture(&dir, &[(4.999, 70.0, 270.0), (150.0, 160.0, 90.0)], |_, t| t);
+        let Failure::Assertion(message) = run(&fixture, 0.5).unwrap_err() else {
+            panic!("expected an assertion failure");
+        };
+        assert!(message.contains("placement 0 violates 0.000 mm printable-area margin"), "{message}");
     }
 
     #[test]
