@@ -107,6 +107,8 @@ fn protected_ids(profiles_dir: &Path) -> AppResult<Vec<String>> {
                 .map(str::to_owned)
                 .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()));
             ids.extend(id);
+            // Also by printer_name: it equals the catalog's printer_model of the same printer.
+            ids.extend(value.get("printer_name").and_then(Value::as_str).map(str::to_owned));
         }
     }
     Ok(ids)
@@ -204,19 +206,44 @@ fn build_drafts(
     let mut out = Vec::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut skip = |reason: &str| *skipped.entry(reason.to_owned()).or_default() += 1;
+    // One profile per (vendor, printer_model): the 0.4 nozzle preset, else the smallest nozzle,
+    // ties by name. Skip reasons below are judged on that chosen preset only.
+    let mut groups: BTreeMap<(String, String), Vec<(f64, String, Map<String, Value>)>> = BTreeMap::new();
     for machine in index.machines() {
         if !only_vendors.is_empty() && !only_vendors.contains(&machine.vendor) {
-            continue;
-        }
-        let id = slug(&machine.name);
-        if protected_ids.contains(&id) {
-            skip("protected hand-made profile");
             continue;
         }
         let Ok(merged) = index.resolve(&machine.vendor, &machine.name) else {
             skip("unresolvable inherits");
             continue;
         };
+        let model = merged
+            .get("printer_model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&machine.name)
+            .to_owned();
+        let nozzle = first_number(merged.get("nozzle_diameter")).unwrap_or(f64::INFINITY);
+        groups
+            .entry((machine.vendor.clone(), model))
+            .or_default()
+            .push((nozzle, machine.name.clone(), merged));
+    }
+    for ((vendor, model), mut candidates) in groups {
+        let is_default = |n: f64| (n - 0.4).abs() < 1e-9;
+        candidates.sort_by(|a, b| {
+            is_default(b.0)
+                .cmp(&is_default(a.0))
+                .then(a.0.total_cmp(&b.0))
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        let (_, machine_name, merged) = candidates.swap_remove(0);
+        let id = slug(&model);
+        // Protected by id or by printer_name, so a printer never gets two profiles.
+        if protected_ids.contains(&id) || protected_ids.contains(&model) {
+            skip("protected hand-made profile");
+            continue;
+        }
         let Some(points) = merged.get("printable_area").and_then(parse_points) else {
             skip("no printable_area");
             continue;
@@ -229,20 +256,14 @@ fn build_drafts(
             skip("no printable_height");
             continue;
         };
-        let model = merged
-            .get("printer_model")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&machine.name)
-            .to_owned();
 
         let mut draft = Map::new();
         draft.insert("id".into(), json!(id));
-        draft.insert("vendor".into(), json!(machine.vendor));
+        draft.insert("vendor".into(), json!(vendor));
         draft.insert("printer_name".into(), json!(model));
         draft.insert("printer_model".into(), json!(model));
-        draft.insert("orca_machine".into(), json!(machine.name));
-        let (kind, path) = slicer_for(&machine.vendor, &model);
+        draft.insert("orca_machine".into(), json!(machine_name));
+        let (kind, path) = slicer_for(&vendor, &model);
         draft.insert("slicer_kind".into(), json!(kind));
         draft.insert("slicer_path".into(), json!(path));
         draft.insert("blank_start_gcode_for_cli".into(), json!(false));
@@ -260,7 +281,7 @@ fn build_drafts(
         draft.insert("purge_lines".into(), json!([]));
         draft.insert("tower_marker_style".into(), json!("wipe_tower"));
         draft.insert("tower_line_width_mm".into(), json!(0.5));
-        if let Some(outline) = plate_outline(index, vendors_root, &machine.vendor, &model, area) {
+        if let Some(outline) = plate_outline(index, vendors_root, &vendor, &model, area) {
             draft.insert("plate_outline".into(), json!(outline));
         }
         draft.insert(
@@ -740,7 +761,7 @@ mod tests {
         let index = PresetIndex::load(&root).unwrap();
         let drafts = drafts(&index, &root, "v2.4.2", "2026-11-01", &[]);
         let ids: Vec<_> = drafts.iter().map(|d| d["id"].as_str().unwrap()).collect();
-        assert_eq!(ids, vec!["acme_box_0_4_nozzle", "acme_ring_0_4_nozzle"]);
+        assert_eq!(ids, vec!["acme_box", "acme_ring"]);
         let first = &drafts[0];
         assert_eq!(first["vendor"], "Acme");
         assert_eq!(first["printer_model"], "Acme Box");
@@ -753,6 +774,45 @@ mod tests {
     }
 
     #[test]
+    fn one_draft_per_printer_model_prefers_the_0_4_nozzle() {
+        let root = root();
+        let index = PresetIndex::load(&root).unwrap();
+        let drafts = drafts(&index, &root, "v2.4.2", "2026-11-01", &[]);
+        let boxes: Vec<_> = drafts.iter().filter(|d| d["printer_model"] == "Acme Box").collect();
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0]["orca_machine"], "Acme Box 0.4 nozzle");
+        assert_eq!(boxes[0]["id"], "acme_box");
+    }
+
+    #[test]
+    fn smallest_nozzle_wins_without_a_0_4() {
+        let mut index = PresetIndex::default();
+        for (name, nozzle) in [("Q 0.8", "0.8"), ("Q 0.25", "0.25"), ("Q 0.6", "0.6")] {
+            index.insert(
+                "V",
+                json!({"type":"machine","name":name,"instantiation":"true","printer_model":"Q",
+                       "nozzle_diameter":[nozzle],"printable_area":["0x0","100x0","100x100","0x100"],
+                       "printable_height":"100"}),
+            );
+        }
+        let (drafts, _) = build_drafts(&index, Path::new("/nonexistent"), "t", "d", &[], &[]);
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0]["orca_machine"], "Q 0.25");
+    }
+
+    #[test]
+    fn hand_made_printer_name_protects_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("x.json"), r#"{"id":"hand","printer_name":"Acme Box"}"#).unwrap();
+        let protected = protected_ids(dir.path()).unwrap();
+        let root = root();
+        let index = PresetIndex::load(&root).unwrap();
+        let (drafts, skipped) = build_drafts(&index, &root, "t", "d", &protected, &[]);
+        assert!(drafts.iter().all(|d| d["printer_model"] != "Acme Box"));
+        assert_eq!(skipped["protected hand-made profile"], 1);
+    }
+
+    #[test]
     fn hand_made_profiles_are_never_overwritten() {
         let root = root();
         let index = PresetIndex::load(&root).unwrap();
@@ -761,7 +821,7 @@ mod tests {
             &root,
             "v2.4.2",
             "2026-11-01",
-            &["acme_box_0_4_nozzle".to_owned()],
+            &["acme_box".to_owned()],
         );
         assert_eq!(drafts.len(), 1);
     }

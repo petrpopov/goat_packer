@@ -1,0 +1,2 @@
+{ "type": "machine", "name": "Acme Box 0.6 nozzle", "inherits": "Acme Box 0.4 nozzle", "from": "system",
+  "instantiation": "true", "nozzle_diameter": ["0.6"] }

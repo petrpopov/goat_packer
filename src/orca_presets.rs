@@ -301,7 +301,7 @@ mod tests {
     fn vendor_comes_from_the_folder_and_only_instantiable_machines_are_listed() {
         let index = fixture();
         let machines: Vec<(String, String)> = index.machines().map(|m| (m.vendor, m.name)).collect();
-        let expected = [("Acme", "Acme Box 0.4 nozzle"), ("Acme", "Acme Ring 0.4 nozzle")].map(|(v, n)| (v.to_owned(), n.to_owned()));
+        let expected = [("Acme", "Acme Box 0.4 nozzle"), ("Acme", "Acme Box 0.6 nozzle"), ("Acme", "Acme Ring 0.4 nozzle")].map(|(v, n)| (v.to_owned(), n.to_owned()));
         assert_eq!(machines, expected);
     }
 
