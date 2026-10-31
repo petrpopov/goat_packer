@@ -448,6 +448,7 @@ mod tests {
             Point { x: -31.5, y: -26.5 },
         ];
         let footprint = Footprint {
+            support_landing_loops: Vec::new(),
             body_loops: vec![loops.clone()],
             bed_loops: None,
             loops: vec![loops.clone()],

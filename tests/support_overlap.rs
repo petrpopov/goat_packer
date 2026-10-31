@@ -26,6 +26,7 @@ fn square(half: f64) -> Vec<Point> {
 
 fn skirted() -> Footprint {
     Footprint {
+        support_landing_loops: Vec::new(),
         loops: vec![square(FULL_HALF)],
         body_loops: vec![square(BODY_HALF)],
         bed_loops: None,
@@ -39,6 +40,7 @@ fn skirted() -> Footprint {
 
 fn options(support_overlap_mm: Option<f64>) -> PackOptions {
     PackOptions {
+        body_exclusions: Vec::new(),
         // One row of objects: every neighbour pair is a horizontal pair. 34.5 mm fits five
         // at the unlimited 6.5 mm pitch but only four at the 8 mm pitch of X = 0.
         bed: Rect::new(0.0, 0.0, 34.5, 9.0),

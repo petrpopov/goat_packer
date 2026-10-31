@@ -31,6 +31,7 @@ pub fn transform(fp: &Footprint, degrees: f64, dx: f64, dy: f64, reorder: bool) 
     let mut result = fp.clone();
     result.loops = map(&fp.loops);
     result.body_loops = map(&fp.body_loops);
+    result.support_landing_loops = map(&fp.support_landing_loops);
     result.bed_loops = fp.bed_loops.as_ref().map(|l| map(l));
     let points: Vec<_> = result.loops.iter().flatten().collect();
     result.width = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)

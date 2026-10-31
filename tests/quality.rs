@@ -11,6 +11,7 @@ fn p1s_search_meets_existing_seventeen_model_baseline() {
     )))
     .unwrap();
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 256.0, 256.0),
         exclusions: vec![
             Rect::new(0.0, 0.0, 18.0, 28.0),
@@ -46,6 +47,7 @@ fn u1_search_keeps_eighteen_models_with_edge_margin_and_purge_line() {
     )))
     .unwrap();
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.5, 1.0, 270.5, 271.0).inset(3.5).unwrap(),
         exclusions: vec![axis_aligned_line_keepout(85.0, 1.0, 185.0, 1.0, 0.5).unwrap()],
         resolution: 0.5,
@@ -78,6 +80,7 @@ fn fixture_options() -> PackOptions {
     let mut exclusions = profile.fixed_keepouts(1.7).unwrap();
     exclusions.push(Rect::new(225.85, 200.10, 246.15, 252.15));
     PackOptions {
+        body_exclusions: Vec::new(),
         bed: profile.usable_bed().unwrap(),
         exclusions,
         resolution: 0.25,

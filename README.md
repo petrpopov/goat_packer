@@ -60,8 +60,19 @@ configured in the printer profile for probing/final slicing.
 
 Writes `<output>.verification.json` with the object count and prime tower bounds, plus
 `supports_detected` (the probe patch reaches past the silhouette, orientation locked) and the
-echoed `support_overlap_mm`, and a `time` block (measured samples, chosen count, corrected
-seconds; with a window also `heat_zone` and the tower relocation).
+echoed `support_overlap_mm`, the support check (`support_rule`, `support_patch_learned`,
+`support_collisions`), `tower_relocated_to` when the tower moved, and a `time` block (measured
+samples, chosen count, corrected seconds; with a window also `heat_zone`).
+
+### Supports and the prime tower
+
+With supports detected, a neighbour's supports may reach under an object's silhouette but never
+onto what it prints on the bed (its first-layer body); silhouettes keep `--clearance` from each
+other, and supports may enter the tower area (bodies may not). After the final slice the packer
+checks every layer of the G-code for supports touching a foreign body; on contact it widens the
+reserved support patch to what the slicer really printed and repacks, then falls back to the
+strict rule (supports off foreign silhouettes). Without a time window the tower position is
+chosen among the source position and the four bed corners, whichever packs most objects.
 
 ### Time window
 

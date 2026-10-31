@@ -15,6 +15,7 @@ use goat_packer::{
         detect_slicer_kind_from_printer_model, load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
     },
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
+    gcode_collisions::{PlateAnalysis, SupportCollision, analyze_plate},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     plate_centre::{
         RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, ensure_relocated_tower_clear,
@@ -22,6 +23,7 @@ use goat_packer::{
         relocate_keepout, relocate_wipe_tower_in_3mf, smallest_containing_zone,
         tower_corner_error_mm, union_rect,
     },
+    progress::{self, RepackReason, Stage, expected_reslice_seconds, expected_slice_seconds},
     print_time::{
         TimeCorrection, TimeSample, WindowFit, corrected_seconds, count_for_window,
         shrink_count, slicer_change_seconds,
@@ -147,6 +149,14 @@ struct ColoredPackReport {
     supports_detected: bool,
     /// Echo of `--support-overlap-mm`; `null` = unlimited.
     support_overlap_mm: Option<f64>,
+    /// Which pair rule packed the written plate: `landing` (foreign supports may reach under
+    /// a silhouette, not onto its first-layer body), `silhouette` (the strict two-zone rule:
+    /// no supports, or the fallback after the landing rule failed the G-code check).
+    support_rule: SupportRule,
+    /// The reserved support patch was widened to what the final slice really printed.
+    support_patch_learned: bool,
+    /// Supports touching a foreign body in the written plate's G-code (normally empty).
+    support_collisions: Vec<SupportCollision>,
 }
 
 /// `time` block of the verification report. `samples` lists every plate whose time was
@@ -389,8 +399,16 @@ fn run() -> AppResult<()> {
         }
         None => args.source_3mf.clone(),
     };
-    eprintln!("probing prime tower position (slicing 1 object)...");
+    progress::stage(
+        Stage::ProbeSlice,
+        "probing prime tower position (slicing 1 object)...",
+        None,
+        Some(1),
+    );
+    let probe_started = std::time::Instant::now();
     let probe = slice_project(&profile, &probe_project, 1, &args.work_dir, "probe")?;
+    // Scales the expected duration of every later slice for the progress bar.
+    let probe_seconds = probe_started.elapsed().as_secs_f64();
     // Spec step 1: with a window, a single object that already overruns it fails here, before
     // the expensive packing.
     let probe_sample = match window_s {
@@ -522,10 +540,14 @@ fn run() -> AppResult<()> {
                 // lying animal's raised horns; on P1S the patch is inset ~0.4 mm per side,
                 // so a bare-patch layout glued 24 goat pairs by up to 1.7 mm²). The body
                 // zone is the mesh outline — walls and walls' strips are all inset
-                // representations of the same body.
+                // representations of the same body — and silhouettes keep clearance from
+                // each other. A neighbour's supports only must not land on what this object
+                // prints on the bed: its first-layer body (`support_landing_loops`; see the
+                // field for the 40-goat plate that proved the silhouette rule too strict).
                 let mut combined = patch.clone();
                 combined.loops = union_loops(&patch, &silhouette);
                 combined.body_loops = silhouette.loops.clone();
+                combined.support_landing_loops = patch.body_loops.clone();
                 // The patch is the measured print (tips included), so purge checks run
                 // against its real extent already — no extra overshoot.
                 (combined, true, 0.0)
@@ -552,13 +574,14 @@ fn run() -> AppResult<()> {
     } else {
         None
     };
-    let mut keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
-    let relocation: Option<RelocatedTower> = match (centre, probe_tower) {
+    let fixed_keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
+    let usable_bed = profile.usable_bed()?;
+    let centre_relocation: Option<RelocatedTower> = match (centre, probe_tower) {
         (Some(centre), Some(tower)) => {
-            let moved = relocate_keepout(tower.keepout, centre, profile.usable_bed()?);
+            let moved = relocate_keepout(tower.keepout, centre, usable_bed);
             // The clamp only knows the bed; a centre near an exclusion corner or purge line
             // would put the printed tower on it.
-            ensure_relocated_tower_clear(moved.keepout, &keepouts)?;
+            ensure_relocated_tower_clear(moved.keepout, &fixed_keepouts)?;
             println!(
                 "centre-out plate around ({:.1}, {:.1}): prime tower moves by ({:+.1}, {:+.1}) mm; \
                  keepout {:.2},{:.2} → {:.2},{:.2}",
@@ -582,13 +605,6 @@ fn run() -> AppResult<()> {
         }
         (None, _) => None,
     };
-    let tower_shift = relocation.map(|relocated| relocated.shift);
-    let reserved_tower_keepout = relocation
-        .map(|relocated| relocated.keepout)
-        .or(probe_tower.map(|tower| tower.keepout));
-    if let Some(keepout) = reserved_tower_keepout {
-        keepouts.push(keepout);
-    }
     // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
     // silhouette: the slicer's bed-collision warning measures the full model extent, which
     // hangs below the printed patch on a lying animal (its tail), silently eating the edge
@@ -602,123 +618,228 @@ fn run() -> AppResult<()> {
     if footprint.bed_loops.is_none() {
         footprint.bed_loops = Some(footprint.loops.clone());
     }
-    eprintln!("packing ({} attempts, seed {})...", args.attempts, args.seed);
-    let mut packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
-    if let Some(centre) = centre {
-        order_centre_out(&footprint, &mut packed, centre);
-    }
-    eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
-    build_colored_project(
-        &args,
-        &profile,
-        &footprint_stl,
-        &footprint,
-        &packed,
-        &keepouts,
-        tower_shift,
-    )?;
-    eprintln!("slicing final plate ({} objects)...", packed.placements.len());
-    let mut final_slice = slice_project(
-        &profile,
-        &args.output,
-        packed.placements.len(),
-        &args.work_dir,
-        "final_first",
-    )?;
-    let mut final_tower =
-        parse_prime_tower_bounds(&final_slice.gcode, profile.tower_line_width_mm, args.clearance);
-    // Checked before the tower evaluation: a slicer that silently dropped the relocation (e.g.
-    // a setting reset to the system value because it is not listed in
-    // `different_settings_to_system`) prints the tower at the source corner, which would read
-    // as a "grown" tower and trigger a pointless repack instead of naming the cause.
-    let mut tower_relocation_error_mm = None;
-    if let (Some(relocated), Some(tower)) = (relocation, final_tower) {
-        let error = tower_corner_error_mm(tower.keepout, relocated.keepout);
-        let (mx, my) = (tower.keepout.min_x, tower.keepout.min_y);
-        if error > TOWER_TARGET_TOLERANCE_MM {
-            return Err(format!(
-                "slicer ignored the relocated wipe tower (wipe_tower_x/y): final tower corner \
-                 ({mx:.1}, {my:.1}) is {error:.1} mm from the target ({:.1}, {:.1})",
-                relocated.keepout.min_x, relocated.keepout.min_y,
-            )
-            .into());
-        }
-        println!(
-            "relocated prime tower confirmed in the final slice: corner ({mx:.1}, {my:.1}), \
-             {error:.1} mm from the target"
-        );
-        tower_relocation_error_mm = Some(error);
-    }
-    let mut repacked = false;
-    if evaluate_final_tower(probe_tower, final_tower, reserved_tower_keepout)?
-        == TowerOutcome::RepackRequired
-    {
-        let grown_keepout = final_tower.unwrap().keepout;
-        // The probe tower is sized by ONE object's colour changes; a full plate's tower
-        // grows. But only growth that physically reaches a placement invalidates the layout:
-        // repacking on bare keepout arithmetic cost a real object (29 → 28) on plates where
-        // the grown strip hit nothing at all. The final slice already ran clean on this
-        // exact file, so an untouched layout is already validated.
-        let collision = packed.placements.iter().enumerate().find(|(_, placement)| {
-            loops_touch_rect(&placement_world_loops(&footprint, placement), grown_keepout)
-        });
-        if let Some((index, _)) = collision {
-            println!(
-                "final tower outgrew the probe keepout and reaches placement {index}; \
-                 repacking once"
-            );
-            keepouts.pop();
-            keepouts.push(grown_keepout);
-            eprintln!("re-packing ({} attempts, seed {})...", args.attempts, args.seed);
-            packed = pack(&args, &profile, &footprint, lock_orientation, keepouts.clone())?;
-            if let Some(centre) = centre {
-                order_centre_out(&footprint, &mut packed, centre);
-            }
-            eprintln!("packed {} objects; assembling 3MF...", packed.placements.len());
-            build_colored_project(
-                &args,
-                &profile,
-                &footprint_stl,
-                &footprint,
-                &packed,
-                &keepouts,
-                tower_shift,
-            )?;
-            eprintln!("slicing repacked plate ({} objects)...", packed.placements.len());
-            final_slice = slice_project(
-                &profile,
-                &args.output,
-                packed.placements.len(),
-                &args.work_dir,
-                "final_repacked",
-            )?;
-            final_tower = parse_prime_tower_bounds(
-                &final_slice.gcode,
-                profile.tower_line_width_mm,
-                args.clearance,
-            );
-            if evaluate_final_tower(probe_tower, final_tower, keepouts.last().copied())?
-                == TowerOutcome::RepackRequired
-            {
-                return Err("prime tower changed again after the permitted re-pack".into());
-            }
-            repacked = true;
+    let mut plan = PackPlan {
+        footprint,
+        lock_orientation,
+        fixed_keepouts,
+        tower_keepout: centre_relocation
+            .map(|relocated| relocated.keepout)
+            .or(probe_tower.map(|tower| tower.keepout)),
+        relocation: centre_relocation,
+        rule: if lock_orientation {
+            SupportRule::Landing
         } else {
+            SupportRule::Silhouette
+        },
+        patch_learned: false,
+    };
+    progress::stage(
+        Stage::Packing,
+        &format!("packing ({} attempts, seed {})...", args.attempts, args.seed),
+        None,
+        None,
+    );
+    // Without centre-out the tower may move: the source position competes with the bed
+    // corners and the densest plate wins (spec 2026-10-31 rule 3).
+    let mut tower_from_contest = false;
+    let mut packed = match (centre, probe_tower) {
+        (None, Some(tower)) => {
+            let (relocation, packed) = choose_tower_position(&args, &profile, &plan, tower.keepout)?;
+            if let Some(relocated) = relocation {
+                plan.tower_keepout = Some(relocated.keepout);
+                plan.relocation = Some(relocated);
+                tower_from_contest = true;
+            }
+            packed
+        }
+        _ => plan.pack(&args, &profile)?,
+    };
+    let mut tower_regrown = false;
+    let mut repacked = false;
+    let mut final_slice;
+    let mut final_tower;
+    let mut tower_relocation_error_mm;
+    let mut support_collisions;
+    // (seconds, objects) of the last full-plate slice: later slices are expected to scale it.
+    let mut measured_slice: Option<(f64, usize)> = None;
+    let expected_plate_seconds = |measured: Option<(f64, usize)>, count: usize| match measured {
+        Some((seconds, objects)) => expected_reslice_seconds(seconds, objects, count),
+        None => expected_slice_seconds(probe_seconds, count),
+    };
+    loop {
+        if let Some(centre) = centre {
+            order_centre_out(&plan.footprint, &mut packed, centre);
+        }
+        let count = packed.placements.len();
+        progress::stage(
+            Stage::Assembling,
+            &format!("packed {count} objects; assembling 3MF..."),
+            None,
+            Some(count),
+        );
+        plan.build(&args, &profile, &footprint_stl, &packed)?;
+        progress::stage(
+            Stage::FinalSlice,
+            &format!("slicing final plate ({count} objects)..."),
+            Some(expected_plate_seconds(measured_slice, count)),
+            Some(count),
+        );
+        let label = if repacked { "final_repacked" } else { "final_first" };
+        let slice_started = std::time::Instant::now();
+        final_slice = match slice_project(&profile, &args.output, count, &args.work_dir, label) {
+            Ok(slice) => {
+                measured_slice = Some((slice_started.elapsed().as_secs_f64(), count));
+                slice
+            }
+            // A tower the contest moved to a bed corner is the one untested input here: when
+            // the slicer rejects that plate, the source position (which the probe sliced
+            // fine) gets one repack before the error is final.
+            Err(error) if tower_from_contest => {
+                println!(
+                    "final slice failed with the tower moved to a corner; repacking with the \
+                     tower at its source position\n  {}",
+                    error.to_string().lines().take(2).collect::<Vec<_>>().join("\n  ")
+                );
+                tower_from_contest = false;
+                plan.relocation = None;
+                plan.tower_keepout = probe_tower.map(|tower| tower.keepout);
+                repacked = true;
+                progress::repack(
+                    RepackReason::TowerCornerFailed,
+                    &format!("re-packing ({} attempts, seed {})...", args.attempts, args.seed),
+                );
+                packed = plan.pack(&args, &profile)?;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        final_tower =
+            parse_prime_tower_bounds(&final_slice.gcode, profile.tower_line_width_mm, args.clearance);
+        // Checked before the tower evaluation: a slicer that silently dropped the relocation
+        // (e.g. a setting reset to the system value because it is not listed in
+        // `different_settings_to_system`) prints the tower at the source corner, which would
+        // read as a "grown" tower and trigger a pointless repack instead of naming the cause.
+        tower_relocation_error_mm = None;
+        if let (Some(relocated), Some(tower)) = (plan.relocation, final_tower) {
+            let error = tower_corner_error_mm(tower.keepout, relocated.keepout);
+            let (mx, my) = (tower.keepout.min_x, tower.keepout.min_y);
+            if error > TOWER_TARGET_TOLERANCE_MM {
+                return Err(format!(
+                    "slicer ignored the relocated wipe tower (wipe_tower_x/y): final tower corner \
+                     ({mx:.1}, {my:.1}) is {error:.1} mm from the target ({:.1}, {:.1})",
+                    relocated.keepout.min_x, relocated.keepout.min_y,
+                )
+                .into());
+            }
+            println!(
+                "relocated prime tower confirmed in the final slice: corner ({mx:.1}, {my:.1}), \
+                 {error:.1} mm from the target"
+            );
+            tower_relocation_error_mm = Some(error);
+        }
+        if evaluate_final_tower(probe_tower, final_tower, plan.tower_keepout)?
+            == TowerOutcome::RepackRequired
+        {
+            let grown_keepout = final_tower.unwrap().keepout;
+            // The probe tower is sized by ONE object's colour changes; a full plate's tower
+            // grows. But only growth that physically reaches a placement's body invalidates
+            // the layout (supports may enter the tower area, see `body_exclusions`):
+            // repacking on bare keepout arithmetic cost a real object (29 → 28) on plates
+            // where the grown strip hit nothing at all. The final slice already ran clean on
+            // this exact file, so an untouched layout is already validated.
+            let collision = packed.placements.iter().position(|placement| {
+                loops_touch_rect(&placement_body_loops(&plan.footprint, placement), grown_keepout)
+            });
+            if let Some(index) = collision {
+                if tower_regrown {
+                    return Err("prime tower changed again after the permitted re-pack".into());
+                }
+                tower_regrown = true;
+                repacked = true;
+                println!(
+                    "final tower outgrew the probe keepout and reaches placement {index}; \
+                     repacking once"
+                );
+                plan.tower_keepout = Some(grown_keepout);
+                progress::repack(
+                    RepackReason::TowerGrown,
+                    &format!("re-packing ({} attempts, seed {})...", args.attempts, args.seed),
+                );
+                packed = plan.pack(&args, &profile)?;
+                continue;
+            }
             println!(
                 "final tower outgrew the probe keepout (y up to {:.1} mm) but reaches no \
                  placement; keeping the layout",
                 grown_keepout.max_y
             );
         }
+        progress::stage(
+            Stage::GcodeCheck,
+            &format!("checking supports layer by layer ({count} objects)..."),
+            Some(5.0),
+            Some(count),
+        );
+        let analysis = analyze_plate(&final_slice.gcode);
+        support_collisions = analysis.collisions.clone();
+        if analysis.labelled_lines == 0 {
+            // Without object labels (slicer's label_objects off) lines cannot be attributed;
+            // say so instead of reporting a clean plate.
+            println!("support check skipped: the G-code carries no object labels");
+            break;
+        }
+        if support_collisions.is_empty() {
+            println!(
+                "support check: {} layers, no support touches a foreign body",
+                analysis.layers
+            );
+            break;
+        }
+        describe_collisions(&support_collisions);
+        if !plan.lock_orientation {
+            // No support zone was reserved at all (support-free probe): nothing to learn.
+            break;
+        }
+        // The slicer re-generated bigger supports than the probe showed (the realization
+        // drifts between slices). First learn what it really prints and repack; if that is
+        // not enough either, fall back to the strict rule (supports kept off the whole
+        // foreign silhouette) — what the packer always did before the landing rule.
+        let reason = if !plan.patch_learned {
+            RepackReason::SupportContact
+        } else {
+            RepackReason::SupportStrict
+        };
+        if !plan.patch_learned {
+            let learned = learn_support_patch(&plan.footprint, &packed, &analysis)?;
+            println!(
+                "support check: learned the final slice's support patch ({:.1}x{:.1} mm, \
+                 probe {:.1}x{:.1} mm); repacking",
+                learned.width, learned.height, plan.footprint.width, plan.footprint.height
+            );
+            plan.footprint = learned;
+            plan.patch_learned = true;
+        } else if plan.rule == SupportRule::Landing {
+            println!(
+                "support check: still touching after learning the patch; repacking with the \
+                 strict rule (supports kept off foreign silhouettes)"
+            );
+            plan.rule = SupportRule::Silhouette;
+        } else {
+            eprintln!(
+                "WARNING: supports still touch foreign bodies under the strict rule; keeping \
+                 the layout (listed in the report as support_collisions)"
+            );
+            break;
+        }
+        repacked = true;
+        progress::repack(
+            reason,
+            &format!("re-packing ({} attempts, seed {})...", args.attempts, args.seed),
+        );
+        packed = plan.pack(&args, &profile)?;
     }
 
-    // The keepout this layout was validated against: the probe's (or the grown one after a
-    // repack). A grown tower that reached no placement left the layout as is.
-    let validated_tower_keepout = if repacked {
-        keepouts.last().copied()
-    } else {
-        reserved_tower_keepout
-    };
+    let validated_tower_keepout = plan.tower_keepout;
     let time = match (window_s, probe_sample) {
         (Some(window_s), Some(probe_sample)) => {
             let estimate = final_slice
@@ -729,21 +850,19 @@ fn run() -> AppResult<()> {
                 time_sample(packed.placements.len(), estimate, slicer_change_s, &correction);
             let full = packed.clone();
             let mut window_tower = None;
+            let mut window_collisions = None;
             let choice = fit_window(probe_sample, max_sample, window_s, |count| {
                 // A prefix of a valid layout is valid (same rule as the scheduler's
                 // subset_3mf), and packing order puts the kept objects together.
                 let mut prefix = full.clone();
                 prefix.placements.truncate(count);
-                build_colored_project(
-                    &args,
-                    &profile,
-                    &footprint_stl,
-                    &footprint,
-                    &prefix,
-                    &keepouts,
-                    tower_shift,
-                )?;
-                eprintln!("slicing time-window plate ({count} objects)...");
+                plan.build(&args, &profile, &footprint_stl, &prefix)?;
+                progress::stage(
+                    Stage::WindowSlice,
+                    &format!("slicing time-window plate ({count} objects)..."),
+                    Some(expected_plate_seconds(measured_slice, count)),
+                    Some(count),
+                );
                 let slice = slice_project(
                     &profile,
                     &args.output,
@@ -764,7 +883,7 @@ fn run() -> AppResult<()> {
                     // nothing is accepted for the same reason as on the max plate.
                     let grown = tower.unwrap().keepout;
                     if prefix.placements.iter().any(|placement| {
-                        loops_touch_rect(&placement_world_loops(&footprint, placement), grown)
+                        loops_touch_rect(&placement_body_loops(&plan.footprint, placement), grown)
                     }) {
                         return Err(format!(
                             "prime tower of the {count}-object time-window plate outgrew the \
@@ -777,6 +896,11 @@ fn run() -> AppResult<()> {
                     format!("time-window slice ({count} objects) estimate unavailable: {error}")
                 })?;
                 window_tower = Some(tower);
+                // A prefix drops objects, and the slicer re-generates every support: check the
+                // plate actually written, report (not repack) what still touches.
+                let collisions = analyze_plate(&slice.gcode).collisions;
+                describe_collisions(&collisions);
+                window_collisions = Some(collisions);
                 Ok(time_sample(count, &estimate, slicer_change_s, &correction))
             })?;
             let mut samples = vec![probe_sample, max_sample];
@@ -784,6 +908,8 @@ fn run() -> AppResult<()> {
                 Some(choice) => {
                     packed.placements.truncate(choice.count);
                     final_tower = window_tower.expect("a chosen window plate was sliced");
+                    support_collisions =
+                        window_collisions.expect("a chosen window plate was checked");
                     samples.extend(choice.samples);
                     *samples.last().expect("window samples are non-empty")
                 }
@@ -834,7 +960,8 @@ fn run() -> AppResult<()> {
 
     // Zone report for window plates only: a max-count plate fills the bed by construction.
     let heat_zone = if window_s.is_some() {
-        let (bbox, zone) = heat_zone_of(&profile, &footprint, &packed, validated_tower_keepout);
+        let (bbox, zone) =
+            heat_zone_of(&profile, &plan.footprint, &packed, validated_tower_keepout);
         if let (false, Some(bbox)) = (profile.heat_zones.is_empty(), bbox) {
             println!(
                 "heat zone: {} (objects + tower x [{:.1}, {:.1}], y [{:.1}, {:.1}])",
@@ -861,7 +988,7 @@ fn run() -> AppResult<()> {
         paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
         time,
         heat_zone,
-        tower_relocated_to: relocation.map(|relocated| {
+        tower_relocated_to: plan.relocation.map(|relocated| {
             [
                 (relocated.keepout.min_x + relocated.keepout.max_x) * 0.5,
                 (relocated.keepout.min_y + relocated.keepout.max_y) * 0.5,
@@ -872,7 +999,11 @@ fn run() -> AppResult<()> {
         // branch: the patch carries a support zone beyond the body.
         supports_detected: lock_orientation,
         support_overlap_mm: args.support_overlap_mm,
+        support_rule: plan.rule,
+        support_patch_learned: plan.patch_learned,
+        support_collisions,
     };
+    progress::stage(Stage::Writing, "writing the verification report...", None, None);
     let report_path = args.output.with_extension("verification.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
     println!(
@@ -993,16 +1124,222 @@ fn derive_embedded_stl(source_3mf: &Path, output_stl: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Which pair rule the packer applies between two objects' supports and bodies.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SupportRule {
+    /// A foreign patch must not touch the first-layer body (`support_landing_loops`);
+    /// silhouettes keep clearance from each other.
+    Landing,
+    /// The plain two-zone rule: a foreign patch must not touch the whole silhouette. Used
+    /// for support-free footprints and as the fallback when the landing rule fails the
+    /// final G-code check twice.
+    Silhouette,
+}
+
+/// Everything one packing pass depends on; the verify loop in `run` mutates it between passes
+/// (grown tower, learned support patch, strict rule).
+struct PackPlan {
+    footprint: Footprint,
+    lock_orientation: bool,
+    /// Bed exclusion corners and purge-line strips: the full-extent bbox must clear them.
+    fixed_keepouts: Vec<Rect>,
+    /// The reserved prime-tower area: only the model body must clear it (supports purge with
+    /// the tower area, see `PackOptions::body_exclusions`).
+    tower_keepout: Option<Rect>,
+    /// Set when the tower moves (centre-out plate or a better bed corner): the keepout the
+    /// final slice is checked against and the `wipe_tower_x/y` shift.
+    relocation: Option<RelocatedTower>,
+    rule: SupportRule,
+    patch_learned: bool,
+}
+
+impl PackPlan {
+    /// The footprint the current rule packs: under the strict rule the landing zone is the
+    /// whole silhouette again.
+    fn rule_footprint(&self) -> Footprint {
+        let mut footprint = self.footprint.clone();
+        if self.rule == SupportRule::Silhouette {
+            footprint.support_landing_loops.clear();
+        }
+        footprint
+    }
+
+    fn keepouts(&self) -> Vec<Rect> {
+        self.fixed_keepouts.iter().copied().chain(self.tower_keepout).collect()
+    }
+
+    fn pack(&self, args: &Args, profile: &PrinterProfile) -> AppResult<PackResult> {
+        pack(args, profile, &self.rule_footprint(), self.lock_orientation, &self.fixed_keepouts, self.tower_keepout, true)
+    }
+
+    fn build(
+        &self,
+        args: &Args,
+        profile: &PrinterProfile,
+        footprint_stl: &Path,
+        packed: &PackResult,
+    ) -> AppResult<()> {
+        build_colored_project(
+            args,
+            profile,
+            footprint_stl,
+            &self.footprint,
+            packed,
+            &self.keepouts(),
+            self.relocation.map(|relocated| relocated.shift),
+        )
+    }
+}
+
+/// Fraction of the probe tower's depth reserved above a corner-placed tower for its growth
+/// on the full plate: a P1S goat tower grew 18.5 → 23.2 mm (×1.25) from 1 to 40 objects, and
+/// the tower grows one-sided from `wipe_tower_y`. A top corner without this room would push
+/// the grown tower off the bed.
+const CORNER_TOWER_GROWTH: f64 = 0.3;
+
+/// Gap between a corner-placed tower keepout and the usable bed edge. A keepout flush with
+/// the bed edge failed BambuStudio's final slice ("Found G-code outside of the printable
+/// area ... try moving the wipe tower further inside": it checks the tower with conservative
+/// wipe/brim margins), while the user's hand-placed P1S corner tower printed with its keepout
+/// 5.2 mm from the right edge and 8 mm from the top. A slice that still fails with a moved
+/// tower falls back to the source position (see `run`).
+const CORNER_TOWER_INSET_MM: f64 = 6.0;
+
+/// Spec 2026-10-31 rule 3: the source tower position competes with the four usable-bed
+/// corners; the densest plate wins, ties keep the source position (then the corner order).
+/// A corner keepout reserves the growth room above the tower (`CORNER_TOWER_GROWTH`), and a
+/// corner on a fixed keepout (P1S exclusion corner, purge line) is skipped; corners keep
+/// `CORNER_TOWER_INSET_MM` from the bed edge. Returns the chosen
+/// relocation (`None` = source position) with its packed layout.
+fn choose_tower_position(
+    args: &Args,
+    profile: &PrinterProfile,
+    plan: &PackPlan,
+    probe_keepout: Rect,
+) -> AppResult<(Option<RelocatedTower>, PackResult)> {
+    let bed = profile.usable_bed()?;
+    let footprint = plan.rule_footprint();
+    let width = probe_keepout.max_x - probe_keepout.min_x;
+    let depth = (probe_keepout.max_y - probe_keepout.min_y) * (1.0 + CORNER_TOWER_GROWTH);
+    let corner = |name: &'static str, min_x: f64, min_y: f64| {
+        let keepout = Rect::new(min_x, min_y, min_x + width, min_y + depth);
+        let shift = (min_x - probe_keepout.min_x, min_y - probe_keepout.min_y);
+        (name, Some(RelocatedTower { keepout, shift }))
+    };
+    let inset = CORNER_TOWER_INSET_MM;
+    let (left, right) = (bed.min_x + inset, bed.max_x - inset - width);
+    let (bottom, top) = (bed.min_y + inset, bed.max_y - inset - depth);
+    let candidates = [
+        ("source position", None),
+        corner("bottom-left corner", left, bottom),
+        corner("bottom-right corner", right, bottom),
+        corner("top-left corner", left, top),
+        corner("top-right corner", right, top),
+    ];
+    let mut best: Option<(&str, Option<RelocatedTower>, PackResult)> = None;
+    for (name, relocation) in candidates {
+        let keepout = relocation.map_or(probe_keepout, |relocated| relocated.keepout);
+        if relocation.is_some()
+            && (keepout.min_x < bed.min_x - 1e-9
+                || keepout.min_y < bed.min_y - 1e-9
+                || keepout.max_x > bed.max_x + 1e-9
+                || keepout.max_y > bed.max_y + 1e-9
+                || ensure_relocated_tower_clear(keepout, &plan.fixed_keepouts).is_err())
+        {
+            continue;
+        }
+        let packed = pack(
+            args,
+            profile,
+            &footprint,
+            plan.lock_orientation,
+            &plan.fixed_keepouts,
+            Some(keepout),
+            false,
+        )?;
+        println!("tower at {name}: {} objects", packed.placements.len());
+        if best
+            .as_ref()
+            .is_none_or(|(_, _, current)| packed.placements.len() > current.placements.len())
+        {
+            best = Some((name, relocation, packed));
+        }
+    }
+    let (name, relocation, packed) = best.expect("the source position is always a candidate");
+    if let Some(relocated) = relocation {
+        println!(
+            "prime tower moves to the {name} by ({:+.1}, {:+.1}) mm: keepout {:.2},{:.2} → \
+             {:.2},{:.2}",
+            relocated.shift.0,
+            relocated.shift.1,
+            relocated.keepout.min_x,
+            relocated.keepout.min_y,
+            relocated.keepout.max_x,
+            relocated.keepout.max_y
+        );
+    }
+    Ok((relocation, packed))
+}
+
+/// The body loops of one placement in bed coordinates (the whole footprint when it has no
+/// separate body): what a grown tower must not reach.
+fn placement_body_loops(
+    footprint: &Footprint,
+    placement: &goat_packer::PackedPlacement,
+) -> Vec<Vec<Point>> {
+    let mut body = footprint.clone();
+    if !body.body_loops.is_empty() {
+        body.loops = body.body_loops.clone();
+    }
+    placement_world_loops(&body, placement)
+}
+
+fn describe_collisions(collisions: &[SupportCollision]) {
+    for collision in collisions {
+        println!(
+            "support check: support of object {} touches object {} on layers {}..{} ({} \
+             layers, gap {:.2} mm)",
+            collision.support_object,
+            collision.body_object,
+            collision.first_layer,
+            collision.last_layer,
+            collision.layers,
+            collision.min_gap_mm
+        );
+    }
+}
+
+/// `learn_support_patch` against the current layout, with the context an operator needs.
+fn learn_support_patch(
+    footprint: &Footprint,
+    packed: &PackResult,
+    analysis: &PlateAnalysis,
+) -> AppResult<Footprint> {
+    goat_packer::gcode_collisions::learn_support_patch(
+        footprint,
+        &packed.placements,
+        &analysis.first_layer,
+    )
+    .map_err(|error| format!("support check: {error}").into())
+}
+
+/// One packing pass: the deterministic grid as a floor, then (`--layout search`) the search.
+/// `verbose` = log the grid baseline and layout bounds (off for the tower-position contest,
+/// whose candidates print one line each).
 fn pack(
     args: &Args,
     profile: &PrinterProfile,
     footprint: &Footprint,
     lock_orientation: bool,
-    exclusions: Vec<Rect>,
+    fixed_keepouts: &[Rect],
+    tower_keepout: Option<Rect>,
+    verbose: bool,
 ) -> AppResult<PackResult> {
     let options = PackOptions {
+        body_exclusions: tower_keepout.into_iter().collect(),
         bed: profile.usable_bed()?,
-        exclusions,
+        exclusions: fixed_keepouts.to_vec(),
         resolution: args.resolution,
         clearance: args.clearance,
         angle_step_deg: args.angle_step,
@@ -1025,14 +1362,21 @@ fn pack(
     let grid = grid_layout(&footprint, &options);
     let result = match args.layout {
         LayoutMode::Grid => {
-            eprintln!("grid layout: {} objects (deterministic search skipped)", grid.placements.len());
+            if verbose {
+                eprintln!(
+                    "grid layout: {} objects (deterministic search skipped)",
+                    grid.placements.len()
+                );
+            }
             grid
         }
         LayoutMode::Search => {
-            eprintln!(
-                "grid baseline: {} objects; deterministic search needs more to win",
-                grid.placements.len()
-            );
+            if verbose {
+                eprintln!(
+                    "grid baseline: {} objects; deterministic search needs more to win",
+                    grid.placements.len()
+                );
+            }
             let searched = pack_footprint(&footprint, &options);
             if searched.placements.len() > grid.placements.len() {
                 searched
@@ -1042,6 +1386,9 @@ fn pack(
         }
     };
     validate_result(&footprint, &options, &result)?;
+    if !verbose {
+        return Ok(result);
+    }
     let bounds = layout_world_bounds(&footprint, &result);
     eprintln!(
         "layout: {} objects within x [{:.1}, {:.1}], y [{:.1}, {:.1}] (bed {:.1}..{:.1} x \
@@ -1559,11 +1906,12 @@ mod tests {
         };
 
         let footprint = extract_footprint(&stl).unwrap();
-        let result = pack(&args, &profile, &footprint, false, vec![]).unwrap();
+        let result = pack(&args, &profile, &footprint, false, &[], None, true).unwrap();
         assert!(!result.placements.is_empty());
 
         let footprint = extract_footprint(&stl).unwrap();
         let options = PackOptions {
+            body_exclusions: Vec::new(),
             bed: profile.usable_bed().unwrap(),
             exclusions: vec![],
             resolution: args.resolution,
@@ -1737,6 +2085,7 @@ mod tests {
         // Footprint off its own origin: the bbox centre, not the placement point, is ranked.
         let shifted: Vec<Point> = square.iter().map(|p| Point { x: p.x + 10.0, y: p.y }).collect();
         let footprint = Footprint {
+            support_landing_loops: Vec::new(),
             body_loops: vec![shifted.clone()],
             bed_loops: None,
             loops: vec![shifted],

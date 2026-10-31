@@ -520,6 +520,7 @@ fn closed_loop(points: &[(f64, f64)]) -> Vec<Point> {
 
 fn loops_footprint(loops: Vec<Vec<Point>>) -> Footprint {
     Footprint {
+        support_landing_loops: Vec::new(),
         body_loops: loops.clone(),
         bed_loops: None,
         loops,

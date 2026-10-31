@@ -11,6 +11,7 @@ fn polygon(points: &[(f64, f64)]) -> Footprint {
     let min_y = points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
     let max_y = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
     Footprint {
+        support_landing_loops: Vec::new(),
         loops: vec![loop_],
         body_loops: Vec::new(),
         bed_loops: None,
@@ -49,6 +50,7 @@ fn concave_shapes_can_interlock_while_bounding_boxes_overlap() {
 fn packer_places_four_squares_without_overlap() {
     let square = polygon(&[(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]);
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 10.0, 10.0),
         exclusions: vec![],
         resolution: 0.5,
@@ -71,6 +73,7 @@ fn packer_places_four_squares_without_overlap() {
 fn packer_never_uses_exclusion_area() {
     let square = polygon(&[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]);
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 8.0, 8.0),
         exclusions: vec![Rect::new(0.0, 0.0, 4.0, 4.0)],
         resolution: 0.5,
@@ -105,6 +108,7 @@ fn bed_bounds_measure_bed_loops_not_the_silhouette_alone() {
     spike.push(spike[0]);
     fp.bed_loops = Some(vec![spike]);
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 10.0, 10.0),
         exclusions: vec![],
         resolution: 0.5,
@@ -160,6 +164,7 @@ fn grid_tiles_the_bed_and_validate_result_accepts_it() {
     // unlike the old three-cell baseline, all six physically fitting cells must survive.
     let square = polygon(&[(-1.5, -3.), (1.5, -3.), (1.5, 3.), (-1.5, 3.)]);
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 13.0, 13.0),
         exclusions: vec![],
         resolution: 0.5,
@@ -198,6 +203,7 @@ fn grid_skips_cells_that_touch_an_exclusion() {
     // dropped, not nudged sideways.
     let square = polygon(&[(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]);
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 16.0, 8.0),
         exclusions: vec![Rect::new(8.0, 0.0, 16.0, 8.0)],
         resolution: 0.5,
@@ -229,6 +235,7 @@ fn layouts_exceed_the_old_128_cap_and_honor_an_explicit_one() {
     // 2x2 squares, 0 clearance, 1 mm pixels on a 40x40 bed: a 20x20 grid = 400 cells.
     let square = polygon(&[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]);
     let mut options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 40.0, 40.0),
         exclusions: vec![],
         resolution: 1.0,
@@ -269,6 +276,7 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
     let mut loop_slab: Vec<Point> = slab.iter().map(|&(x, y)| Point { x, y }).collect();
     loop_slab.push(loop_slab[0]);
     let footprint = Footprint {
+        support_landing_loops: Vec::new(),
         bed_loops: None,
         loops: vec![loop_slab.clone()],
         body_loops: vec![loop_body],
@@ -279,6 +287,7 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         triangle_count: 4,
     };
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 40.0, 40.0),
         exclusions: vec![],
         resolution: 0.5,
@@ -321,6 +330,7 @@ fn grid_picks_the_orientation_that_fits_more_cells() {
     // lattice fits one column of 7 rows; rotated fits 3 columns x 2 rows = 6 — upright wins.
     let rectangle = polygon(&[(-4., -1.), (4., -1.), (4., 1.), (-4., 1.)]);
     let options = PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 10.0, 20.0),
         exclusions: vec![],
         resolution: 0.5,
@@ -350,6 +360,7 @@ mod support;
 
 fn stable_options() -> PackOptions {
     PackOptions {
+        body_exclusions: Vec::new(),
         bed: Rect::new(-3.25, 10.75, 30.75, 38.75),
         exclusions: vec![Rect::new(10., 10.75, 14., 14.75)],
         resolution: 0.25,

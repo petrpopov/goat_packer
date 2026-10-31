@@ -1,9 +1,12 @@
 //! Stream native subprocess diagnostics without buffering untrusted output in memory.
-use std::{io::{self, Read}, process::{Command, Output, Stdio}, thread, time::Instant};
+use std::{io::{self, Read}, process::{Command, Output, Stdio}, thread, time::{Duration, Instant}};
 
 const TAIL: usize = 64 * 1024;
 const LINE: usize = 8192;
 const STREAM_LOG_LIMIT: usize = 5 * 1024 * 1024;
+/// Structured mode: a `slicer_progress` heartbeat this often while the slicer runs. The
+/// slicers print no progress of their own, and a 5-minute final slice must not look frozen.
+const HEARTBEAT: Duration = Duration::from_secs(2);
 
 fn drain(mut input: impl Read, stream: &str, structured: bool) -> io::Result<Vec<u8>> {
     let mut tail = Vec::with_capacity(TAIL);
@@ -40,7 +43,21 @@ pub fn bounded_output(command: &mut Command) -> io::Result<Output> {
     let stderr = child.stderr.take().unwrap();
     let out = thread::spawn(move || drain(stdout, "stdout", structured));
     let err = thread::spawn(move || drain(stderr, "stderr", structured));
-    let status = child.wait()?;
+    let status = if structured {
+        let mut last = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if last.elapsed() >= HEARTBEAT {
+                last = Instant::now();
+                eprintln!("{}",serde_json::json!({"event":"slicer_progress","elapsed_ms":started.elapsed().as_millis()}));
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    } else {
+        child.wait()?
+    };
     let stdout = out.join().map_err(|_| io::Error::other("stdout reader panicked"))??;
     let stderr = err.join().map_err(|_| io::Error::other("stderr reader panicked"))??;
     if structured { eprintln!("{}",serde_json::json!({"event":"slicer_finished","exit_code":status.code(),"elapsed_ms":started.elapsed().as_millis()})); }

@@ -9,10 +9,12 @@ pub mod ams_calibration;
 pub mod assemble;
 pub mod colored_packer;
 pub mod embedded_mesh;
+pub mod gcode_collisions;
 pub mod nozzle_clean;
 pub mod plate_centre;
 pub mod plate_preview;
 pub mod print_time;
+pub mod progress;
 pub mod scheduler;
 pub mod process_output;
 pub mod slicer_cli;
@@ -36,6 +38,15 @@ pub struct Footprint {
     /// may overlap other supports. Empty = the whole footprint is body (mesh-projection
     /// branch, or a first layer without supports).
     pub body_loops: Vec<Vec<Point>>,
+    /// Where a FOREIGN object's patch must not land: the probe's first-layer body (walls and
+    /// bottom of the model itself, no supports). Empty = `body_loops` (the plain two-zone rule).
+    /// BambuStudio builds tree supports per object and never trims them around neighbours; a
+    /// hand-made 40-goat P1S plate printed 15 neighbour pairs with one goat's support base on
+    /// the bed under the other's silhouette (up to 21 mm²) while no printed lines met — the
+    /// silhouette rule had cost that plate 3 goats. Silhouettes still keep clearance from each
+    /// other (3D bodies); supports only must not land on what the neighbour lays on the bed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub support_landing_loops: Vec<Vec<Point>>,
     /// What the bed bounds and exclusions are checked against: the first-layer patch UNION the
     /// whole-model silhouette. The slicer's bed-collision warnings measure the full model
     /// extent, which hangs below the printed patch on models with overhangs (a lying animal's
@@ -192,6 +203,7 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
     Ok(Footprint {
         // The mesh projection branch: everything is body — supports, if any, sit inside it.
         body_loops: loops.clone(),
+        support_landing_loops: Vec::new(),
         bed_loops: None,
         loops,
         width: maxs[0] - mins[0],
@@ -426,6 +438,7 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
     loops.sort_by(|a, b| polygon_area(b).abs().total_cmp(&polygon_area(a).abs()));
     Some(Footprint {
         body_loops,
+        support_landing_loops: Vec::new(),
         bed_loops: None, // the caller unions the silhouette in when overhangs demand it
         loops,
         width: patch_max_x - patch_min_x,
@@ -989,12 +1002,20 @@ pub struct RasterMask {
     /// structures may touch other supports. Equals `clearance` when the footprint carries no
     /// separate body loops (mesh projection, or a support-free first layer).
     pub body_clearance: PixelMask,
+    /// `Footprint::support_landing_loops`, dilated like the other zones: a foreign full
+    /// patch must not touch it. Equals `body_clearance` (and `landing_is_body` is set) when
+    /// the footprint carries no landing loops.
+    pub landing_clearance: PixelMask,
+    pub landing_is_body: bool,
     /// Bed/exclusion variant of the patch (patch + model silhouette when overhangs extend
     /// past the first layer). Collisions between objects still use the patch above.
     pub bed_physical: PixelMask,
     pub bed_clearance: PixelMask,
     pub bed_physical_bounds: Rect,
     pub physical_bounds: Rect,
+    /// Rotated bbox of the body loops (`bed_physical_bounds` when the footprint has no
+    /// separate body): what `PackOptions::body_exclusions` are checked against.
+    pub body_bounds: Rect,
     /// Support-overlap rule (`PackOptions::support_overlap_mm = Some(X)`): the printed patch
     /// eroded by X/2 per side. Two cores must not overlap, so printed supports of two objects
     /// overlap by at most X (X = 0: they may touch). `None` without the option, and when the
@@ -1085,11 +1106,8 @@ pub fn rasterize_footprint_with_support(
     let radius = (clearance * 0.5 / resolution).ceil() as i32;
     let clearance_pixels = physical_pixels.dilate(radius);
 
-    let body_clearance_pixels = if footprint.body_loops.is_empty() {
-        clearance_pixels.clone()
-    } else {
-        let rotated_body: Vec<Vec<Point>> = footprint
-            .body_loops
+    let rotate_loops = |loops: &[Vec<Point>]| -> Vec<Vec<Point>> {
+        loops
             .iter()
             .map(|loop_| {
                 loop_
@@ -1100,42 +1118,29 @@ pub fn rasterize_footprint_with_support(
                     })
                     .collect()
             })
-            .collect();
-        let body = SpanRaster::scanline(&rotated_body, resolution, range);
-        if body.rows.iter().all(Vec::is_empty) {
-            clearance_pixels.clone()
-        } else {
-            body.dilate(radius)
-        }
+            .collect()
     };
+    // A sub-zone of the footprint (body, landing) dilated like the full patch; `None` when
+    // the footprint has no such loops or they rasterize to nothing.
+    let zone_clearance = |loops: &[Vec<Point>]| -> Option<SpanRaster> {
+        if loops.is_empty() {
+            return None;
+        }
+        let zone = SpanRaster::scanline(&rotate_loops(loops), resolution, range);
+        (!zone.rows.iter().all(Vec::is_empty)).then(|| zone.dilate(radius))
+    };
+    let body_clearance_pixels =
+        zone_clearance(&footprint.body_loops).unwrap_or_else(|| clearance_pixels.clone());
+    let landing_clearance_pixels = zone_clearance(&footprint.support_landing_loops);
+    let landing_is_body = landing_clearance_pixels.is_none();
+    let landing_clearance_pixels =
+        landing_clearance_pixels.unwrap_or_else(|| body_clearance_pixels.clone());
 
     let (bed_physical_pixels, bed_physical_bounds) = match &footprint.bed_loops {
         None => (physical_pixels.clone(), bounds),
         Some(bed_loops) => {
-            let rotated_bed: Vec<Vec<Point>> = bed_loops
-                .iter()
-                .map(|loop_| {
-                    loop_
-                        .iter()
-                        .map(|p| Point {
-                            x: p.x * cos - p.y * sin,
-                            y: p.x * sin + p.y * cos,
-                        })
-                        .collect()
-                })
-                .collect();
-            let mut bed_bounds = Rect::new(
-                f64::INFINITY,
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                f64::NEG_INFINITY,
-            );
-            for point in rotated_bed.iter().flatten() {
-                bed_bounds.min_x = bed_bounds.min_x.min(point.x);
-                bed_bounds.min_y = bed_bounds.min_y.min(point.y);
-                bed_bounds.max_x = bed_bounds.max_x.max(point.x);
-                bed_bounds.max_y = bed_bounds.max_y.max(point.y);
-            }
+            let rotated_bed = rotate_loops(bed_loops);
+            let mut bed_bounds = points_bounds(rotated_bed.iter().flatten());
             let bed_only = SpanRaster::scanline(&rotated_bed, resolution, pixel_range(&bed_bounds));
             bed_bounds.min_x = bed_bounds.min_x.min(bounds.min_x);
             bed_bounds.min_y = bed_bounds.min_y.min(bounds.min_y);
@@ -1145,6 +1150,11 @@ pub fn rasterize_footprint_with_support(
         }
     };
     let bed_clearance_pixels = bed_physical_pixels.dilate(radius);
+    let body_bounds = if footprint.body_loops.is_empty() {
+        bed_physical_bounds
+    } else {
+        points_bounds(rotate_loops(&footprint.body_loops).iter().flatten())
+    };
 
     let support_core = support_overlap_mm
         .filter(|_| {
@@ -1168,12 +1178,64 @@ pub fn rasterize_footprint_with_support(
         physical: PixelMask::from_spans(&physical_pixels),
         clearance: PixelMask::from_spans(&clearance_pixels),
         body_clearance: PixelMask::from_spans(&body_clearance_pixels),
+        landing_clearance: PixelMask::from_spans(&landing_clearance_pixels),
+        landing_is_body,
         bed_physical: PixelMask::from_spans(&bed_physical_pixels),
         bed_clearance: PixelMask::from_spans(&bed_clearance_pixels),
         bed_physical_bounds,
         physical_bounds: bounds,
+        body_bounds,
         support_core,
     }
+}
+
+fn points_bounds<'a>(points: impl Iterator<Item = &'a Point>) -> Rect {
+    let mut bounds = Rect::new(
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for point in points {
+        bounds.min_x = bounds.min_x.min(point.x);
+        bounds.min_y = bounds.min_y.min(point.y);
+        bounds.max_x = bounds.max_x.max(point.x);
+        bounds.max_y = bounds.max_y.max(point.y);
+    }
+    bounds
+}
+
+/// The mask pairs whose overlap makes two placements collide (`b` shifted relative to `a`):
+/// a full patch against the other's landing zone both ways, and silhouette against
+/// silhouette when a landing zone is narrower than the body (the landing pairs alone would
+/// let two bodies interpenetrate above the first layer). Without landing loops the body pair
+/// is implied by the first two (body ⊂ full), so it is left out and layouts stay what the
+/// two-zone rule gave. Support cores (`support_overlap_mm`) are a separate pair, see
+/// `support_cores_overlap`.
+pub(crate) fn zone_pairs<'a>(
+    a: &'a RasterMask,
+    b: &'a RasterMask,
+) -> Vec<(&'a PixelMask, &'a PixelMask)> {
+    let mut pairs = vec![
+        (&a.clearance, &b.landing_clearance),
+        (&a.landing_clearance, &b.clearance),
+    ];
+    if !(a.landing_is_body && b.landing_is_body) {
+        pairs.push((&a.body_clearance, &b.body_clearance));
+    }
+    pairs
+}
+
+/// `b` at pixel offset `(dx, dy)` from `a` breaks the zone rule (`zone_pairs`).
+fn zones_collide(a: &RasterMask, b: &RasterMask, dx: i32, dy: i32) -> bool {
+    zone_pairs(a, b)
+        .into_iter()
+        .any(|(za, zb)| masks_overlap(za, 0, 0, zb, dx, dy))
+}
+
+/// `b` at pixel offset `(dx, dy)` from `a` collides: the zone rule or the support cores.
+pub fn placements_collide(a: &RasterMask, b: &RasterMask, dx: i32, dy: i32) -> bool {
+    zones_collide(a, b, dx, dy) || support_cores_overlap(a, b, dx, dy)
 }
 
 /// Support-overlap pair: the support cores of two placements (shifted by `(dx, dy)` pixels
@@ -1280,6 +1342,12 @@ fn aabb_hits_exclusion(options: &PackOptions, mask: &RasterMask, x_px: i32, y_px
         origin_y,
         options.clearance,
         &options.exclusions,
+    ) || bounds_hit_exclusion(
+        mask.body_bounds,
+        origin_x,
+        origin_y,
+        options.clearance,
+        &options.body_exclusions,
     )
 }
 
@@ -1296,6 +1364,12 @@ fn bounds_hit_exclusion(bounds: Rect, x: f64, y: f64, pad: f64, exclusions: &[Re
 pub struct PackOptions {
     pub bed: Rect,
     pub exclusions: Vec<Rect>,
+    /// Exclusions only the model body must clear (body bbox + clearance), while the support
+    /// part of the patch may enter: the prime tower keepout. Tree supports reaching into the
+    /// tower's area print as purge-side scrap, and a P1S plate printed fine with them; the
+    /// bed exclusion corner and purge lines stay in `exclusions` (full-extent bbox).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_exclusions: Vec<Rect>,
     pub resolution: f64,
     pub clearance: f64,
     pub angle_step_deg: f64,
@@ -1367,6 +1441,7 @@ fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), 
         || options.angle_step_deg > 360.0
         || !valid_rect(&options.bed)
         || options.exclusions.iter().any(|r| !valid_rect(r))
+        || options.body_exclusions.iter().any(|r| !valid_rect(r))
         || options
             .support_overlap_mm
             .is_some_and(|x| !x.is_finite() || x < 0.0)
@@ -1382,6 +1457,7 @@ fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), 
             .loops
             .iter()
             .chain(&footprint.body_loops)
+            .chain(&footprint.support_landing_loops)
             .chain(footprint.bed_loops.iter().flatten())
             .any(|l| {
                 l.len() < 4
@@ -1448,11 +1524,7 @@ fn grid_layout_inner(footprint: &Footprint, options: &PackOptions) -> PackResult
         // The lattice pitch per axis is the SMALLEST whole-pixel shift where two copies of
         // the mask satisfy the two-zone rule — not the full bounding box. Distant lattice
         // neighbours can still conflict for disconnected shapes; every cell is checked below.
-        let pair_collides = |dx: i32, dy: i32| {
-            masks_overlap(&mask.clearance, 0, 0, &mask.body_clearance, dx, dy)
-                || masks_overlap(&mask.body_clearance, 0, 0, &mask.clearance, dx, dy)
-                || support_cores_overlap(&mask, &mask, dx, dy)
-        };
+        let pair_collides = |dx: i32, dy: i32| placements_collide(&mask, &mask, dx, dy);
         let pitch_x = (1..)
             .find(|&s| !pair_collides(s, 0))
             .unwrap_or(mask.bed_clearance.width as i32 + 1);
@@ -1658,6 +1730,7 @@ pub fn validate_result(
             let mut shifted = footprint.clone();
             shifted.loops = shift(&footprint.loops);
             shifted.body_loops = shift(&footprint.body_loops);
+            shifted.support_landing_loops = shift(&footprint.support_landing_loops);
             shifted.bed_loops = footprint.bed_loops.as_ref().map(|l| shift(l));
             rasterize_footprint_with_support(
                 &shifted,
@@ -1698,25 +1771,21 @@ pub fn validate_result(
         ) {
             return Err(format!("placement {index} intersects exclusion (bbox)"));
         }
+        if bounds_hit_exclusion(
+            mask.body_bounds,
+            x_mm,
+            y_mm,
+            options.clearance,
+            &options.body_exclusions,
+        ) {
+            return Err(format!("placement {index} body intersects a body exclusion (bbox)"));
+        }
         for (previous, previous_mask) in masks.iter().enumerate().take(index) {
             let (previous_px, previous_py) = centers[previous];
-            // Two-zone rule: a body must clear anything foreign, while supports may touch
-            // other supports — the same predicate the packing strategies enforce.
-            if masks_overlap(
-                &previous_mask.body_clearance,
-                previous_px,
-                previous_py,
-                &mask.clearance,
-                px,
-                py,
-            ) || masks_overlap(
-                &previous_mask.clearance,
-                previous_px,
-                previous_py,
-                &mask.body_clearance,
-                px,
-                py,
-            ) {
+            // Zone rule: a patch must not land on a foreign landing zone (body when the
+            // footprint has none), silhouettes keep clearance, supports may touch other
+            // supports — the same predicate the packing strategies enforce.
+            if zones_collide(previous_mask, mask, px - previous_px, py - previous_py) {
                 return Err(format!(
                     "placements {previous} and {index} overlap: a body touches a foreign \
                      structure"
@@ -1748,7 +1817,20 @@ pub fn union_loops(first: &Footprint, second: &Footprint) -> Vec<Vec<Point>> {
         .chain(second.loops.iter())
         .map(|loop_| polygon_from_loop(loop_))
         .collect();
-    let polygons: Vec<&Polygon> = owned.iter().collect();
+    union_exterior_loops(&owned)
+}
+
+/// Union of polygons as exterior rings, largest first, slivers dropped. Every polygon is
+/// oriented counter-clockwise first: geo's `unary_union` picks its fill rule from the FIRST
+/// ring's winding and silently drops rings wound the other way, so a clockwise strip
+/// (`strip_polygon`) after a counter-clockwise loop vanished from a learned support patch.
+fn union_exterior_loops(owned: &[Polygon]) -> Vec<Vec<Point>> {
+    use geo::orient::{Direction, Orient};
+    let oriented: Vec<Polygon> = owned
+        .iter()
+        .map(|polygon| polygon.orient(Direction::Default))
+        .collect();
+    let polygons: Vec<&Polygon> = oriented.iter().collect();
     let union = unary_union(polygons);
     let mut loops: Vec<Vec<Point>> = Vec::new();
     for polygon in &union.0 {

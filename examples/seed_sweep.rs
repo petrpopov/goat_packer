@@ -124,6 +124,7 @@ fn run() -> Result<(), String> {
         .into_par_iter()
         .map(|seed| {
             let options = PackOptions {
+                body_exclusions: Vec::new(),
                 bed: profile.usable_bed().expect("usable bed"),
                 exclusions: exclusions.clone(),
                 resolution,

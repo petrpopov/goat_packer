@@ -30,6 +30,7 @@ impl Frame {
             .loops
             .iter()
             .chain(&fp.body_loops)
+            .chain(&fp.support_landing_loops)
             .chain(fp.bed_loops.iter().flatten())
             .flatten()
             .copied()
@@ -108,6 +109,7 @@ impl Frame {
         let mut footprint = fp.clone();
         footprint.loops = transform(&fp.loops);
         footprint.body_loops = transform(&fp.body_loops);
+        footprint.support_landing_loops = transform(&fp.support_landing_loops);
         footprint.bed_loops = fp.bed_loops.as_ref().map(|l| transform(l));
         footprint.width = footprint
             .loops
@@ -162,13 +164,11 @@ impl Frame {
 
 /// All integer translations of B relative to A that overlap at least one occupied pixel.
 /// Span difference: [a,b) - [c,d) = [a-d+1,b-c). Holes remain holes.
-/// The third pair (support cores) exists only with `support_overlap_mm`; a side without a
-/// core has no support zone, and the two-zone pairs already cover it.
+/// The pairs are `zone_pairs` plus the support cores, which exist only with
+/// `support_overlap_mm`; a side without a core has no support zone, and the zone pairs
+/// already cover it.
 fn no_fit(a: &RasterMask, b: &RasterMask) -> SpanRaster {
-    let mut pairs = vec![
-        (&a.clearance, &b.body_clearance),
-        (&a.body_clearance, &b.clearance),
-    ];
+    let mut pairs = zone_pairs(a, b);
     if let (Some(core_a), Some(core_b)) = (&a.support_core, &b.support_core) {
         pairs.push((core_a, core_b));
     }
@@ -240,19 +240,31 @@ impl FreeCenters {
         for row in &mut this.rows {
             set_bit_range(row, 0, width);
         }
-        for exclusion in &options.exclusions {
-            let lo_x = ((exclusion.min_x - options.bed.min_x - b.max_x - options.clearance) / r)
-                .floor() as i32
-                + 1;
-            let hi_x = ((exclusion.max_x - options.bed.min_x - b.min_x + options.clearance) / r)
-                .ceil() as i32;
-            let lo_y = ((exclusion.min_y - options.bed.min_y - b.max_y - options.clearance) / r)
-                .floor() as i32
-                + 1;
-            let hi_y = ((exclusion.max_y - options.bed.min_y - b.min_y + options.clearance) / r)
-                .ceil() as i32;
-            for y in lo_y.max(min_y)..hi_y.min(max_y + 1) {
-                this.clear(y, lo_x, hi_x);
+        // Full-extent exclusions against the patch ∪ silhouette bbox, body exclusions (the
+        // tower) against the body bbox only — see `PackOptions::body_exclusions`.
+        let zones = [
+            (&options.exclusions, b),
+            (&options.body_exclusions, mask.body_bounds),
+        ];
+        for (exclusions, b) in zones {
+            for exclusion in exclusions {
+                let lo_x = ((exclusion.min_x - options.bed.min_x - b.max_x - options.clearance)
+                    / r)
+                    .floor() as i32
+                    + 1;
+                let hi_x = ((exclusion.max_x - options.bed.min_x - b.min_x + options.clearance)
+                    / r)
+                    .ceil() as i32;
+                let lo_y = ((exclusion.min_y - options.bed.min_y - b.max_y - options.clearance)
+                    / r)
+                    .floor() as i32
+                    + 1;
+                let hi_y = ((exclusion.max_y - options.bed.min_y - b.min_y + options.clearance)
+                    / r)
+                    .ceil() as i32;
+                for y in lo_y.max(min_y)..hi_y.min(max_y + 1) {
+                    this.clear(y, lo_x, hi_x);
+                }
             }
         }
         this
@@ -540,6 +552,7 @@ mod tests {
             ring
         };
         Footprint {
+            support_landing_loops: Vec::new(),
             loops: vec![
                 ring(&[
                     (-3., -2.),
@@ -576,6 +589,43 @@ mod tests {
                     assert_eq!(actual, expected, "angle={angle}, shift={x},{y}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn no_fit_matches_brute_force_landing_collisions_at_every_shift() {
+        // The body loop as the silhouette, a narrower strip of it as the landing zone: the
+        // no-fit raster must forbid exactly the shifts where a patch meets a landing zone or
+        // two silhouettes meet.
+        let mut fp = shape();
+        let landing = vec![
+            Point { x: -2., y: -2. },
+            Point { x: 2., y: -2. },
+            Point { x: 2., y: -1.5 },
+            Point { x: -2., y: -1.5 },
+            Point { x: -2., y: -2. },
+        ];
+        fp.support_landing_loops = vec![landing];
+        for angle in [0., 13., 90., 180.] {
+            let a = rasterize_footprint(&fp, 0., 0.5, 0.5);
+            let b = rasterize_footprint(&fp, angle, 0.5, 0.5);
+            assert!(!a.landing_is_body);
+            let nfp = no_fit(&a, &b);
+            let mut differs_from_two_zone = false;
+            for y in -24..=24 {
+                for x in -24..=24 {
+                    let expected = masks_overlap(&a.clearance, 0, 0, &b.landing_clearance, x, y)
+                        || masks_overlap(&a.landing_clearance, 0, 0, &b.clearance, x, y)
+                        || masks_overlap(&a.body_clearance, 0, 0, &b.body_clearance, x, y);
+                    let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
+                    assert_eq!(actual, expected, "angle={angle}, shift={x},{y}");
+                    assert_eq!(actual, placements_collide(&a, &b, x, y));
+                    differs_from_two_zone |= actual
+                        != (masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
+                            || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y));
+                }
+            }
+            assert!(differs_from_two_zone, "angle={angle}: landing changed nothing");
         }
     }
 

@@ -120,6 +120,7 @@ fn run() -> Result<(), String> {
         let rotated = rotate_input(&footprint, rotation);
         for seed in first_seed..last_seed {
             let options = PackOptions {
+                body_exclusions: Vec::new(),
                 bed: profile.usable_bed()?,
                 exclusions: exclusions.clone(),
                 resolution,
@@ -203,6 +204,7 @@ fn rotate_input(footprint: &Footprint, degrees: f64) -> Footprint {
             .collect()
     };
     Footprint {
+        support_landing_loops: Vec::new(),
         loops: shift(loops),
         body_loops: shift(rotate(&footprint.body_loops)),
         bed_loops: footprint.bed_loops.as_ref().map(|l| shift(rotate(l))),
