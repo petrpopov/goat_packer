@@ -102,6 +102,7 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
                 Files.newInputStream(job.directory.resolve("input.3mf")).use { input-> val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;digest.update(buffer,0,n)} }
                 check(digest.digest().joinToString(""){"%02x".format(it)}==blob.sha256) {"Input checksum mismatch"}
             }
+            // Снимок профиля с постановки: каталожный json или разовый CustomProfile своего стола (slicer_kind orca).
             val profile=mapper.readTree(record.profileJson) as com.fasterxml.jackson.databind.node.ObjectNode
             if(props.runnerMode=="docker") {
                 val kind=profile.path("slicer_kind").asText()

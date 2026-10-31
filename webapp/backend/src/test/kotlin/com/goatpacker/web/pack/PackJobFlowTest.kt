@@ -59,6 +59,41 @@ class PackJobFlowTest(
         return jobId
     }
 
+    private fun packCustom(file: ByteArray, vararg params: Pair<String, String>) =
+        mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, file))
+                .apply { params.forEach { (k, v) -> param(k, v) } },
+        )
+
+    @Test
+    fun `свой стол — разовый профиль в каталоге джоба уходит пакеру`() {
+        val create = packCustom(miniProject3mf("Prusa MK4"), "customWidth" to "250", "customDepth" to "210", "customHeight" to "220", "customMargin" to "3")
+            .andExpect(status().isAccepted).andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        val body = mockMvc.awaitJobCompletion(jobId)
+        assertEquals("custom", body["pack"]["profileId"].asText())
+        val dir = tmpRoot.resolve("jobs").resolve(jobId)
+        val profile = json.readTree(dir.resolve("profile.json").toFile())
+        // Пакер сверяет printer_model проекта с printer_name профиля — разовый профиль назван так же.
+        assertEquals("Prusa MK4", profile["printer_name"].asText())
+        assertEquals(listOf(0.0, 0.0, 250.0, 210.0), profile["printable_area"].map { it.asDouble() })
+        assertEquals(3.0, profile["edge_margin_mm"].asDouble(), 1e-9)
+        val args = Files.readAllLines(dir.resolve("packer-args.txt"))
+        assertEquals(dir.resolve("profile.json").toString(), args[args.indexOf("--profile") + 1])
+    }
+
+    @Test
+    fun `свой стол — ровно один источник стола и границы размеров`() {
+        packCustom(miniProject3mf("Prusa MK4")).andExpect(status().isBadRequest)
+        packCustom(miniProject3mf("Prusa MK4"), "profileId" to "bambu_p1s", "customWidth" to "250", "customDepth" to "210", "customHeight" to "220")
+            .andExpect(status().isBadRequest)
+        packCustom(miniProject3mf("Prusa MK4"), "customWidth" to "250", "customDepth" to "210").andExpect(status().isBadRequest)
+        packCustom(miniProject3mf("Prusa MK4"), "customWidth" to "40", "customDepth" to "210", "customHeight" to "220").andExpect(status().isBadRequest)
+        packCustom(miniProject3mf("Prusa MK4"), "customWidth" to "250", "customDepth" to "210", "customHeight" to "220", "customMargin" to "31")
+            .andExpect(status().isBadRequest)
+    }
+
     @Test
     fun `полный цикл — загрузка, успех, артефакты, скачивание, удаление`() {
         val jobId = uploadGoat()

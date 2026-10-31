@@ -16,9 +16,9 @@ class CustomProfileTest {
 
     @Test
     fun `шаблон своего стола — формат PrinterProfile с выключенным неизвестным`() {
-        val built = CustomProfile.build(mapper, CustomBed(220.0, 230.0, 250.0, 6.0), null, "/opt/orca")
+        val built = CustomProfile.build(mapper, CustomBed(220.0, 230.0, 250.0, 6.0), null, "Prusa MK4") { "/opt/$it" }
         val p = mapper.readTree(built.json)
-        assertEquals("custom", p["id"].asText()); assertEquals("Custom Printer", p["printer_name"].asText())
+        assertEquals("custom", p["id"].asText()); assertEquals("Prusa MK4", p["printer_name"].asText())
         assertEquals("orca", p["slicer_kind"].asText()); assertEquals("/opt/orca", p["slicer_path"].asText())
         assertEquals(listOf(0.0, 0.0, 220.0, 230.0), p["printable_area"].map { it.asDouble() })
         assertEquals(6.0, p["edge_margin_mm"].asDouble()); assertEquals(250.0, p["printable_height"].asDouble())
@@ -32,12 +32,21 @@ class CustomProfileTest {
     @Test
     fun `стол из проекта берётся, только если размеры подтверждены без правки`() {
         val project = ProjectBed(listOf(-10.0, 5.0, 240.0, 215.0), listOf(listOf(-10.0, 5.0, 10.0, 25.0)), 220.0)
-        val same = mapper.readTree(CustomProfile.build(mapper, CustomBed(250.0, 210.0, 220.0), project, "o").json)
+        val same = mapper.readTree(CustomProfile.build(mapper, CustomBed(250.0, 210.0, 220.0), project, null) { "o" }.json)
         assertEquals(listOf(-10.0, 5.0, 240.0, 215.0), same["printable_area"].map { it.asDouble() })
         assertEquals(1, same["exclusion_rectangles"].size())
-        val edited = mapper.readTree(CustomProfile.build(mapper, CustomBed(300.0, 210.0, 220.0), project, "o").json)
+        val edited = mapper.readTree(CustomProfile.build(mapper, CustomBed(300.0, 210.0, 220.0), project, null) { "o" }.json)
         assertEquals(listOf(0.0, 0.0, 300.0, 210.0), edited["printable_area"].map { it.asDouble() })
         assertTrue(edited["exclusion_rectangles"].isEmpty)
+    }
+
+    @Test
+    fun `имя — printer_model проекта (пакер сверяет), слайсер — по модели как в Rust`() {
+        val bambu = mapper.readTree(CustomProfile.build(mapper, CustomBed(256.0, 256.0, 256.0), null, "Bambu Lab X1 Carbon") { "/opt/$it" }.json)
+        assertEquals("Bambu Lab X1 Carbon", bambu["printer_name"].asText())
+        assertEquals("bambu", bambu["slicer_kind"].asText()); assertEquals("/opt/bambu", bambu["slicer_path"].asText())
+        val none = mapper.readTree(CustomProfile.build(mapper, CustomBed(256.0, 256.0, 256.0), null, null) { "/opt/$it" }.json)
+        assertEquals("Custom Printer", none["printer_name"].asText()); assertEquals("orca", none["slicer_kind"].asText())
     }
 
     @Test

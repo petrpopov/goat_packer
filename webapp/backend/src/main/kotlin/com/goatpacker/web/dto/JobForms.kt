@@ -13,8 +13,13 @@ import org.springframework.web.multipart.MultipartFile
 data class PackJobForm(
     @field:NotNull(message = "Файл .3mf обязателен")
     val file: MultipartFile? = null,
-    @field:NotBlank(message = "profileId обязателен")
+    /** Принтер из каталога; пусто — если задан свой стол (custom*). Ровно одно из двух. */
     val profileId: String? = null,
+    /** «Моего принтера нет в списке»: ширина × глубина × высота стола, мм (50–1000), и отступ (0–30, по умолчанию 5). */
+    val customWidth: Double? = null,
+    val customDepth: Double? = null,
+    val customHeight: Double? = null,
+    val customMargin: Double? = null,
     @field:DecimalMin(value = "0.05", message = "clearance должен быть в диапазоне 0.05..10 мм")
     @field:DecimalMax(value = "10", message = "clearance должен быть в диапазоне 0.05..10 мм")
     val clearance: Double? = null,

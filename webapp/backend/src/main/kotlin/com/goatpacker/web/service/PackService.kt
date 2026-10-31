@@ -49,16 +49,31 @@ class PackService(
             throw BadRequestException("${StlInputs.UPLOAD_EXTENSIONS_MESSAGE}, получено: «$fileName»")
         }
         StlInputs.rejectUntilConversion(fileName)
-        val profileId = form.profileId!!.trim()
-        val profile = profileService.require(profileId)
-        profileService.requireMatches(projects.inspect(file), profile)
+        val customBed = customBed(form)
+        val profileId = form.profileId?.trim().orEmpty()
+        if ((customBed == null) == profileId.isEmpty()) {
+            throw BadRequestException(if (customBed == null) "Выберите принтер или укажите свой стол" else "Укажите либо принтер из каталога, либо свой стол")
+        }
+        val inspection = projects.inspect(file)
+        val jobId = UUID.randomUUID().toString()
+        val directory = properties.jobsRootPath.resolve(jobId)
+        // Свой стол: разовый профиль — profile.json в каталоге джоба (пишется, когда каталог создан).
+        val custom = customBed?.let {
+            projects.requireModel(inspection)
+            profileService.custom(it, inspection.projectBed, inspection.printerModel)
+        }
+        val profile = if (custom != null) {
+            ProfileService.ResolvedProfile(custom.dto, directory.resolve("profile.json"))
+        } else {
+            profileService.require(profileId).also { profileService.requireMatches(inspection, it) }
+        }
         val nozzleClean = form.nozzleClean?.trim() ?: ""
         validateNozzleClean(nozzleClean, profile)
         val amsCorrection = form.amsCorrection == true
         profileService.requireAmsCorrectionSupported(profile, amsCorrection)
 
         val params = PackParams(
-            profileId = profileId,
+            profileId = profile.dto.id,
             profilePath = profile.file,
             clearance = form.clearance ?: 0.7,
             resolution = form.resolution ?: 0.25,
@@ -78,16 +93,16 @@ class PackService(
             supportOverlapMm = form.supportOverlapMm,
         )
 
-        val jobId = UUID.randomUUID().toString()
         val job = Job(
             id = jobId,
             kind = JobKind.PACK,
-            directory = properties.jobsRootPath.resolve(jobId),
+            directory = directory,
             createdAt = OffsetDateTime.now(),
         )
         Files.createDirectories(job.directory)
         try {
             file.transferTo(job.directory.resolve("input.3mf").toFile())
+            custom?.let { Files.writeString(params.profilePath, it.json) }
             store.put(job)
             jobRunner.runPack(job, params)
         } catch (ex: RejectedExecutionException) {
@@ -102,8 +117,17 @@ class PackService(
             throw ex
         }
 
-        log.info("Создана pack-джоба {} (профиль {}, файл {} байт)", job.id, profileId, file.size)
+        log.info("Создана pack-джоба {} (профиль {}, файл {} байт)", job.id, profile.dto.id, file.size)
         return JobCreatedDto(job.id)
+    }
+
+    /** Свой стол из полей custom*: все три размера или ни одного (отступ без размеров — ошибка формы). */
+    private fun customBed(form: PackJobForm): com.goatpacker.web.dto.CustomBed? {
+        val sizes = listOf(form.customWidth, form.customDepth, form.customHeight)
+        if (sizes.all { it == null } && form.customMargin == null) return null
+        if (sizes.any { it == null }) throw BadRequestException("Для своего стола нужны ширина, глубина и высота")
+        return com.goatpacker.web.dto.CustomBed(form.customWidth!!, form.customDepth!!, form.customHeight!!, form.customMargin ?: 5.0)
+            .also { it.validate() }
     }
 
     /**

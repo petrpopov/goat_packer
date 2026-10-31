@@ -20,7 +20,9 @@ data class JobRequest(val kind:String="PACK",val fileId:String?=null,val packJob
     // Время печати (упаковка) и коррекция смены прутка AMS (упаковка и расписание); null = не задано.
     val timeWindowHours:Double?=null,val amsCorrection:Boolean=false,val changeSeconds:Double?=null,val timeMarginPct:Double?=null,
     // Перекрытие поддержек (упаковка), мм; null = без ограничений. Вариант теста смены AMS (калибровка).
-    val supportOverlapMm:Double?=null,val variant:String="normal")
+    val supportOverlapMm:Double?=null,val variant:String="normal",
+    // «Моего принтера нет в списке» (только упаковка): вместо profileId; задача получает разовый профиль CustomProfile.
+    val customBed:com.goatpacker.web.dto.CustomBed?=null)
 data class CreatedJob(val jobId:String,val readToken:String?=null)
 
 @Service @Profile("server")
@@ -38,11 +40,15 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             if(it.requestHash!=hash) throw ServerError(409,"CONFLICT","Этот ключ запроса использован с другими параметрами")
             return CreatedJob(it.id)
         }
+        var customFile:UploadEntity?=null
         val (input,name)=if(request.fileId!=null) {
             val file=uploads.findById(request.fileId).orElse(null)?.takeIf { it.ownerId==ownerId && it.state=="READY" } ?: missing()
             if(file.expiresAt?.isBefore(Instant.now())==true) throw ServerError(410,"EXPIRED","Файл истёк")
             com.goatpacker.web.service.StlInputs.rejectUntilConversion(file.originalName)
-            if(file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
+            // Каталожный принтер — только распознанный по файлу: пакер сверяет printer_model проекта с
+            // printer_name профиля. Нераспознанный 3MF упаковывается лишь со своим столом (CustomProfile).
+            if(request.customBed==null && file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
+            customFile=file
             file.blobId!! to file.originalName
         } else {
             val previous=owned(request.packJobId!!,ownerId)
@@ -61,14 +67,18 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         quotas.reserve(owner,props.outputReservationBytes)
         val budgetDay=java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         reserveCompute(owner,budgetDay,props.jobTimeoutSeconds)
-        val profile=profiles.require(request.profileId)
-        if(request.nozzleClean.isNotBlank() && !profile.dto.supportsNozzleClean) bad("Принтер не поддерживает чистку сопла")
-        if(request.amsCorrection && profile.dto.filamentChangeSeconds==null) bad("Для этого принтера коррекция смены прутка не нужна")
-        if(request.kind=="CALIBRATION" && profile.dto.filamentChangeSeconds==null) bad(ProfileService.CALIBRATION_NOT_NEEDED)
+        // Разовый профиль собирается при постановке и хранится снимком, как каталожный (воркер лишь пишет его в profile.json).
+        val (dto,profileJson)=request.customBed?.let { bed ->
+            val bedFromProject=customFile?.projectBedJson?.let { mapper.readValue(it,com.goatpacker.web.service.ProjectBed::class.java) }
+            profiles.custom(bed,bedFromProject,customFile?.printerModel).let { it.dto to it.json }
+        } ?: profiles.require(request.profileId).let { it.dto to Files.readString(it.file) }
+        if(request.nozzleClean.isNotBlank() && !dto.supportsNozzleClean) bad("Принтер не поддерживает чистку сопла")
+        if(request.amsCorrection && dto.filamentChangeSeconds==null) bad("Для этого принтера коррекция смены прутка не нужна")
+        if(request.kind=="CALIBRATION" && dto.filamentChangeSeconds==null) bad(ProfileService.CALIBRATION_NOT_NEEDED)
         if(owner.kind=="GUEST" && request.benchMode=="full") bad("Полный перебор партий доступен только аккаунту")
         val token=Secrets.token()
         val j=jobs.save(QueueJobEntity(ownerId=ownerId,kind=request.kind,inputBlobId=input,originalName=name,
-            profileId=request.profileId,profileJson=Files.readString(profile.file),paramsJson=mapper.writeValueAsString(request),
+            profileId=dto.id,profileJson=profileJson,paramsJson=mapper.writeValueAsString(request),
             requestKey=key,requestHash=hash,readTokenHash=Secrets.hash(token),reservedBytes=props.outputReservationBytes,
             computeReservedSeconds=props.jobTimeoutSeconds,budgetDay=budgetDay))
         return CreatedJob(j.id,token)
@@ -246,6 +256,11 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         if(r.kind !in listOf("PACK","SCHEDULE","CALIBRATION") || (r.fileId==null)==(r.packJobId==null)) bad("Укажите один источник и тип PACK/SCHEDULE/CALIBRATION")
         if(r.kind=="PACK" && r.packJobId!=null) bad("Для упаковки нужен загруженный файл")
         if(r.kind=="CALIBRATION" && r.packJobId!=null) bad("Для калибровки нужен загруженный проект")
+        if(r.customBed!=null) {
+            if(r.kind!="PACK") bad("Свой стол пока доступен только для упаковки")
+            if(r.profileId.isNotBlank()) bad("Укажите либо принтер из каталога, либо свой стол")
+            r.customBed.validate()
+        } else if(r.profileId.isBlank()) bad("Выберите принтер или укажите свой стол")
         if(r.variant !in listOf("normal","perfectionist")) bad("Вариант калибровки: normal или perfectionist")
         if(r.supportOverlapMm!=null && (!r.supportOverlapMm.isFinite() || r.supportOverlapMm !in 0.0..20.0)) bad("Перекрытие поддержек должно быть 0–20 мм")
         if(!r.clearance.isFinite() || r.clearance !in 0.05..10.0 || !r.resolution.isFinite() || r.resolution !in 0.05..1.0) bad("Некорректные зазор/разрешение")

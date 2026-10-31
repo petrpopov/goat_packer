@@ -17,5 +17,6 @@ app:
   calibration-bin: ${GOAT_CALIBRATION_BIN:../../target/release/ams_calibration}
   profiles-dir: ${GOAT_PROFILES_DIR:../../profiles}
   orca-slicer: ${GOAT_ORCA_SLICER:/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer}
+  bambu-slicer: ${GOAT_BAMBU_SLICER:/Applications/BambuStudio.app/Contents/MacOS/BambuStudio}
   jobs-root: ${GOAT_JOBS_ROOT:${java.io.tmpdir}/goat-packer-web/jobs}
   job-ttl-hours: 12

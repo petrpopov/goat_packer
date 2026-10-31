@@ -111,10 +111,15 @@ class ProfileService(
         }
     }
 
-    /** Разовый профиль своего стола (см. [CustomProfile]); слайсер — локальный Orca из настроек. */
-    fun custom(bed: com.goatpacker.web.dto.CustomBed, projectBed: ProjectBed?): CustomProfile.Built {
+    /**
+     * Разовый профиль своего стола (см. [CustomProfile]) для 3MF с [printerModel]: без printer_model
+     * пакер проект не примет (сверяет его с printer_name профиля). Слайсер — локальный из настроек
+     * (в docker-режиме воркер подменяет путь на слайсер образа).
+     */
+    fun custom(bed: com.goatpacker.web.dto.CustomBed, projectBed: ProjectBed?, printerModel: String?): CustomProfile.Built {
         bed.validate()
-        return CustomProfile.build(objectMapper, bed, projectBed, properties.orcaSlicer)
+        if (printerModel.isNullOrBlank()) throw BadRequestException("В проекте нет printer_model. Сохраните проект с выбранным принтером в слайсере")
+        return CustomProfile.build(objectMapper, bed, projectBed, printerModel) { kind -> if (kind == "bambu") properties.bambuSlicer else properties.orcaSlicer }
     }
 
     fun exists(profileId: String): Boolean = findById(profileId) != null

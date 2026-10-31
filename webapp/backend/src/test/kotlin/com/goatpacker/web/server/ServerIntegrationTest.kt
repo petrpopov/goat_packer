@@ -136,6 +136,40 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         assertEquals(unknown["projectBed"],c.call("GET","/api/v2/uploads/${unknown["fileId"].asText()}")["projectBed"])
         assertTrue(c.uploadRaw("p1s.3mf",descriptorProject3mf("Bambu Lab P1S",settings))["projectBed"].isNull)
     }
+    @Test fun `custom bed job packs an unknown printer 3MF with an ad-hoc profile from the confirmed project bed`() {
+        val c=Client();c.guest()
+        val settings=mapOf("printable_area" to listOf("-5x0","245x0","245x210","-5x210"),"bed_exclude_area" to listOf("0x0"),"printable_height" to "220")
+        val file=c.uploadRaw("cat.3mf",descriptorProject3mf("Prusa MK4",settings))["fileId"].asText()
+        val bed=mapOf("width" to 250,"depth" to 210,"height" to 220)
+        fun send(body:Map<String,Any?>,expected:Int)=c.call("POST","/api/v2/jobs",body,expected,headers=mapOf("Idempotency-Key" to newId()))
+        send(mapOf("fileId" to file,"profileId" to "bambu_p1s","customBed" to bed),400)
+        send(mapOf("fileId" to file),400)
+        send(mapOf("fileId" to file,"kind" to "SCHEDULE","customBed" to bed),400)
+        send(mapOf("fileId" to file,"customBed" to bed+("height" to 1001)),400)
+        send(mapOf("fileId" to file,"customBed" to bed+("margin" to 31)),400)
+        val id=send(mapOf("fileId" to file,"customBed" to bed),200)["jobId"].asText()
+        val record=jobs.findById(id).orElseThrow()
+        assertEquals("custom",record.profileId)
+        val profile=json.readTree(record.profileJson)
+        // Размеры совпали со столом проекта — берутся его начало координат и исключения.
+        assertEquals(listOf(-5.0,0.0,245.0,210.0),profile["printable_area"].map { it.asDouble() })
+        assertEquals(5.0,profile["edge_margin_mm"].asDouble(),1e-9)
+        assertEquals("Prusa MK4",profile["printer_name"].asText());assertEquals("orca",profile["slicer_kind"].asText())
+        val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
+        try {
+            worker.dispatch()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+            while(jobs.findById(id).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+            val response=c.call("GET","/api/v2/jobs/$id")
+            assertEquals("SUCCEEDED",response["status"].asText(),response.toString())
+            assertTrue(response["artifacts"][0]["name"].asText().contains("_custom_"),response.toString())
+        } finally {worker.stop()}
+    }
+    @Test fun `unknown printer 3MF needs a custom bed, the catalog pick is refused`() {
+        val c=Client();c.guest()
+        val file=c.uploadRaw("cat.3mf",descriptorProject3mf("Prusa MK4"))["fileId"].asText()
+        assertEquals("Принтер файла не соответствует выбранному профилю",c.job(file,expected=400)["message"].asText())
+    }
     @Test fun `concurrent workers cannot exceed global slots or claim same job`() {
         val a=Client();a.guest();a.job(a.upload())
         val b=Client();b.guest();b.job(b.upload())

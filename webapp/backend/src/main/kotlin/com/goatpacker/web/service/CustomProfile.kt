@@ -21,16 +21,27 @@ object CustomProfile {
      * зонами исключения), только если пользователь подтвердил его размеры без правки: иначе
      * введённые цифры важнее, и стол строится от (0, 0) без исключений.
      */
-    fun build(mapper: ObjectMapper, bed: CustomBed, projectBed: ProjectBed?, slicerPath: String): Built {
+    /**
+     * Слайсер по printer_model — зеркало SLICER_KIND_BY_PRINTER_SUBSTRING (src/colored_packer.rs):
+     * пакер отвергает профиль, чей slicer_kind спорит с моделью проекта. Незнакомая модель — Orca.
+     */
+    fun slicerKind(printerModel: String?): String = if (printerModel?.contains("Bambu Lab") == true) "bambu" else "orca"
+
+    /**
+     * [printerModel] — printer_model проекта: пакер требует printer_name профиля, равный ему
+     * (validate_source_printer), поэтому разовый профиль называется так же; null — «Custom Printer».
+     */
+    fun build(mapper: ObjectMapper, bed: CustomBed, projectBed: ProjectBed?, printerModel: String?, slicerPath: (String) -> String): Built {
         val confirmed = projectBed?.takeIf { p ->
             Math.abs(p.printableArea[2] - p.printableArea[0] - bed.width) < 0.01 && Math.abs(p.printableArea[3] - p.printableArea[1] - bed.depth) < 0.01
         }
         val area = confirmed?.printableArea ?: listOf(0.0, 0.0, bed.width, bed.depth)
         val exclusions = confirmed?.exclusionRectangles ?: emptyList()
+        val name = printerModel?.trim()?.takeIf { it.isNotEmpty() } ?: NAME
+        val kind = slicerKind(name)
         val node: ObjectNode = mapper.createObjectNode().apply {
-            put("id", ID); put("printer_name", NAME); put("download_slug", ID)
-            // Orca: её CLI грузит и Bambu-проекты; своего слайсера у незнакомого принтера нет.
-            put("slicer_kind", "orca"); put("slicer_path", slicerPath)
+            put("id", ID); put("printer_name", name); put("download_slug", ID)
+            put("slicer_kind", kind); put("slicer_path", slicerPath(kind))
             put("blank_start_gcode_for_cli", false)
             // Башня незнакомого принтера в пробе не проверяется: её размер мы не калибровали.
             put("no_check_for_final_tower_probe", true)
@@ -42,7 +53,7 @@ object CustomProfile {
             put("tower_marker_style", "wipe_tower"); put("tower_line_width_mm", 0.5)
         }
         val dto = ProfileDto(
-            id = ID, name = NAME, vendor = "", slicerKind = "orca",
+            id = ID, name = name, vendor = "", slicerKind = kind,
             bedWidthMm = area[2] - area[0], bedDepthMm = area[3] - area[1], edgeMarginMm = bed.margin,
             supportsNozzleClean = false, filamentChangeSeconds = null,
             printableArea = area, exclusionRectangles = exclusions,

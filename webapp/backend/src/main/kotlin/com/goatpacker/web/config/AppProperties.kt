@@ -19,8 +19,9 @@ data class AppProperties(
     var schedulerBin: String = "../../target/release/daily_scheduler",
     var calibrationBin: String = "../../target/release/ams_calibration",
     var profilesDir: String = "../../profiles",
-    /** OrcaSlicer для разового профиля своего стола (у каталожных профилей путь свой, в json). */
+    /** Слайсеры для разового профиля своего стола (у каталожных профилей путь свой, в json). */
     var orcaSlicer: String = "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+    var bambuSlicer: String = "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
     var jobsRoot: String = "${System.getProperty("java.io.tmpdir")}/goat-packer-web/jobs",
     var jobTtlHours: Long = 12,
     var allowedOrigins: List<String> = listOf("http://localhost:3007", "http://127.0.0.1:3007"),
