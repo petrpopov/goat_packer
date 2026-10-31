@@ -290,36 +290,24 @@ select.input {
 }
 
 .btn-primary {
-  background: linear-gradient(to bottom, var(--accent-hi), var(--accent-lo));
+  border: 0;
   color: var(--accent-ink);
-  border-color: transparent;
+  background: var(--accent-fill);
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
   min-height: 34px;
   padding: 5px 16px;
-  box-shadow:
-    inset 0 1px 0 var(--accent-edge-hi),
-    0 1px 2px oklch(0 0 0 / 0.22);
   transition:
-    box-shadow 0.16s cubic-bezier(0.2, 0, 0, 1),
-    background 0.16s ease,
+    filter 0.16s ease,
     transform 0.16s cubic-bezier(0.2, 0, 0, 1);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(
-    to bottom,
-    oklch(from var(--accent-hi) calc(l + 0.025) c h),
-    oklch(from var(--accent-lo) calc(l + 0.025) c h)
-  );
-  border-color: transparent;
-  box-shadow:
-    inset 0 1px 0 var(--accent-edge-hi),
-    0 2px 5px oklch(0 0 0 / 0.26),
-    0 0 0 3px var(--accent-soft),
-    0 8px 22px var(--accent-glow);
+  filter: brightness(1.06);
 }
 
 .btn-primary:active:not(:disabled) {
+  filter: brightness(0.96);
   transform: translateY(0.5px);
 }
 
