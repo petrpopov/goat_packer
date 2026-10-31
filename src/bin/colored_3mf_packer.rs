@@ -666,10 +666,21 @@ fn run() -> AppResult<()> {
         Some((seconds, objects)) => expected_reslice_seconds(seconds, objects, count),
         None => expected_slice_seconds(probe_seconds, count),
     };
+    // The webapp scene draws every winning layout; the first one is "pack", later ones "repack".
+    let mut layout_source = progress::LayoutSource::Pack;
     loop {
         if let Some(centre) = centre {
             order_centre_out(&plan.footprint, &mut packed, centre);
         }
+        progress::layout(
+            layout_source,
+            &plan.footprint.loops,
+            &packed.placements,
+            usable_bed,
+            &plan.fixed_keepouts,
+            plan.tower_keepout,
+        );
+        layout_source = progress::LayoutSource::Repack;
         let count = packed.placements.len();
         progress::stage(
             Stage::Assembling,
@@ -907,6 +918,14 @@ fn run() -> AppResult<()> {
             let chosen = match choice {
                 Some(choice) => {
                     packed.placements.truncate(choice.count);
+                    progress::layout(
+                        progress::LayoutSource::Window,
+                        &plan.footprint.loops,
+                        &packed.placements,
+                        usable_bed,
+                        &plan.fixed_keepouts,
+                        plan.tower_keepout,
+                    );
                     final_tower = window_tower.expect("a chosen window plate was sliced");
                     support_collisions =
                         window_collisions.expect("a chosen window plate was checked");
