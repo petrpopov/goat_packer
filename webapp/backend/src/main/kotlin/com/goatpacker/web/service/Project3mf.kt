@@ -6,7 +6,6 @@ import com.goatpacker.web.exception.BadRequestException
 import com.goatpacker.web.exception.ErrorMessages
 import com.goatpacker.web.exception.badRequest
 import com.goatpacker.web.model.Inspection
-import com.goatpacker.web.model.ProjectBed
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.io.FilterInputStream
@@ -23,7 +22,7 @@ import javax.xml.stream.XMLStreamConstants
 
 /**
  * Безопасный разбор 3MF-проекта. Читается central directory, а не локальные заголовки ZIP: слайсеры
- * кладут PNG-превью как STORED + data descriptors, которые java.util.zip.ZipInputStream отвергает до того,
+ * кладут PNG-превью как STORED + data descriptors, которые ZipInputStream отвергает до того,
  * как доберётся до настроек. Архив проверяется на «бомбы» и подмену путей, XML — на DTD и внешние сущности.
  */
 @Service

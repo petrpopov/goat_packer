@@ -162,10 +162,6 @@ class JobExecutionService(
             }
     }
 
-    /** Исполнитель закончил, не опубликовав результат: слот освобождается, задача идёт на повтор, если есть попытки. */
-    @Transactional
-    fun releaseStopped(id: String, fence: Long) = retryStopped(id, fence, "Исполнитель остановлен до завершения задачи")
-
     /** Не удалось подтвердить остановку процесса: слот остаётся занятым (LOST), пока уборка не подтвердит остановку. */
     @Transactional
     fun markRuntimeLost(id: String, fence: Long, reason: String) {

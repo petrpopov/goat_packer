@@ -1,5 +1,6 @@
 package com.goatpacker.web.repository
 
+import com.goatpacker.web.entity.PrincipalKind
 import com.goatpacker.web.entity.QueueStatus
 import org.springframework.context.annotation.Profile
 import org.springframework.jdbc.core.JdbcTemplate
@@ -45,7 +46,7 @@ class RetentionRepository(private val jdbc: JdbcTemplate) {
     /** Гости, не появлявшиеся [idleDays] дней и ничем не владеющие. */
     fun deleteIdleGuests(idleDays: Int) {
         jdbc.update(
-            """delete from principals p where p.kind='GUEST' and not p.blocked and p.last_seen_at<now()-interval '$idleDays days'
+            """delete from principals p where p.kind='${PrincipalKind.GUEST.name}' and not p.blocked and p.last_seen_at<now()-interval '$idleDays days'
                and not exists(select 1 from auth_sessions s where s.owner_id=p.id)
                and not exists(select 1 from uploads u where u.owner_id=p.id)
                and not exists(select 1 from queue_jobs j where j.owner_id=p.id)

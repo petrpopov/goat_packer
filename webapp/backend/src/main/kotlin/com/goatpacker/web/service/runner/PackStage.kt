@@ -32,9 +32,6 @@ enum class PackStage(
     WINDOW_SLICE("window_slice", JobPhase.SLICING, 86, 95, 300.0),
     WRITING("writing", JobPhase.WRITING, 95, 99, 10.0);
 
-    val slicing: Boolean
-        get() = this == PROBE_SLICE || this == SAMPLE_SLICE || this == FINAL_SLICE || this == WINDOW_SLICE
-
     /** Ожидаемая длительность при отсутствии `expected_s`: для нарезок — по формуле из дизайна. */
     fun fallbackSeconds(objects: Int?): Double =
         if ((this == FINAL_SLICE || this == WINDOW_SLICE) && objects != null && objects > 0) {

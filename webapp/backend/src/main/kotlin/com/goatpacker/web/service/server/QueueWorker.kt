@@ -19,7 +19,6 @@ import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.file.Files
 import java.nio.file.LinkOption
-import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.time.Duration
 import java.time.Instant
@@ -183,7 +182,7 @@ class QueueWorker(
             return
         }
         val settled = runCatching {
-            if (retryReason != null) execution.retryStopped(record.id, record.fence, retryReason) else execution.releaseStopped(record.id, record.fence)
+            execution.retryStopped(record.id, record.fence, retryReason ?: STOPPED_BEFORE_COMPLETION)
         }.isSuccess
         if (settled) release(job) else cleanupPending.add(job.id)
     }
@@ -224,6 +223,9 @@ class QueueWorker(
         const val SHUTDOWN_WAIT_SECONDS = 20L
         const val MAX_FAILURE_REASON_CHARS = 500
         const val UNKNOWN_FENCE = -1L
+
+        /** Исполнитель закончил работу над задачей, не опубликовав результат: слот освобождается, задача идёт на повтор. */
+        const val STOPPED_BEFORE_COMPLETION = "Исполнитель остановлен до завершения задачи"
         const val BYTES_PER_MIB = 1024L * 1024
 
         /** Запас диска сверх входа и результата задачи: временные файлы слайсера. */

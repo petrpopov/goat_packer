@@ -34,7 +34,7 @@ class QueueJobEntity(
     var progress: Int = 0,
     var message: String? = null,
     var error: String? = null,
-    /** Текущий этап пакера (JSON [com.goatpacker.web.model.JobStage]); null — этапа нет (V3). */
+    /** Текущий этап пакера (JSON [JobStage]); null — этапа нет (V3). */
     @Column(columnDefinition = "text") var stageJson: String? = null,
     /** Последняя раскладка пакера (JSON layout-события); null — раскладки нет (V4). */
     @Column(columnDefinition = "text") var layoutJson: String? = null,

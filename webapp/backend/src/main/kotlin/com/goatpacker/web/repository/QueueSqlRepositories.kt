@@ -1,6 +1,7 @@
 package com.goatpacker.web.repository
 
 import com.goatpacker.web.entity.QueueStatus
+import com.goatpacker.web.entity.UploadState
 import com.goatpacker.web.model.JobKind
 import org.springframework.context.annotation.Profile
 import org.springframework.jdbc.core.JdbcTemplate
@@ -26,7 +27,7 @@ class QueueJobSqlRepository(private val jdbc: JdbcTemplate) {
             """select count(*) as n,
                percentile_cont(0.5) within group(order by extract(epoch from finished_at-started_at)) as median
                from (select started_at,finished_at from queue_jobs
-               where status='SUCCEEDED' and kind=? and profile_id=? and started_at is not null
+               where status='${QueueStatus.SUCCEEDED.name}' and kind=? and profile_id=? and started_at is not null
                order by finished_at desc limit $DURATION_SAMPLE_SIZE) sample""",
             kind.name,
             profileId,
@@ -78,7 +79,7 @@ data class DurationStats(val samples: Int, val medianSeconds: Double?)
 class JobAttemptRepository(private val jdbc: JdbcTemplate) {
     fun start(id: String, jobId: String, fence: Long, workerId: String, bootId: String) {
         jdbc.update(
-            "insert into job_attempts(id,job_id,fence,worker_id,boot_id,started_at,status) values (?,?,?,?,?,now(),'RUNNING')",
+            "insert into job_attempts(id,job_id,fence,worker_id,boot_id,started_at,status) values (?,?,?,?,?,now(),'${QueueStatus.RUNNING.name}')",
             id,
             jobId,
             fence,
@@ -131,6 +132,6 @@ class OwnerContentRepository(private val jdbc: JdbcTemplate) {
     fun retainPermanently(ownerId: String) {
         jdbc.update("delete from read_grants where job_id in (select id from queue_jobs where owner_id=?)", ownerId)
         jdbc.update("update queue_jobs set expires_at=null,read_token_hash=null where owner_id=?", ownerId)
-        jdbc.update("update uploads set expires_at=null where owner_id=? and state='READY'", ownerId)
+        jdbc.update("update uploads set expires_at=null where owner_id=? and state='${UploadState.READY.name}'", ownerId)
     }
 }

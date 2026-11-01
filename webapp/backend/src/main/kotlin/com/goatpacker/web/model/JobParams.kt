@@ -59,7 +59,7 @@ data class PackParams(
     val supportOverlapMm: Double? = null,
     /**
      * Вход — STL: команда source_project (STL → input.3mf), выполняется перед пакером в том же
-     * процессе/контейнере ([com.goatpacker.web.util.ShellChain]); null — вход уже 3MF.
+     * процессе/контейнере ([ShellChain]); null — вход уже 3MF.
      */
     val sourceCommand: List<String>? = null,
     /**

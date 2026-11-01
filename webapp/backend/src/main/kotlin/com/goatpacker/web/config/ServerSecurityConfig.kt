@@ -1,5 +1,6 @@
 package com.goatpacker.web.config
 
+import com.goatpacker.web.entity.Role
 import com.goatpacker.web.exception.ErrorCode
 import com.goatpacker.web.security.SessionFilter
 import com.goatpacker.web.security.writeError
@@ -34,7 +35,7 @@ class ServerSecurityConfig {
             .addFilterBefore(SessionFilter(sessions, props.secureCookies), UsernamePasswordAuthenticationFilter::class.java)
             .authorizeHttpRequests {
                 it.requestMatchers(*PUBLIC_PATHS).permitAll()
-                it.requestMatchers("/api/v2/admin/**").hasRole("ADMIN")
+                it.requestMatchers("/api/v2/admin/**").hasRole(Role.ADMIN.name)
                 it.requestMatchers("/api/v2/**").authenticated()
                 it.anyRequest().denyAll()
             }
