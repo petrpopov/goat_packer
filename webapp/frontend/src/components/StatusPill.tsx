@@ -14,10 +14,11 @@ const LABELS: Record<JobStatus, string> = {
 
 const PILL_CLASSES: Record<JobStatus, string> = {
   QUEUED: 'pill pill-muted',
-  RUNNING: 'pill pill-cyan',
+  // Оранжевый — ход машины (DESIGN.md): идущая задача не должна выглядеть как «Готово» (зелёный).
+  RUNNING: 'pill pill-run',
   SUCCEEDED: 'pill pill-ok',
   FAILED: 'pill pill-crit',
-  FINALIZING: 'pill pill-cyan',
+  FINALIZING: 'pill pill-run',
   LOST: 'pill pill-warn',
   RETRY_WAIT: 'pill pill-warn',
   CANCELLED: 'pill pill-muted',

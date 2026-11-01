@@ -302,6 +302,11 @@ select.input {
   color: var(--accent-2);
 }
 
+.pill-run {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .pill-ok {
   background: var(--ok-soft);
   color: var(--ok);

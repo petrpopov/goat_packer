@@ -22,6 +22,9 @@ export default defineConfig({
     },
   },
   build: {
+    // Шрифты — всегда файлами: мелкие подмножества Vite встроил бы как data:, а CSP gateway
+    // (font-src 'self') их блокирует — часть глифов на проде падала на системный шрифт.
+    assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined),
     // Порог по умолчанию (500 КБ) срабатывает на чанк three.js; он ленивый (сцена грузится только
     // на странице упаковки), главный бандл от него не растёт.
     chunkSizeWarningLimit: 700,

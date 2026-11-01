@@ -909,8 +909,11 @@ export default function PackPage() {
   }
 
   /** Текст поверх сцены, пока её нечем заполнить. */
-  const sceneBusy =
-    external && jobInput.isPending && job?.kind === 'pack'
+  /** Файл задачи не скачался (истёк срок хранения, нет сети): сцена без модели — сказать прямо. */
+  const sceneFailed = external && jobInput.isError ? 'Файл задачи недоступен — стол без модели' : null;
+  const sceneBusy = sceneFailed
+    ? null
+    : external && jobInput.isPending && job?.kind === 'pack'
       ? 'Загружаю файл задачи…'
       : parsing
         ? 'Читаю модель…'
@@ -1096,11 +1099,11 @@ export default function PackPage() {
               {sceneBusy ? null : 'Здесь появится стол выбранного принтера и модель'}
             </div>
           )}
-          {sceneBusy ? (
+          {sceneBusy || sceneFailed ? (
             <div className="scene-busy" aria-live="polite">
               <span>
-                <span className="spinner" aria-hidden="true" />
-                {sceneBusy}
+                {sceneBusy ? <span className="spinner" aria-hidden="true" /> : <Icon name="alert" />}
+                {sceneBusy ?? sceneFailed}
               </span>
             </div>
           ) : null}
