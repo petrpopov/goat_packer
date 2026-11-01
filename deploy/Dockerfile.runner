@@ -1,5 +1,7 @@
 # Runner задачи на релиз: база слайсера (Dockerfile.slicer) + бинарники упаковщика этого коммита (~10 MB слой).
 # Собирается на x86-64 (CI на main); glibc bookworm старше Ubuntu 24.04 базы, поэтому бинарники совместимы.
+# Версия Rust — та же, что у тестов в .woodpecker (deploy/check-pins.sh).
+# SLICER_IMAGE без значения по умолчанию: обязателен, его передаёт build-images.sh.
 ARG SLICER_IMAGE
 FROM rust:1.94.0-bookworm AS packer
 WORKDIR /build

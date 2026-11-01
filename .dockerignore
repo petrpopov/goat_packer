@@ -1,13 +1,19 @@
-.git
+# Контекст сборки deploy/Dockerfile.* — только то, что они копируют (список разрешённого, а не запрещённого):
+# иначе в контекст попадают target/, локальные .3mf/.gcode, .claude/worktrees с копиями репозитория и т.п.
+*
+!Cargo.toml
+!Cargo.lock
+!src
+!profiles
+!webapp/backend
+!webapp/frontend
+!deploy/apt-mirror.sh
+!deploy/runner/slicer.sh
+!deploy/nginx.conf
+!deploy/gateway-realip.sh
 **/node_modules
 **/build
 **/.gradle
 **/.kotlin
 **/dist
-target
-.v2c
-*.log
-deploy/.env
-deploy/vendor
-docs
-examples
+**/.DS_Store

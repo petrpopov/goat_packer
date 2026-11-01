@@ -6,6 +6,7 @@
 set -eu
 version=${1:?usage: deploy/build-images.sh <version>}
 cd "$(dirname "$0")/.."
+# shellcheck source=deploy/slicers.env
 . deploy/slicers.env
 cache=${SLICER_CACHE:-$HOME/.cache/goat-packer/slicers}
 mkdir -p "$cache"
@@ -19,8 +20,8 @@ fetch() { # <file> <url> <sha256>
   mv "$cache/$1.part" "$cache/$1"
 }
 
-# Тег базы включает хэш её рецепта: правка Dockerfile.slicer или slicer.sh пересобирает базу и без смены версии.
-recipe=$(cat deploy/Dockerfile.slicer deploy/runner/slicer.sh | sha256sum | cut -c1-8)
+# Тег базы включает хэш её рецепта: правка любого из этих файлов пересобирает базу и без смены версии слайсера.
+recipe=$(cat deploy/Dockerfile.slicer deploy/runner/slicer.sh deploy/apt-mirror.sh | sha256sum | cut -c1-8)
 
 for kind in bambu orca; do
   case $kind in

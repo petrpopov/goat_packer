@@ -1,4 +1,5 @@
 #!/bin/sh
+# Обёртка слайсера в runner-образе: /opt/slicers/<kind>/AppRun -> сюда -> распакованный /opt/slicer/AppRun.
 set -eu
 mkdir -p "$HOME" "${XDG_CONFIG_HOME:-$HOME/.config}" "${XDG_CACHE_HOME:-$HOME/.cache}"
 # Private headless display: no host sockets/GPU, TCP, account or network needed.
@@ -14,5 +15,6 @@ while [ ! -s "$ready" ]; do
   n=$((n+1)); [ "$n" -lt 300 ] || { echo 'Xvfb startup timed out' >&2; exit 1; }
   sleep 0.1
 done
-export DISPLAY=":$(cat "$ready")"
+display=$(cat "$ready")
+export DISPLAY=":$display"
 /opt/slicer/AppRun "$@"

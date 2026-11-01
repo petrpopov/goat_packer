@@ -11,6 +11,15 @@ labels:
   platform: linux/amd64
   host: main
 
+variables:
+  # Те же кэши Cargo, что у check.yaml (там же — почему target вне рабочего каталога).
+  - &cargo_volumes
+    - /var/lib/ci/goat_packer/cargo-registry:/usr/local/cargo/registry
+    - /var/lib/ci/goat_packer/target:/cargo-target
+  - &cargo_env
+    CARGO_BUILD_JOBS: "3"
+    CARGO_TARGET_DIR: /cargo-target
+
 steps:
   - name: images
     image: docker:29-cli
@@ -26,15 +35,12 @@ steps:
 
   - name: cli archive
     image: rust:1.94.0-bookworm
-    volumes:
-      - /var/lib/ci/goat_packer/cargo-registry:/usr/local/cargo/registry
-      - /var/lib/ci/goat_packer/target:/woodpecker/src/github.com/petrpopov/goat_packer/target
-    environment:
-      CARGO_BUILD_JOBS: "3"
+    volumes: *cargo_volumes
+    environment: *cargo_env
     commands:
       - cargo build --release --locked --bins
       - mkdir -p dist
-      - tar czf "dist/goat-packer-$CI_COMMIT_TAG-linux-x86_64.tar.gz" -C target/release colored_3mf_packer daily_scheduler verify_outputs ams_calibration source_project
+      - tar czf "dist/goat-packer-$CI_COMMIT_TAG-linux-x86_64.tar.gz" -C "$CARGO_TARGET_DIR/release" colored_3mf_packer daily_scheduler verify_outputs ams_calibration source_project
 
   - name: github release (draft)
     image: alpine:3.22

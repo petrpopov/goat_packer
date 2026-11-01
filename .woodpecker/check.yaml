@@ -1,6 +1,7 @@
-# Проверки goat_packer на main: Rust, backend (Testcontainers через docker socket хоста), frontend.
+# Проверки goat_packer на main: Rust, backend (Testcontainers через docker socket хоста), frontend, скрипты deploy/.
 # Push в ветку после тестов собирает образы goat-packer-*:branch-<ветка> (перезаписываются, не выкладываются).
 # Тег тоже проверяется: release.yaml ждёт успешного check и собирает образы версии сам.
+# Версии образов шагов — в паре с deploy/Dockerfile.* (шаг lint сверяет их deploy/check-pins.sh).
 when:
   - event: [push, pull_request, manual, tag]
 
@@ -8,16 +9,24 @@ labels:
   platform: linux/amd64
   host: main
 
-# Rust, backend и frontend идут параллельно; образы ветки собираются после всех трёх.
+variables:
+  - &rust_image rust:1.94.0-bookworm
+  # Кэши Cargo на main переживают сборки. target вне рабочего каталога (CARGO_TARGET_DIR): путь не зависит
+  # от того, куда Woodpecker кладёт исходники.
+  - &cargo_volumes
+    - /var/lib/ci/goat_packer/cargo-registry:/usr/local/cargo/registry
+    - /var/lib/ci/goat_packer/target:/cargo-target
+  - &cargo_env
+    CARGO_BUILD_JOBS: "3"
+    CARGO_TARGET_DIR: /cargo-target
+
+# Rust, backend, frontend и lint идут параллельно; образы ветки собираются после всех.
 steps:
   - name: rust
-    image: rust:1.94.0-bookworm
+    image: *rust_image
     depends_on: []
-    volumes:
-      - /var/lib/ci/goat_packer/cargo-registry:/usr/local/cargo/registry
-      - /var/lib/ci/goat_packer/target:/woodpecker/src/github.com/petrpopov/goat_packer/target
-    environment:
-      CARGO_BUILD_JOBS: "3"
+    volumes: *cargo_volumes
+    environment: *cargo_env
     commands:
       - cargo test --release --all --locked
 
@@ -48,9 +57,16 @@ steps:
       - bun run lint
       - bun run build
 
+  - name: lint
+    image: koalaman/shellcheck-alpine:v0.11.0
+    depends_on: []
+    commands:
+      - shellcheck -x deploy/*.sh deploy/runner/slicer.sh
+      - sh deploy/check-pins.sh
+
   - name: images (branch)
     image: docker:29-cli
-    depends_on: [rust, backend, frontend]
+    depends_on: [rust, backend, frontend, lint]
     when:
       - event: push
     volumes:
@@ -66,11 +82,11 @@ steps:
 
   # Кэш сборки Rust растёт с каждой версией зависимостей: чистим, если больше 10 ГБ (диск main 50 ГБ).
   - name: cleanup target cache
-    image: rust:1.94.0-bookworm
+    image: *rust_image
     depends_on: [rust]
-    volumes:
-      - /var/lib/ci/goat_packer/target:/woodpecker/src/github.com/petrpopov/goat_packer/target
+    volumes: *cargo_volumes
+    environment: *cargo_env
     when:
       - status: [success, failure]
     commands:
-      - 'size=$(du -sm target | cut -f1); echo "кэш target: $size МБ"; if [ "$size" -gt 10000 ]; then find target -mindepth 1 -delete; echo "кэш очищен"; fi'
+      - 'size=$(du -sm "$CARGO_TARGET_DIR" | cut -f1); echo "кэш target: $size МБ"; if [ "$size" -gt 10000 ]; then find "$CARGO_TARGET_DIR" -mindepth 1 -delete; echo "кэш очищен"; fi'
