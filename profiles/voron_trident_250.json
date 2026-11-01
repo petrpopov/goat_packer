@@ -1,6 +1,6 @@
 {
   "blank_start_gcode_for_cli": false,
-  "edge_margin_mm": 0.0,
+  "edge_margin_mm": 5.0,
   "exclusion_rectangles": [],
   "id": "voron_trident_250",
   "no_check_for_final_tower_probe": false,
@@ -104,7 +104,8 @@
       "purge lines detected: 0",
       "probe plate: 128 cubes 20x20 mm, final slice and verify_outputs OK",
       "tower not qualified (single-colour probe)",
-      "no CLI workaround needed"
+      "no CLI workaround needed",
+      "start G-code calls firmware macros (PRINT_START); purge not visible — 5 mm edge margin"
     ],
     "orca_tag": "v2.4.2",
     "qualified": true,
