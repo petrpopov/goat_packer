@@ -154,7 +154,7 @@ impl FreeCenters {
             let row = &self.rows[y];
             for j in 0..row.len() {
                 let index = if reverse_x { row.len() - 1 - j } else { j };
-                let skip = [0, 2, 1, 3][phase % 4] * self.width / 4;
+                let skip = [0, 2, 1, 3][phase % START_PHASES] * self.width / START_PHASES;
                 let lo = if reverse_x { 0 } else { skip };
                 let hi = if reverse_x {
                     self.width - skip
@@ -191,6 +191,18 @@ impl FreeCenters {
 const MIXED_FAMILIES: usize = 4;
 /// Quarter turns tried around each shortlisted family's angle (degrees).
 const MIXED_OFFSETS_DEG: [f64; 4] = [0.0, 90.0, 180.0, 270.0];
+/// A sweep starts from one of the bed's four corners. Variants run through the corners fastest,
+/// then through which mask places the first object, then (every `START_PHASE_STRIDE` variants
+/// per mask) through the start phase.
+const CORNERS: usize = 4;
+/// The first object of a plate may start a quarter, half or three quarters along the first row
+/// (`START_PHASES` positions, in the order `FreeCenters::first` tries them).
+const START_PHASES: usize = 4;
+/// Variants per mask between two start phases: all corners, twice (straight and cycling).
+const START_PHASE_STRIDE: usize = 2 * CORNERS;
+/// Candidate heights are compared as integers at this many units per pixel, so float noise
+/// cannot reorder two candidates that are equally high.
+const HEIGHT_QUANTUM: f64 = 1e6;
 /// Sweep variants per palette angle in the mixed pass.
 const MIXED_VARIANTS_PER_ANGLE: usize = 8;
 /// Most sweep variants any single family runs, however high the requested effort.
@@ -209,10 +221,10 @@ struct Candidate {
 /// corner, or cycling around the four corners once `variant` is far enough along. The latter
 /// avoids greedy height traps such as four 6x4 rectangles around a 2x2 central hole.
 fn sweep_corner(variant: usize, placed: usize, mask_count: usize) -> usize {
-    if (variant / (4 * mask_count)).is_multiple_of(2) {
-        variant % 4
+    if (variant / (CORNERS * mask_count)).is_multiple_of(2) {
+        variant % CORNERS
     } else {
-        (variant % 4) ^ [0, 1, 3, 2][placed % 4]
+        (variant % CORNERS) ^ [0, 1, 3, 2][placed % CORNERS]
     }
 }
 
@@ -228,7 +240,7 @@ fn next_placement(
     let reverse_x = corner & 1 != 0;
     let reverse_y = corner & 2 != 0;
     let phase = if placed == 0 {
-        variant / (8 * masks.len())
+        variant / (START_PHASE_STRIDE * masks.len())
     } else {
         0
     };
@@ -241,7 +253,7 @@ fn next_placement(
             f64::from(y) + b.max_y / options.resolution
         };
         Some(Candidate {
-            top: (top * 1e6).round() as i64,
+            top: (top * HEIGHT_QUANTUM).round() as i64,
             side: if reverse_x { -x } else { x },
             mask: i,
             placement: PixelPlacement { mask: i, x, y },
@@ -249,7 +261,7 @@ fn next_placement(
     });
     let best = candidates.min_by(|a, b| {
         if placed == 0 {
-            let first = (variant / 4) % masks.len();
+            let first = (variant / CORNERS) % masks.len();
             let rank = |i| (i + masks.len() - first) % masks.len();
             rank(a.mask)
                 .cmp(&rank(b.mask))
