@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.dto.CustomBed
 import com.goatpacker.web.exception.BadRequestException
 import com.goatpacker.web.service.CustomProfile
-import com.goatpacker.web.service.ProjectBed
+import com.goatpacker.web.model.ProjectBed
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

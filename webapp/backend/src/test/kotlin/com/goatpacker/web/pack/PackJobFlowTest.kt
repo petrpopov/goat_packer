@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.awaitJobCompletion
 import com.goatpacker.web.FakeBins
 import com.goatpacker.web.miniProject3mf
+import com.goatpacker.web.repository.JobStore
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,7 +30,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 @AutoConfigureMockMvc
 class PackJobFlowTest(
     @Autowired private val mockMvc: MockMvc,
-    @Autowired private val store: com.goatpacker.web.job.JobStore,
+    @Autowired private val store: JobStore,
 ) {
     companion object {
         private val tmpRoot: Path = Files.createTempDirectory("goat-pack-flow")

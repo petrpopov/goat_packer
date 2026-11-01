@@ -2,7 +2,7 @@ package com.goatpacker.web.profiles
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.service.OrcaBed
-import com.goatpacker.web.service.ProjectBed
+import com.goatpacker.web.model.ProjectBed
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test

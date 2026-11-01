@@ -15,12 +15,12 @@ import java.nio.file.Paths
 @Component
 @ConfigurationProperties(prefix = "app")
 data class AppProperties(
-    var packerBin: String = "../../target/release/colored_3mf_packer",
-    var schedulerBin: String = "../../target/release/daily_scheduler",
-    var calibrationBin: String = "../../target/release/ams_calibration",
+    var packerBin: String = "$RELEASE_DIR/colored_3mf_packer",
+    var schedulerBin: String = "$RELEASE_DIR/daily_scheduler",
+    var calibrationBin: String = "$RELEASE_DIR/ams_calibration",
     var profilesDir: String = "../../profiles",
     /** STL → 3MF перед упаковкой (Rust source_project). */
-    var sourceProjectBin: String = "../../target/release/source_project",
+    var sourceProjectBin: String = "$RELEASE_DIR/source_project",
     /**
      * Дерево пресетов OrcaSlicer (`resources/profiles`, JSON) для STL в локальном режиме; пусто —
      * STL-джобы отклоняются. В docker-режиме пресеты берутся из образа слайсера.
@@ -52,6 +52,17 @@ data class AppProperties(
         jobsRootPath = toAbsolute(jobsRoot)
     }
 
-    private fun toAbsolute(raw: String): Path =
-        Paths.get(raw).toAbsolutePath().normalize()
+    private fun toAbsolute(raw: String): Path = Paths.get(raw).toAbsolutePath().normalize()
+
+    /** Слайсер локального запуска для [slicerKind] (`bambu` или `orca`). */
+    fun localSlicer(slicerKind: String): String = if (slicerKind == SlicerKind.BAMBU) bambuSlicer else orcaSlicer
+}
+
+private const val RELEASE_DIR = "../../target/release"
+
+/** Виды слайсера в `slicer_kind` профилей. */
+object SlicerKind {
+    const val BAMBU = "bambu"
+    const val ORCA = "orca"
+    val ALL = setOf(BAMBU, ORCA)
 }

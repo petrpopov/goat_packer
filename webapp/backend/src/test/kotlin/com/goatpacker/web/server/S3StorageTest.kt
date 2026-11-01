@@ -1,5 +1,7 @@
 package com.goatpacker.web.server
 
+import com.goatpacker.web.config.PlatformProperties
+import com.goatpacker.web.repository.S3ObjectStore
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.io.TempDir
@@ -18,7 +20,7 @@ class S3StorageTest {
                 container.start()
                 val endpoint="http://${container.host}:${container.getMappedPort(8333)}"
                 val props=PlatformProperties().apply {s3Endpoint=endpoint;s3PublicEndpoint=endpoint;s3AccessKey="test-access";s3SecretKey="test-secret-password"}
-                val store=S3Objects(props)
+                val store=S3ObjectStore(props)
                 val source=dir.resolve("in.txt");Files.writeString(source,"test content")
                 store.put("jobs/test/result",source)
                 val out=dir.resolve("out.txt");store.get("jobs/test/result",out);assertEquals("test content",Files.readString(out))

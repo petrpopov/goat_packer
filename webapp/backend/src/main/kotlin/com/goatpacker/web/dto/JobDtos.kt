@@ -1,6 +1,12 @@
 package com.goatpacker.web.dto
 
 import com.fasterxml.jackson.annotation.JsonInclude
+import com.fasterxml.jackson.databind.JsonNode
+import com.goatpacker.web.model.JobStage
+import com.goatpacker.web.model.ProjectBed
+import com.goatpacker.web.model.StageSpan
+import com.goatpacker.web.model.UploadKind
+import java.time.OffsetDateTime
 
 /** Принтер из каталога профилей: файл {profiles-dir}/{id}.json. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -44,7 +50,7 @@ data class ArtifactDto(
 )
 
 /**
- * Проверка нарезкой внутри pack-джоба (локальный режим; в серверном та же форма отдаётся картой). Id внутренней
+ * Проверка нарезкой внутри pack-джоба (локальный режим; в серверном та же форма — [QueueCheckDto]). Id внутренней
  * задачи наружу не уходит: [artifacts] скачиваются по id самой упаковки.
  */
 @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -54,8 +60,8 @@ data class CheckStatusDto(
     val progressPercent: Int,
     val phaseMessage: String?,
     val error: String?,
-    val startedAt: java.time.OffsetDateTime?,
-    val finishedAt: java.time.OffsetDateTime?,
+    val startedAt: OffsetDateTime?,
+    val finishedAt: OffsetDateTime?,
     val stage: JobStageDto?,
     val pack: PackInfoDto?,
     val artifacts: List<ArtifactDto>,
@@ -148,13 +154,15 @@ data class JobStageDto(
     val visited: List<String>,
     val detail: String?,
     /** Все заходы в этапы по порядку; фронт показывает пройденные этапы с длительностями и после завершения. */
-    val history: List<com.goatpacker.web.job.StageSpan> = emptyList(),
+    val history: List<StageSpan> = emptyList(),
 ) {
     companion object {
-        fun of(stage: com.goatpacker.web.job.JobStage, nowMs: Long = System.currentTimeMillis()) = JobStageDto(
+        private const val MILLIS_PER_SECOND = 1000
+
+        fun of(stage: JobStage, nowMs: Long = System.currentTimeMillis()) = JobStageDto(
             id = stage.id,
             startedAtMs = stage.startedAtMs,
-            elapsedSeconds = ((nowMs - stage.startedAtMs) / 1000).coerceAtLeast(0),
+            elapsedSeconds = ((nowMs - stage.startedAtMs) / MILLIS_PER_SECOND).coerceAtLeast(0),
             expectedSeconds = stage.expectedSeconds,
             objects = stage.objects,
             attempt = stage.attempt,
@@ -195,8 +203,8 @@ data class JobStatusDto(
     val progressPercent: Int,
     val phaseMessage: String?,
     val error: String?,
-    val createdAt: java.time.OffsetDateTime,
-    val finishedAt: java.time.OffsetDateTime?,
+    val createdAt: OffsetDateTime,
+    val finishedAt: OffsetDateTime?,
     val artifacts: List<ArtifactDto>,
     val pack: PackInfoDto?,
     val schedule: ScheduleInfoDto?,
@@ -204,7 +212,7 @@ data class JobStatusDto(
     /** Этап упаковки; null — не pack-джоб или этап ещё не начался. */
     val stage: JobStageDto? = null,
     /** Последняя раскладка пакера (layout-событие как есть); есть и после успеха. null — раскладки нет. */
-    val layout: com.fasterxml.jackson.databind.JsonNode? = null,
+    val layout: JsonNode? = null,
     /** Имя загруженного файла; только pack-джоб (иначе null). */
     val originalName: String? = null,
     /** Профиль принтера, как элемент /profiles (для своего стола — разовый, id `custom`); только pack. */
@@ -213,4 +221,15 @@ data class JobStatusDto(
     val params: PackParamsDto? = null,
     /** Проверка нарезкой стола внутри этой упаковки; null — не запускалась. */
     val check: CheckStatusDto? = null,
+)
+
+/** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось; printerModel — что за принтер записан в файле (для понятных сообщений). */
+@JsonInclude(JsonInclude.Include.ALWAYS)
+data class DetectProfileDto(
+    val profileId: String?,
+    val printerModel: String?,
+    /** "3mf" — проект слайсера, "stl" — сетка (не разбирается, принтер выбирает пользователь). */
+    val kind: String = UploadKind.PROJECT_3MF,
+    /** Стол из настроек 3MF, когда принтер не распознан (profileId = null); иначе null. */
+    val projectBed: ProjectBed? = null,
 )

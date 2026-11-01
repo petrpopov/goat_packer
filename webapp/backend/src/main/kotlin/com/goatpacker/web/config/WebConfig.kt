@@ -7,7 +7,6 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 /** CORS только для локального фронтенда Goat Packer Web. */
 @Configuration
 class WebConfig(private val properties: AppProperties) : WebMvcConfigurer {
-
     override fun addCorsMappings(registry: CorsRegistry) {
         registry.addMapping("/api/**")
             .allowedOrigins(*properties.allowedOrigins.toTypedArray())
