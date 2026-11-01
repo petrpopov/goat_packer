@@ -124,5 +124,6 @@
   },
   "tower_line_width_mm": 0.5,
   "tower_marker_style": "wipe_tower",
-  "vendor": "Qidi"
+  "vendor": "Qidi",
+  "vendor_display": "Qidi"
 }

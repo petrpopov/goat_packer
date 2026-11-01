@@ -150,8 +150,15 @@ class ProfileService(
         }
     }
 
+    /**
+     * Производитель для группировки: vendor_display (каталог: у профилей OrcaSlicer vendor — имя
+     * папки пресетов вроде «BBL», нужное для сборки из STL; printer_catalog relabel пишет рядом
+     * «Bambu Lab»), затем vendor (ручные профили), затем printer_name без последнего слова.
+     */
     private fun vendorOf(node: JsonNode): String {
-        node.path("vendor").asText("").trim().takeIf { it.isNotEmpty() }?.let { return it }
+        for (key in listOf("vendor_display", "vendor")) {
+            node.path(key).asText("").trim().takeIf { it.isNotEmpty() }?.let { return it }
+        }
         val name = node.path("printer_name").asText("").trim()
         return name.substringBeforeLast(' ', name).trim()
     }

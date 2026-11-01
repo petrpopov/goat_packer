@@ -83,6 +83,9 @@ class ProfilesIntegrationTest(
 
         assertEquals("Bambu Lab P1S", p1s["name"].asText())
         assertEquals("Bambu Lab", p1s["vendor"].asText())
+        // Каталожный Bambu (vendor «BBL» — папка Orca) попадает в ту же группу, что и ручной P1S.
+        val a1 = (0 until profiles.size()).map { profiles[it] }.first { it["id"].asText() == "bambu_lab_a1" }
+        assertEquals("Bambu Lab", a1["vendor"].asText())
         assertEquals(256.0, p1s["bedWidthMm"].asDouble(), 1e-9)
         assertEquals(256.0, p1s["bedDepthMm"].asDouble(), 1e-9)
         assertTrue(p1s["supportsNozzleClean"].asBoolean(), "у p1s есть nozzle_clean_gcode")

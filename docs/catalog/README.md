@@ -30,9 +30,18 @@ cargo build --release
   --vendor BBL --vendor Prusa --out /tmp/catalog-drafts
 ```
 
-One `<id>.json` per instantiable rectangular-bed machine (deltas/circular beds are skipped and
+One `<id>.json` per printer model (0.4 mm nozzle preset preferred) with a rectangular bed (deltas/circular beds are skipped and
 counted). `slicer_kind` is `bambu` for Bambu Lab printers (the packer refuses orca for a
 `Bambu Lab …` printer_model), `orca` otherwise. `purge_lines` is empty until qualification.
+
+`vendor` is the Orca vendor folder (`BBL`, `Prusa`): qualification and STL builds look presets up
+by it. The printer picker groups by `vendor_display` — the leading words every `printer_model` of the
+folder shares (`Bambu Lab`), else the folder name. To recompute it for existing profiles without the
+Orca checkout (it only edits that line, other values stay byte-identical):
+
+```bash
+./target/release/printer_catalog relabel --profiles profiles
+```
 
 ## 2. Qualify (on the x86-64 host with the runner images)
 

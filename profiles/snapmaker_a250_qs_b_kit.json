@@ -99,5 +99,6 @@
   },
   "tower_line_width_mm": 0.5,
   "tower_marker_style": "wipe_tower",
-  "vendor": "Snapmaker"
+  "vendor": "Snapmaker",
+  "vendor_display": "Snapmaker"
 }

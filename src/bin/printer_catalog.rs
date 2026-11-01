@@ -8,6 +8,11 @@
 //!     --work <dir> [--out profiles/] [--report <file.md>] [--stage export|pack|all]
 //!     [--orca-slicer /opt/slicers/orca/AppRun] [--slicer <path, default: draft slicer_path>]
 //!     [--packer colored_3mf_packer] [--verify verify_outputs]
+//!   printer_catalog relabel [--profiles profiles/]
+//!
+//! `vendor` stays the Orca vendor folder (`BBL`): qualify and STL builds look presets up by it.
+//! The picker groups by `vendor_display` (`Bambu Lab`), the leading words every model of the
+//! folder shares; `relabel` recomputes it for existing catalog profiles without Orca files.
 //!
 //! `qualify` runs in the runner image (`deploy/catalog-qualify.sh`): the probe 3MF is always
 //! exported by the Orca CLI, slicing and packing use the draft's slicer, so a Bambu printer
@@ -49,7 +54,8 @@ fn run() -> AppResult<()> {
     match args.next().as_deref() {
         Some("extract") => extract(args.collect()),
         Some("qualify") => qualify(args.collect()),
-        _ => Err("usage: printer_catalog extract|qualify ...".into()),
+        Some("relabel") => relabel(args.collect()),
+        _ => Err("usage: printer_catalog extract|qualify|relabel ...".into()),
     }
 }
 
@@ -293,7 +299,117 @@ fn build_drafts(
         );
         out.push(Value::Object(draft));
     }
+    set_vendor_display(&mut out);
     (out, skipped)
+}
+
+/// Display vendor per Orca vendor folder: the leading words shared by every `printer_model` of
+/// the folder, kept only while each model still has a word of its own (`Bambu Lab A1`, `Bambu Lab
+/// X1` → `Bambu Lab`). A folder with one model or no shared words shows its folder name.
+fn vendor_display_names<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> BTreeMap<String, String> {
+    let mut models: BTreeMap<&str, Vec<Vec<&str>>> = BTreeMap::new();
+    for (vendor, model) in pairs {
+        models.entry(vendor).or_default().push(model.split_whitespace().collect());
+    }
+    models
+        .into_iter()
+        .map(|(vendor, words)| {
+            let shortest = words.iter().map(Vec::len).min().unwrap_or(0);
+            let mut shared = 0;
+            while words.len() > 1 && shared + 1 < shortest && words.iter().all(|w| w[shared] == words[0][shared]) {
+                shared += 1;
+            }
+            let display = if shared == 0 { vendor.to_owned() } else { words[0][..shared].join(" ") };
+            (vendor.to_owned(), display)
+        })
+        .collect()
+}
+
+/// Writes `vendor_display` into every profile that has a `vendor` and a `printer_model`.
+fn set_vendor_display(profiles: &mut [Value]) {
+    let field = |p: &Value, key: &str| p.get(key).and_then(Value::as_str).map(str::to_owned);
+    let pairs: Vec<(String, String)> =
+        profiles.iter().filter_map(|p| Some((field(p, "vendor")?, field(p, "printer_model")?))).collect();
+    let names = vendor_display_names(pairs.iter().map(|(v, m)| (v.as_str(), m.as_str())));
+    for profile in profiles.iter_mut() {
+        if field(profile, "printer_model").is_none() {
+            continue;
+        }
+        if let Some(display) = field(profile, "vendor").and_then(|v| names.get(&v).cloned()) {
+            profile["vendor_display"] = json!(display);
+        }
+    }
+}
+
+/// Sets `vendor_display` in a pretty-printed profile by editing its text: a serde round-trip
+/// would rewrite floats (serde_json without `float_roundtrip` parses 0.49999396104662325 as
+/// …233) all over the qualified purge lines. Keys are alphabetical, so the field goes right
+/// after the top-level `"vendor"` line (replaced in place when present).
+fn with_vendor_display(text: &str, display: &str) -> Option<String> {
+    let value = serde_json::to_string(display).ok()?;
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    if let Some(line) = lines.iter_mut().find(|l| l.starts_with("  \"vendor_display\": ")) {
+        let comma = if line.ends_with(',') { "," } else { "" };
+        *line = format!("  \"vendor_display\": {value}{comma}");
+    } else {
+        let at = lines.iter().position(|l| l.starts_with("  \"vendor\": "))?;
+        let comma = if lines[at].ends_with(',') {
+            ","
+        } else {
+            lines[at].push(',');
+            ""
+        };
+        lines.insert(at + 1, format!("  \"vendor_display\": {value}{comma}"));
+    }
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    serde_json::from_str::<Value>(&out).ok()?;
+    Some(out)
+}
+
+/// `relabel [--profiles profiles/]`: recomputes `vendor_display` of the catalog profiles (those
+/// with a `source` block; hand-made ones are never touched) and rewrites the changed files.
+fn relabel(raw: Vec<String>) -> AppResult<()> {
+    let mut args = raw.into_iter();
+    let mut dir = PathBuf::from("profiles");
+    while let Some(option) = args.next() {
+        let value = args.next().ok_or_else(|| format!("missing value for {option}"))?;
+        match option.as_str() {
+            "--profiles" => dir = PathBuf::from(value),
+            _ => return Err(format!("unknown option {option}").into()),
+        }
+    }
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .collect();
+    paths.sort();
+    let mut catalog = Vec::new();
+    for path in paths {
+        let value: Value = serde_json::from_slice(&fs::read(&path)?)?;
+        if !is_hand_made(&value) {
+            catalog.push((path, value));
+        }
+    }
+    let mut profiles: Vec<Value> = catalog.iter().map(|(_, v)| v.clone()).collect();
+    set_vendor_display(&mut profiles);
+    let mut changed = 0;
+    for ((path, before), after) in catalog.iter().zip(&profiles) {
+        let Some(display) = after.get("vendor_display").and_then(Value::as_str) else { continue };
+        if before.get("vendor_display").and_then(Value::as_str) == Some(display) {
+            continue;
+        }
+        let text = fs::read_to_string(path)?;
+        let edited = with_vendor_display(&text, display)
+            .ok_or_else(|| format!("{}: no top-level \"vendor\" line to put vendor_display after", path.display()))?;
+        fs::write(path, edited)?;
+        changed += 1;
+    }
+    println!("{} catalog profiles, {changed} rewritten", catalog.len());
+    Ok(())
 }
 
 /// Slicer kind and runner path for packing/final slices. Bambu printers must slice with
@@ -1113,6 +1229,50 @@ mod tests {
         zip.finish().unwrap();
         assert_eq!(read_gcode(dir.path()).unwrap(), "G1 X1\n");
         assert!(read_gcode(tempfile::tempdir().unwrap().path()).is_err());
+    }
+
+    #[test]
+    fn vendor_display_is_the_prefix_every_model_of_the_folder_shares() {
+        let names = vendor_display_names([
+            ("BBL", "Bambu Lab A1"),
+            ("BBL", "Bambu Lab X1 Carbon"),
+            ("Voron", "Voron 2.4 250"),
+            ("Voron", "Voron Trident 250"),
+            ("Solo", "Solo One"),
+            ("Mix", "Alpha One"),
+            ("Mix", "Beta Two"),
+            ("Tiny", "Lab"),
+            ("Tiny", "Lab X"),
+        ]);
+        assert_eq!(names["BBL"], "Bambu Lab");
+        assert_eq!(names["Voron"], "Voron");
+        assert_eq!(names["Solo"], "Solo");
+        assert_eq!(names["Mix"], "Mix");
+        // Every model keeps a word of its own: `Lab` cannot be the vendor of `Lab`.
+        assert_eq!(names["Tiny"], "Tiny");
+    }
+
+    #[test]
+    fn relabel_rewrites_catalog_profiles_and_leaves_hand_made_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let hand = r#"{"id":"p1s","printer_name":"Bambu Lab P1S","printer_model":"Bambu Lab P1S","vendor":"Bambu Lab"}"#;
+        fs::write(dir.path().join("p1s.json"), hand).unwrap();
+        for model in ["Bambu Lab A1", "Bambu Lab H2D"] {
+            let profile = json!({"id": slug(model), "vendor": "BBL", "printer_model": model, "source": {"qualified": true}});
+            fs::write(dir.path().join(format!("{}.json", slug(model))), serde_json::to_string_pretty(&profile).unwrap()).unwrap();
+        }
+        relabel(vec!["--profiles".into(), dir.path().display().to_string()]).unwrap();
+        let a1 = read_json(&dir.path().join("bambu_lab_a1.json")).unwrap();
+        // Text edit, not a serde round-trip: the float keeps its digits.
+        let pretty = "{\n  \"purge\": [\n    0.49999396104662325\n  ],\n  \"vendor\": \"BBL\"\n}\n";
+        assert_eq!(
+            with_vendor_display(pretty, "Bambu Lab").unwrap(),
+            "{\n  \"purge\": [\n    0.49999396104662325\n  ],\n  \"vendor\": \"BBL\",\n  \"vendor_display\": \"Bambu Lab\"\n}\n"
+        );
+        let again = with_vendor_display(&with_vendor_display(pretty, "X").unwrap(), "Bambu Lab").unwrap();
+        assert_eq!(again, with_vendor_display(pretty, "Bambu Lab").unwrap());
+        assert_eq!((a1["vendor"].as_str(), a1["vendor_display"].as_str()), (Some("BBL"), Some("Bambu Lab")));
+        assert_eq!(fs::read_to_string(dir.path().join("p1s.json")).unwrap(), hand);
     }
 
     #[test]

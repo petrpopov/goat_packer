@@ -18,8 +18,8 @@ class ProfileVendorTest {
         return ProfileService(props, mapper, Project3mf(mapper))
     }
 
-    private fun write(dir: Path, id: String, name: String, vendor: String?) {
-        val vendorField = vendor?.let { ""","vendor":"$it"""" } ?: ""
+    private fun write(dir: Path, id: String, name: String, vendor: String?, display: String? = null) {
+        val vendorField = (vendor?.let { ""","vendor":"$it"""" } ?: "") + (display?.let { ""","vendor_display":"$it"""" } ?: "")
         Files.writeString(dir.resolve("$id.json"),
             """{"id":"$id","printer_name":"$name"$vendorField,"slicer_kind":"orca","printable_area":[0,0,200,200]}""")
     }
@@ -29,7 +29,9 @@ class ProfileVendorTest {
         write(dir, "a", "Creality K1 Max", null)
         write(dir, "b", "Voron 2.4 R2", "Voron Design")
         write(dir, "c", "Solo", null)
+        // Каталог: vendor — папка пресетов OrcaSlicer, в выборе принтера — vendor_display.
+        write(dir, "d", "Bambu Lab H2D", "BBL", "Bambu Lab")
         val vendors = service(dir).list().associate { it.id to it.vendor }
-        assertEquals(mapOf("a" to "Creality K1", "b" to "Voron Design", "c" to "Solo"), vendors)
+        assertEquals(mapOf("a" to "Creality K1", "b" to "Voron Design", "c" to "Solo", "d" to "Bambu Lab"), vendors)
     }
 }
