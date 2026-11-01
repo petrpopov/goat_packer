@@ -11,7 +11,6 @@ import com.goatpacker.web.dto.QueueCheckDto
 import com.goatpacker.web.dto.QueueJobDetailDto
 import com.goatpacker.web.dto.QueueJobPageDto
 import com.goatpacker.web.dto.QueueJobSummaryDto
-import com.goatpacker.web.dto.WaitEstimate
 import com.goatpacker.web.dto.toPackParamsDto
 import com.goatpacker.web.entity.PlatformEntity
 import com.goatpacker.web.entity.QueueJobEntity
@@ -31,6 +30,21 @@ import org.springframework.context.annotation.Profile
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
+
+/** Очередь для статуса: место, оценка ожидания (с) и её причина — одинаково для задачи и её проверки. */
+private data class WaitEstimate(val position: Long?, val seconds: Long?, val reason: String) {
+    /** Нижняя граница диапазона для пользователя. */
+    val fromSeconds: Long? get() = seconds?.div(RANGE_LOWER_DIVISOR)
+
+    /** Верхняя граница диапазона для пользователя. */
+    val toSeconds: Long? get() = seconds?.let { it * RANGE_UPPER_MULTIPLIER + RANGE_UPPER_PADDING_SECONDS }
+
+    private companion object {
+        const val RANGE_LOWER_DIVISOR = 2
+        const val RANGE_UPPER_MULTIPLIER = 2
+        const val RANGE_UPPER_PADDING_SECONDS = 10
+    }
+}
 
 /** Статусы задач для API: список, статус одной задачи, проверка нарезкой внутри неё и оценка ожидания. */
 @Service

@@ -39,21 +39,6 @@ data class UploadDto(
     val expiresAt: Instant?,
 )
 
-/** Очередь для статуса: место, оценка ожидания (с) и её причина — одинаково для задачи и её проверки. */
-data class WaitEstimate(val position: Long?, val seconds: Long?, val reason: String) {
-    /** Нижняя граница диапазона для пользователя. */
-    val fromSeconds: Long? get() = seconds?.div(RANGE_LOWER_DIVISOR)
-
-    /** Верхняя граница диапазона для пользователя. */
-    val toSeconds: Long? get() = seconds?.let { it * RANGE_UPPER_MULTIPLIER + RANGE_UPPER_PADDING_SECONDS }
-
-    private companion object {
-        const val RANGE_LOWER_DIVISOR = 2
-        const val RANGE_UPPER_MULTIPLIER = 2
-        const val RANGE_UPPER_PADDING_SECONDS = 10
-    }
-}
-
 /** Проверка нарезкой внутри задачи: её собственный id в ответ не попадает. */
 data class QueueCheckDto(
     val status: QueueStatus,
