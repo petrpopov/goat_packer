@@ -96,7 +96,8 @@ const REPEAT_LABEL: Partial<Record<PackStageId, string>> = {
 };
 
 /**
- * Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, — «skipped».
+ * Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, и этапы до первого
+ * захода (доводка начинает с нарезки) — «skipped».
  * Повторный заход (после перепаковки пакер снова идёт через сборку, нарезку и проверку) —
  * отдельный текущий сегмент сразу за самым дальним пройденным этапом, а первый заход — «done»:
  * подсветка стоит там же, где заполнение шкалы (процент бэкенда назад не идёт).
@@ -110,11 +111,14 @@ export function stageSegments(stage: JobStage, percent: number): StageSegment[] 
   );
   const repeat = currentIndex >= 0 && furthest > currentIndex;
   const reached = repeat ? furthest : currentIndex;
+  // Доводка «Нарезать стол» начинает с нарезки: этапы до первого пройденного она не делала.
+  const first = ORDER.findIndex((step) => step.id === stage.id || visited.has(step.id));
   const segments: StageSegment[] = ORDER.map((step, index) => {
     const [start, end] = BANDS[step.id];
     let state: SegmentState;
     if (step.id === stage.id) state = repeat ? 'done' : 'current';
     else if (visited.has(step.id)) state = 'done';
+    else if (index < first) state = 'skipped';
     else if (index < reached) state = step.optional ? 'skipped' : 'done';
     else state = 'pending';
     const fill = state === 'current' ? Math.min(1, Math.max(0, (percent - start) / (end - start))) : state === 'done' ? 1 : 0;

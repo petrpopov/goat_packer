@@ -73,6 +73,13 @@ describe('stageSegments', () => {
     ]);
     expect(segs.find((s) => s.id === 'final_slice')!.fill).toBeCloseTo(0.5);
   });
+  test('a finish job starts at the final slice: earlier stages are skipped, not done', () => {
+    const segs = stageSegments(stage({ id: 'final_slice', visited: ['final_slice'] }), 40);
+    expect(segs.slice(0, 5).map((s) => [s.id, s.state])).toEqual([
+      ['probe_slice', 'skipped'], ['packing', 'skipped'], ['sample_slice', 'skipped'], ['assembling', 'skipped'],
+      ['final_slice', 'current'],
+    ]);
+  });
   test('optional stages passed without a visit are skipped', () => {
     const segs = stageSegments(stage({ id: 'writing', visited: ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check'] }), 97);
     expect(segs.find((s) => s.id === 'repacking')!.state).toBe('skipped');
