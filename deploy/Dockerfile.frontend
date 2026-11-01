@@ -10,4 +10,6 @@ LABEL goat-packer=1
 COPY --from=build /src/dist /usr/share/nginx/html
 # Шаблон: entrypoint nginx подставляет определённые переменные окружения (GOAT_PUBLIC_SCHEME) в conf.d.
 COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
+COPY --chmod=755 deploy/gateway-realip.sh /docker-entrypoint.d/30-goat-realip.sh
 ENV GOAT_PUBLIC_SCHEME=""
+ENV GOAT_TRUSTED_UPSTREAM=""

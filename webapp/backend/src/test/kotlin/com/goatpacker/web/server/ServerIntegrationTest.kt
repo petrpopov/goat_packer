@@ -293,6 +293,9 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             val finished=await(finish)
             assertEquals("SUCCEEDED",finished["status"].asText(),finished.toString())
             assertEquals(true,finished["pack"]["finalSliced"].asBoolean(),finished.toString())
+            // Доводка не тратит суточный лимит задач гостя (4): посчитана только упаковка.
+            val owner=jobs.findById(pack).orElseThrow().ownerId
+            assertEquals(1,jdbc.queryForObject("select used from request_limits where key=?",Int::class.java,"jobs:$owner"))
             assertTrue(finished["artifacts"].none { it["name"].asText()=="pack_state.json" },finished.toString())
             // Нарезанный стол доводить нечего.
             client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to finish),400,headers=mapOf("Idempotency-Key" to newId()))

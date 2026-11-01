@@ -78,7 +78,15 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             val packed=artifacts.findAllByJobId(previous.id).find { it.name=="packed.3mf" } ?: missing()
             promote(packed) to com.goatpacker.web.service.StlInputs.projectName(previous.originalName)
         }
-        limits.hit("jobs:$ownerId",if(owner.kind=="GUEST") 4 else 10,86400)
+        // Доводка «Нарезать стол» продолжает уже посчитанную упаковку: в суточный лимит задач она не идёт
+        // (вычислительный бюджет ниже резервируется как обычно).
+        if(finishParent==null) {
+            val guest=owner.kind=="GUEST"
+            val perDay=if(guest) 4 else 10
+            limits.hit("jobs:$ownerId",perDay,86400,
+                if(guest) "Гостю доступно $perDay задачи в сутки — войдите или зарегистрируйтесь, чтобы запускать больше"
+                else "Достигнут суточный лимит: $perDay задач — повторите завтра")
+        }
         val current=jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java)!!
         if(current>=props.maxQueue) limited("Очередь заполнена — попробуйте позже")
         val ownedCount=jdbc.queryForObject("select count(*) from queue_jobs where owner_id=? and status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java,ownerId)!!

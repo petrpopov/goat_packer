@@ -39,12 +39,12 @@ fun actor():Actor = SecurityContextHolder.getContext().authentication?.principal
 
 @Service @Profile("server")
 class AdmissionLimits(private val jdbc:JdbcTemplate) {
-    @Transactional fun hit(key:String, maximum:Int, seconds:Int=60) {
+    @Transactional fun hit(key:String, maximum:Int, seconds:Int=60, message:String="Слишком много запросов — повторите позже") {
         val used=jdbc.queryForObject("""insert into request_limits(key,window_start,used) values (?,now(),1)
             on conflict(key) do update set
             used=case when request_limits.window_start < now()- (? * interval '1 second') then 1 else request_limits.used+1 end,
             window_start=case when request_limits.window_start < now()- (? * interval '1 second') then now() else request_limits.window_start end returning used""",Int::class.java,key,seconds,seconds)!!
-        if(used>maximum) limited("Слишком много запросов — повторите позже")
+        if(used>maximum) limited(message)
     }
 }
 
