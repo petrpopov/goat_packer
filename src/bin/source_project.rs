@@ -125,7 +125,9 @@ fn run(args: &Args) -> Result<(), Error> {
 
     fs::create_dir_all(&args.work_dir)?;
     let files = orca_project::write_cli_presets(&presets, &args.work_dir.join("presets"))?;
-    let export_dir = args.work_dir.join("export");
+    // Absolute: with a relative --outputdir OrcaSlicer 2.5 (macOS) fails the export ("Project
+    // export to w/export/export.3mf failed", 2026-11-01); the job runner passes relative paths.
+    let export_dir = std::path::absolute(args.work_dir.join("export"))?;
     if export_dir.exists() {
         fs::remove_dir_all(&export_dir)?;
     }
@@ -145,7 +147,8 @@ fn run(args: &Args) -> Result<(), Error> {
 }
 
 fn export(args: &Args, files: &[PathBuf; 3], export_dir: &Path) -> Result<(), Error> {
-    let mut command = orca_project::export_command(&args.orca, files, &args.stl, export_dir);
+    let stl = std::path::absolute(&args.stl)?;
+    let mut command = orca_project::export_command(&args.orca, files, &stl, export_dir);
     let output = bounded_output(&mut command).map_err(|e| format!("cannot start {}: {e}", args.orca.display()))?;
     fs::write(args.work_dir.join("export.log"), [&output.stdout[..], &output.stderr[..]].concat())?;
     if !output.status.success() {
