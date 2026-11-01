@@ -11,7 +11,7 @@ import org.springframework.web.multipart.MultipartFile
 
 /** Форма создания pack-джоба (multipart/form-data). Пустые числовые поля — дефолты CLI. */
 data class PackJobForm(
-    @field:NotNull(message = "Файл .3mf обязателен")
+    @field:NotNull(message = "Файл .3mf или .stl обязателен")
     val file: MultipartFile? = null,
     /** Принтер из каталога; пусто — если задан свой стол (custom*). Ровно одно из двух. */
     val profileId: String? = null,

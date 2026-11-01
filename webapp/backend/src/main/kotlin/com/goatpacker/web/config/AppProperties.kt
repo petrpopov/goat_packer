@@ -19,6 +19,15 @@ data class AppProperties(
     var schedulerBin: String = "../../target/release/daily_scheduler",
     var calibrationBin: String = "../../target/release/ams_calibration",
     var profilesDir: String = "../../profiles",
+    /** STL → 3MF перед упаковкой (Rust source_project). */
+    var sourceProjectBin: String = "../../target/release/source_project",
+    /**
+     * Дерево пресетов OrcaSlicer (`resources/profiles`, JSON) для STL в локальном режиме; пусто —
+     * STL-джобы отклоняются. В docker-режиме пресеты берутся из образа слайсера.
+     */
+    var slicerPresets: String = "",
+    /** Дерево пресетов Bambu Studio для STL на принтерах Bambu локально; пусто — экспорт Orca из [slicerPresets]. */
+    var bambuPresets: String = "",
     /** Слайсеры для разового профиля своего стола (у каталожных профилей путь свой, в json). */
     var orcaSlicer: String = "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
     var bambuSlicer: String = "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
@@ -30,6 +39,7 @@ data class AppProperties(
     lateinit var schedulerBinPath: Path
     lateinit var calibrationBinPath: Path
     lateinit var profilesDirPath: Path
+    lateinit var sourceProjectBinPath: Path
     lateinit var jobsRootPath: Path
 
     @PostConstruct
@@ -38,6 +48,7 @@ data class AppProperties(
         schedulerBinPath = toAbsolute(schedulerBin)
         calibrationBinPath = toAbsolute(calibrationBin)
         profilesDirPath = toAbsolute(profilesDir)
+        sourceProjectBinPath = toAbsolute(sourceProjectBin)
         jobsRootPath = toAbsolute(jobsRoot)
     }
 

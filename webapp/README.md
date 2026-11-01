@@ -46,13 +46,21 @@ bun run dev
 | `GOAT_SCHEDULER_BIN` | путь к daily_scheduler | `../../target/release/daily_scheduler` |
 | `GOAT_CALIBRATION_BIN` | путь к ams_calibration | `../../target/release/ams_calibration` |
 | `GOAT_PROFILES_DIR` | каталог профилей принтеров | `../../profiles` |
+| `GOAT_SOURCE_PROJECT_BIN` | путь к source_project (STL → 3MF перед упаковкой) | `../../target/release/source_project` |
+| `GOAT_SLICER_PRESETS` | дерево пресетов OrcaSlicer (`resources/profiles`, JSON — из исходников Orca, не из .app) для STL; пусто — STL-джобы отклоняются 400 | пусто |
+| `GOAT_BAMBU_PRESETS` | дерево пресетов Bambu Studio для STL на принтерах Bambu; пусто — экспорт Orca из `GOAT_SLICER_PRESETS` (у Orca нет A2L) | пусто |
+| `GOAT_ORCA_SLICER` / `GOAT_BAMBU_SLICER` | слайсеры для своего стола, экспорта STL и каталожных профилей (их `slicer_path` — путь runner-образа) | `/Applications/…` |
 | `GOAT_JOBS_ROOT` | каталог джобов | `${java.io.tmpdir}/goat-packer-web/jobs` |
 | `PORT` | порт бэкенда | 19190 |
 
 ## API
 
 - `GET /api/profiles` — профили принтеров из `profiles/` (`filamentChangeSeconds` нет — коррекция смены не нужна).
-- `POST /api/pack/jobs` — multipart: `file` (.3mf, один объект) + `profileId`, `clearance`,
+- `POST /api/pack/jobs` — multipart: `file` (.3mf с одним объектом или .stl) + `profileId` либо свой стол
+  `customWidth`/`customDepth`/`customHeight` (50–1000 мм) и `customMargin` (0–30, дефолт 5). STL сначала
+  превращается в проект бинарником `source_project` (этап «Готовлю проект из STL…»): каталожный принтер —
+  его пресет машины (`vendor` + `orca_machine` профиля), свой стол — общий станок Orca с этими размерами.
+  Для 3MF каталожный `profileId` должен совпасть с принтером файла; неизвестный принтер — только свой стол. Остальное: `clearance`,
   `resolution`, `attempts` (необязательно, дефолт 16000 как у CLI; фронт не шлёт), `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
   (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
   (0–50 %, дефолт CLI 10), `supportOverlapMm` (0–20 мм; пусто — без ограничений, флаг

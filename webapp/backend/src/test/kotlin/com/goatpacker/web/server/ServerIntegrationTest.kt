@@ -119,12 +119,37 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         a.call("DELETE","/api/v2/jobs/$id")
         assertEquals("CANCELLED",a.call("GET","/api/v2/jobs/$id")["status"].asText())
     }
-    @Test fun `stl uploads feed the printer picker but packing them is not available yet`() {
+    @Test fun `stl packs on any catalog printer or a custom bed, converted by source_project before the packer`() {
         val c=Client();c.guest()
         assertEquals("Нужен файл .3mf или .stl",c.call("POST","/api/v2/uploads",mapOf("name" to "cat.obj","sizeBytes" to 10),expected=400)["message"].asText())
         val stl=c.uploadRaw("cat.stl","solid cat\nendsolid cat\n".toByteArray())
         assertEquals("READY",stl["state"].asText());assertEquals("stl",stl["kind"].asText());assertTrue(stl["profileId"].isNull,stl.toString())
-        assertEquals("Упаковка STL появится в ближайшем обновлении",c.job(stl["fileId"].asText(),expected=400)["message"].asText())
+        val file=stl["fileId"].asText()
+        fun send(body:Map<String,Any?>,expected:Int)=c.call("POST","/api/v2/jobs",body,expected,headers=mapOf("Idempotency-Key" to newId()))
+        assertEquals("STL можно только упаковать: для расписания и калибровки нужен проект .3mf",send(mapOf("fileId" to file,"profileId" to "bambu_p1s","kind" to "CALIBRATION"),400)["message"].asText())
+        // Локальный раннер сервера без GOAT_SLICER_PRESETS: отказ при постановке, а не в воркере.
+        assertEquals(com.goatpacker.web.service.StlInputs.LOCAL_PRESETS_MISSING,send(mapOf("fileId" to file,"profileId" to "prusa_mk4s"),400)["message"].asText())
+        val presets=Files.createDirectories(root.resolve("orca-profiles"))
+        val saved=listOf(app.slicerPresets,app.sourceProjectBin,app.orcaSlicer)
+        app.slicerPresets=presets.toString();app.orcaSlicer="/fake/orca"
+        app.sourceProjectBin=com.goatpacker.web.FakeBins.install(root,"fake-source-project.sh");app.resolveAbsolutePaths()
+        val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
+        try {
+            val catalog=send(mapOf("fileId" to file,"profileId" to "prusa_mk4s"),200)["jobId"].asText()
+            val custom=send(mapOf("fileId" to file,"customBed" to mapOf("width" to 220,"depth" to 220,"height" to 250)),200)["jobId"].asText()
+            assertEquals("Custom Printer",json.readTree(jobs.findById(custom).orElseThrow().profileJson)["printer_name"].asText())
+            for(id in listOf(catalog,custom)) {
+                worker.dispatch()
+                val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+                while(jobs.findById(id).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+                val response=c.call("GET","/api/v2/jobs/$id")
+                assertEquals("SUCCEEDED",response["status"].asText(),response.toString())
+                assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"),response.toString())
+            }
+        } finally {
+            worker.stop()
+            app.slicerPresets=saved[0];app.sourceProjectBin=saved[1];app.orcaSlicer=saved[2];app.resolveAbsolutePaths()
+        }
     }
     @Test fun `unknown printer upload carries the project bed for the custom-bed form`() {
         val c=Client();c.guest()

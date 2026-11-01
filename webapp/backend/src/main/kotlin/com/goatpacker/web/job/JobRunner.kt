@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.config.AppProperties
 import com.goatpacker.web.service.ClockFormat
+import com.goatpacker.web.service.PackStage
 import com.goatpacker.web.service.ProgressTracker
+import com.goatpacker.web.service.StlInputs
 import com.goatpacker.web.service.XlsxWriter
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
@@ -40,6 +42,11 @@ data class PackParams(
     val timeMarginPct: Double? = null,
     /** --support-overlap-mm; null = без ограничений (флаг не передаётся). */
     val supportOverlapMm: Double? = null,
+    /**
+     * Вход — STL: команда source_project (STL → input.3mf), выполняется перед пакером в том же
+     * процессе/контейнере ([ShellChain]); null — вход уже 3MF.
+     */
+    val sourceCommand: List<String>? = null,
 )
 
 /** Параметры calibration-джоба — CLI-аргументы ams_calibration. */
@@ -172,7 +179,13 @@ class JobRunner(
             }
         }
 
-        execute(job, command) { exitCode -> finishPack(job, params, exitCode) }
+        if (params.sourceCommand != null) {
+            // Конвертация молчит до конца: этап виден сразу, процент — в начале полосы пробы.
+            job.update {
+                it.copy(phase = JobPhase.PROBE, progressPercent = PackStage.PROBE_SLICE.bandStart, phaseMessage = StlInputs.CONVERSION_MESSAGE)
+            }
+        }
+        execute(job, command, params.sourceCommand) { exitCode -> finishPack(job, params, exitCode) }
     }
 
     @Async("jobExecutor")
@@ -235,15 +248,16 @@ class JobRunner(
         execute(job, command) { exitCode -> finishCalibration(job, params, exitCode) }
     }
 
-    private fun execute(job: Job, command: List<String>, finish: (Int) -> Unit) {
-        log.info("Джоба {} ({}) запущена: {}", job.id, job.kind, command.joinToString(" "))
+    /** [prelude] — подготовительная команда (source_project), см. [ShellChain]. */
+    private fun execute(job: Job, command: List<String>, prelude: List<String>? = null, finish: (Int) -> Unit) {
+        log.info("Джоба {} ({}) запущена: {}", job.id, job.kind, (prelude?.let { it.joinToString(" ") + " && " } ?: "") + command.joinToString(" "))
         if (job.cancelled) return
-        val tracker = ProgressTracker(job.kind)
+        val tracker = ProgressTracker(job.kind, initialMessage = prelude?.let { StlInputs.CONVERSION_MESSAGE })
 
         try {
             val process = synchronized(job) {
                 if (job.cancelled) return
-                (nativeLauncher?.getIfAvailable()?.start(job, command) ?: ProcessBuilder(command)
+                (nativeLauncher?.getIfAvailable()?.start(job, command, prelude) ?: ProcessBuilder(ShellChain.command(prelude, command))
                     .redirectErrorStream(true)
                     .directory(job.directory.toFile())
                     // JSON-события (stage, layout) — тот же протокол, что в серверном/docker-режиме.

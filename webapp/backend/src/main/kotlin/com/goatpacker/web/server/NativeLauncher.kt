@@ -2,6 +2,7 @@ package com.goatpacker.web.server
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.job.Job
+import com.goatpacker.web.job.ShellChain
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Component
@@ -35,10 +36,11 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
         val stale=runCommand(listOf("docker","volume","ls","-q","--filter","label=goat.worker=${props.workerId}")).lines().filter(String::isNotBlank)
         for(volume in stale) runCommand(listOf("docker","volume","rm",volume))
     }
-    fun start(job:Job,command:List<String>):Process {
+    /** [prelude] — подготовительная команда (source_project для STL) в том же процессе, см. [ShellChain]. */
+    fun start(job:Job,command:List<String>,prelude:List<String>?=null):Process {
         if(props.runnerMode=="local") {
             check(props.allowLocalRunner && !props.production) {"Local runner forbidden in production"}
-            return ProcessBuilder(command).directory(job.directory.toFile()).redirectErrorStream(true)
+            return ProcessBuilder(ShellChain.command(prelude,command)).directory(job.directory.toFile()).redirectErrorStream(true)
                 .also {it.environment()["RAYON_NUM_THREADS"]=props.workerCpus.toInt().coerceAtLeast(1).toString()
                     // Как docker-ветка (--env GOAT_LOG_FORMAT=json): stage/layout-события нужны трекеру.
                     it.environment()["GOAT_LOG_FORMAT"]="json"}.start()
@@ -62,7 +64,9 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
         try {
             val id=runCommand(create).trim();containers[job.id]=id
             runCommand(listOf("docker","start",id))
-            for(file in listOf("input.3mf","profile.json")) {
+            // STL-вход едет как input.stl: input.3mf из него соберёт source_project внутри контейнера.
+            val input=if(Files.isRegularFile(job.directory.resolve("input.stl"),LinkOption.NOFOLLOW_LINKS)) "input.stl" else "input.3mf"
+            for(file in listOf(input,"profile.json")) {
                 val source=job.directory.resolve(file);check(Files.isRegularFile(source,LinkOption.NOFOLLOW_LINKS))
                 val transfer=ProcessBuilder("docker","exec","-i",id,"/bin/sh","-c","cat > /work/$file")
                     .redirectInput(source.toFile()).redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start()
@@ -70,8 +74,9 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
                 check(transfer.exitValue()==0) {"Input transfer failed"}
             }
             // Independent timeout survives a disconnected JVM or a dead control plane.
-            val args=listOf("docker","exec",id,"/usr/bin/timeout","--signal=TERM","--kill-after=5s",job.runtimeTimeoutSeconds.toString(),
-                "/usr/local/bin/${Path.of(command.first()).fileName}")+command.drop(1)
+            fun inImage(c:List<String>)=listOf("/usr/local/bin/${Path.of(c.first()).fileName}")+c.drop(1)
+            val args=listOf("docker","exec",id,"/usr/bin/timeout","--signal=TERM","--kill-after=5s",job.runtimeTimeoutSeconds.toString())+
+                ShellChain.command(prelude?.let(::inImage),inImage(command))
             return ProcessBuilder(args).redirectErrorStream(true).start()
         } catch(ex:Exception) {stop(job);throw ex}
     }

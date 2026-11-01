@@ -192,6 +192,11 @@ object PackStageRules {
  */
 class ProgressTracker(
     private val kind: JobKind,
+    /**
+     * Сообщение до первого этапа пакера (конвертация STL): фаза — проба, процент — начало её
+     * полосы. Строки до первого этапа сообщение пакера не меняют, поэтому оно держится само.
+     */
+    initialMessage: String? = null,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     companion object {
@@ -220,14 +225,22 @@ class ProgressTracker(
     }
 
     // Калибровка стартует сразу с нарезки: иначе первая же строка вывода откатила бы фазу к upload.
-    var phase: JobPhase = if (kind == JobKind.CALIBRATION) JobPhase.SLICING else JobPhase.UPLOAD
+    var phase: JobPhase = when {
+        kind == JobKind.CALIBRATION -> JobPhase.SLICING
+        initialMessage != null -> PackStage.PROBE_SLICE.phase
+        else -> JobPhase.UPLOAD
+    }
         private set
 
-    var percent: Int = if (kind == JobKind.CALIBRATION) 10 else 0
+    var percent: Int = when {
+        kind == JobKind.CALIBRATION -> 10
+        initialMessage != null -> PackStage.PROBE_SLICE.bandStart
+        else -> 0
+    }
         private set
 
     /** Последнее сообщение для пользователя (у пакера — русское описание этапа). */
-    var message: String? = if (kind == JobKind.CALIBRATION) CALIBRATION_MESSAGE else null
+    var message: String? = if (kind == JobKind.CALIBRATION) CALIBRATION_MESSAGE else initialMessage
         private set
 
     /** Последний j из строк "slicing sample i/j" — для правила "refining". */

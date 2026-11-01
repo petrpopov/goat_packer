@@ -16,6 +16,9 @@ app:
   scheduler-bin: ${GOAT_SCHEDULER_BIN:../../target/release/daily_scheduler}
   calibration-bin: ${GOAT_CALIBRATION_BIN:../../target/release/ams_calibration}
   profiles-dir: ${GOAT_PROFILES_DIR:../../profiles}
+  source-project-bin: ${GOAT_SOURCE_PROJECT_BIN:../../target/release/source_project}
+  slicer-presets: ${GOAT_SLICER_PRESETS:}
+  bambu-presets: ${GOAT_BAMBU_PRESETS:}
   orca-slicer: ${GOAT_ORCA_SLICER:/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer}
   bambu-slicer: ${GOAT_BAMBU_SLICER:/Applications/BambuStudio.app/Contents/MacOS/BambuStudio}
   jobs-root: ${GOAT_JOBS_ROOT:${java.io.tmpdir}/goat-packer-web/jobs}

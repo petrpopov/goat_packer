@@ -29,7 +29,8 @@ data class CreatedJob(val jobId:String,val readToken:String?=null)
 class DurableQueue(private val jobs:QueueJobRepository,private val owners:PrincipalRepository,private val uploads:UploadRepository,
     private val blobs:BlobRepository,private val artifacts:ArtifactRepository,private val platform:PlatformRepository,
     private val profiles:ProfileService,private val quotas:Quotas,private val mapper:ObjectMapper,
-    private val props:PlatformProperties,private val jdbc:JdbcTemplate,private val limits:AdmissionLimits) {
+    private val props:PlatformProperties,private val jdbc:JdbcTemplate,private val limits:AdmissionLimits,
+    private val app:com.goatpacker.web.config.AppProperties) {
     @Transactional fun create(ownerId:String,key:String,request:JobRequest):CreatedJob {
         if(!Regex("[a-zA-Z0-9_-]{8,100}").matches(key)) bad("Нужен Idempotency-Key длиной 8–100")
         validate(request)
@@ -44,10 +45,12 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         val (input,name)=if(request.fileId!=null) {
             val file=uploads.findById(request.fileId).orElse(null)?.takeIf { it.ownerId==ownerId && it.state=="READY" } ?: missing()
             if(file.expiresAt?.isBefore(Instant.now())==true) throw ServerError(410,"EXPIRED","Файл истёк")
-            com.goatpacker.web.service.StlInputs.rejectUntilConversion(file.originalName)
-            // Каталожный принтер — только распознанный по файлу: пакер сверяет printer_model проекта с
+            val stl=com.goatpacker.web.service.StlInputs.isStl(file.originalName)
+            if(stl && request.kind!="PACK") bad("STL можно только упаковать: для расписания и калибровки нужен проект .3mf")
+            // Каталожный принтер для 3MF — только распознанный по файлу: пакер сверяет printer_model проекта с
             // printer_name профиля. Нераспознанный 3MF упаковывается лишь со своим столом (CustomProfile).
-            if(request.customBed==null && file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
+            // STL — любой принтер каталога: source_project запишет в проект его printer_model.
+            if(!stl && request.customBed==null && file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
             customFile=file
             file.blobId!! to file.originalName
         } else {
@@ -70,8 +73,15 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         // Разовый профиль собирается при постановке и хранится снимком, как каталожный (воркер лишь пишет его в profile.json).
         val (dto,profileJson)=request.customBed?.let { bed ->
             val bedFromProject=customFile?.projectBedJson?.let { mapper.readValue(it,com.goatpacker.web.service.ProjectBed::class.java) }
-            profiles.custom(bed,bedFromProject,customFile?.printerModel).let { it.dto to it.json }
+            val stl=com.goatpacker.web.service.StlInputs.isStl(customFile?.originalName)
+            profiles.custom(bed,bedFromProject,if(stl) com.goatpacker.web.service.CustomProfile.NAME else customFile?.printerModel).let { it.dto to it.json }
         } ?: profiles.require(request.profileId).let { it.dto to Files.readString(it.file) }
+        // Принтер без пресета машины (orca_machine) из STL не собрать — отказ сразу, а не в воркере.
+        if(com.goatpacker.web.service.StlInputs.isStl(name)) {
+            val node=mapper.readTree(profileJson)
+            com.goatpacker.web.service.StlInputs.printerArgs(node)
+            if(props.runnerMode=="local") com.goatpacker.web.service.StlInputs.localTools(app,node)
+        }
         if(request.nozzleClean.isNotBlank() && !dto.supportsNozzleClean) bad("Принтер не поддерживает чистку сопла")
         if(request.amsCorrection && dto.filamentChangeSeconds==null) bad("Для этого принтера коррекция смены прутка не нужна")
         if(request.kind=="CALIBRATION" && dto.filamentChangeSeconds==null) bad(ProfileService.CALIBRATION_NOT_NEEDED)

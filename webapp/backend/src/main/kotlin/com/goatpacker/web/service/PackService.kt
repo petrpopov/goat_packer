@@ -29,6 +29,7 @@ class PackService(
     private val store: JobStore,
     private val jobRunner: JobRunner,
     private val projects: Project3mf,
+    private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper,
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(PackService::class.java)
@@ -42,30 +43,54 @@ class PackService(
     fun create(form: PackJobForm): JobCreatedDto {
         val file = form.file
         if (file == null || file.isEmpty) {
-            throw BadRequestException("Файл .3mf обязателен")
+            throw BadRequestException("Файл .3mf или .stl обязателен")
         }
         val fileName = file.originalFilename ?: ""
         if (!StlInputs.isAcceptedUpload(fileName)) {
             throw BadRequestException("${StlInputs.UPLOAD_EXTENSIONS_MESSAGE}, получено: «$fileName»")
         }
-        StlInputs.rejectUntilConversion(fileName)
+        val stl = StlInputs.isStl(fileName)
         val customBed = customBed(form)
         val profileId = form.profileId?.trim().orEmpty()
         if ((customBed == null) == profileId.isEmpty()) {
             throw BadRequestException(if (customBed == null) "Выберите принтер или укажите свой стол" else "Укажите либо принтер из каталога, либо свой стол")
         }
-        val inspection = projects.inspect(file)
+        // STL — сетка без настроек: проверять в нём нечего, принтер — выбор пользователя (любой из каталога).
+        val inspection = if (stl) {
+            if (file.size > 200L * 1024 * 1024) throw BadRequestException("Файл больше 200 МБ")
+            null
+        } else {
+            projects.inspect(file)
+        }
         val jobId = UUID.randomUUID().toString()
         val directory = properties.jobsRootPath.resolve(jobId)
         // Свой стол: разовый профиль — profile.json в каталоге джоба (пишется, когда каталог создан).
+        // Проект из STL на своём столе source_project собирает с printer_model «Custom Printer».
         val custom = customBed?.let {
-            projects.requireModel(inspection)
-            profileService.custom(it, inspection.projectBed, inspection.printerModel)
+            if (inspection == null) {
+                profileService.custom(it, null, CustomProfile.NAME)
+            } else {
+                projects.requireModel(inspection)
+                profileService.custom(it, inspection.projectBed, inspection.printerModel)
+            }
         }
-        val profile = if (custom != null) {
-            ProfileService.ResolvedProfile(custom.dto, directory.resolve("profile.json"))
+        val catalog = if (custom == null) {
+            profileService.require(profileId).also { if (inspection != null) profileService.requireMatches(inspection, it) }
         } else {
-            profileService.require(profileId).also { profileService.requireMatches(inspection, it) }
+            null
+        }
+        // Каталожные профили (printer_catalog) указывают слайсер runner-образа: локально — свой слайсер.
+        val localCopy = catalog?.let { localSlicerCopy(it) }
+        val profileJson = custom?.json ?: localCopy ?: Files.readString(catalog!!.file)
+        val profile = if (catalog != null && localCopy == null) catalog else {
+            ProfileService.ResolvedProfile(custom?.dto ?: catalog!!.dto, directory.resolve("profile.json"))
+        }
+        val sourceCommand = if (stl) {
+            val node = objectMapper.readTree(profileJson)
+            val (presets, slicer) = StlInputs.localTools(properties, node)
+            StlInputs.command(properties.sourceProjectBinPath.toString(), presets, slicer, node)
+        } else {
+            null
         }
         val nozzleClean = form.nozzleClean?.trim() ?: ""
         validateNozzleClean(nozzleClean, profile)
@@ -91,6 +116,7 @@ class PackService(
             changeSeconds = form.changeSeconds,
             timeMarginPct = form.timeMarginPct,
             supportOverlapMm = form.supportOverlapMm,
+            sourceCommand = sourceCommand,
         )
 
         val job = Job(
@@ -101,8 +127,8 @@ class PackService(
         )
         Files.createDirectories(job.directory)
         try {
-            file.transferTo(job.directory.resolve("input.3mf").toFile())
-            custom?.let { Files.writeString(params.profilePath, it.json) }
+            file.transferTo(job.directory.resolve(StlInputs.inputName(fileName)).toFile())
+            if (profile.file != catalog?.file) Files.writeString(params.profilePath, profileJson)
             store.put(job)
             jobRunner.runPack(job, params)
         } catch (ex: RejectedExecutionException) {
@@ -119,6 +145,18 @@ class PackService(
 
         log.info("Создана pack-джоба {} (профиль {}, файл {} байт)", job.id, profile.dto.id, file.size)
         return JobCreatedDto(job.id)
+    }
+
+    /**
+     * Профиль из каталога OrcaSlicer несёт slicer_path runner-образа (/opt/slicers/<kind>/AppRun):
+     * локально такого пути нет, и джоб получает копию профиля со слайсером из настроек. Ручные
+     * профили (P1S и др. с путями macOS) идут как есть. null — копия не нужна.
+     */
+    private fun localSlicerCopy(profile: ProfileService.ResolvedProfile): String? {
+        val node = objectMapper.readTree(profile.file.toFile()) as com.fasterxml.jackson.databind.node.ObjectNode
+        if (!node.path("slicer_path").asText("").startsWith("/opt/slicers/")) return null
+        node.put("slicer_path", if (node.path("slicer_kind").asText() == "bambu") properties.bambuSlicer else properties.orcaSlicer)
+        return objectMapper.writeValueAsString(node)
     }
 
     /** Свой стол из полей custom*: все три размера или ни одного (отступ без размеров — ошибка формы). */
