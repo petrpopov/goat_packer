@@ -199,7 +199,7 @@ pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> 
     Ok(profile)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PrimeTowerBounds {
     pub centerline: Rect,
     pub keepout: Rect,

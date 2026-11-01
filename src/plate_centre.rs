@@ -58,7 +58,7 @@ pub fn plate_centre(zones: &[HeatZone], usable_bed: Rect) -> (f64, f64) {
 }
 
 /// A tower keepout moved towards a target centre.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RelocatedTower {
     pub keepout: Rect,
     /// Applied to `wipe_tower_x[0]`/`wipe_tower_y[0]`: the tower's size does not depend on its

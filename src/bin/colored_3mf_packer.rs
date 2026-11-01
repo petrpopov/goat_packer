@@ -33,7 +33,7 @@ use goat_packer::{
     },
     scheduler::{SliceEstimate, object_count_3mf, parse_bambu_result, parse_orca_gcode},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 type AppResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -66,6 +66,11 @@ struct Args {
     /// `--sample-objects`: how many objects of the first layout are sliced as the support
     /// sample (`Footprint::layer_zones`); 0 = no sample, the probe's zones only.
     sample_objects: usize,
+    /// `--no-final-slice` clears it: write the packed 3MF and `<output>.state.json` without
+    /// slicing the whole plate; a time window needs the slices and keeps it on.
+    final_slice: bool,
+    /// `--finish-state PATH`: skip probing and packing, slice and check the plate of a state.
+    finish_state: Option<PathBuf>,
 }
 
 /// Time-model options (spec 2026-10-26-time-model-and-window-design). Without
@@ -163,6 +168,12 @@ struct ColoredPackReport {
     support_patch_learned: bool,
     /// Supports touching a foreign body in the written plate's G-code (normally empty).
     support_collisions: Vec<SupportCollision>,
+    /// The whole plate was sliced and checked. `false` (`--no-final-slice`): the plate is
+    /// packed against the sample slice's supports, the final checks wait for `--finish-state`
+    /// with `state_path`; no final tower, time or collisions yet.
+    final_sliced: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state_path: Option<String>,
 }
 
 /// `time` block of the verification report. `samples` lists every plate whose time was
@@ -391,306 +402,347 @@ fn run() -> AppResult<()> {
     // standalone STL's keyring-hole position did not match the embedded mesh's.
     let footprint_stl = args.work_dir.join("embedded_source.stl");
     derive_embedded_stl(&args.source_3mf, &footprint_stl)?;
-    // With --nozzle-clean the probe slices a copy carrying the same wipe injection as every
-    // final plate, so its time (and tower) is comparable to theirs; the wipe block is gated on
-    // `layer_num > 0`, so the first-layer patch parsed below is unaffected. The probe still
-    // prints the tower at the source position (the relocation is decided from this very
-    // slice); the window's shrink step uses the window-vs-max secant, which cancels that.
-    let probe_project = match &args.nozzle_clean {
-        Some(spec) => {
-            let copy = args.work_dir.join("probe_source.3mf");
-            inject_nozzle_clean(&profile, &args.source_3mf, &copy, spec)
-                .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
-            copy
-        }
-        None => args.source_3mf.clone(),
-    };
-    progress::stage(
-        Stage::ProbeSlice,
-        "probing prime tower position (slicing 1 object)...",
-        None,
-        Some(1),
-    );
-    let probe_started = std::time::Instant::now();
-    let probe = slice_project(&profile, &probe_project, 1, &args.work_dir, "probe")?;
-    // Scales the expected duration of every later slice for the progress bar.
-    let probe_seconds = probe_started.elapsed().as_secs_f64();
-    // Spec step 1: with a window, a single object that already overruns it fails here, before
-    // the expensive packing.
-    let probe_sample = match window_s {
-        Some(window_s) => {
-            let estimate = probe
-                .estimate
-                .as_ref()
-                .map_err(|error| format!("probe slice time estimate unavailable: {error}"))?;
-            let sample = time_sample(1, estimate, slicer_change_s, &correction);
-            if sample.corrected_s > window_s {
-                return Err(even_one_exceeds(sample.corrected_s, window_s).into());
-            }
+    // `--finish-state`: the plate was packed by an earlier run without the final slice; its
+    // plan and layout come back from the state file and only the final slice and its checks
+    // run (spec 2026-11-01-sample-slice-layer-zones-design).
+    let prepared = match &args.finish_state {
+        Some(path) => {
+            let state: PackState = serde_json::from_slice(&fs::read(path)?)
+                .map_err(|error| format!("pack state {}: {error}", path.display()))?;
             println!(
-                "time window {:.1} h: 1 object = {:.1} h corrected ({} filament changes)",
-                hours(window_s),
-                hours(sample.corrected_s),
-                sample.changes
+                "finishing a packed plate of {} objects from {}",
+                state.packed.placements.len(),
+                path.display()
             );
-            Some(sample)
-        }
-        None => None,
-    };
-    let probe_gcode = probe.gcode;
-    let probe_tower =
-        parse_prime_tower_bounds(&probe_gcode, profile.tower_line_width_mm, args.clearance);
-    match probe_tower {
-        Some(tower) => println!(
-            "probe tower keepout: {:.2},{:.2} → {:.2},{:.2}",
-            tower.keepout.min_x, tower.keepout.min_y, tower.keepout.max_x, tower.keepout.max_y
-        ),
-        None => println!(
-            "no prime/wipe tower markers in source slice (single material/color); packing \
-             without a tower keepout"
-        ),
-    }
-
-    // The probe slice already shows the object exactly as it prints — body, tree supports,
-    // brim. Packing against that first-layer patch stops supports from touching neighbouring
-    // bodies, which the pure mesh projection could not promise (tree supports wander several
-    // mm past the silhouette on a real lying-animal plate).
-    let silhouette = extract_footprint(&footprint_stl)?;
-    // Where the model's bbox center sits in the probe slice: the embedded mesh's center put
-    // through the source build item's transform. The layer-1 patch must be centered exactly
-    // there to stay in the assembler's placement frame.
-    let model_world_center = model_center_on_bed(&args.source_3mf, &footprint_stl);
-    let (mut footprint, lock_orientation, purge_tip_overshoot) =
-        match first_layer_footprint(&probe_gcode, model_world_center) {
-        Some(patch) => {
-            eprintln!(
-                "probe slice's first layer: patch {:.1}x{:.1} mm, mesh silhouette {:.1}x{:.1} mm",
-                patch.width, patch.height, silhouette.width, silhouette.height
-            );
-            // Arc-fitted probes parse differently from straight-line ones (the patch is
-            // rebuilt from flattened G2/G3 sweeps); the count tells the operator which kind
-            // of gcode the patch below came from when a layout surprises them.
-            let arc_moves = probe_gcode
-                .split(|&byte| byte == b'\n')
-                .filter(|line| line.starts_with(b"G2 ") || line.starts_with(b"G3 "))
-                .count();
-            if arc_moves > 0 {
-                eprintln!(
-                    "probe gcode carries {arc_moves} G2/G3 arc moves; the patch flattens them"
-                );
-            }
-            // Supports and brim legitimately add a few mm, but a patch far larger than the
-            // silhouette means foreign extrusions (prime tower, purge line) leaked into the
-            // parsed first layer — every clone would reserve them and the layout would come
-            // out sparse with no other error. This caught the Bambu dialect bug where the
-            // tower inflated a 54 mm goat to a 97.5 mm patch.
-            const FOREIGN_EXTRUSION_EXCESS_MM: f64 = 15.0;
-            if patch.width > silhouette.width + FOREIGN_EXTRUSION_EXCESS_MM
-                || patch.height > silhouette.height + FOREIGN_EXTRUSION_EXCESS_MM
-            {
-                eprintln!(
-                    "WARNING: first-layer patch {:.1}x{:.1} mm exceeds the mesh silhouette \
-                     {:.1}x{:.1} mm by more than {FOREIGN_EXTRUSION_EXCESS_MM} mm — foreign \
-                     extrusions (prime tower / purge line) probably leaked into the patch; \
-                     expecting a sparse layout",
-                    patch.width, patch.height, silhouette.width, silhouette.height
-                );
-            }
-            // A patch that stays inside the mesh outline carries no supports or brim beyond
-            // the model, so the silhouette is the honest footprint — and it unlocks
-            // rotations, which tile much denser than one locked orientation (a flat goat
-            // plate: 31 with rotations, 28 locked). Supports past the outline keep the patch
-            // and the lock: the slicer rebuilds them in table coordinates. The 2.0 mm
-            // tolerance absorbs wall-bead artifacts (miter on sharp tips ~1 mm; arachne
-            // slivers along a curved belly up to ~1.6 mm, 2.45 mm² total on the P1S goat);
-            // real supports wander 3-5 mm past the outline with hundreds of mm².
-            if patch_within_silhouette(&patch, &silhouette, args.resolution, 2.0) {
-                eprintln!(
-                    "patch fits inside the mesh silhouette (+2.0 mm) — no supports or brim \
-                     reach past the model; packing the silhouette with rotations allowed"
-                );
-                // Within tolerance is not within: Arachne thin-tip lines print past the mesh
-                // outline (measured up to 1.66 mm on a P1S goat's legs), and the prime line
-                // is machine start gcode — nothing routes it around objects, so a goat whose
-                // silhouette cleared the purge-line keepout printed its leg tips straight
-                // through the line. The measured overshoot widens the PURGE-LINE keepout
-                // only: the tower and exclusion corner keep their own validated safeties,
-                // and object-vs-object clearance is untouched.
-                let overshoot = patch_overshoot_mm(&patch, &silhouette, args.resolution);
-                if overshoot > 0.0 {
-                    eprintln!(
-                        "first layer overshoots the mesh silhouette by up to {:.1} mm at thin \
-                         tips; the purge-line keepout keeps that standoff",
-                        overshoot
-                    );
-                }
-                // Bed bounds still measure the printed patch: the overshoot at thin tips is
-                // real ink past the silhouette, and a silhouette that clears the bed edge can
-                // print outside it (see the bed_loops note after the match).
-                let mut footprint = silhouette.clone();
-                footprint.bed_loops = Some(union_loops(&patch, &silhouette));
-                (footprint, false, overshoot)
-            } else {
-                // How far the patch actually sticks out separates the two realities this
-                // branch exists for: real supports/brim wander whole millimetres, while a
-                // fraction of a millimetre is a parse artifact (a stray chord, a mitered
-                // tip) worth a second look before accepting the locked-orientation layout.
-                let overshoot = patch_overshoot_mm(&patch, &silhouette, args.resolution);
-                eprintln!(
-                    "patch reaches past the mesh silhouette by up to {overshoot:.1} mm \
-                     (supports/brim) — packing the patch ∪ silhouette, orientation locked to \
-                     the sliced one"
-                );
-                // Collisions must respect BOTH truths: the printed patch (supports/brim
-                // beyond the outline) AND the mesh body where layer 1 prints nothing (a
-                // lying animal's raised horns; on P1S the patch is inset ~0.4 mm per side,
-                // so a bare-patch layout glued 24 goat pairs by up to 1.7 mm²). The body
-                // zone is the mesh outline — walls and walls' strips are all inset
-                // representations of the same body — and silhouettes keep clearance from
-                // each other. A neighbour's supports only must not land on what this object
-                // prints on the bed: its first-layer body (`support_landing_loops`; see the
-                // field for the 40-goat plate that proved the silhouette rule too strict).
-                let mut combined = patch.clone();
-                combined.loops = union_loops(&patch, &silhouette);
-                combined.body_loops = silhouette.loops.clone();
-                // Support interfaces print up to ~2 mm past the overhangs they carry, at the
-                // overhang's height: they belong to this object's 3D extent, so they join the
-                // silhouette that keeps clearance from the neighbours' silhouettes (four
-                // P1S goat pairs touched a neighbour's wall at z ≈ 23 mm without this, and the
-                // strict-rule fallback cost the plate 4 goats).
-                if let Some(center) = model_world_center {
-                    let interfaces = support_interface_loops(&probe_gcode, center);
-                    if !interfaces.is_empty() {
-                        let mut interface_zone = silhouette.clone();
-                        interface_zone.loops = interfaces;
-                        let overshoot =
-                            patch_overshoot_mm(&interface_zone, &silhouette, args.resolution);
-                        eprintln!(
-                            "support interfaces reach past the mesh silhouette by up to \
-                             {overshoot:.1} mm; the silhouette zone includes them"
-                        );
-                        combined.body_loops = union_loops(&silhouette, &interface_zone);
-                    }
-                }
-                combined.support_landing_loops = patch.body_loops.clone();
-                // The patch is the measured print (tips included), so purge checks run
-                // against its real extent already — no extra overshoot.
-                (combined, true, 0.0)
-            }
+            state
         }
         None => {
-            eprintln!(
-                "probe slice's first layer has no object extrusions; packing against the mesh \
-                 silhouette ({:.1}x{:.1} mm)",
-                silhouette.width, silhouette.height
-            );
-            // No probe data to measure the tip overshoot from; the base 0.5 mm purge safety
-            // applies, as it always did in this degraded path.
-            (silhouette.clone(), false, 0.0)
-        }
-    };
-    // Centre-out time-window plate (spec 2026-10-26-centre-out-zones-tower-design): the kept
-    // objects gather around the smallest heat zone's centre, and the tower moves there too so
-    // every colour change travels a short way. The tower's size does not depend on its
-    // position, so the probe keepout shifted by the same vector is the reservation — no
-    // re-probe; the first final slice verifies the slicer really moved it.
-    let centre = if args.time.centre_out() {
-        Some(plate_centre(&profile.heat_zones, profile.usable_bed()?))
-    } else {
-        None
-    };
-    let fixed_keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
-    let usable_bed = profile.usable_bed()?;
-    let centre_relocation: Option<RelocatedTower> = match (centre, probe_tower) {
-        (Some(centre), Some(tower)) => {
-            let moved = relocate_keepout(tower.keepout, centre, usable_bed);
-            // The clamp only knows the bed; a centre near an exclusion corner or purge line
-            // would put the printed tower on it.
-            ensure_relocated_tower_clear(moved.keepout, &fixed_keepouts)?;
-            println!(
-                "centre-out plate around ({:.1}, {:.1}): prime tower moves by ({:+.1}, {:+.1}) mm; \
-                 keepout {:.2},{:.2} → {:.2},{:.2}",
-                centre.0,
-                centre.1,
-                moved.shift.0,
-                moved.shift.1,
-                moved.keepout.min_x,
-                moved.keepout.min_y,
-                moved.keepout.max_x,
-                moved.keepout.max_y
-            );
-            Some(moved)
-        }
-        (Some(centre), None) => {
-            println!(
-                "centre-out plate around ({:.1}, {:.1}); no tower to relocate",
-                centre.0, centre.1
-            );
-            None
-        }
-        (None, _) => None,
-    };
-    // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
-    // silhouette: the slicer's bed-collision warning measures the full model extent, which
-    // hangs below the printed patch on a lying animal (its tail), silently eating the edge
-    // margin — the manual 3.5/4.0 mm gap complaint. Every branch above has already set
-    // bed_loops to that union: with rotations allowed the patch carries the measured tip
-    // overshoot (~2 mm of Arachne miter past the silhouette at thin tips), and a layout
-    // whose silhouette clears the bed edge can still print outside it — BambuStudio then
-    // refuses the whole final slice with "too close to exclusion area" / "no object fully
-    // inside it" (a real 17-object P1S goat plate died at mesh x=0.06 and x=255.7 on a
-    // 256 mm bed this way).
-    if footprint.bed_loops.is_none() {
-        footprint.bed_loops = Some(footprint.loops.clone());
-    }
-    let mut plan = PackPlan {
-        footprint,
-        lock_orientation,
-        fixed_keepouts,
-        tower_keepout: centre_relocation
-            .map(|relocated| relocated.keepout)
-            .or(probe_tower.map(|tower| tower.keepout)),
-        relocation: centre_relocation,
-        rule: if lock_orientation {
-            SupportRule::Landing
-        } else {
-            SupportRule::Silhouette
-        },
-        patch_learned: false,
-    };
-    progress::stage(
-        Stage::Packing,
-        &format!("packing ({} attempts, seed {})...", args.attempts, args.seed),
-        None,
-        None,
-    );
-    // Without centre-out the tower may move: the source position competes with the bed
-    // corners and the densest plate wins (spec 2026-10-31 rule 3).
-    let mut tower_from_contest = false;
-    let mut packed = match (centre, probe_tower) {
-        (None, Some(tower)) => {
-            let (relocation, packed) = choose_tower_position(&args, &profile, &plan, tower.keepout)?;
-            if let Some(relocated) = relocation {
-                plan.tower_keepout = Some(relocated.keepout);
-                plan.relocation = Some(relocated);
-                tower_from_contest = true;
+        // With --nozzle-clean the probe slices a copy carrying the same wipe injection as every
+        // final plate, so its time (and tower) is comparable to theirs; the wipe block is gated on
+        // `layer_num > 0`, so the first-layer patch parsed below is unaffected. The probe still
+        // prints the tower at the source position (the relocation is decided from this very
+        // slice); the window's shrink step uses the window-vs-max secant, which cancels that.
+        let probe_project = match &args.nozzle_clean {
+            Some(spec) => {
+                let copy = args.work_dir.join("probe_source.3mf");
+                inject_nozzle_clean(&profile, &args.source_3mf, &copy, spec)
+                    .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
+                copy
             }
-            packed
-        }
-        _ => plan.pack(&args, &profile)?,
-    };
-    // The one-object probe comes from the source project; the slicer builds the supports of
-    // the assembled plate a little differently (up to 0.4 mm wider bases, interfaces past the
-    // ears). A few objects of the first layout, sliced as an assembled plate, print exactly
-    // what every object of the full plate will (identical within 0.1 mm, sample vs plate
-    // within 0.5 mm); the plate is packed again against those supports, height band by band.
-    if plan.lock_orientation && args.sample_objects > 0 && packed.placements.len() > 1 {
-        match sample_supports(&args, &profile, &mut plan, &footprint_stl, &packed) {
-            Ok(()) => packed = plan.pack(&args, &profile)?,
-            Err(error) => eprintln!(
-                "WARNING: sample slice failed, packing with the probe's supports only: {error}"
+            None => args.source_3mf.clone(),
+        };
+        progress::stage(
+            Stage::ProbeSlice,
+            "probing prime tower position (slicing 1 object)...",
+            None,
+            Some(1),
+        );
+        let probe_started = std::time::Instant::now();
+        let probe = slice_project(&profile, &probe_project, 1, &args.work_dir, "probe")?;
+        // Scales the expected duration of every later slice for the progress bar.
+        let probe_seconds = probe_started.elapsed().as_secs_f64();
+        // Spec step 1: with a window, a single object that already overruns it fails here, before
+        // the expensive packing.
+        let probe_sample = match window_s {
+            Some(window_s) => {
+                let estimate = probe
+                    .estimate
+                    .as_ref()
+                    .map_err(|error| format!("probe slice time estimate unavailable: {error}"))?;
+                let sample = time_sample(1, estimate, slicer_change_s, &correction);
+                if sample.corrected_s > window_s {
+                    return Err(even_one_exceeds(sample.corrected_s, window_s).into());
+                }
+                println!(
+                    "time window {:.1} h: 1 object = {:.1} h corrected ({} filament changes)",
+                    hours(window_s),
+                    hours(sample.corrected_s),
+                    sample.changes
+                );
+                Some(sample)
+            }
+            None => None,
+        };
+        let probe_gcode = probe.gcode;
+        let probe_tower =
+            parse_prime_tower_bounds(&probe_gcode, profile.tower_line_width_mm, args.clearance);
+        match probe_tower {
+            Some(tower) => println!(
+                "probe tower keepout: {:.2},{:.2} → {:.2},{:.2}",
+                tower.keepout.min_x, tower.keepout.min_y, tower.keepout.max_x, tower.keepout.max_y
+            ),
+            None => println!(
+                "no prime/wipe tower markers in source slice (single material/color); packing \
+                 without a tower keepout"
             ),
         }
+
+        // The probe slice already shows the object exactly as it prints — body, tree supports,
+        // brim. Packing against that first-layer patch stops supports from touching neighbouring
+        // bodies, which the pure mesh projection could not promise (tree supports wander several
+        // mm past the silhouette on a real lying-animal plate).
+        let silhouette = extract_footprint(&footprint_stl)?;
+        // Where the model's bbox center sits in the probe slice: the embedded mesh's center put
+        // through the source build item's transform. The layer-1 patch must be centered exactly
+        // there to stay in the assembler's placement frame.
+        let model_world_center = model_center_on_bed(&args.source_3mf, &footprint_stl);
+        let (mut footprint, lock_orientation, purge_tip_overshoot) =
+            match first_layer_footprint(&probe_gcode, model_world_center) {
+            Some(patch) => {
+                eprintln!(
+                    "probe slice's first layer: patch {:.1}x{:.1} mm, mesh silhouette {:.1}x{:.1} mm",
+                    patch.width, patch.height, silhouette.width, silhouette.height
+                );
+                // Arc-fitted probes parse differently from straight-line ones (the patch is
+                // rebuilt from flattened G2/G3 sweeps); the count tells the operator which kind
+                // of gcode the patch below came from when a layout surprises them.
+                let arc_moves = probe_gcode
+                    .split(|&byte| byte == b'\n')
+                    .filter(|line| line.starts_with(b"G2 ") || line.starts_with(b"G3 "))
+                    .count();
+                if arc_moves > 0 {
+                    eprintln!(
+                        "probe gcode carries {arc_moves} G2/G3 arc moves; the patch flattens them"
+                    );
+                }
+                // Supports and brim legitimately add a few mm, but a patch far larger than the
+                // silhouette means foreign extrusions (prime tower, purge line) leaked into the
+                // parsed first layer — every clone would reserve them and the layout would come
+                // out sparse with no other error. This caught the Bambu dialect bug where the
+                // tower inflated a 54 mm goat to a 97.5 mm patch.
+                const FOREIGN_EXTRUSION_EXCESS_MM: f64 = 15.0;
+                if patch.width > silhouette.width + FOREIGN_EXTRUSION_EXCESS_MM
+                    || patch.height > silhouette.height + FOREIGN_EXTRUSION_EXCESS_MM
+                {
+                    eprintln!(
+                        "WARNING: first-layer patch {:.1}x{:.1} mm exceeds the mesh silhouette \
+                         {:.1}x{:.1} mm by more than {FOREIGN_EXTRUSION_EXCESS_MM} mm — foreign \
+                         extrusions (prime tower / purge line) probably leaked into the patch; \
+                         expecting a sparse layout",
+                        patch.width, patch.height, silhouette.width, silhouette.height
+                    );
+                }
+                // A patch that stays inside the mesh outline carries no supports or brim beyond
+                // the model, so the silhouette is the honest footprint — and it unlocks
+                // rotations, which tile much denser than one locked orientation (a flat goat
+                // plate: 31 with rotations, 28 locked). Supports past the outline keep the patch
+                // and the lock: the slicer rebuilds them in table coordinates. The 2.0 mm
+                // tolerance absorbs wall-bead artifacts (miter on sharp tips ~1 mm; arachne
+                // slivers along a curved belly up to ~1.6 mm, 2.45 mm² total on the P1S goat);
+                // real supports wander 3-5 mm past the outline with hundreds of mm².
+                if patch_within_silhouette(&patch, &silhouette, args.resolution, 2.0) {
+                    eprintln!(
+                        "patch fits inside the mesh silhouette (+2.0 mm) — no supports or brim \
+                         reach past the model; packing the silhouette with rotations allowed"
+                    );
+                    // Within tolerance is not within: Arachne thin-tip lines print past the mesh
+                    // outline (measured up to 1.66 mm on a P1S goat's legs), and the prime line
+                    // is machine start gcode — nothing routes it around objects, so a goat whose
+                    // silhouette cleared the purge-line keepout printed its leg tips straight
+                    // through the line. The measured overshoot widens the PURGE-LINE keepout
+                    // only: the tower and exclusion corner keep their own validated safeties,
+                    // and object-vs-object clearance is untouched.
+                    let overshoot = patch_overshoot_mm(&patch, &silhouette, args.resolution);
+                    if overshoot > 0.0 {
+                        eprintln!(
+                            "first layer overshoots the mesh silhouette by up to {:.1} mm at thin \
+                             tips; the purge-line keepout keeps that standoff",
+                            overshoot
+                        );
+                    }
+                    // Bed bounds still measure the printed patch: the overshoot at thin tips is
+                    // real ink past the silhouette, and a silhouette that clears the bed edge can
+                    // print outside it (see the bed_loops note after the match).
+                    let mut footprint = silhouette.clone();
+                    footprint.bed_loops = Some(union_loops(&patch, &silhouette));
+                    (footprint, false, overshoot)
+                } else {
+                    // How far the patch actually sticks out separates the two realities this
+                    // branch exists for: real supports/brim wander whole millimetres, while a
+                    // fraction of a millimetre is a parse artifact (a stray chord, a mitered
+                    // tip) worth a second look before accepting the locked-orientation layout.
+                    let overshoot = patch_overshoot_mm(&patch, &silhouette, args.resolution);
+                    eprintln!(
+                        "patch reaches past the mesh silhouette by up to {overshoot:.1} mm \
+                         (supports/brim) — packing the patch ∪ silhouette, orientation locked to \
+                         the sliced one"
+                    );
+                    // Collisions must respect BOTH truths: the printed patch (supports/brim
+                    // beyond the outline) AND the mesh body where layer 1 prints nothing (a
+                    // lying animal's raised horns; on P1S the patch is inset ~0.4 mm per side,
+                    // so a bare-patch layout glued 24 goat pairs by up to 1.7 mm²). The body
+                    // zone is the mesh outline — walls and walls' strips are all inset
+                    // representations of the same body — and silhouettes keep clearance from
+                    // each other. A neighbour's supports only must not land on what this object
+                    // prints on the bed: its first-layer body (`support_landing_loops`; see the
+                    // field for the 40-goat plate that proved the silhouette rule too strict).
+                    let mut combined = patch.clone();
+                    combined.loops = union_loops(&patch, &silhouette);
+                    combined.body_loops = silhouette.loops.clone();
+                    // Support interfaces print up to ~2 mm past the overhangs they carry, at the
+                    // overhang's height: they belong to this object's 3D extent, so they join the
+                    // silhouette that keeps clearance from the neighbours' silhouettes (four
+                    // P1S goat pairs touched a neighbour's wall at z ≈ 23 mm without this, and the
+                    // strict-rule fallback cost the plate 4 goats).
+                    if let Some(center) = model_world_center {
+                        let interfaces = support_interface_loops(&probe_gcode, center);
+                        if !interfaces.is_empty() {
+                            let mut interface_zone = silhouette.clone();
+                            interface_zone.loops = interfaces;
+                            let overshoot =
+                                patch_overshoot_mm(&interface_zone, &silhouette, args.resolution);
+                            eprintln!(
+                                "support interfaces reach past the mesh silhouette by up to \
+                                 {overshoot:.1} mm; the silhouette zone includes them"
+                            );
+                            combined.body_loops = union_loops(&silhouette, &interface_zone);
+                        }
+                    }
+                    combined.support_landing_loops = patch.body_loops.clone();
+                    // The patch is the measured print (tips included), so purge checks run
+                    // against its real extent already — no extra overshoot.
+                    (combined, true, 0.0)
+                }
+            }
+            None => {
+                eprintln!(
+                    "probe slice's first layer has no object extrusions; packing against the mesh \
+                     silhouette ({:.1}x{:.1} mm)",
+                    silhouette.width, silhouette.height
+                );
+                // No probe data to measure the tip overshoot from; the base 0.5 mm purge safety
+                // applies, as it always did in this degraded path.
+                (silhouette.clone(), false, 0.0)
+            }
+        };
+        // Centre-out time-window plate (spec 2026-10-26-centre-out-zones-tower-design): the kept
+        // objects gather around the smallest heat zone's centre, and the tower moves there too so
+        // every colour change travels a short way. The tower's size does not depend on its
+        // position, so the probe keepout shifted by the same vector is the reservation — no
+        // re-probe; the first final slice verifies the slicer really moved it.
+        let centre = if args.time.centre_out() {
+            Some(plate_centre(&profile.heat_zones, profile.usable_bed()?))
+        } else {
+            None
+        };
+        let fixed_keepouts = profile.fixed_keepouts(purge_tip_overshoot)?;
+        let usable_bed = profile.usable_bed()?;
+        let centre_relocation: Option<RelocatedTower> = match (centre, probe_tower) {
+            (Some(centre), Some(tower)) => {
+                let moved = relocate_keepout(tower.keepout, centre, usable_bed);
+                // The clamp only knows the bed; a centre near an exclusion corner or purge line
+                // would put the printed tower on it.
+                ensure_relocated_tower_clear(moved.keepout, &fixed_keepouts)?;
+                println!(
+                    "centre-out plate around ({:.1}, {:.1}): prime tower moves by ({:+.1}, {:+.1}) mm; \
+                     keepout {:.2},{:.2} → {:.2},{:.2}",
+                    centre.0,
+                    centre.1,
+                    moved.shift.0,
+                    moved.shift.1,
+                    moved.keepout.min_x,
+                    moved.keepout.min_y,
+                    moved.keepout.max_x,
+                    moved.keepout.max_y
+                );
+                Some(moved)
+            }
+            (Some(centre), None) => {
+                println!(
+                    "centre-out plate around ({:.1}, {:.1}); no tower to relocate",
+                    centre.0, centre.1
+                );
+                None
+            }
+            (None, _) => None,
+        };
+        // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
+        // silhouette: the slicer's bed-collision warning measures the full model extent, which
+        // hangs below the printed patch on a lying animal (its tail), silently eating the edge
+        // margin — the manual 3.5/4.0 mm gap complaint. Every branch above has already set
+        // bed_loops to that union: with rotations allowed the patch carries the measured tip
+        // overshoot (~2 mm of Arachne miter past the silhouette at thin tips), and a layout
+        // whose silhouette clears the bed edge can still print outside it — BambuStudio then
+        // refuses the whole final slice with "too close to exclusion area" / "no object fully
+        // inside it" (a real 17-object P1S goat plate died at mesh x=0.06 and x=255.7 on a
+        // 256 mm bed this way).
+        if footprint.bed_loops.is_none() {
+            footprint.bed_loops = Some(footprint.loops.clone());
+        }
+        let mut plan = PackPlan {
+            footprint,
+            lock_orientation,
+            fixed_keepouts,
+            tower_keepout: centre_relocation
+                .map(|relocated| relocated.keepout)
+                .or(probe_tower.map(|tower| tower.keepout)),
+            relocation: centre_relocation,
+            rule: if lock_orientation {
+                SupportRule::Landing
+            } else {
+                SupportRule::Silhouette
+            },
+            patch_learned: false,
+        };
+        progress::stage(
+            Stage::Packing,
+            &format!("packing ({} attempts, seed {})...", args.attempts, args.seed),
+            None,
+            None,
+        );
+        // Without centre-out the tower may move: the source position competes with the bed
+        // corners and the densest plate wins (spec 2026-10-31 rule 3).
+        let mut tower_from_contest = false;
+        let mut packed = match (centre, probe_tower) {
+            (None, Some(tower)) => {
+                let (relocation, packed) = choose_tower_position(&args, &profile, &plan, tower.keepout)?;
+                if let Some(relocated) = relocation {
+                    plan.tower_keepout = Some(relocated.keepout);
+                    plan.relocation = Some(relocated);
+                    tower_from_contest = true;
+                }
+                packed
+            }
+            _ => plan.pack(&args, &profile)?,
+        };
+        // The one-object probe comes from the source project; the slicer builds the supports of
+        // the assembled plate a little differently (up to 0.4 mm wider bases, interfaces past the
+        // ears). A few objects of the first layout, sliced as an assembled plate, print exactly
+        // what every object of the full plate will (identical within 0.1 mm, sample vs plate
+        // within 0.5 mm); the plate is packed again against those supports, height band by band.
+        if plan.lock_orientation && args.sample_objects > 0 && packed.placements.len() > 1 {
+            match sample_supports(&args, &profile, &mut plan, &footprint_stl, &packed) {
+                Ok(()) => packed = plan.pack(&args, &profile)?,
+                Err(error) => eprintln!(
+                    "WARNING: sample slice failed, packing with the probe's supports only: {error}"
+                ),
+            }
+        }
+            PackState {
+                plan,
+                packed,
+                probe_tower,
+                probe_seconds,
+                tower_from_contest,
+                centre,
+                probe_sample,
+            }
+        }
+    };
+    let PackState {
+        mut plan,
+        mut packed,
+        probe_tower,
+        probe_seconds,
+        mut tower_from_contest,
+        centre,
+        probe_sample,
+    } = prepared;
+    let lock_orientation = plan.lock_orientation;
+    let usable_bed = profile.usable_bed()?;
+    let skip_final_slice = !args.final_slice && args.finish_state.is_none() && window_s.is_none();
+    if !args.final_slice && window_s.is_some() {
+        println!("note: a time window needs the plate slices; --no-final-slice is ignored");
     }
     let mut tower_regrown = false;
     let mut repacked = false;
@@ -740,6 +792,22 @@ fn run() -> AppResult<()> {
             Some(count),
         );
         plan.build(&args, &profile, &footprint_stl, &packed)?;
+        if skip_final_slice {
+            return write_unsliced_plate(
+                &args,
+                &profile,
+                PackState {
+                    plan,
+                    packed,
+                    probe_tower,
+                    probe_seconds,
+                    tower_from_contest,
+                    centre,
+                    probe_sample,
+                },
+                repacked,
+            );
+        }
         progress::stage(
             Stage::FinalSlice,
             &format!("slicing final plate ({count} objects)..."),
@@ -1094,6 +1162,8 @@ fn run() -> AppResult<()> {
         support_rule: plan.rule,
         support_patch_learned: plan.patch_learned,
         support_collisions,
+        final_sliced: true,
+        state_path: None,
     };
     progress::stage(Stage::Writing, "writing the verification report...", None, None);
     let report_path = args.output.with_extension("verification.json");
@@ -1103,6 +1173,56 @@ fn run() -> AppResult<()> {
         report.object_count,
         args.output.display(),
         report_path.display()
+    );
+    Ok(())
+}
+
+/// `--no-final-slice`: the packed 3MF is already written; saves the state for `--finish-state`
+/// and a report that says the plate was not sliced.
+fn write_unsliced_plate(
+    args: &Args,
+    profile: &PrinterProfile,
+    state: PackState,
+    repacked: bool,
+) -> AppResult<()> {
+    progress::stage(Stage::Writing, "writing the packed plate (final slice skipped)...", None, None);
+    let state_path = args.output.with_extension("state.json");
+    fs::write(&state_path, serde_json::to_vec(&state)?)?;
+    let report = ColoredPackReport {
+        source_3mf: args.source_3mf.display().to_string(),
+        output_3mf: args.output.display().to_string(),
+        profile: profile.id.clone(),
+        object_count: state.packed.placements.len(),
+        clearance_mm: args.clearance,
+        probe_tower: state.probe_tower,
+        final_tower: None,
+        repacked,
+        paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
+        time: None,
+        heat_zone: None,
+        tower_relocated_to: state.plan.relocation.map(|relocated| {
+            [
+                (relocated.keepout.min_x + relocated.keepout.max_x) * 0.5,
+                (relocated.keepout.min_y + relocated.keepout.max_y) * 0.5,
+            ]
+        }),
+        tower_relocation_error_mm: None,
+        supports_detected: state.plan.lock_orientation,
+        support_overlap_mm: args.support_overlap_mm,
+        support_rule: state.plan.rule,
+        support_patch_learned: state.plan.patch_learned,
+        support_collisions: Vec::new(),
+        final_sliced: false,
+        state_path: Some(state_path.display().to_string()),
+    };
+    let report_path = args.output.with_extension("verification.json");
+    fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
+    println!(
+        "packed {} colored objects without the final slice; wrote {}\nreport: {}\nstate: {}",
+        report.object_count,
+        args.output.display(),
+        report_path.display(),
+        state_path.display()
     );
     Ok(())
 }
@@ -1217,7 +1337,7 @@ fn derive_embedded_stl(source_3mf: &Path, output_stl: &Path) -> AppResult<()> {
 }
 
 /// Which pair rule the packer applies between two objects' supports and bodies.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SupportRule {
     /// A foreign patch must not touch the first-layer body (`support_landing_loops`);
@@ -1229,8 +1349,23 @@ enum SupportRule {
     Silhouette,
 }
 
+/// What `--no-final-slice` leaves behind (`<output>.state.json`) and `--finish-state` reads
+/// back: the packed plate and everything the final slice's checks and fallbacks need.
+#[derive(Deserialize, Serialize)]
+struct PackState {
+    plan: PackPlan,
+    packed: PackResult,
+    probe_tower: Option<PrimeTowerBounds>,
+    probe_seconds: f64,
+    tower_from_contest: bool,
+    /// The centre-out target and the probe's time sample (time-window plates).
+    centre: Option<(f64, f64)>,
+    probe_sample: Option<TimeSample>,
+}
+
 /// Everything one packing pass depends on; the verify loop in `run` mutates it between passes
 /// (grown tower, learned support patch, strict rule).
+#[derive(Deserialize, Serialize)]
 struct PackPlan {
     footprint: Footprint,
     lock_orientation: bool,
@@ -2032,6 +2167,8 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
     let mut sample_objects = SAMPLE_OBJECTS;
+    let mut final_slice = true;
+    let mut finish_state = None;
     while let Some(option) = args.next() {
         // The valueless switches; every other option consumes the next argument.
         if option == "--ams-correction" {
@@ -2040,6 +2177,10 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
         }
         if option == "--no-centre" {
             time.no_centre = true;
+            continue;
+        }
+        if option == "--no-final-slice" {
+            final_slice = false;
             continue;
         }
         let value = args
@@ -2084,6 +2225,7 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
                 time.prep_min = parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?;
             }
             "--sample-objects" => sample_objects = value.parse()?,
+            "--finish-state" => finish_state = Some(PathBuf::from(value)),
             "--support-overlap-mm" => {
                 support_overlap_mm =
                     Some(parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?);
@@ -2115,6 +2257,8 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
         time,
         support_overlap_mm,
         sample_objects,
+        final_slice,
+        finish_state,
     })
 }
 
@@ -2193,6 +2337,9 @@ mod tests {
             nozzle_clean: None,
             time: TimeOptions::default(),
             support_overlap_mm: None,
+            sample_objects: SAMPLE_OBJECTS,
+            final_slice: true,
+            finish_state: None,
         };
 
         let footprint = extract_footprint(&stl).unwrap();
@@ -2352,6 +2499,21 @@ mod tests {
         for bad in ["-0.5", "NaN", "inf", "x"] {
             assert!(parse_with(&["--support-overlap-mm", bad]).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn final_slice_and_sample_flags_parse() {
+        let defaults = parse(&REQUIRED).unwrap();
+        assert!(defaults.final_slice);
+        assert_eq!(defaults.finish_state, None);
+        assert_eq!(defaults.sample_objects, SAMPLE_OBJECTS);
+        assert!(!parse_with(&["--no-final-slice"]).unwrap().final_slice);
+        assert_eq!(
+            parse_with(&["--finish-state", "out.state.json"]).unwrap().finish_state,
+            Some(PathBuf::from("out.state.json"))
+        );
+        assert_eq!(parse_with(&["--sample-objects", "0"]).unwrap().sample_objects, 0);
+        assert!(parse_with(&["--sample-objects", "x"]).is_err());
     }
 
     #[test]
