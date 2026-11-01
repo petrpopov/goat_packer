@@ -1,0 +1,206 @@
+//! STL → slicer project (`input.3mf`) on the runner, before `colored_3mf_packer` (plan
+//! 2026-11-01-stl-upload-and-printer-picker, Task 3):
+//!
+//!   source_project --stl model.stl [--presets /opt/slicer/resources/profiles]
+//!     [--orca /opt/slicers/orca/AppRun]
+//!     (--vendor BBL --machine "Bambu Lab P1S 0.4 nozzle" | --custom-bed W,D,H)
+//!     --output input.3mf --work-dir work
+//!
+//! Presets are read at run time from the slicer installed in the image (plain JSON) and
+//! flattened by `orca_project`; nothing from Orca is shipped by us. A catalog printer loads its
+//! profile's `vendor` (Orca folder) + `orca_machine`; a custom bed puts W×D×H on Orca's generic
+//! machine (`printer_model` `Custom Printer`). Every failure exits 1 with one line
+//! `error: STL could not be converted: …` (the webapp's CliErrorTranslator keys on it).
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use goat_packer::{
+    orca_presets::PresetIndex,
+    orca_project::{self, CliPresets, Error, failure_line},
+    process_output::bounded_output,
+};
+
+const DEFAULT_PRESETS: &str = "/opt/slicer/resources/profiles";
+const DEFAULT_ORCA: &str = "/opt/slicers/orca/AppRun";
+
+#[derive(Debug, PartialEq)]
+enum Printer {
+    Catalog { vendor: String, machine: String },
+    Custom { width: f64, depth: f64, height: f64 },
+}
+
+#[derive(Debug)]
+struct Args {
+    stl: PathBuf,
+    presets: PathBuf,
+    orca: PathBuf,
+    printer: Printer,
+    output: PathBuf,
+    work_dir: PathBuf,
+}
+
+fn main() {
+    if let Err(error) = parse_args(std::env::args().skip(1).collect()).and_then(|args| run(&args)) {
+        eprintln!("error: STL could not be converted: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
+    let mut args = raw.into_iter();
+    let (mut stl, mut vendor, mut machine, mut custom, mut output, mut work_dir) = (None, None, None, None, None, None);
+    let mut presets = PathBuf::from(DEFAULT_PRESETS);
+    let mut orca = PathBuf::from(DEFAULT_ORCA);
+    while let Some(option) = args.next() {
+        let value = args.next().ok_or_else(|| format!("missing value for {option}"))?;
+        match option.as_str() {
+            "--stl" => stl = Some(PathBuf::from(value)),
+            "--presets" => presets = PathBuf::from(value),
+            "--orca" => orca = PathBuf::from(value),
+            "--vendor" => vendor = Some(value),
+            "--machine" => machine = Some(value),
+            "--custom-bed" => custom = Some(parse_bed(&value)?),
+            "--output" => output = Some(PathBuf::from(value)),
+            "--work-dir" => work_dir = Some(PathBuf::from(value)),
+            _ => return Err(format!("unknown option {option}").into()),
+        }
+    }
+    let printer = match (vendor, machine, custom) {
+        (Some(vendor), Some(machine), None) => Printer::Catalog { vendor, machine },
+        (None, None, Some((width, depth, height))) => Printer::Custom { width, depth, height },
+        (None, None, None) => return Err("give --vendor and --machine, or --custom-bed W,D,H".into()),
+        (_, _, Some(_)) => return Err("--custom-bed excludes --vendor/--machine".into()),
+        _ => return Err("--vendor and --machine go together".into()),
+    };
+    Ok(Args {
+        stl: stl.ok_or("missing --stl")?,
+        presets,
+        orca,
+        printer,
+        output: output.ok_or("missing --output")?,
+        work_dir: work_dir.ok_or("missing --work-dir")?,
+    })
+}
+
+/// `W,D,H` in millimetres, each finite and positive.
+fn parse_bed(value: &str) -> Result<(f64, f64, f64), Error> {
+    let numbers: Vec<f64> = value
+        .split(',')
+        .map(|v| v.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| format!("--custom-bed {value}: expected W,D,H in mm"))?;
+    match numbers[..] {
+        [w, d, h] if [w, d, h].iter().all(|v| v.is_finite() && *v > 0.0) => Ok((w, d, h)),
+        [_, _, _] => Err(format!("--custom-bed {value}: sizes must be positive").into()),
+        _ => Err(format!("--custom-bed {value}: expected three numbers W,D,H").into()),
+    }
+}
+
+fn run(args: &Args) -> Result<(), Error> {
+    let stl = fs::read(&args.stl).map_err(|e| format!("cannot read {}: {e}", args.stl.display()))?;
+    let footprint = orca_project::stl_xy_size(&stl).map_err(|e| format!("{}: {e}", args.stl.display()))?;
+    if !args.presets.is_dir() {
+        return Err(format!("slicer presets {} not found", args.presets.display()).into());
+    }
+    let index = PresetIndex::load(&args.presets)?;
+    let presets = match &args.printer {
+        Printer::Catalog { vendor, machine } => orca_project::catalog_presets(&index, vendor, machine)?,
+        Printer::Custom { width, depth, height } => orca_project::custom_presets(&index, *width, *depth, *height)?,
+    };
+    let (area, exclusions) = presets.bed()?;
+    let (bed_w, bed_d) = (area[2] - area[0], area[3] - area[1]);
+    if footprint.0 > bed_w || footprint.1 > bed_d {
+        return Err(format!(
+            "the model's footprint {:.1}x{:.1} mm does not fit the printable area {bed_w:.1}x{bed_d:.1} mm",
+            footprint.0, footprint.1
+        )
+        .into());
+    }
+
+    fs::create_dir_all(&args.work_dir)?;
+    let files = orca_project::write_cli_presets(&presets, &args.work_dir.join("presets"))?;
+    let export_dir = args.work_dir.join("export");
+    if export_dir.exists() {
+        fs::remove_dir_all(&export_dir)?;
+    }
+    fs::create_dir_all(&export_dir)?;
+    export(args, &files, &export_dir)?;
+    let exported = orca_project::exported_3mf(&export_dir)?;
+    if let Some(parent) = args.output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(&exported, &args.output)?;
+    let origin = orca_project::free_spot(area, &exclusions, footprint);
+    orca_project::place_build_item(&args.output, (origin.0 + footprint.0 / 2.0, origin.1 + footprint.1 / 2.0))?;
+    let settings = orca_project::project_settings(&args.output)?;
+    orca_project::check_project_settings(&settings, &presets)?;
+    print_summary(&args.output, &presets);
+    Ok(())
+}
+
+fn export(args: &Args, files: &[PathBuf; 3], export_dir: &Path) -> Result<(), Error> {
+    let mut command = orca_project::export_command(&args.orca, files, &args.stl, export_dir);
+    let output = bounded_output(&mut command).map_err(|e| format!("cannot start {}: {e}", args.orca.display()))?;
+    fs::write(args.work_dir.join("export.log"), [&output.stdout[..], &output.stderr[..]].concat())?;
+    if !output.status.success() {
+        let reason = failure_line(&output.stderr).or_else(|| failure_line(&output.stdout)).unwrap_or_default();
+        return Err(format!("slicer export failed ({}): {reason}", output.status).into());
+    }
+    orca_project::check_result_json(export_dir, "slicer export")
+}
+
+fn print_summary(output: &Path, presets: &CliPresets) {
+    println!(
+        "source project {}: machine {}, process {}, filament {}",
+        output.display(),
+        presets.machine_name(),
+        presets.process_name(),
+        presets.filament_name()
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Result<Args, Error> {
+        parse_args(list.iter().map(|s| s.to_string()).collect())
+    }
+
+    const BASE: [&str; 6] = ["--stl", "m.stl", "--output", "o.3mf", "--work-dir", "w"];
+
+    fn with(extra: &[&'static str]) -> Vec<&'static str> {
+        BASE.iter().chain(extra).copied().collect()
+    }
+
+    #[test]
+    fn catalog_printer_needs_vendor_and_machine() {
+        let parsed = args(&with(&["--vendor", "Prusa", "--machine", "Prusa MK4S 0.4 nozzle"])).unwrap();
+        assert_eq!(parsed.printer, Printer::Catalog { vendor: "Prusa".into(), machine: "Prusa MK4S 0.4 nozzle".into() });
+        assert_eq!(parsed.presets, PathBuf::from(DEFAULT_PRESETS));
+        assert_eq!(parsed.orca, PathBuf::from(DEFAULT_ORCA));
+        assert!(args(&with(&["--machine", "Prusa MK4S 0.4 nozzle"])).is_err());
+        assert!(args(&with(&["--vendor", "Prusa"])).is_err());
+    }
+
+    #[test]
+    fn custom_bed_needs_three_positive_sizes() {
+        let parsed = args(&with(&["--custom-bed", "300,250,220"])).unwrap();
+        assert_eq!(parsed.printer, Printer::Custom { width: 300.0, depth: 250.0, height: 220.0 });
+        for bad in ["300,250", "300,250,220,1", "300,0,220", "300,-1,220", "a,b,c", "300,250,inf"] {
+            assert!(args(&with(&["--custom-bed", bad])).is_err(), "{bad}");
+        }
+        assert!(args(&with(&["--custom-bed", "300,250,220", "--vendor", "Prusa", "--machine", "M"])).is_err());
+    }
+
+    #[test]
+    fn printer_and_paths_are_required() {
+        assert!(args(&BASE).is_err());
+        assert!(args(&["--custom-bed", "300,250,220", "--output", "o", "--work-dir", "w"]).is_err());
+        assert!(args(&["--stl", "m", "--custom-bed", "300,250,220", "--work-dir", "w"]).is_err());
+        assert!(args(&with(&["--custom-bed", "300,250,220", "--bogus", "x"])).is_err());
+        assert!(args(&with(&["--custom-bed"])).is_err());
+    }
+}

@@ -16,6 +16,10 @@ object CliErrorTranslator {
     private data class Pattern(val regex: Regex, val message: (MatchResult) -> String)
 
     private val PATTERNS = listOf(
+        // source_project (STL → 3MF перед упаковкой) пишет все свои ошибки одной строкой с этим префиксом.
+        Pattern(Regex("STL could not be converted: (.+)")) {
+            "Не удалось подготовить проект из STL: ${it.groupValues[1].trim()}"
+        },
         Pattern(Regex("must contain exactly one painted object; found (\\d+)")) {
             "В файле несколько объектов (${it.groupValues[1]}): упаковка рассчитана на проект с одним объектом на одном листе. Удалите лишние копии в слайсере и сохраните проект заново."
         },

@@ -22,6 +22,14 @@ class CliErrorTranslatorTest {
     }
 
     @Test
+    fun `ошибка подготовки проекта из STL переводится с причиной`() {
+        val tail = "error: STL could not be converted: the model's footprint 300.0x20.0 mm does not fit the printable area 250.0x210.0 mm"
+        val headline = CliErrorTranslator.translate(tail)!!
+        assertTrue(headline.startsWith("Не удалось подготовить проект из STL: "), headline)
+        assertTrue(headline.contains("300.0x20.0 mm"), headline)
+    }
+
+    @Test
     fun `несовпадение принтера и профиля называет обоих`() {
         val tail = "error: source printer 'Bambu Lab P1S' does not match profile 'Snapmaker U1'"
         val headline = CliErrorTranslator.translate(tail)!!

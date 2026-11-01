@@ -31,7 +31,7 @@ use goat_packer::{
     bed_outline::outline_from_stl,
     embedded_mesh::write_binary_stl,
     orca_presets::{PresetIndex, exclusion_rects, parse_points, rect_from_points, shared_extruder_area},
-    orca_project::{self, check_result_json, find_file, read_json},
+    orca_project::{self, check_result_json, failure_line, find_file, read_json},
     process_output::bounded_output,
     purge_detect::purge_lines,
     slicer_cli::slice_command,
@@ -757,31 +757,6 @@ fn run_logged(command: &mut std::process::Command, log: &Path, what: &str) -> Ap
     Err(format!("{what} failed ({}): {reason}", output.status).into())
 }
 
-/// The most useful single line of a failed tool's output: the last `error`-looking line, else
-/// the last non-empty one.
-fn failure_line(bytes: &[u8]) -> Option<String> {
-    // Headless X noise the runner prints on every slicer call (and after the real error).
-    const NOISE: [&str; 4] = ["xkbcomp", "XDG_RUNTIME_DIR", "_XSERVTrans", "keysym"];
-    let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !NOISE.iter().any(|n| l.contains(n)))
-        .collect();
-    let last = |pred: &dyn Fn(&str) -> bool| lines.iter().rposition(|l| pred(l));
-    let lower = |l: &str| l.to_ascii_lowercase();
-    let index = last(&|l| l.starts_with("slicer report:"))
-        .or_else(|| last(&|l| lower(l).starts_with("error")))
-        // Orca CLI: "run found error, return -51, exit..." then the message on the next line.
-        .map(|i| if lines[i].starts_with("run found error") && i + 1 < lines.len() { i + 1 } else { i })
-        .or_else(|| {
-            last(&|l| lower(l).contains("error"))
-                .map(|i| if lines[i].starts_with("run found error") && i + 1 < lines.len() { i + 1 } else { i })
-        })
-        .or(lines.len().checked_sub(1))?;
-    Some(lines[index].chars().take(300).collect())
-}
-
 /// Plain `plate_1.gcode` (Orca and BambuStudio CLI with `--slice 1 --outputdir`), else a G-code
 /// inside a `.gcode.3mf`.
 fn read_gcode(dir: &Path) -> AppResult<String> {
@@ -1020,19 +995,6 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(text.matches("| vendor |").count(), 1);
         assert_eq!(text.lines().count(), 4);
-    }
-
-    #[test]
-    fn failure_line_prefers_the_last_error() {
-        let out = b"stage 1\nerror: printer_model 'X' implies slicer 'bambu'\nbye\n";
-        assert_eq!(failure_line(out).unwrap(), "error: printer_model 'X' implies slicer 'bambu'");
-        assert_eq!(failure_line(b"a\n\nlast\n").unwrap(), "last");
-        assert_eq!(failure_line(b""), None);
-        // Runner noise after the real error is skipped; the packer's slicer report wins.
-        let packer = b"error: Qidi Q2 slicing failed (exit status: 192)\nslicer report: Object conflicts were detected.\nErrors from xkbcomp are not fatal to the X server\n";
-        assert_eq!(failure_line(packer).unwrap(), "slicer report: Object conflicts were detected.");
-        let orca = b"run found error, return -51, exit...\nRelative extruder addressing requires resetting\nErrors from xkbcomp are not fatal to the X server\n";
-        assert_eq!(failure_line(orca).unwrap(), "Relative extruder addressing requires resetting");
     }
 
     #[test]
