@@ -443,39 +443,48 @@ pub const LAYER_BAND_MM: f64 = 2.0;
 /// infill is left out, the walls around it bound the band's body ring). Also returns the
 /// sample's analysis for learning the first-layer patch.
 pub fn layer_zones_from_sample(
-    gcode: &[u8],
+    gcodes: &[&[u8]],
     footprint: &Footprint,
     placements: &[PackedPlacement],
 ) -> Result<(Vec<crate::LayerZone>, PlateAnalysis), String> {
-    let parser = parse(gcode, true);
-    let analysis = PlateAnalysis {
-        collisions: parser.collisions.values().cloned().collect(),
-        first_layer: parser.first_layer.clone(),
-        layers: parser.layer,
-        labelled_lines: parser.labelled_lines,
-    };
-    let matched = match_placements(footprint, placements, &parser.first_layer)?;
-    if matched.is_empty() {
-        return Err("no sample object matches a placement".into());
+    // Several slices of the same sample: tree supports differ between runs (see
+    // `crate::first_layer_footprint_of`), so every run's supports join the bands and the
+    // analysis carries every run's first layer for `learn_support_patch`.
+    let mut runs = Vec::with_capacity(gcodes.len());
+    for gcode in gcodes {
+        let parser = parse(gcode, true);
+        let matched = match_placements(footprint, placements, &parser.first_layer)?;
+        if matched.is_empty() {
+            return Err("no sample object matches a placement".into());
+        }
+        let index_of: HashMap<usize, usize> = parser
+            .labels
+            .iter()
+            .enumerate()
+            .filter_map(|(object, label)| Some((object, *matched.get(label)?)))
+            .collect();
+        runs.push((parser, index_of));
     }
-    let index_of: HashMap<usize, usize> = parser
-        .labels
-        .iter()
-        .enumerate()
-        .filter_map(|(object, label)| Some((object, *matched.get(label)?)))
-        .collect();
-    let body_object = *index_of.keys().min().expect("matched is not empty");
+    let analysis = PlateAnalysis {
+        collisions: runs.iter().flat_map(|(parser, _)| parser.collisions.values().cloned()).collect(),
+        first_layer: runs.iter().flat_map(|(parser, _)| parser.first_layer.iter().cloned()).collect(),
+        layers: runs.iter().map(|(parser, _)| parser.layer).max().unwrap_or(0),
+        labelled_lines: runs.iter().map(|(parser, _)| parser.labelled_lines).sum(),
+    };
     let to_frame = |placement: &PackedPlacement, (x, y): (f64, f64)| {
         let (sin, cos) = (-placement.angle_deg).to_radians().sin_cos();
         let (dx, dy) = (x - placement.x_mm, y - placement.y_mm);
         (dx * cos - dy * sin, dx * sin + dy * cos)
     };
     let mut bands: BTreeMap<usize, (Vec<Polygon>, Vec<Polygon>)> = BTreeMap::new();
+    for (run, (parser, index_of)) in runs.iter().enumerate() {
+    // The body comes from one object of the first run: bodies don't vary.
+    let body_object = *index_of.keys().min().expect("matched is not empty");
     for line in &parser.kept {
         let Some(&index) = index_of.get(&line.object) else {
             continue;
         };
-        if !line.strip.support && (line.object != body_object || line.infill) {
+        if !line.strip.support && (run != 0 || line.object != body_object || line.infill) {
             continue;
         }
         let placement = &placements[index];
@@ -487,6 +496,7 @@ pub fn layer_zones_from_sample(
         } else {
             band.1.push(polygon);
         }
+    }
     }
     let zones = bands
         .into_values()
@@ -823,7 +833,7 @@ mod tests {
             PackedPlacement { x_mm: 50.0, y_mm: 0.0, angle_deg: 0.0 },
         ];
         let (zones, analysis) =
-            layer_zones_from_sample(gcode.as_bytes(), &footprint, &placements).unwrap();
+            layer_zones_from_sample(&[gcode.as_bytes()], &footprint, &placements).unwrap();
         assert_eq!(analysis.layers, 2);
         // Band 0 has no support; band 1 has both.
         assert_eq!(zones.len(), 1);

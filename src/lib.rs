@@ -258,7 +258,22 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
 /// start gcode) never touch the patch. Returns `None` when the first layer holds no object
 /// extrusions to union.
 pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> Option<Footprint> {
-    let sink = parse_strips(gcode, Some(1), |_, feature| Some(!feature.contains("support")));
+    first_layer_footprint_of(&[gcode], model_center)
+}
+
+/// `first_layer_footprint` of several slices of the same project, as the union of their lines.
+/// BambuStudio builds tree supports in parallel and they differ between runs: five slices of
+/// one P1S goat printed first-layer supports of 43.8x43.4 mm four times and 43.8x39.6 mm once
+/// (a whole support foot missing); one core makes them identical, but the user's slicer GUI
+/// slices on all cores again. The union of a few runs is what any later slice may print.
+pub fn first_layer_footprint_of(
+    gcodes: &[&[u8]],
+    model_center: Option<(f64, f64)>,
+) -> Option<Footprint> {
+    let mut sink = StripSink::default();
+    for gcode in gcodes {
+        sink.absorb(parse_strips(gcode, Some(1), |_, feature| Some(!feature.contains("support"))));
+    }
     let (patch_min_x, patch_min_y, patch_max_x, patch_max_y) = sink.patch_bounds?;
     if sink.strips.is_empty() {
         return None;
@@ -346,9 +361,18 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
 /// pairs touched a neighbour's outer wall at z ≈ 23 mm with exactly these lines. Empty when the
 /// G-code prints no interfaces.
 pub fn support_interface_loops(gcode: &[u8], model_center: (f64, f64)) -> Vec<Vec<Point>> {
-    let sink = parse_strips(gcode, None, |layer, feature| {
-        (layer >= 2 && feature.contains("support interface")).then_some(false)
-    });
+    support_interface_loops_of(&[gcode], model_center)
+}
+
+/// `support_interface_loops` of several slices of the same project (see
+/// `first_layer_footprint_of` for why supports need more than one run).
+pub fn support_interface_loops_of(gcodes: &[&[u8]], model_center: (f64, f64)) -> Vec<Vec<Point>> {
+    let mut sink = StripSink::default();
+    for gcode in gcodes {
+        sink.absorb(parse_strips(gcode, None, |layer, feature| {
+            (layer >= 2 && feature.contains("support interface")).then_some(false)
+        }));
+    }
     let polygons: Vec<&Polygon> = sink.strips.iter().map(|(polygon, _)| polygon).collect();
     let union = unary_union(polygons.iter().copied());
     let mut loops: Vec<Vec<Point>> = union
@@ -575,6 +599,16 @@ struct StripSink {
 }
 
 impl StripSink {
+    fn absorb(&mut self, other: StripSink) {
+        self.strips.extend(other.strips);
+        let merge = |a: Option<(f64, f64, f64, f64)>, b: Option<(f64, f64, f64, f64)>| match (a, b) {
+            (Some(a), Some(b)) => Some(grow_bounds(Some(a), b.0, b.1, b.2, b.3)),
+            (a, b) => a.or(b),
+        };
+        self.patch_bounds = merge(self.patch_bounds, other.patch_bounds);
+        self.body_bounds = merge(self.body_bounds, other.body_bounds);
+    }
+
     fn record(&mut self, from: (f64, f64), to: (f64, f64), line_width: f64, is_body: bool) {
         let (x0, y0) = from;
         let (x1, y1) = to;

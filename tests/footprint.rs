@@ -651,3 +651,38 @@ G1 X40 Y20 E1
     assert!((bounds.max_y - 10.2).abs() < 1e-6, "{bounds:?}");
     assert_eq!(loops.len(), 2);
 }
+
+/// Tree supports differ between slices of the same project (a P1S goat lost a whole support
+/// foot in one of five runs). The patch of several runs must reserve every run's supports,
+/// not only the first one's.
+#[test]
+fn first_layer_patch_of_several_slices_is_their_union() {
+    let wall = "
+;LAYER_CHANGE
+;TYPE:Outer wall
+;WIDTH:0.5
+G1 X60.000 Y60.000 F30000
+G1 X70.000 Y60.000 E0.5
+G1 X70.000 Y70.000 E0.5
+G1 X60.000 Y70.000 E0.5
+G1 X60.000 Y60.000 E0.5
+;TYPE:Support
+;WIDTH:0.5
+";
+    let with_left_foot = format!("{wall}G1 X50.000 Y65.000 F30000\nG1 X55.000 Y65.000 E0.25\n");
+    let with_right_foot = format!("{wall}G1 X75.000 Y65.000 F30000\nG1 X80.000 Y65.000 E0.25\n");
+    let union = goat_packer::first_layer_footprint_of(
+        &[with_left_foot.as_bytes(), with_right_foot.as_bytes()],
+        Some((65.0, 65.0)),
+    )
+    .expect("layer-1 extrusions exist");
+    let xs: Vec<f64> = union.loops.iter().flatten().map(|p| p.x).collect();
+    let (min_x, max_x) = (
+        xs.iter().copied().fold(f64::INFINITY, f64::min),
+        xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+    );
+    assert!(min_x < -14.5 && max_x > 14.5, "both feet reserved: {min_x}..{max_x}");
+    let single = first_layer_footprint(with_left_foot.as_bytes(), Some((65.0, 65.0))).unwrap();
+    let single_max = single.loops.iter().flatten().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    assert!(single_max < 6.0, "one run reserves only its own foot: {single_max}");
+}

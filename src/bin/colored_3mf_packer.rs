@@ -6,9 +6,9 @@ use std::{
 };
 
 use goat_packer::{
-    Footprint, PackOptions, PackResult, Point, Rect, extract_footprint, first_layer_footprint,
+    Footprint, PackOptions, PackResult, Point, Rect, extract_footprint, first_layer_footprint_of,
     grid_layout, loops_touch_rect, pack_footprint, patch_overshoot_mm, patch_within_silhouette,
-    support_interface_loops, union_loops, validate_result,
+    support_interface_loops_of, union_loops, validate_result,
     assemble::{AssembleOptions, assemble_project, source_model_center},
     colored_packer::{
         PrimeTowerBounds, PrinterProfile, apply_cli_settings_workarounds,
@@ -450,7 +450,9 @@ fn run() -> AppResult<()> {
             Some(1),
         );
         let probe_started = std::time::Instant::now();
-        let probe = slice_project(&profile, &probe_project, 1, &args.work_dir, "probe")?;
+        let probes = slice_runs(&profile, &probe_project, 1, &args.work_dir, "probe")?;
+        let probe_gcodes: Vec<&[u8]> = probes.iter().map(|run| run.gcode.as_slice()).collect();
+        let probe = &probes[0];
         // Scales the expected duration of every later slice for the progress bar.
         let probe_seconds = probe_started.elapsed().as_secs_f64();
         // Spec step 1: with a window, a single object that already overruns it fails here, before
@@ -475,9 +477,20 @@ fn run() -> AppResult<()> {
             }
             None => None,
         };
-        let probe_gcode = probe.gcode;
-        let probe_tower =
-            parse_prime_tower_bounds(&probe_gcode, profile.tower_line_width_mm, args.clearance);
+        let probe_gcode = &probe.gcode;
+        // The tower depends on the supports' flush volume too; reserve the largest run.
+        let probe_tower = probe_gcodes
+            .iter()
+            .map(|gcode| parse_prime_tower_bounds(gcode, profile.tower_line_width_mm, args.clearance))
+            .reduce(|a, b| match (a, b) {
+                (Some(a), Some(b)) => Some(PrimeTowerBounds {
+                    centerline: union_rect(a.centerline, b.centerline),
+                    keepout: union_rect(a.keepout, b.keepout),
+                    ..a
+                }),
+                (a, b) => a.or(b),
+            })
+            .flatten();
         match probe_tower {
             Some(tower) => println!(
                 "probe tower keepout: {:.2},{:.2} → {:.2},{:.2}",
@@ -499,7 +512,7 @@ fn run() -> AppResult<()> {
         // there to stay in the assembler's placement frame.
         let model_world_center = model_center_on_bed(&args.source_3mf, &footprint_stl);
         let (mut footprint, lock_orientation, purge_tip_overshoot) =
-            match first_layer_footprint(&probe_gcode, model_world_center) {
+            match first_layer_footprint_of(&probe_gcodes, model_world_center) {
             Some(patch) => {
                 eprintln!(
                     "probe slice's first layer: patch {:.1}x{:.1} mm, mesh silhouette {:.1}x{:.1} mm",
@@ -597,7 +610,7 @@ fn run() -> AppResult<()> {
                     // P1S goat pairs touched a neighbour's wall at z ≈ 23 mm without this, and the
                     // strict-rule fallback cost the plate 4 goats).
                     if let Some(center) = model_world_center {
-                        let interfaces = support_interface_loops(&probe_gcode, center);
+                        let interfaces = support_interface_loops_of(&probe_gcodes, center);
                         if !interfaces.is_empty() {
                             let mut interface_zone = silhouette.clone();
                             interface_zone.loops = interfaces;
@@ -1773,11 +1786,12 @@ fn sample_supports(
     let sample_project = args.work_dir.join("sample.3mf");
     goat_packer::scheduler::subset_3mf_items(&args.output, &sample_project, &sample, false)
         .map_err(|error| format!("sample subset: {error}"))?;
-    let slice = slice_project(profile, &sample_project, sample.len(), &args.work_dir, "sample")?;
+    let slices = slice_runs(profile, &sample_project, sample.len(), &args.work_dir, "sample")?;
+    let gcodes: Vec<&[u8]> = slices.iter().map(|run| run.gcode.as_slice()).collect();
     let sampled: Vec<goat_packer::PackedPlacement> =
         sample.iter().map(|&index| packed.placements[index].clone()).collect();
     let (zones, analysis) =
-        layer_zones_from_sample(&slice.gcode, &plan.footprint, &sampled).map_err(|error| {
+        layer_zones_from_sample(&gcodes, &plan.footprint, &sampled).map_err(|error| {
             format!("sample slice: {error}")
         })?;
     let mut learned = learn_support_patch(&plan.footprint, &PackResult {
@@ -2030,6 +2044,46 @@ fn build_colored_project(
         );
     }
     Ok(())
+}
+
+/// Slices of the same project whose supports the packer learns from. Tree supports differ
+/// between runs (`goat_packer::first_layer_footprint_of`): the union of a few runs stands for
+/// whatever the final slice or the user's slicer GUI prints. Single-core slicing would make
+/// them repeatable, but only on the server; the GUI slices on all cores.
+const SUPPORT_SLICE_RUNS: usize = 3;
+
+/// `SUPPORT_SLICE_RUNS` slices of `project` at once (`label`, `label_2`, ...): each is one
+/// slicer process, so they take about as long as one on a machine with spare cores.
+fn slice_runs(
+    profile: &PrinterProfile,
+    project: &Path,
+    count: usize,
+    work_dir: &Path,
+    label: &str,
+) -> AppResult<Vec<SliceOutput>> {
+    let labels: Vec<String> = (0..SUPPORT_SLICE_RUNS)
+        .map(|run| if run == 0 { label.to_owned() } else { format!("{label}_{}", run + 1) })
+        .collect();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = labels
+            .iter()
+            .map(|run_label| {
+                scope.spawn(move || {
+                    slice_project(profile, project, count, work_dir, run_label)
+                        .map_err(|error| error.to_string())
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| "slicer thread panicked".to_owned())?
+                    .map_err(Into::into)
+            })
+            .collect()
+    })
 }
 
 fn slice_project(
