@@ -470,11 +470,9 @@ fn draft_str<'a>(draft: &'a Value, key: &str) -> AppResult<&'a str> {
         .ok_or_else(|| format!("draft has no {key}").into())
 }
 
-/// Spike 2026-11-01: flattened machine/process/filament + `--arrange 0` + `--export-3mf`. The cube
-/// is generated already at the centre of the draft's printable area (off its exclusions): with
-/// `--arrange 1` Orca's arrange misreads seam-chained `bed_exclude_area` lists (Kobra 3, Qidi
-/// X-Plus 4) and put the cube off the bed (y = -61), so the probe slice saw an empty plate.
-/// `--arrange 0` keeps the STL position. A 20×20×10 mm cube generated here: single colour, so no prime tower and
+/// Spike 2026-11-01: flattened machine/process/filament + `--arrange 1` + `--export-3mf`, then the
+/// build item is moved to the centre of the draft's printable area, off its exclusions
+/// (`place_probe_item`). A 20×20×10 mm cube generated here: single colour, so no prime tower and
 /// the tower is not qualified (the packer measures it per job from the user's own probe).
 fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()> {
     let orca = args.orca.as_ref().ok_or("missing --orca")?;
@@ -500,12 +498,7 @@ fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()
         serde_json::to_vec_pretty(&json!({"machine": machine, "process": process, "filament": DEFAULT_FILAMENT}))?,
     )?;
     let cube = args.work.join("cube.stl");
-    let (ox, oy) = probe_origin(draft, PROBE_CUBE_MM);
-    let triangles: Vec<_> = cube_triangles(PROBE_CUBE_MM, PROBE_CUBE_MM, 10.0)
-        .into_iter()
-        .map(|t| t.map(|(x, y, z)| (x + ox, y + oy, z)))
-        .collect();
-    write_binary_stl(&cube, &triangles)?;
+    write_binary_stl(&cube, &cube_triangles(PROBE_CUBE_MM, PROBE_CUBE_MM, 10.0))?;
     let export_dir = args.work.join("export");
     reset_dir(&export_dir)?;
     let mut command = std::process::Command::new(&args.orca_slicer);
@@ -514,7 +507,7 @@ fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()
         .arg(format!("{};{}", machine_json.display(), process_json.display()))
         .arg("--load-filaments")
         .arg(&filament_json)
-        .args(["--arrange", "0", "--export-3mf", "probe.3mf", "--outputdir"])
+        .args(["--arrange", "1", "--export-3mf", "probe.3mf", "--outputdir"])
         .arg(&export_dir)
         .arg(&cube);
     run_logged(&mut command, &args.work.join("export.log"), "probe export")?;
@@ -522,6 +515,9 @@ fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()
     let exported = find_file(&export_dir, |name| name.ends_with(".3mf"))
         .ok_or("probe export wrote no 3MF")?;
     fs::copy(exported, probe)?;
+    let target = probe_origin(draft, PROBE_CUBE_MM);
+    let centre = (target.0 + PROBE_CUBE_MM / 2.0, target.1 + PROBE_CUBE_MM / 2.0);
+    place_probe_item(probe, centre)?;
     Ok(())
 }
 
@@ -740,6 +736,91 @@ fn read_gcode(dir: &Path) -> AppResult<String> {
 }
 
 const PROBE_CUBE_MM: f64 = 20.0;
+const MODEL_ENTRY: &str = "3D/3dmodel.model";
+const MODEL_SETTINGS_ENTRY: &str = "Metadata/model_settings.config";
+
+/// Orca's arrange leaves a cube it put off the bed out of plate 1 (no `<model_instance>`), and the
+/// slicer then reads the moved probe as an empty project. Adds the instance Orca writes for a lone
+/// object (object 2, instance 0, identify_id 14 as in every exported probe) when it is missing.
+fn ensure_plate_instance(config: &str) -> String {
+    if config.contains("<model_instance>") {
+        return config.to_owned();
+    }
+    let Some(at) = config.find("  </plate>") else { return config.to_owned() };
+    let instance = "    <model_instance>\n      <metadata key=\"object_id\" value=\"2\"/>\n      <metadata key=\"instance_id\" value=\"0\"/>\n      <metadata key=\"identify_id\" value=\"14\"/>\n    </model_instance>\n";
+    format!("{}{instance}{}", &config[..at], &config[at..])
+}
+
+/// Moves the probe's single build item so the cube's centre is at `centre`. Orca's `--arrange 1`
+/// is still needed: with `--arrange 0` the 2.4.2 CLI exports the object on no plate (no
+/// `model_instance` in plate 1; the probe slice then reads an "empty" file) wherever the STL sits.
+/// But its arrange misreads seam-chained `bed_exclude_area` lists (Kobra 3: cube at y = -61), so
+/// the position is set here from the draft's own geometry.
+fn place_probe_item(probe: &Path, centre: (f64, f64)) -> AppResult<()> {
+    use std::io::{Read as _, Write as _};
+    let mut archive = zip::ZipArchive::new(fs::File::open(probe)?)?;
+    let mut entries = Vec::with_capacity(archive.len());
+    let mut moved = false;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let (name, is_dir) = (entry.name().to_owned(), entry.is_dir());
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        if name == MODEL_ENTRY {
+            bytes = centre_build_item(&String::from_utf8(bytes)?, centre)?.into_bytes();
+            moved = true;
+        } else if name == MODEL_SETTINGS_ENTRY {
+            bytes = ensure_plate_instance(&String::from_utf8(bytes)?).into_bytes();
+        }
+        entries.push((name, is_dir, bytes));
+    }
+    drop(archive);
+    if !moved {
+        return Err(format!("{} has no {MODEL_ENTRY}", probe.display()).into());
+    }
+    let mut zip = zip::ZipWriter::new(fs::File::create(probe)?);
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (name, is_dir, bytes) in entries {
+        if is_dir {
+            zip.add_directory(name.trim_end_matches('/'), options)?;
+        } else {
+            zip.start_file(&name, options)?;
+            zip.write_all(&bytes)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
+}
+
+/// The 12 numbers of the first `transform="…"` inside the first `<{tag} ` element, with the
+/// byte range of the attribute value.
+fn first_transform(xml: &str, tag: &str) -> AppResult<(Vec<f64>, std::ops::Range<usize>)> {
+    let start = xml.find(&format!("<{tag} ")).ok_or_else(|| format!("probe 3MF has no <{tag}>"))?;
+    let end = xml[start..].find('>').ok_or_else(|| format!("unterminated <{tag}>"))? + start;
+    let key = "transform=\"";
+    let at = xml[start..end].find(key).ok_or_else(|| format!("<{tag}> without transform"))? + start + key.len();
+    let close = xml[at..end].find('"').ok_or("unterminated transform")? + at;
+    let m: Vec<f64> = xml[at..close]
+        .split_whitespace()
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("bad transform: {e}"))?;
+    if m.len() != 12 {
+        return Err(format!("transform has {} numbers, expected 12", m.len()).into());
+    }
+    Ok((m, at..close))
+}
+
+/// Sets the build item's x/y translation so that item + component offset (Orca keeps the mesh
+/// centred on its component origin) lands on `centre`. The probe is one object, one item.
+fn centre_build_item(xml: &str, (x, y): (f64, f64)) -> AppResult<String> {
+    let (component, _) = first_transform(xml, "component")?;
+    let (mut item, range) = first_transform(xml, "item")?;
+    item[9] = x - component[9];
+    item[10] = y - component[10];
+    let text: Vec<String> = item.iter().map(|v| format!("{v}")).collect();
+    Ok(format!("{}{}{}", &xml[..range.start], text.join(" "), &xml[range.end..]))
+}
 
 /// Lower-left corner for the probe cube: centred in the draft's printable area, or the first spot
 /// of a 10 mm scan (centre-out) whose square clears every exclusion rectangle.
@@ -933,6 +1014,25 @@ mod tests {
         assert!(x + 20.0 <= 100.0 || x >= 156.0 || y + 20.0 <= 100.0 || y >= 156.0, "({x}, {y})");
         let h2d = json!({"printable_area": [25.0, 0.0, 325.0, 320.0]});
         assert_eq!(probe_origin(&h2d, 20.0), (165.0, 150.0));
+    }
+
+    #[test]
+    fn missing_plate_instance_is_added_once() {
+        let empty = "<config>\n  <plate>\n    <metadata key=\"plater_id\" value=\"1\"/>\n  </plate>\n</config>\n";
+        let fixed = ensure_plate_instance(empty);
+        assert!(fixed.contains("<model_instance>\n      <metadata key=\"object_id\" value=\"2\"/>"), "{fixed}");
+        assert!(fixed.find("<model_instance>").unwrap() < fixed.find("</plate>").unwrap());
+        assert_eq!(ensure_plate_instance(&fixed), fixed);
+    }
+
+    #[test]
+    fn build_item_is_centred_through_the_component_offset() {
+        let xml = r#"<object><components><component objectid="1" transform="1 0 0 0 1 0 0 0 1 10 10 5"/></components></object>
+ <build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 10 -61 0" printable="1"/></build>"#;
+        let moved = centre_build_item(xml, (127.5, 127.5)).unwrap();
+        assert!(moved.contains(r#"<item objectid="2" transform="1 0 0 0 1 0 0 0 1 117.5 117.5 0" printable="1"/>"#), "{moved}");
+        assert!(moved.contains(r#"transform="1 0 0 0 1 0 0 0 1 10 10 5""#));
+        assert!(centre_build_item("<build></build>", (1.0, 1.0)).is_err());
     }
 
     #[test]
