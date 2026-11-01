@@ -4,6 +4,7 @@ import com.goatpacker.web.miniProject3mf
 import com.goatpacker.web.FakeBins
 import java.nio.file.Files
 import java.nio.file.Path
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
@@ -42,11 +43,11 @@ class ValidationTest(
         val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, "solid goat\nfacet normal 0 0 1\nendsolid goat\n".toByteArray())
         val body = mockMvc.perform(multipart("/api/pack/jobs").file(stl).param("profileId", "bambu_a2l"))
             .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
-        org.junit.jupiter.api.Assertions.assertTrue("STL в локальном режиме требует GOAT_SLICER_PRESETS" in body, body)
+        assertTrue("STL в локальном режиме требует GOAT_SLICER_PRESETS" in body, body)
         val obj = MockMultipartFile("file", "goat.obj", MediaType.APPLICATION_OCTET_STREAM_VALUE, byteArrayOf(1))
         val other = mockMvc.perform(multipart("/api/pack/jobs").file(obj).param("profileId", "bambu_a2l"))
             .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
-        org.junit.jupiter.api.Assertions.assertTrue("Нужен файл .3mf или .stl" in other, other)
+        assertTrue("Нужен файл .3mf или .stl" in other, other)
     }
 
     @Test
@@ -126,7 +127,7 @@ class ValidationTest(
         val u1 = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Snapmaker U1"))
         val body = mockMvc.perform(multipart("/api/calibration/jobs").file(u1).param("profileId", "snapmaker_u1"))
             .andExpect(status().isBadRequest).andReturn().response.contentAsString
-        org.junit.jupiter.api.Assertions.assertTrue(body.contains("калибровка не нужна"), body)
+        assertTrue(body.contains("калибровка не нужна"), body)
     }
 
     @Test
@@ -141,7 +142,7 @@ class ValidationTest(
             )
                 .andExpect(status().isBadRequest)
                 .andReturn().response.contentAsString
-            org.junit.jupiter.api.Assertions.assertTrue(body.contains("коррекция"), body)
+            assertTrue(body.contains("коррекция"), body)
         }
     }
 
@@ -164,7 +165,7 @@ class ValidationTest(
         for (path in listOf("/api/pack/jobs", "/api/profiles/detect")) {
             val body = mockMvc.perform(multipart(path).file(stl).param("profileId", "bambu_a2l"))
                 .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
-            org.junit.jupiter.api.Assertions.assertTrue("Файл .stl повреждён или не является STL" in body, "$path: $body")
+            assertTrue("Файл .stl повреждён или не является STL" in body, "$path: $body")
         }
     }
 

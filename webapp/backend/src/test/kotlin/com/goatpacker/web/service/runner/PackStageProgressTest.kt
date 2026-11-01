@@ -2,6 +2,10 @@ package com.goatpacker.web.service.runner
 
 import com.goatpacker.web.model.JobKind
 import com.goatpacker.web.model.JobPhase
+import com.goatpacker.web.model.JobStage
+import com.goatpacker.web.model.StageSpan
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.kotlinModule
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -60,10 +64,10 @@ class PackStageProgressTest {
 
         assertEquals(
             listOf(
-                com.goatpacker.web.model.StageSpan("probe_slice", 1, start, start + 20_000),
-                com.goatpacker.web.model.StageSpan("final_slice", 1, start + 20_000, start + 50_000),
-                com.goatpacker.web.model.StageSpan("repacking", 1, start + 50_000, start + 55_000),
-                com.goatpacker.web.model.StageSpan("final_slice", 2, start + 55_000, null),
+                StageSpan("probe_slice", 1, start, start + 20_000),
+                StageSpan("final_slice", 1, start + 20_000, start + 50_000),
+                StageSpan("repacking", 1, start + 50_000, start + 55_000),
+                StageSpan("final_slice", 2, start + 55_000, null),
             ),
             again.history,
         )
@@ -73,7 +77,7 @@ class PackStageProgressTest {
     fun `история этапов не растёт без границ и укладывается в stage_json`() {
         val clock = FakeClock()
         val t = tracker(clock)
-        var last: com.goatpacker.web.model.JobStage? = null
+        var last: JobStage? = null
         repeat(100) {
             clock.advance(1.0)
             last = t.onLine(stage(if (it % 2 == 0) "final_slice" else "window_slice", 10.0, 20)).stage
@@ -83,7 +87,7 @@ class PackStageProgressTest {
         // Самые старые заходы отброшены, текущий — последний и открыт.
         assertEquals(null, stage.history.last().endedAtMs)
         assertEquals(stage.startedAtMs, stage.history.last().startedAtMs)
-        assertTrue(com.fasterxml.jackson.databind.ObjectMapper().registerModule(com.fasterxml.jackson.module.kotlin.kotlinModule()).writeValueAsString(stage).length < 4000)
+        assertTrue(ObjectMapper().registerModule(kotlinModule()).writeValueAsString(stage).length < 4000)
     }
 
     @Test

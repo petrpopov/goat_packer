@@ -3,6 +3,7 @@ package com.goatpacker.web.pack
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.awaitJobCompletion
 import com.goatpacker.web.FakeBins
+import com.goatpacker.web.descriptorProject3mf
 import com.goatpacker.web.miniProject3mf
 import com.goatpacker.web.repository.JobStore
 import java.nio.file.Files
@@ -372,7 +373,7 @@ class PackJobFlowTest(
     @Test
     fun `pack accepts descriptor archive and exposes actual work placements`() {
         val response = mockMvc.perform(multipart("/api/pack/jobs")
-            .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", com.goatpacker.web.descriptorProject3mf("Bambu Lab P1S")))
+            .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", descriptorProject3mf("Bambu Lab P1S")))
             .param("profileId", "bambu_p1s").param("nozzleClean", "global,every=1"))
             .andExpect(status().isAccepted).andReturn().response
         val id = json.readTree(response.contentAsString)["jobId"].asText()

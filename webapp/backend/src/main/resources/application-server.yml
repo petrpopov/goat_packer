@@ -65,6 +65,12 @@ platform:
   guest-compute-seconds: ${GUEST_COMPUTE_SECONDS:3600}
   account-compute-seconds: ${ACCOUNT_COMPUTE_SECONDS:10800}
   global-compute-seconds: ${GLOBAL_COMPUTE_SECONDS:72000}
+  guest-jobs-per-day: ${GUEST_JOBS_PER_DAY:4}
+  user-jobs-per-day: ${USER_JOBS_PER_DAY:10}
+  guest-active-jobs: ${GUEST_ACTIVE_JOBS:2}
+  user-active-jobs: ${USER_ACTIVE_JOBS:4}
+  max-principals: ${MAX_PRINCIPALS:10000}
+  max-active-uploads: ${MAX_ACTIVE_UPLOADS:2}
 logging:
   structured:
     format:
