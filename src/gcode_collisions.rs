@@ -20,7 +20,13 @@ use std::collections::{BTreeMap, HashMap};
 use geo::Polygon;
 use serde::Serialize;
 
-use crate::{Footprint, PackedPlacement};
+use crate::footprint::{Footprint, LayerZone};
+use crate::gcode_text::{
+    ArcSweep, DENSITY_CHECK_MIN_LENGTH_MM, MIN_FLOW_PER_MM, axis_value, feature_label,
+    is_layer_change, line_width_comment,
+};
+use crate::geometry::{Rect, polygon_from_loop, strip_polygon, union_exterior_loops};
+use crate::options::PackedPlacement;
 
 /// One printed line on the first layer, in bed coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,23 +84,18 @@ pub struct PlateAnalysis {
     /// Every object's printed extent over all layers: line centres, arcs sampled along the
     /// sweep — what BambuStudio's G-code viewer measures (`all_paths_inside`: the paths' bbox,
     /// arc interpolation points included, line widths not).
-    pub extents: Vec<(String, crate::Rect)>,
+    pub extents: Vec<(String, Rect)>,
 }
 
 impl PlateAnalysis {
     /// Objects whose printed lines leave `area` (the printable area), with their extent. The
     /// slicer GUI refuses to export such a plate ("G-code path goes beyond plate
     /// boundaries"); its CLI writes it without a word.
-    pub fn off_plate(&self, area: crate::Rect) -> Vec<(String, crate::Rect)> {
+    pub fn off_plate(&self, area: Rect) -> Vec<(String, Rect)> {
         const EPSILON_MM: f64 = 1e-3;
         self.extents
             .iter()
-            .filter(|(_, b)| {
-                b.min_x < area.min_x - EPSILON_MM
-                    || b.min_y < area.min_y - EPSILON_MM
-                    || b.max_x > area.max_x + EPSILON_MM
-                    || b.max_y > area.max_y + EPSILON_MM
-            })
+            .filter(|(_, extent)| extent.sticks_out_of(area, EPSILON_MM))
             .cloned()
             .collect()
     }
@@ -130,7 +131,7 @@ struct Parser {
     first_layer: Vec<ObjectFirstLayer>,
     collisions: BTreeMap<(usize, usize), SupportCollision>,
     labelled_lines: usize,
-    extents: Vec<Option<crate::Rect>>,
+    extents: Vec<Option<Rect>>,
     z: f64,
     /// Every labelled line with its layer height, kept only for `layer_zones_from_sample`.
     keep_lines: bool,
@@ -168,7 +169,7 @@ impl Parser {
         let support = self.feature.to_lowercase().contains("support");
         let width = self.width;
         self.labelled_lines += 1;
-        let extent = self.extents[object].get_or_insert(crate::Rect::new(from.0, from.1, from.0, from.1));
+        let extent = self.extents[object].get_or_insert(Rect::new(from.0, from.1, from.0, from.1));
         for (x, y) in [from, to] {
             extent.min_x = extent.min_x.min(x);
             extent.min_y = extent.min_y.min(y);
@@ -179,7 +180,12 @@ impl Parser {
             self.kept.push(KeptLine {
                 object,
                 z: self.z,
-                strip: Strip { from, to, width, support },
+                strip: Strip {
+                    from,
+                    to,
+                    width,
+                    support,
+                },
                 infill: self.feature.to_lowercase().contains("infill"),
             });
         }
@@ -227,7 +233,7 @@ impl Parser {
 
     fn line(&mut self, raw: &str) {
         let line = raw.trim();
-        if line == "; CHANGE_LAYER" || line == ";LAYER_CHANGE" {
+        if is_layer_change(line) {
             self.finish_layer();
             self.layer += 1;
             return;
@@ -260,86 +266,58 @@ impl Parser {
             self.current = Some(self.object(name));
             return;
         }
-        if let Some(kind) = line
-            .strip_prefix("; FEATURE:")
-            .or_else(|| line.strip_prefix(";TYPE:"))
-            .or_else(|| line.strip_prefix(";FEATURE:"))
-        {
-            self.feature = kind.trim().to_owned();
+        if let Some(kind) = feature_label(line) {
+            self.feature = kind.to_owned();
             return;
         }
-        if let Some(value) = line
-            .strip_prefix("; LINE_WIDTH:")
-            .or_else(|| line.strip_prefix(";WIDTH:"))
-            .or_else(|| line.strip_prefix(";LINE_WIDTH:"))
-        {
-            if let Ok(width) = value.trim().parse::<f64>() {
-                self.width = width;
-            }
+        if let Some(width) = line_width_comment(line) {
+            self.width = width.unwrap_or(self.width);
             return;
         }
         let arc = line.starts_with("G2 ") || line.starts_with("G3 ");
-        if !(arc || line.starts_with("G1 ") || line.starts_with("G0 ")) {
-            return;
+        if arc || line.starts_with("G1 ") || line.starts_with("G0 ") {
+            self.read_move(line, arc);
         }
-        let x = axis(line, 'X');
-        let y = axis(line, 'Y');
+    }
+
+    fn read_move(&mut self, line: &str, arc: bool) {
+        let x = axis_value(line, 'X');
+        let y = axis_value(line, 'Y');
         let next = (x.unwrap_or(self.x), y.unwrap_or(self.y));
         let from = (self.x, self.y);
-        self.x = next.0;
-        self.y = next.1;
-        let filament = axis(line, 'E').unwrap_or(0.0);
+        (self.x, self.y) = next;
+        let filament = axis_value(line, 'E').unwrap_or(0.0);
         // Un-retractions carry no X/Y; a move without an extrusion is travel.
         if filament <= 0.0 || (x.is_none() && y.is_none()) || self.layer == 0 {
             return;
         }
-        if arc {
-            let (Some(i), Some(j)) = (axis(line, 'I'), axis(line, 'J')) else {
-                return;
-            };
-            let centre = (from.0 + i, from.1 + j);
-            let radius = i.hypot(j);
-            if radius < 1e-9 {
-                return;
-            }
-            let start = (from.1 - centre.1).atan2(from.0 - centre.0);
-            let end = (next.1 - centre.1).atan2(next.0 - centre.0);
-            let mut sweep = end - start;
-            if line.starts_with("G2") {
-                if sweep >= 0.0 {
-                    sweep -= std::f64::consts::TAU;
-                }
-            } else if sweep <= 0.0 {
-                sweep += std::f64::consts::TAU;
-            }
-            let steps = ((radius * sweep.abs() / ARC_STEP_MM).ceil() as usize).max(1);
-            let mut previous = from;
-            for step in 1..=steps {
-                let angle = start + sweep * step as f64 / steps as f64;
-                let point = (
-                    centre.0 + radius * angle.cos(),
-                    centre.1 + radius * angle.sin(),
-                );
-                self.ink(previous, point);
-                previous = point;
-            }
-        } else {
-            let length = (next.0 - from.0).hypot(next.1 - from.1);
-            // Same density cut as the first-layer patch parser: a travel-smeared smear prints
-            // an order of magnitude below the thinnest real (Arachne) line.
-            if length > 0.3 && filament / length <= 0.001 {
-                return;
-            }
-            self.ink(from, next);
+        if !arc {
+            self.ink_straight(from, next, filament);
+            return;
+        }
+        let (Some(i), Some(j)) = (axis_value(line, 'I'), axis_value(line, 'J')) else {
+            return;
+        };
+        let Some(sweep) = ArcSweep::new(from, next, (i, j), line.starts_with("G2")) else {
+            return;
+        };
+        let steps = ((sweep.length() / ARC_STEP_MM).ceil() as usize).max(1);
+        let mut previous = from;
+        for point in sweep.points(steps) {
+            self.ink(previous, point);
+            previous = point;
         }
     }
-}
 
-fn axis(line: &str, axis: char) -> Option<f64> {
-    let code = line.split(';').next().unwrap_or("");
-    code.split_whitespace()
-        .skip(1)
-        .find_map(|token| token.strip_prefix(axis).and_then(|v| v.parse::<f64>().ok()))
+    fn ink_straight(&mut self, from: (f64, f64), to: (f64, f64), filament: f64) {
+        let length = (to.0 - from.0).hypot(to.1 - from.1);
+        // Same density cut as the first-layer patch parser: a travel-smeared smear prints
+        // an order of magnitude below the thinnest real (Arachne) line.
+        if length > DENSITY_CHECK_MIN_LENGTH_MM && filament / length <= MIN_FLOW_PER_MM {
+            return;
+        }
+        self.ink(from, to);
+    }
 }
 
 fn cell(point: (f64, f64)) -> (i32, i32) {
@@ -451,7 +429,7 @@ pub fn analyze_plate(gcode: &[u8]) -> PlateAnalysis {
     }
 }
 
-fn extents_of(parser: &Parser) -> Vec<(String, crate::Rect)> {
+fn extents_of(parser: &Parser) -> Vec<(String, Rect)> {
     parser
         .labels
         .iter()
@@ -489,7 +467,7 @@ pub fn layer_zones_from_sample(
     gcodes: &[&[u8]],
     footprint: &Footprint,
     placements: &[PackedPlacement],
-) -> Result<(Vec<crate::LayerZone>, PlateAnalysis), String> {
+) -> Result<(Vec<LayerZone>, PlateAnalysis), String> {
     // Several slices of the same sample: tree supports differ between runs (see
     // `crate::first_layer_footprint_of`), so every run's supports join the bands and the
     // analysis carries every run's first layer for `learn_support_patch`.
@@ -509,11 +487,24 @@ pub fn layer_zones_from_sample(
         runs.push((parser, index_of));
     }
     let analysis = PlateAnalysis {
-        collisions: runs.iter().flat_map(|(parser, _)| parser.collisions.values().cloned()).collect(),
-        first_layer: runs.iter().flat_map(|(parser, _)| parser.first_layer.iter().cloned()).collect(),
-        layers: runs.iter().map(|(parser, _)| parser.layer).max().unwrap_or(0),
+        collisions: runs
+            .iter()
+            .flat_map(|(parser, _)| parser.collisions.values().cloned())
+            .collect(),
+        first_layer: runs
+            .iter()
+            .flat_map(|(parser, _)| parser.first_layer.iter().cloned())
+            .collect(),
+        layers: runs
+            .iter()
+            .map(|(parser, _)| parser.layer)
+            .max()
+            .unwrap_or(0),
         labelled_lines: runs.iter().map(|(parser, _)| parser.labelled_lines).sum(),
-        extents: runs.iter().flat_map(|(parser, _)| extents_of(parser)).collect(),
+        extents: runs
+            .iter()
+            .flat_map(|(parser, _)| extents_of(parser))
+            .collect(),
     };
     let to_frame = |placement: &PackedPlacement, (x, y): (f64, f64)| {
         let (sin, cos) = (-placement.angle_deg).to_radians().sin_cos();
@@ -522,32 +513,37 @@ pub fn layer_zones_from_sample(
     };
     let mut bands: BTreeMap<usize, (Vec<Polygon>, Vec<Polygon>)> = BTreeMap::new();
     for (run, (parser, index_of)) in runs.iter().enumerate() {
-    // The body comes from one object of the first run: bodies don't vary.
-    let body_object = *index_of.keys().min().expect("matched is not empty");
-    for line in &parser.kept {
-        let Some(&index) = index_of.get(&line.object) else {
-            continue;
-        };
-        if !line.strip.support && (run != 0 || line.object != body_object || line.infill) {
-            continue;
+        // The body comes from one object of the first run: bodies don't vary.
+        let body_object = *index_of.keys().min().expect("matched is not empty");
+        for line in &parser.kept {
+            let Some(&index) = index_of.get(&line.object) else {
+                continue;
+            };
+            if !line.strip.support && (run != 0 || line.object != body_object || line.infill) {
+                continue;
+            }
+            let placement = &placements[index];
+            let (from, to) = (
+                to_frame(placement, line.strip.from),
+                to_frame(placement, line.strip.to),
+            );
+            let polygon = strip_polygon(from.0, from.1, to.0, to.1, line.strip.width);
+            let band = bands
+                .entry((line.z.max(0.0) / LAYER_BAND_MM) as usize)
+                .or_default();
+            if line.strip.support {
+                band.0.push(polygon);
+            } else {
+                band.1.push(polygon);
+            }
         }
-        let placement = &placements[index];
-        let (from, to) = (to_frame(placement, line.strip.from), to_frame(placement, line.strip.to));
-        let polygon = crate::strip_polygon(from.0, from.1, to.0, to.1, line.strip.width);
-        let band = bands.entry((line.z.max(0.0) / LAYER_BAND_MM) as usize).or_default();
-        if line.strip.support {
-            band.0.push(polygon);
-        } else {
-            band.1.push(polygon);
-        }
-    }
     }
     let zones = bands
         .into_values()
         .filter(|(support, body)| !support.is_empty() && !body.is_empty())
-        .map(|(support, body)| crate::LayerZone {
-            support_loops: crate::union_exterior_loops(&support),
-            body_loops: crate::union_exterior_loops(&body),
+        .map(|(support, body)| LayerZone {
+            support_loops: union_exterior_loops(&support),
+            body_loops: union_exterior_loops(&body),
         })
         .collect();
     Ok((zones, analysis))
@@ -576,7 +572,7 @@ pub fn learn_support_patch(
         .loops
         .iter()
         .chain(footprint.bed_loops.iter().flatten())
-        .map(|loop_| crate::polygon_from_loop(loop_))
+        .map(|loop_| polygon_from_loop(loop_))
         .collect();
     let matched = match_placements(footprint, placements, first_layer)?;
     if matched.is_empty() {
@@ -590,10 +586,10 @@ pub fn learn_support_patch(
         for strip in object.strips.iter().filter(|strip| strip.support) {
             let from = to_frame(placement, strip.from);
             let to = to_frame(placement, strip.to);
-            polygons.push(crate::strip_polygon(from.0, from.1, to.0, to.1, strip.width));
+            polygons.push(strip_polygon(from.0, from.1, to.0, to.1, strip.width));
         }
     }
-    let loops = crate::union_exterior_loops(&polygons);
+    let loops = union_exterior_loops(&polygons);
     let bounds = crate::plate_centre::loops_bounds(&loops).ok_or("learned patch is empty")?;
     let mut learned = footprint.clone();
     learned.width = bounds.max_x - bounds.min_x;
@@ -681,14 +677,21 @@ pub fn nudge_apart(
         *entry = entry.min(gap);
     }
     let offset = |layout: &[PackedPlacement], a: usize, b: usize| {
-        (layout[b].x_mm - layout[a].x_mm, layout[b].y_mm - layout[a].y_mm)
+        (
+            layout[b].x_mm - layout[a].x_mm,
+            layout[b].y_mm - layout[a].y_mm,
+        )
     };
     let mut current = placements.to_vec();
     for ((a, b), gap) in pairs {
         let need = (TOUCH_EPSILON_MM - gap).max(0.0) + NUDGE_MARGIN_MM;
         let (ox, oy) = offset(placements, a, b);
         let length = ox.hypot(oy);
-        let (ux, uy) = if length > 1e-9 { (ox / length, oy / length) } else { (1.0, 0.0) };
+        let (ux, uy) = if length > 1e-9 {
+            (ox / length, oy / length)
+        } else {
+            (1.0, 0.0)
+        };
         // Separation already gained along the pair's original direction.
         let (cx, cy) = offset(&current, a, b);
         if (cx - ox) * ux + (cy - oy) * uy >= need - 1e-9 {
@@ -764,7 +767,11 @@ mod tests {
     }
 
     fn at(x: f64, y: f64) -> PackedPlacement {
-        PackedPlacement { x_mm: x, y_mm: y, angle_deg: 0.0 }
+        PackedPlacement {
+            x_mm: x,
+            y_mm: y,
+            angle_deg: 0.0,
+        }
     }
 
     #[test]
@@ -781,8 +788,10 @@ mod tests {
     fn nudge_moves_the_support_object_when_the_other_cannot_move() {
         // Object 1 sits against the bed edge at x = 40: only object 0 may move.
         let placements = [at(0.0, 0.0), at(40.0, 0.0)];
-        let moved =
-            nudge_apart(&placements, &[(0, 1, -0.1)], |layout| layout[1].x_mm <= 40.0).unwrap();
+        let moved = nudge_apart(&placements, &[(0, 1, -0.1)], |layout| {
+            layout[1].x_mm <= 40.0
+        })
+        .unwrap();
         assert_eq!(moved[1].x_mm, 40.0);
         assert!(moved[0].x_mm < -0.1, "{:?}", moved[0]);
     }
@@ -805,7 +814,9 @@ mod tests {
             let far_enough = |i: usize, j: usize| {
                 (layout[i].x_mm - layout[j].x_mm).hypot(layout[i].y_mm - layout[j].y_mm) >= 39.9
             };
-            far_enough(0, 1) && far_enough(1, 2) && far_enough(0, 2)
+            far_enough(0, 1)
+                && far_enough(1, 2)
+                && far_enough(0, 2)
                 && layout[0].x_mm.abs() < 1e-9
                 && layout.iter().all(|p| p.y_mm.abs() < 1e-9)
         };
@@ -823,7 +834,10 @@ mod tests {
             layout[1].x_mm > 40.0 && (layout[2].x_mm - layout[1].x_mm) >= 39.99
         })
         .unwrap();
-        assert!((moved[2].x_mm - moved[1].x_mm - 40.0).abs() < 1e-9, "{moved:?}");
+        assert!(
+            (moved[2].x_mm - moved[1].x_mm - 40.0).abs() < 1e-9,
+            "{moved:?}"
+        );
     }
 
     #[test]
@@ -834,12 +848,16 @@ mod tests {
             let mut text = format!(
                 "; start printing object, unique label id: {id}\n; FEATURE: Outer wall\n\
                  ; LINE_WIDTH: 0.4\nG1 X{} Y-1\nG1 X{} Y-1 E1\nG1 X{} Y1 E1\nG1 X{} Y1 E1\n",
-                x - 1.0, x + 1.0, x + 1.0, x - 1.0
+                x - 1.0,
+                x + 1.0,
+                x + 1.0,
+                x - 1.0
             );
             if support {
                 text += &format!(
                     "; FEATURE: Support interface\nG1 X{} Y0\nG1 X{} Y0 E1\n",
-                    x + 4.0, x + 5.0
+                    x + 4.0,
+                    x + 5.0
                 );
             }
             text + &format!("; stop printing object, unique label id: {id}\n")
@@ -873,8 +891,16 @@ mod tests {
             triangle_count: 0,
         };
         let placements = [
-            PackedPlacement { x_mm: 0.0, y_mm: 0.0, angle_deg: 0.0 },
-            PackedPlacement { x_mm: 50.0, y_mm: 0.0, angle_deg: 0.0 },
+            PackedPlacement {
+                x_mm: 0.0,
+                y_mm: 0.0,
+                angle_deg: 0.0,
+            },
+            PackedPlacement {
+                x_mm: 50.0,
+                y_mm: 0.0,
+                angle_deg: 0.0,
+            },
         ];
         let (zones, analysis) =
             layer_zones_from_sample(&[gcode.as_bytes()], &footprint, &placements).unwrap();
@@ -882,10 +908,16 @@ mod tests {
         // Band 0 has no support; band 1 has both.
         assert_eq!(zones.len(), 1);
         let support = crate::plate_centre::loops_bounds(&zones[0].support_loops).unwrap();
-        assert!((support.min_x - 4.0).abs() < 1e-6 && (support.max_x - 5.0).abs() < 1e-6, "{support:?}");
+        assert!(
+            (support.min_x - 4.0).abs() < 1e-6 && (support.max_x - 5.0).abs() < 1e-6,
+            "{support:?}"
+        );
         let body = crate::plate_centre::loops_bounds(&zones[0].body_loops).unwrap();
         // Three sides of the square: bottom, right, top (no closing left side).
-        assert!((body.min_x + 1.0).abs() < 1e-6 && (body.max_x - 1.2).abs() < 1e-6, "{body:?}");
+        assert!(
+            (body.min_x + 1.0).abs() < 1e-6 && (body.max_x - 1.2).abs() < 1e-6,
+            "{body:?}"
+        );
     }
 
     #[test]
@@ -897,8 +929,19 @@ mod tests {
         let collision = &analysis.collisions[0];
         assert_eq!(collision.support_object, "22");
         assert_eq!(collision.body_object, "11");
-        assert_eq!((collision.first_layer, collision.last_layer, collision.layers), (2, 2, 1));
-        assert!((collision.min_gap_mm + 0.125).abs() < 1e-9, "{}", collision.min_gap_mm);
+        assert_eq!(
+            (
+                collision.first_layer,
+                collision.last_layer,
+                collision.layers
+            ),
+            (2, 2, 1)
+        );
+        assert!(
+            (collision.min_gap_mm + 0.125).abs() < 1e-9,
+            "{}",
+            collision.min_gap_mm
+        );
     }
 
     #[test]
@@ -932,7 +975,12 @@ mod tests {
         assert_eq!(analysis.collisions[0].support_object, "a.stl id:0 copy 0");
         assert_eq!(analysis.collisions[0].body_object, "b.stl id:1 copy 0");
         assert_eq!(analysis.first_layer.len(), 2);
-        assert!(analysis.first_layer[1].strips.iter().all(|strip| strip.support));
+        assert!(
+            analysis.first_layer[1]
+                .strips
+                .iter()
+                .all(|strip| strip.support)
+        );
     }
 
     #[test]
@@ -947,11 +995,19 @@ mod tests {
                      G1 X100 Y100\nG1 X150 Y100 E1.0\n\
                      ; stop printing object, unique label id: 8\n";
         let analysis = analyze_plate(gcode.as_bytes());
-        let off = analysis.off_plate(crate::Rect::new(0.0, 0.0, 256.0, 256.0));
+        let off = analysis.off_plate(Rect::new(0.0, 0.0, 256.0, 256.0));
         assert_eq!(off.len(), 1, "{off:?}");
         assert_eq!(off[0].0, "7");
-        assert!(off[0].1.max_x > 256.2 && off[0].1.max_x < 256.4, "{:?}", off[0].1);
-        assert!(analysis.off_plate(crate::Rect::new(0.0, 0.0, 257.0, 256.0)).is_empty());
+        assert!(
+            off[0].1.max_x > 256.2 && off[0].1.max_x < 256.4,
+            "{:?}",
+            off[0].1
+        );
+        assert!(
+            analysis
+                .off_plate(Rect::new(0.0, 0.0, 257.0, 256.0))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -974,10 +1030,11 @@ mod tests {
     }
 
     fn square(half: f64) -> Vec<crate::Point> {
-        let mut ring: Vec<crate::Point> = [(-half, -half), (half, -half), (half, half), (-half, half)]
-            .iter()
-            .map(|&(x, y)| crate::Point { x, y })
-            .collect();
+        let mut ring: Vec<crate::Point> =
+            [(-half, -half), (half, -half), (half, half), (-half, half)]
+                .iter()
+                .map(|&(x, y)| crate::Point { x, y })
+                .collect();
         ring.push(ring[0]);
         ring
     }
@@ -997,27 +1054,53 @@ mod tests {
             triangle_count: 2,
         };
         let placements = [
-            PackedPlacement { x_mm: 10.0, y_mm: 10.0, angle_deg: 0.0 },
-            PackedPlacement { x_mm: 40.0, y_mm: 10.0, angle_deg: 0.0 },
+            PackedPlacement {
+                x_mm: 10.0,
+                y_mm: 10.0,
+                angle_deg: 0.0,
+            },
+            PackedPlacement {
+                x_mm: 40.0,
+                y_mm: 10.0,
+                angle_deg: 0.0,
+            },
         ];
         let object = ObjectFirstLayer {
             label: "7".into(),
             strips: vec![
-                Strip { from: (9.0, 10.0), to: (11.0, 10.0), width: 0.4, support: false },
-                Strip { from: (10.0, 13.0), to: (12.0, 13.0), width: 0.4, support: true },
+                Strip {
+                    from: (9.0, 10.0),
+                    to: (11.0, 10.0),
+                    width: 0.4,
+                    support: false,
+                },
+                Strip {
+                    from: (10.0, 13.0),
+                    to: (12.0, 13.0),
+                    width: 0.4,
+                    support: true,
+                },
             ],
         };
         let learned = learn_support_patch(&footprint, &placements, &[object]).unwrap();
         let bounds = crate::plate_centre::loops_bounds(&learned.loops).unwrap();
         assert!((bounds.max_y - 3.2).abs() < 1e-6, "{bounds:?}");
         assert!((bounds.min_y + 2.0).abs() < 1e-6, "{bounds:?}");
-        assert_eq!(learned.support_landing_loops, footprint.support_landing_loops);
+        assert_eq!(
+            learned.support_landing_loops,
+            footprint.support_landing_loops
+        );
         assert_eq!(learned.body_loops, footprint.body_loops);
         assert_eq!(learned.bed_loops.as_ref(), Some(&learned.loops));
         // Nothing within reach of a placement: the G-code is not this layout.
         let stray = ObjectFirstLayer {
             label: "8".into(),
-            strips: vec![Strip { from: (99.0, 99.0), to: (100.0, 99.0), width: 0.4, support: false }],
+            strips: vec![Strip {
+                from: (99.0, 99.0),
+                to: (100.0, 99.0),
+                width: 0.4,
+                support: false,
+            }],
         };
         assert!(learn_support_patch(&footprint, &placements, &[stray]).is_err());
     }
