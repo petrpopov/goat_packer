@@ -1,21 +1,28 @@
+# api и worker одного релиза (Spring Boot, профиль server). Версии JDK и docker CLI — в паре с .woodpecker
+# (deploy/check-pins.sh следит).
+# Worker управляет sandbox-контейнерами задач через сокет Docker хоста: нужен только статический docker CLI,
+# не пакет docker.io (тот тащит dockerd/containerd, которые здесь не запускаются).
+FROM docker:29-cli AS docker-cli
+
 FROM eclipse-temurin:21-jdk-jammy AS build
 WORKDIR /src
 COPY webapp/backend/gradlew webapp/backend/settings.gradle.kts webapp/backend/build.gradle.kts webapp/backend/gradle.properties ./
 COPY webapp/backend/gradle ./gradle
 COPY webapp/backend/src ./src
 # Кэш Gradle (дистрибутив и зависимости) живёт в BuildKit между сборками: services.gradle.org с main медленный.
-RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon bootJar -x test
+# bootJar собирает ровно один JAR (plain jar — отдельная задача); cp в файл упадёт, если их вдруг станет два.
+RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon bootJar \
+    && cp build/libs/*.jar /src/app.jar
 
 FROM eclipse-temurin:21-jre-jammy AS api
 LABEL goat-packer=1
 ARG APT_MIRROR
-# Пустой APT_MIRROR = официальные зеркала. CI на main передаёт mirror.yandex.ru: deb.debian.org и
-# archive.ubuntu.com оттуда отдают 0.3–5 MB/s против ~30 MB/s.
-RUN if [ -n "$APT_MIRROR" ]; then find /etc/apt -name "*.list" -o -name "*.sources" | xargs sed -i -E \
-      "s#https?://(deb\.debian\.org|archive\.ubuntu\.com|security\.ubuntu\.com)#$APT_MIRROR#g"; fi
+# Пустой APT_MIRROR = официальные зеркала (почему зеркало — deploy/apt-mirror.sh).
+RUN --mount=type=bind,source=deploy/apt-mirror.sh,target=/tmp/apt-mirror.sh sh /tmp/apt-mirror.sh
+# curl — для healthcheck в deploy/compose.yml.
 RUN useradd -u 1000 -m goat && apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /src/build/libs/*-1.0.0.jar /app/app.jar
+COPY --from=build /src/app.jar /app/app.jar
 COPY profiles /app/profiles
 USER 1000:1000
 ENV SPRING_PROFILES_ACTIVE=server GOAT_PROFILES_DIR=/app/profiles JAVA_TOOL_OPTIONS="-Xmx256m"
@@ -23,6 +30,8 @@ ENTRYPOINT ["java","-jar","/app/app.jar"]
 
 # Dedicated trusted worker only. Never mount the Docker socket into the API service.
 FROM api AS worker
+# root: сокет Docker хоста принадлежит группе с номером, который у каждого хоста свой. Доступ к сокету и так
+# равен root на хосте, поэтому отдельный пользователь здесь ничего не изолирует; изолированы задачи (uid 1000).
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends docker.io && rm -rf /var/lib/apt/lists/*
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 ENV SPRING_MAIN_WEB_APPLICATION_TYPE=none WORKER_ENABLED=true GOAT_JOBS_ROOT=/scratch

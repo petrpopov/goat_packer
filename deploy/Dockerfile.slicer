@@ -8,10 +8,8 @@ ARG SLICER_FILE
 ARG SLICER_SHA256
 ARG SQUASHFS_OFFSET
 ARG APT_MIRROR
-# Пустой APT_MIRROR = официальные зеркала. CI на main передаёт mirror.yandex.ru: deb.debian.org и
-# archive.ubuntu.com оттуда отдают 0.3–5 MB/s против ~30 MB/s.
-RUN if [ -n "$APT_MIRROR" ]; then find /etc/apt -name "*.list" -o -name "*.sources" | xargs sed -i -E \
-      "s#https?://(deb\.debian\.org|archive\.ubuntu\.com|security\.ubuntu\.com)#$APT_MIRROR#g"; fi
+# Пустой APT_MIRROR = официальные зеркала (почему зеркало — deploy/apt-mirror.sh).
+RUN --mount=type=bind,source=deploy/apt-mirror.sh,target=/tmp/apt-mirror.sh sh /tmp/apt-mirror.sh
 RUN apt-get update && apt-get install -y --no-install-recommends squashfs-tools && rm -rf /var/lib/apt/lists/*
 COPY --from=slicer ${SLICER_FILE} /tmp/slicer.AppImage
 RUN echo "$SLICER_SHA256  /tmp/slicer.AppImage" | sha256sum -c - \
@@ -21,8 +19,7 @@ RUN echo "$SLICER_SHA256  /tmp/slicer.AppImage" | sha256sum -c - \
 
 FROM ubuntu:24.04
 ARG APT_MIRROR
-RUN if [ -n "$APT_MIRROR" ]; then find /etc/apt -name "*.list" -o -name "*.sources" | xargs sed -i -E \
-      "s#https?://(deb\.debian\.org|archive\.ubuntu\.com|security\.ubuntu\.com)#$APT_MIRROR#g"; fi
+RUN --mount=type=bind,source=deploy/apt-mirror.sh,target=/tmp/apt-mirror.sh sh /tmp/apt-mirror.sh
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates libgtk-3-0t64 libwebkit2gtk-4.1-0 libglu1-mesa libgl1 libegl1 libopengl0 \
     libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libxrender1 libxi6 libxrandr2 libxinerama1 \
