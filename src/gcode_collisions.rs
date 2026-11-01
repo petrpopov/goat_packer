@@ -411,8 +411,52 @@ pub fn learn_support_patch(
     placements: &[PackedPlacement],
     first_layer: &[ObjectFirstLayer],
 ) -> Result<Footprint, String> {
-    // Where the first-layer body centre sits in the footprint frame (the landing zone, or the
-    // body/patch when the footprint has none).
+    let to_frame = |placement: &PackedPlacement, (x, y): (f64, f64)| {
+        let (sin, cos) = (-placement.angle_deg).to_radians().sin_cos();
+        let (dx, dy) = (x - placement.x_mm, y - placement.y_mm);
+        (dx * cos - dy * sin, dx * sin + dy * cos)
+    };
+    let mut polygons: Vec<Polygon> = footprint
+        .loops
+        .iter()
+        .chain(footprint.bed_loops.iter().flatten())
+        .map(|loop_| crate::polygon_from_loop(loop_))
+        .collect();
+    let matched = match_placements(footprint, placements, first_layer)?;
+    if matched.is_empty() {
+        return Err("no sliced object matches a placement; cannot learn the support patch".into());
+    }
+    for object in first_layer {
+        let Some(&index) = matched.get(&object.label) else {
+            continue;
+        };
+        let placement = &placements[index];
+        for strip in object.strips.iter().filter(|strip| strip.support) {
+            let from = to_frame(placement, strip.from);
+            let to = to_frame(placement, strip.to);
+            polygons.push(crate::strip_polygon(from.0, from.1, to.0, to.1, strip.width));
+        }
+    }
+    let loops = crate::union_exterior_loops(&polygons);
+    let bounds = crate::plate_centre::loops_bounds(&loops).ok_or("learned patch is empty")?;
+    let mut learned = footprint.clone();
+    learned.width = bounds.max_x - bounds.min_x;
+    learned.height = bounds.max_y - bounds.min_y;
+    learned.bed_loops = Some(loops.clone());
+    learned.loops = loops;
+    Ok(learned)
+}
+
+/// Sliced object label → index of its placement, matched by the first-layer body centre
+/// (within `MATCH_TOLERANCE_MM` of where the placement puts the footprint's landing zone, or
+/// its body/patch when it has none). Objects without a body on the first layer or without a
+/// placement that close are left out.
+pub fn match_placements(
+    footprint: &Footprint,
+    placements: &[PackedPlacement],
+    first_layer: &[ObjectFirstLayer],
+) -> Result<HashMap<String, usize>, String> {
+    // Where the first-layer body centre sits in the footprint frame.
     let reference = [
         &footprint.support_landing_loops,
         &footprint.body_loops,
@@ -425,56 +469,115 @@ pub fn learn_support_patch(
         (reference.min_x + reference.max_x) * 0.5,
         (reference.min_y + reference.max_y) * 0.5,
     );
-    let to_frame = |placement: &PackedPlacement, (x, y): (f64, f64)| {
-        let (sin, cos) = (-placement.angle_deg).to_radians().sin_cos();
-        let (dx, dy) = (x - placement.x_mm, y - placement.y_mm);
-        (dx * cos - dy * sin, dx * sin + dy * cos)
-    };
-    let mut polygons: Vec<Polygon> = footprint
-        .loops
-        .iter()
-        .chain(footprint.bed_loops.iter().flatten())
-        .map(|loop_| crate::polygon_from_loop(loop_))
-        .collect();
-    let mut matched = 0;
+    let mut matched = HashMap::new();
     for object in first_layer {
         let Some(centre) = object.body_center() else {
             continue;
         };
-        let Some(placement) = placements
+        let nearest = placements
             .iter()
-            .map(|placement| {
+            .enumerate()
+            .map(|(index, placement)| {
                 let (sin, cos) = placement.angle_deg.to_radians().sin_cos();
                 let expected = (
                     placement.x_mm + offset.0 * cos - offset.1 * sin,
                     placement.y_mm + offset.0 * sin + offset.1 * cos,
                 );
-                (placement, (centre.0 - expected.0).hypot(centre.1 - expected.1))
+                (index, (centre.0 - expected.0).hypot(centre.1 - expected.1))
             })
             .filter(|(_, distance)| *distance <= MATCH_TOLERANCE_MM)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(placement, _)| placement)
-        else {
-            continue;
-        };
-        matched += 1;
-        for strip in object.strips.iter().filter(|strip| strip.support) {
-            let from = to_frame(placement, strip.from);
-            let to = to_frame(placement, strip.to);
-            polygons.push(crate::strip_polygon(from.0, from.1, to.0, to.1, strip.width));
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((index, _)) = nearest {
+            matched.insert(object.label.clone(), index);
         }
     }
-    if matched == 0 {
-        return Err("no sliced object matches a placement; cannot learn the support patch".into());
+    Ok(matched)
+}
+
+/// Extra distance a nudge adds on top of the measured overlap: the slicer regenerates the
+/// supports on the nudged plate, and their reach drifts by a few tenths of a millimetre.
+pub const NUDGE_MARGIN_MM: f64 = 0.3;
+
+/// Directions tried for one contact, as offsets from the line between the two objects.
+const NUDGE_ANGLES_DEG: [f64; 7] = [0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0];
+
+/// Moves touching objects apart instead of repacking the plate: for each contact (support of
+/// `contacts[i].0` touching the body of `.1`, smallest gap `.2` mm, negative = overlap) the pair
+/// separates by the overlap plus `NUDGE_MARGIN_MM`, along the line between the two objects or
+/// up to 90° off it, by the first move that keeps the whole layout `valid` (the packer's own
+/// rule: neighbours, bed, keepouts, tower). Moves, in order: one of the two objects alone, both
+/// by half, then everything on one side of the pair (the object and every placement beyond it
+/// in that direction) — dense plates touch in chains, where a lone object only runs into the
+/// next one. Pairs are handled once (both directions, smallest gap), and a pair an earlier move
+/// already separated enough is skipped. `None` when a contact finds no valid move: the caller
+/// falls back to a repack.
+pub fn nudge_apart(
+    placements: &[PackedPlacement],
+    contacts: &[(usize, usize, f64)],
+    valid: impl Fn(&[PackedPlacement]) -> bool,
+) -> Option<Vec<PackedPlacement>> {
+    let mut pairs: BTreeMap<(usize, usize), f64> = BTreeMap::new();
+    for &(a, b, gap) in contacts {
+        if a == b || a >= placements.len() || b >= placements.len() {
+            return None;
+        }
+        let entry = pairs.entry((a.min(b), a.max(b))).or_insert(gap);
+        *entry = entry.min(gap);
     }
-    let loops = crate::union_exterior_loops(&polygons);
-    let bounds = crate::plate_centre::loops_bounds(&loops).ok_or("learned patch is empty")?;
-    let mut learned = footprint.clone();
-    learned.width = bounds.max_x - bounds.min_x;
-    learned.height = bounds.max_y - bounds.min_y;
-    learned.bed_loops = Some(loops.clone());
-    learned.loops = loops;
-    Ok(learned)
+    let offset = |layout: &[PackedPlacement], a: usize, b: usize| {
+        (layout[b].x_mm - layout[a].x_mm, layout[b].y_mm - layout[a].y_mm)
+    };
+    let mut current = placements.to_vec();
+    for ((a, b), gap) in pairs {
+        let need = (TOUCH_EPSILON_MM - gap).max(0.0) + NUDGE_MARGIN_MM;
+        let (ox, oy) = offset(placements, a, b);
+        let length = ox.hypot(oy);
+        let (ux, uy) = if length > 1e-9 { (ox / length, oy / length) } else { (1.0, 0.0) };
+        // Separation already gained along the pair's original direction.
+        let (cx, cy) = offset(&current, a, b);
+        if (cx - ox) * ux + (cy - oy) * uy >= need - 1e-9 {
+            continue;
+        }
+        let base = uy.atan2(ux);
+        let moved = NUDGE_ANGLES_DEG.iter().find_map(|degrees| {
+            let angle = base + degrees.to_radians();
+            let (dx, dy) = (angle.cos(), angle.sin());
+            let side = |layout: &[PackedPlacement], pivot: usize, sign: f64| -> Vec<usize> {
+                (0..layout.len())
+                    .filter(|&index| {
+                        let along = (layout[index].x_mm - layout[pivot].x_mm) * dx
+                            + (layout[index].y_mm - layout[pivot].y_mm) * dy;
+                        index == pivot || along * sign > 1e-9
+                    })
+                    .collect()
+            };
+            // (objects moved forward along d, objects moved back, distance each).
+            let moves: [(Vec<usize>, Vec<usize>, f64); 5] = [
+                (vec![b], vec![], need),
+                (vec![], vec![a], need),
+                (vec![b], vec![a], need * 0.5),
+                (side(&current, b, 1.0), vec![], need),
+                (vec![], side(&current, a, -1.0), need),
+            ];
+            moves.into_iter().find_map(|(forward, back, distance)| {
+                if forward.contains(&a) || back.contains(&b) {
+                    return None;
+                }
+                let mut candidate = current.clone();
+                for &index in &forward {
+                    candidate[index].x_mm += dx * distance;
+                    candidate[index].y_mm += dy * distance;
+                }
+                for &index in &back {
+                    candidate[index].x_mm -= dx * distance;
+                    candidate[index].y_mm -= dy * distance;
+                }
+                valid(&candidate).then_some(candidate)
+            })
+        })?;
+        current = moved;
+    }
+    Some(current)
 }
 
 #[cfg(test)]
@@ -502,6 +605,69 @@ mod tests {
              G1 X0 Y{support_x}\nG1 X10 Y{support_x} E0.5\n\
              ; stop printing object, unique label id: 22\n"
         )
+    }
+
+    fn at(x: f64, y: f64) -> PackedPlacement {
+        PackedPlacement { x_mm: x, y_mm: y, angle_deg: 0.0 }
+    }
+
+    #[test]
+    fn nudge_moves_the_body_object_away_along_the_pair_line() {
+        let placements = [at(0.0, 0.0), at(40.0, 0.0)];
+        let moved = nudge_apart(&placements, &[(0, 1, -0.2)], |_| true).unwrap();
+        assert_eq!((moved[0].x_mm, moved[0].y_mm), (0.0, 0.0));
+        let expected = 40.0 + 0.2 + TOUCH_EPSILON_MM + NUDGE_MARGIN_MM;
+        assert!((moved[1].x_mm - expected).abs() < 1e-9, "{:?}", moved[1]);
+        assert!(moved[1].y_mm.abs() < 1e-9);
+    }
+
+    #[test]
+    fn nudge_moves_the_support_object_when_the_other_cannot_move() {
+        // Object 1 sits against the bed edge at x = 40: only object 0 may move.
+        let placements = [at(0.0, 0.0), at(40.0, 0.0)];
+        let moved =
+            nudge_apart(&placements, &[(0, 1, -0.1)], |layout| layout[1].x_mm <= 40.0).unwrap();
+        assert_eq!(moved[1].x_mm, 40.0);
+        assert!(moved[0].x_mm < -0.1, "{:?}", moved[0]);
+    }
+
+    #[test]
+    fn nudge_handles_a_pair_once_and_gives_up_without_a_valid_move() {
+        let placements = [at(0.0, 0.0), at(40.0, 0.0)];
+        let moved = nudge_apart(&placements, &[(0, 1, -0.1), (1, 0, -0.3)], |_| true).unwrap();
+        let expected = 40.0 + 0.3 + TOUCH_EPSILON_MM + NUDGE_MARGIN_MM;
+        assert!((moved[1].x_mm - expected).abs() < 1e-9, "{:?}", moved[1]);
+        assert!(nudge_apart(&placements, &[(0, 1, -0.1)], |_| false).is_none());
+    }
+
+    #[test]
+    fn nudge_pushes_a_chain_when_a_lone_object_would_hit_the_next() {
+        // A row 0 - 1 - 2 along x, 40 mm apart; 0 touches 1, and 1 may not come within 39.9 of
+        // anything: only shifting 1 and 2 together keeps the row valid.
+        let placements = [at(0.0, 0.0), at(40.0, 0.0), at(80.0, 0.0)];
+        let valid = |layout: &[PackedPlacement]| {
+            let far_enough = |i: usize, j: usize| {
+                (layout[i].x_mm - layout[j].x_mm).hypot(layout[i].y_mm - layout[j].y_mm) >= 39.9
+            };
+            far_enough(0, 1) && far_enough(1, 2) && far_enough(0, 2)
+                && layout[0].x_mm.abs() < 1e-9
+                && layout.iter().all(|p| p.y_mm.abs() < 1e-9)
+        };
+        let moved = nudge_apart(&placements, &[(0, 1, -0.2)], valid).unwrap();
+        let need = 0.2 + TOUCH_EPSILON_MM + NUDGE_MARGIN_MM;
+        assert!((moved[1].x_mm - (40.0 + need)).abs() < 1e-9, "{moved:?}");
+        assert!((moved[2].x_mm - (80.0 + need)).abs() < 1e-9, "{moved:?}");
+    }
+
+    #[test]
+    fn nudge_skips_a_pair_an_earlier_move_already_separated() {
+        // 0-1 and 0-2 touch; shifting the side beyond 1 also carries 2 away from 0.
+        let placements = [at(0.0, 0.0), at(40.0, 0.0), at(80.0, 0.0)];
+        let moved = nudge_apart(&placements, &[(0, 1, -0.2), (0, 2, -0.1)], |layout| {
+            layout[1].x_mm > 40.0 && (layout[2].x_mm - layout[1].x_mm) >= 39.99
+        })
+        .unwrap();
+        assert!((moved[2].x_mm - moved[1].x_mm - 40.0).abs() < 1e-9, "{moved:?}");
     }
 
     #[test]

@@ -15,7 +15,9 @@ use goat_packer::{
         detect_slicer_kind_from_printer_model, load_printer_profile, parse_prime_tower_bounds, tower_repack_required,
     },
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
-    gcode_collisions::{PlateAnalysis, SupportCollision, analyze_plate},
+    gcode_collisions::{
+        PlateAnalysis, SupportCollision, analyze_plate, match_placements, nudge_apart,
+    },
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     plate_centre::{
         RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, ensure_relocated_tower_clear,
@@ -687,6 +689,7 @@ fn run() -> AppResult<()> {
     };
     // The webapp scene draws every winning layout; the first one is "pack", later ones "repack".
     let mut layout_source = progress::LayoutSource::Pack;
+    let mut nudge_rounds = 0;
     // Set once the slicer rejected a moved tower: from then on it stays at the source.
     let mut tower_pinned = false;
     loop {
@@ -842,6 +845,27 @@ fn run() -> AppResult<()> {
         if !plan.lock_orientation {
             // No support zone was reserved at all (support-free probe): nothing to learn.
             break;
+        }
+        // A contact is a few tenths of a millimetre between one or two pairs; a repack lays
+        // out the whole plate again under a stricter zone and cost a P1S goat plate up to 5
+        // objects. Moving just the touching objects apart keeps every object; the next slice
+        // checks the moved plate again.
+        if nudge_rounds < MAX_NUDGE_ROUNDS {
+            if let Some(nudged) = nudge_touching(&args, &profile, &plan, &packed, &analysis)? {
+                nudge_rounds += 1;
+                repacked = true;
+                progress::repack(
+                    RepackReason::SupportNudge,
+                    &format!(
+                        "moving {} touching objects apart (round {nudge_rounds} of \
+                         {MAX_NUDGE_ROUNDS})...",
+                        support_collisions.len()
+                    ),
+                );
+                packed.placements = nudged;
+                continue;
+            }
+            println!("support check: no small move separates the touching objects; repacking");
         }
         // The slicer re-generated bigger supports than the probe showed (the realization
         // drifts between slices). First learn what it really prints and repack; if that is
@@ -1438,6 +1462,50 @@ fn describe_collisions(collisions: &[SupportCollision]) {
     }
 }
 
+/// Slices a nudged plate may take before the support check falls back to a repack: each
+/// round is a full final slice, and supports regenerate (and drift) on every one.
+const MAX_NUDGE_ROUNDS: usize = 2;
+
+/// The layout with every touching pair moved apart (`gcode_collisions::nudge_apart`), still
+/// valid under the current rule; `None` when an object cannot be matched or moved.
+fn nudge_touching(
+    args: &Args,
+    profile: &PrinterProfile,
+    plan: &PackPlan,
+    packed: &PackResult,
+    analysis: &PlateAnalysis,
+) -> AppResult<Option<Vec<goat_packer::PackedPlacement>>> {
+    let matched = match_placements(&plan.footprint, &packed.placements, &analysis.first_layer)
+        .map_err(|error| format!("support check: {error}"))?;
+    let mut contacts = Vec::new();
+    for collision in &analysis.collisions {
+        match (matched.get(&collision.support_object), matched.get(&collision.body_object)) {
+            (Some(&a), Some(&b)) => contacts.push((a, b, collision.min_gap_mm)),
+            _ => return Ok(None),
+        }
+    }
+    let footprint = plan.rule_footprint();
+    let options =
+        pack_options(args, profile, plan.lock_orientation, &plan.fixed_keepouts, plan.tower_keepout)?;
+    let nudged = nudge_apart(&packed.placements, &contacts, |placements| {
+        let mut layout = packed.clone();
+        layout.placements = placements.to_vec();
+        validate_result(&footprint, &options, &layout).is_ok()
+    });
+    if let Some(nudged) = &nudged {
+        for (index, (before, after)) in packed.placements.iter().zip(nudged).enumerate() {
+            let shift = (after.x_mm - before.x_mm, after.y_mm - before.y_mm);
+            if shift.0.hypot(shift.1) > 1e-9 {
+                println!(
+                    "support check: placement {index} moves by ({:+.2}, {:+.2}) mm",
+                    shift.0, shift.1
+                );
+            }
+        }
+    }
+    Ok(nudged)
+}
+
 /// `learn_support_patch` against the current layout, with the context an operator needs.
 fn learn_support_patch(
     footprint: &Footprint,
@@ -1452,19 +1520,15 @@ fn learn_support_patch(
     .map_err(|error| format!("support check: {error}").into())
 }
 
-/// One packing pass: the deterministic grid as a floor, then (`--layout search`) the search.
-/// `verbose` = log the grid baseline and layout bounds (off for the tower-position contest,
-/// whose candidates print one line each).
-fn pack(
+/// The packing options of one pass; also what a nudged layout is validated against.
+fn pack_options(
     args: &Args,
     profile: &PrinterProfile,
-    footprint: &Footprint,
     lock_orientation: bool,
     fixed_keepouts: &[Rect],
     tower_keepout: Option<Rect>,
-    verbose: bool,
-) -> AppResult<PackResult> {
-    let options = PackOptions {
+) -> AppResult<PackOptions> {
+    Ok(PackOptions {
         body_exclusions: tower_keepout.into_iter().collect(),
         bed: profile.usable_bed()?,
         exclusions: fixed_keepouts.to_vec(),
@@ -1482,7 +1546,22 @@ fn pack(
         // Only bites when the footprint has a support zone (the locked patch ∪ silhouette
         // branch); a silhouette footprint has body == full and the option is a no-op.
         support_overlap_mm: args.support_overlap_mm,
-    };
+    })
+}
+
+/// One packing pass: the deterministic grid as a floor, then (`--layout search`) the search.
+/// `verbose` = log the grid baseline and layout bounds (off for the tower-position contest,
+/// whose candidates print one line each).
+fn pack(
+    args: &Args,
+    profile: &PrinterProfile,
+    footprint: &Footprint,
+    lock_orientation: bool,
+    fixed_keepouts: &[Rect],
+    tower_keepout: Option<Rect>,
+    verbose: bool,
+) -> AppResult<PackResult> {
+    let options = pack_options(args, profile, lock_orientation, fixed_keepouts, tower_keepout)?;
     // The deterministic grid runs first as a floor score: small models tile as densely as
     // their bounding boxes allow, and the deterministic search only wins when it beats that.
     // Taking the grid on a tie keeps the layout reproducible. `--layout grid` stops right

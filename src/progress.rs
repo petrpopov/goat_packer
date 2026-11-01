@@ -44,6 +44,8 @@ pub enum RepackReason {
     SupportStrict,
     /// The slicer rejected the plate with the tower in a bed corner: back to the source spot.
     TowerCornerFailed,
+    /// Supports touched a foreign body: only the touching objects moved apart, no repack.
+    SupportNudge,
 }
 
 impl RepackReason {
@@ -53,6 +55,7 @@ impl RepackReason {
             RepackReason::SupportContact => "support_contact",
             RepackReason::SupportStrict => "support_strict",
             RepackReason::TowerCornerFailed => "tower_corner_failed",
+            RepackReason::SupportNudge => "support_nudge",
         }
     }
 }
