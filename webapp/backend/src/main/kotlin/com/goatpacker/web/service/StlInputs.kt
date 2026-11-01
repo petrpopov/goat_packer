@@ -1,7 +1,16 @@
 package com.goatpacker.web.service
 
 import com.fasterxml.jackson.databind.JsonNode
+import com.goatpacker.web.config.AppProperties
+import com.goatpacker.web.config.SlicerKind
 import com.goatpacker.web.exception.BadRequestException
+import com.goatpacker.web.exception.ErrorMessages
+import org.springframework.web.multipart.MultipartFile
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
  * Загрузки бывают двух видов: проект слайсера (.3mf) и голая сетка (.stl). STL перед упаковкой
@@ -10,6 +19,7 @@ import com.goatpacker.web.exception.BadRequestException
  */
 object StlInputs {
     const val UPLOAD_EXTENSIONS_MESSAGE = "Нужен файл .3mf или .stl"
+
     /** Сообщение этапа конвертации (до пробной нарезки пакера). */
     const val CONVERSION_MESSAGE = "Готовлю проект из STL…"
     const val LOCAL_PRESETS_MISSING = "STL в локальном режиме требует GOAT_SLICER_PRESETS"
@@ -25,10 +35,17 @@ object StlInputs {
     /** Пресеты слайсера в runner-образе (plain JSON) и CLI для экспорта: в runner-bambu это Bambu Studio. */
     const val RUNNER_PRESETS = "/opt/slicer/resources/profiles"
 
-    fun isStl(name: String?): Boolean = name.orEmpty().trim().endsWith(".stl", ignoreCase = true)
+    private const val STL_EXTENSION = ".stl"
+    private const val STL_HEADER_BYTES = 80
+    private const val STL_TRIANGLE_COUNT_BYTES = 4
+    private const val STL_TRIANGLE_BYTES = 50L
+    private const val STL_BINARY_PREFIX = STL_HEADER_BYTES + STL_TRIANGLE_COUNT_BYTES
+    private const val SNIFF_BYTES = 64 * 1024
+    private const val UINT_MASK = 0xffffffffL
 
-    fun isAcceptedUpload(name: String?): Boolean =
-        isStl(name) || name.orEmpty().trim().endsWith(".3mf", ignoreCase = true)
+    fun isStl(name: String?): Boolean = name.orEmpty().trim().endsWith(STL_EXTENSION, ignoreCase = true)
+
+    fun isAcceptedUpload(name: String?): Boolean = isStl(name) || name.orEmpty().trim().endsWith(".3mf", ignoreCase = true)
 
     fun inputName(originalName: String?): String = if (isStl(originalName)) INPUT_STL else INPUT_3MF
 
@@ -37,29 +54,31 @@ object StlInputs {
      * ней — обычный 3MF (`cat.stl` → `cat.3mf`). Иначе воркер положил бы packed.3mf как input.stl.
      */
     fun projectName(originalName: String): String =
-        if (isStl(originalName)) originalName.trim().dropLast(4) + ".3mf" else originalName
+        if (isStl(originalName)) originalName.trim().dropLast(STL_EXTENSION.length) + ".3mf" else originalName
 
     /**
      * Дешёвая проверка, что файл похож на STL: бинарный — размер ровно 84 + 50·n (n из заголовка),
      * ASCII — начинается с `solid` и в начале есть `facet`. Бинарный проверяется первым: заголовок
      * бинарного STL тоже может начинаться со `solid`.
      */
-    fun looksLikeStl(size: Long, input: java.io.InputStream): Boolean {
-        val head = input.readNBytes(64 * 1024)
-        if (head.size >= 84) {
-            val n = java.nio.ByteBuffer.wrap(head, 80, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xffffffffL
-            if (size == 84 + 50 * n) return true
+    fun looksLikeStl(size: Long, input: InputStream): Boolean {
+        val head = input.readNBytes(SNIFF_BYTES)
+        if (head.size >= STL_BINARY_PREFIX) {
+            val triangles = ByteBuffer.wrap(head, STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and UINT_MASK
+            if (size == STL_BINARY_PREFIX + STL_TRIANGLE_BYTES * triangles) return true
         }
         val text = String(head, Charsets.ISO_8859_1)
         return text.trimStart().startsWith("solid") && "facet" in text
     }
 
-    fun requireValidStl(path: java.nio.file.Path) {
-        val valid = java.nio.file.Files.newInputStream(path).use { looksLikeStl(java.nio.file.Files.size(path), it) }
+    fun requireValidStl(path: Path) {
+        val valid = Files.newInputStream(path).use { looksLikeStl(Files.size(path), it) }
         if (!valid) throw BadRequestException(INVALID_STL)
     }
 
-    fun requireValidStl(file: org.springframework.web.multipart.MultipartFile) {
+    /** Загруженный STL: размер в пределах [Project3mf.MAX_UPLOAD_BYTES] и содержимое похоже на STL. */
+    fun requireValidStl(file: MultipartFile) {
+        if (file.size > Project3mf.MAX_UPLOAD_BYTES) throw BadRequestException(ErrorMessages.FILE_OVER_LIMIT)
         if (!file.inputStream.use { looksLikeStl(file.size, it) }) throw BadRequestException(INVALID_STL)
     }
 
@@ -90,7 +109,8 @@ object StlInputs {
      */
     fun command(bin: String, presets: String, slicer: String, profile: JsonNode): List<String> {
         val margin = profile.path("edge_margin_mm").asDouble(0.0).takeIf { it.isFinite() && it > 0 }
-        return listOf(bin, "--stl", INPUT_STL, "--presets", presets, "--orca", slicer) + printerArgs(profile) +
+        return listOf(bin, "--stl", INPUT_STL, "--presets", presets, "--orca", slicer) +
+            printerArgs(profile) +
             (margin?.let { listOf("--edge-margin", number(it)) } ?: emptyList()) +
             listOf("--output", INPUT_3MF, "--work-dir", WORK_DIR)
     }
@@ -100,8 +120,10 @@ object StlInputs {
      * экспортирует Bambu Studio, иначе — OrcaSlicer из [AppProperties.slicerPresets] (Orca знает и BBL-машины,
      * кроме A2L). Без пресетов STL локально не собрать — ошибка при постановке, а не на минуте работы.
      */
-    fun localTools(app: com.goatpacker.web.config.AppProperties, profile: JsonNode): Pair<String, String> {
-        if (profile.path("slicer_kind").asText() == "bambu" && app.bambuPresets.isNotBlank()) return app.bambuPresets to app.bambuSlicer
+    fun localTools(app: AppProperties, profile: JsonNode): Pair<String, String> {
+        if (profile.path("slicer_kind").asText() == SlicerKind.BAMBU && app.bambuPresets.isNotBlank()) {
+            return app.bambuPresets to app.bambuSlicer
+        }
         if (app.slicerPresets.isBlank()) throw BadRequestException(LOCAL_PRESETS_MISSING)
         return app.slicerPresets to app.orcaSlicer
     }

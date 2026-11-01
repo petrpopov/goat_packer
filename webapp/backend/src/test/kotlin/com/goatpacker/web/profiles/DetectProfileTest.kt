@@ -1,9 +1,11 @@
 package com.goatpacker.web.profiles
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.goatpacker.web.descriptorProject3mf
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
@@ -14,6 +16,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multi
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
+import java.util.zip.ZipException
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
@@ -90,9 +94,9 @@ class DetectProfileTest(
     }
     @Test
     fun `slicer stored previews with descriptors do not hide printer settings`() {
-        val bytes = com.goatpacker.web.descriptorProject3mf("Bambu Lab P1S")
-        org.junit.jupiter.api.assertThrows<java.util.zip.ZipException> {
-            java.util.zip.ZipInputStream(bytes.inputStream()).use { it.nextEntry }
+        val bytes = descriptorProject3mf("Bambu Lab P1S")
+        assertThrows<ZipException> {
+            ZipInputStream(bytes.inputStream()).use { it.nextEntry }
         }
         val response = json.readTree(detect(bytes))
         assertEquals("bambu_p1s", response["profileId"].asText())

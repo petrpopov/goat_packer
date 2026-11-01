@@ -4,12 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.config.AppProperties
 import com.goatpacker.web.dto.CustomBed
 import com.goatpacker.web.exception.BadRequestException
-import com.goatpacker.web.job.JobKind
-import com.goatpacker.web.job.JobPhase
-import com.goatpacker.web.job.ShellChain
+import com.goatpacker.web.model.JobKind
+import com.goatpacker.web.model.JobPhase
+import com.goatpacker.web.service.runner.PackStage
+import com.goatpacker.web.service.runner.ProgressTracker
+import com.goatpacker.web.util.ShellChain
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /** Сборка команды source_project и цепочки «конвертация && пакер». */
 class StlInputsTest {
@@ -36,7 +40,7 @@ class StlInputsTest {
     fun `проверка STL — бинарный по размеру, ASCII по solid и facet`() {
         fun binary(triangles: Int, extra: Int = 0): ByteArray = ByteArray(84 + 50 * triangles + extra).also {
             "solid but binary".toByteArray().copyInto(it)
-            java.nio.ByteBuffer.wrap(it, 80, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(triangles)
+            ByteBuffer.wrap(it, 80, 4).order(ByteOrder.LITTLE_ENDIAN).putInt(triangles)
         }
         fun valid(bytes: ByteArray) = StlInputs.looksLikeStl(bytes.size.toLong(), bytes.inputStream())
         assertEquals(true, valid(binary(2)))
@@ -45,7 +49,8 @@ class StlInputsTest {
         assertEquals(false, valid("solid cube\nendsolid cube\n".toByteArray()))
         assertEquals(false, valid("PK\u0003\u0004 not an stl".toByteArray()))
         assertEquals(false, valid(ByteArray(0)))
-        assertEquals("cat.3mf", StlInputs.projectName("cat.STL")); assertEquals("cat.3mf", StlInputs.projectName("cat.3mf"))
+        assertEquals("cat.3mf", StlInputs.projectName("cat.STL"))
+        assertEquals("cat.3mf", StlInputs.projectName("cat.3mf"))
     }
 
     @Test

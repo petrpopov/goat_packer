@@ -117,14 +117,3 @@ data class ScheduleJobForm(
     @field:DecimalMax(value = "600", message = "changeSeconds должен быть в диапазоне 0..600 с")
     val changeSeconds: Double? = null,
 )
-
-/** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось; printerModel — что за принтер записан в файле (для понятных сообщений). */
-@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-data class DetectProfileDto(
-    val profileId: String?,
-    val printerModel: String?,
-    /** "3mf" — проект слайсера, "stl" — сетка (не разбирается, принтер выбирает пользователь). */
-    val kind: String = "3mf",
-    /** Стол из настроек 3MF, когда принтер не распознан (profileId = null); иначе null. */
-    val projectBed: com.goatpacker.web.service.ProjectBed? = null,
-)
