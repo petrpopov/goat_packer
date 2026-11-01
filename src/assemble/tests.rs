@@ -704,7 +704,8 @@ fn every_mode_reuses_the_source_item_z_offset() {
     fn set_inline(options: &mut AssembleOptions) {
         options.inline_colored_mesh_objects = true;
     }
-    let modes: Vec<(&str, bool, fn(&mut AssembleOptions))> = vec![
+    type Mode = (&'static str, bool, fn(&mut AssembleOptions));
+    let modes: Vec<Mode> = vec![
         ("default", false, |_| {}),
         ("duplicate", true, set_duplicate),
         ("reuse", false, set_reuse),

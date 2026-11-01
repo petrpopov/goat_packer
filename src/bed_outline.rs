@@ -25,7 +25,7 @@ fn triangles(stl: &[u8]) -> Option<Vec<[[f64; 3]; 3]>> {
             Some([it.next()??, it.next()??, it.next()??])
         })
         .collect();
-    (!verts.is_empty() && verts.len() % 3 == 0).then(|| verts.chunks(3).map(|c| [c[0], c[1], c[2]]).collect())
+    (!verts.is_empty() && verts.len().is_multiple_of(3)).then(|| verts.chunks(3).map(|c| [c[0], c[1], c[2]]).collect())
 }
 
 pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>> {

@@ -35,13 +35,12 @@ impl PrinterInput {
     /// packer's `--change-seconds`, implies the correction); otherwise the profile value when
     /// `--ams-correction` is on. A profile without the value (tool changer) never corrects.
     pub fn real_change_seconds(&self, ams_correction: bool) -> Option<f64> {
-        self.change_seconds.or_else(|| {
-            if ams_correction {
-                self.profile.filament_change_seconds
-            } else {
-                None
-            }
-        })
+        let profile_value = if ams_correction {
+            self.profile.filament_change_seconds
+        } else {
+            None
+        };
+        self.change_seconds.or(profile_value)
     }
 }
 
