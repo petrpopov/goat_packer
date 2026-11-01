@@ -98,7 +98,14 @@ describe('HTTP contracts', () => {
   });
   test('old omitted nullable fields cannot become an undefined profile selection', async () => {
     globalThis.fetch = (async () => Response.json({})) as typeof fetch;
-    expect(await detectProfile(new File(['zip'], 'model.3mf'))).toEqual({ profileId: null, printerModel: null });
+    expect(await detectProfile(new File(['zip'], 'model.3mf'))).toEqual({
+      profileId: null,
+      printerModel: null,
+      kind: '3mf',
+      projectBed: null,
+    });
+    // Старый ответ без kind: STL узнаётся по имени файла (принтер выбирает пользователь).
+    expect((await detectProfile(new File(['solid'], 'cube.STL'))).kind).toBe('stl');
   });
   test('server errors remain errors instead of missing-printer results', async () => {
     globalThis.fetch = (async () =>

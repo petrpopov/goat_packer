@@ -22,6 +22,11 @@ interface PrinterPickerProps {
   /** id поля ввода — для <label htmlFor>. Не оборачивать пикер в <label>: клик по опции ушёл бы в input. */
   id?: string;
   placeholder?: string;
+  /**
+   * Только «Моего принтера нет в списке»: 3MF неизвестного принтера пакер примет лишь со своим
+   * столом (он сверяет printer_model проекта с printer_name профиля), каталог ему не подходит.
+   */
+  customOnly?: boolean;
 }
 
 /**
@@ -38,6 +43,7 @@ export default function PrinterPicker({
   disabled = false,
   id,
   placeholder = 'Выберите принтер',
+  customOnly = false,
 }: PrinterPickerProps) {
   const autoId = useId();
   const inputId = id ?? `${autoId}-input`;
@@ -52,7 +58,10 @@ export default function PrinterPicker({
   /** Список только что открыт: выбранную опцию прокрутить к центру, а не к краю. */
   const justOpened = useRef(false);
 
-  const groups = useMemo(() => groupPrinters(filterPrinters(profiles, query)), [profiles, query]);
+  const groups = useMemo(
+    () => (customOnly ? [] : groupPrinters(filterPrinters(profiles, query))),
+    [customOnly, profiles, query],
+  );
   // Плоский порядок опций для стрелок: заголовки производителей в него не входят.
   const values = useMemo(
     () => [...groups.flatMap((g) => g.items.map((p) => p.id)), CUSTOM_PRINTER],
@@ -68,7 +77,7 @@ export default function PrinterPicker({
     justOpened.current = true;
     setOpen(true);
     setQuery('');
-    const all = groupPrinters(profiles).flatMap((g) => g.items.map((p) => p.id));
+    const all = customOnly ? [] : groupPrinters(profiles).flatMap((g) => g.items.map((p) => p.id));
     const index = value === CUSTOM_PRINTER ? all.length : all.indexOf(value ?? '');
     setActive(index >= 0 ? index : 0);
   };
@@ -189,7 +198,7 @@ export default function PrinterPicker({
     );
   };
 
-  const empty = groups.length === 0;
+  const empty = groups.length === 0 && !customOnly;
 
   return (
     <div ref={rootRef} className={`printer-picker${open ? ' open' : ''}`}>
@@ -259,7 +268,7 @@ export default function PrinterPicker({
               Ничего не найдено
             </div>
           ) : null}
-          <div role="presentation" className="printer-list-sep" />
+          {customOnly ? null : <div role="presentation" className="printer-list-sep" />}
           {option(CUSTOM_PRINTER, CUSTOM_LABEL)}
         </div>
       ) : null}

@@ -86,3 +86,5 @@ output.input { display: flex; align-items: center; color: var(--fg-muted); }
   .work, .work.with-side { grid-template-columns: 1fr; }
   .form-col { border-right: 0; border-bottom: 1px solid var(--border); }
 }
+/* Свой стол: три размера в строку (узкая колонка формы — по 90 px на поле). */
+.row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }

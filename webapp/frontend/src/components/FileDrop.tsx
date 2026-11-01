@@ -10,22 +10,27 @@ interface FileDropProps {
   file: File | null;
   onFileChange: (file: File | null) => void;
   disabled?: boolean;
+  /** Упаковка принимает и STL (сервер соберёт проект сам); расписание и калибровка — только 3MF. */
+  allowStl?: boolean;
 }
 
-function validateFile(file: File): string | null {
-  if (!file.name.toLowerCase().endsWith('.3mf')) return 'Поддерживаются только файлы .3mf';
+function validateFile(file: File, allowStl: boolean): string | null {
+  const name = file.name.toLowerCase();
+  if (!name.endsWith('.3mf') && !(allowStl && name.endsWith('.stl')))
+    return allowStl ? 'Выберите .3mf или .stl' : 'Поддерживаются только файлы .3mf';
   if (file.size === 0) return 'Файл пуст';
   if (file.size > MAX_FILE_SIZE_BYTES) return `Файл больше ${MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ`;
   return null;
 }
 
-export default function FileDrop({ file, onFileChange, disabled = false }: FileDropProps) {
+export default function FileDrop({ file, onFileChange, disabled = false, allowStl = false }: FileDropProps) {
+  const kinds = allowStl ? '.3mf или .stl' : '.3mf';
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const accept = (candidate: File | null | undefined) => {
     if (disabled || !candidate) return;
-    const problem = validateFile(candidate);
+    const problem = validateFile(candidate, allowStl);
     if (problem) {
       pushToast(problem, 'error');
       if (inputRef.current) inputRef.current.value = '';
@@ -48,7 +53,7 @@ export default function FileDrop({ file, onFileChange, disabled = false }: FileD
       role="button"
       tabIndex={disabled ? -1 : 0}
       aria-disabled={disabled}
-      aria-label="Загрузить файл .3mf"
+      aria-label={`Загрузить файл ${kinds}`}
       onClick={() => {
         if (!disabled) inputRef.current?.click();
       }}
@@ -88,7 +93,7 @@ export default function FileDrop({ file, onFileChange, disabled = false }: FileD
         </>
       ) : (
         <>
-          <span className="file-name">Перетащите файл .3mf сюда</span>
+          <span className="file-name">Перетащите файл {kinds} сюда</span>
           <span className="file-size">или нажмите для выбора · до {MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ</span>
         </>
       )}
@@ -96,7 +101,7 @@ export default function FileDrop({ file, onFileChange, disabled = false }: FileD
         ref={inputRef}
         type="file"
         disabled={disabled}
-        accept=".3mf"
+        accept={allowStl ? '.3mf,.stl' : '.3mf'}
         className="file-drop-input"
         onChange={(event) => {
           accept(event.target.files?.[0]);

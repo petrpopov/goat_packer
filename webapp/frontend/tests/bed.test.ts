@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { PrinterProfile } from '../src/api/types';
 import { bedSpec } from '../src/scene/bed';
+import { customBedFromProject, customPrinterProfile, parseCustomBed } from '../src/utils/printers';
 
 const base: PrinterProfile = {
   id: 'x', name: 'X', slicerKind: 'bambu', bedWidthMm: 256, bedDepthMm: 256, edgeMarginMm: 0,
@@ -28,5 +29,34 @@ describe('bedSpec', () => {
     const bed = bedSpec(base);
     expect(bed.labels[0].y).toBeLessThan(-3);
     expect(bed.labels[1].x).toBeGreaterThan(259);
+  });
+  test('custom bed: synthetic profile from the typed sizes, margin as usable inset', () => {
+    const profile = customPrinterProfile({ width: 220, depth: 200, height: 250, margin: 5 });
+    const bed = bedSpec(profile);
+    expect(bed.area).toEqual({ x0: 0, y0: 0, x1: 220, y1: 200 });
+    expect(bed.usable).toEqual({ x0: 5, y0: 5, x1: 215, y1: 195 });
+    expect(bed.exclusions).toEqual([]);
+    expect(bed.labels.map((l) => l.text)).toEqual(['220 мм', '200 мм', 'отступ 5 мм']);
+    expect(profile.supportsNozzleClean).toBe(false);
+  });
+  test('custom bed from an unknown 3MF keeps the project origin and exclusions until resized', () => {
+    const projectBed = { printableArea: [-5, 0, 245, 210], exclusionRectangles: [[0, 0, 20, 30]], printableHeight: 220 };
+    const fields = customBedFromProject(projectBed);
+    expect(fields).toEqual({ width: '250', depth: '210', height: '220', margin: '5' });
+    const kept = bedSpec(customPrinterProfile(parseCustomBed(fields)!, projectBed));
+    expect(kept.area).toEqual({ x0: -5, y0: 0, x1: 245, y1: 210 });
+    expect(kept.exclusions).toEqual([{ x0: 0, y0: 0, x1: 20, y1: 30 }]);
+    const resized = bedSpec(customPrinterProfile(parseCustomBed({ ...fields, width: '240' })!, projectBed));
+    expect(resized.area).toEqual({ x0: 0, y0: 0, x1: 240, y1: 210 });
+    expect(resized.exclusions).toEqual([]);
+  });
+  test('custom bed fields: 50–1000 mm, margin 0–30 and smaller than half the bed', () => {
+    const ok = { width: '220', depth: '220', height: '250', margin: '' };
+    expect(parseCustomBed(ok)).toEqual({ width: 220, depth: 220, height: 250, margin: 5 });
+    expect(parseCustomBed({ ...ok, width: '49' })).toBeNull();
+    expect(parseCustomBed({ ...ok, height: '' })).toBeNull();
+    expect(parseCustomBed({ ...ok, depth: '1001' })).toBeNull();
+    expect(parseCustomBed({ ...ok, margin: '31' })).toBeNull();
+    expect(parseCustomBed({ ...ok, width: '50', margin: '25' })).toBeNull();
   });
 });

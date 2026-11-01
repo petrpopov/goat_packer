@@ -9,12 +9,20 @@ import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import Icon from '@/components/Icon';
 import JobCard from '@/components/JobCard';
+import PrinterPicker, { CUSTOM_PRINTER } from '@/components/PrinterPicker';
 import CalibrationPage from '@/pages/CalibrationPage';
 import { sceneLayout } from '@/scene/layout';
 import type { ModelMesh } from '@/scene/model3d';
 import { parseModelInWorker, PREVIEW_MAX_BYTES } from '@/scene/parseModelAsync';
 import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields } from '@/utils/forms';
 import { objectsText, sceneClip } from '@/utils/progress';
+import {
+  customBedFromProject,
+  customPrinterProfile,
+  isStlName,
+  parseCustomBed,
+  type CustomBedInput,
+} from '@/utils/printers';
 import { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
 import { useJob } from '@/hooks/useJob';
@@ -22,6 +30,14 @@ import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 
 type NozzleCleanMode = 'off' | 'global' | 'from-z';
+
+/**
+ * Принтер задачи: определён по 3MF (выбор заблокирован), выбран пользователем (STL или до файла),
+ * свой стол («Моего принтера нет в списке» или 3MF неизвестного принтера — размеры из проекта).
+ */
+type PrinterChoice = { kind: 'detected'; id: string } | { kind: 'picked'; id: string } | { kind: 'custom' } | null;
+
+const EMPTY_BED: CustomBedInput = { width: '', depth: '', height: '', margin: '5' };
 
 // three.js тяжёлый: сцена грузится отдельным чанком, только когда известен профиль.
 // Одна повторная попытка: сетевой сбой при загрузке чанка иначе сразу уводит в заглушку.
@@ -47,6 +63,9 @@ export default function PackPage() {
   const [supportOverlap, setSupportOverlap] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
   const [model, setModel] = useState<ModelMesh | null>(null);
+  /** Выбор в PrinterPicker (id или CUSTOM_PRINTER); переживает смену файла, определение по 3MF его перекрывает. */
+  const [picked, setPicked] = useState<string | null>(null);
+  const [bedInput, setBedInput] = useState<CustomBedInput>(EMPTY_BED);
 
   // Слишком большой файл — без предпросмотра (без тоста: упаковать его всё равно можно).
   const modelTooLarge = file !== null && file.size > PREVIEW_MAX_BYTES;
@@ -96,7 +115,39 @@ export default function PackPage() {
   }, [profilesQuery.isError, profilesQuery.error]);
 
   const detectMutation = useProfileDetection(file);
-  const profileId = detectMutation.data?.profileId ?? '';
+  const detected = detectMutation.data;
+  const stl = file !== null && isStlName(file.name);
+  const detectedId = !stl ? (detected?.profileId ?? null) : null;
+  // 3MF неизвестного принтера: пакер примет его только со своим столом (сверяет printer_model с профилем).
+  const unknown3mf = file !== null && !stl && detectMutation.isSuccess && detectedId === null;
+  const projectBed = unknown3mf ? (detected?.projectBed ?? null) : null;
+  const choice: PrinterChoice = detectedId
+    ? { kind: 'detected', id: detectedId }
+    : unknown3mf
+      ? { kind: 'custom' }
+      : file !== null && !stl
+        ? null // 3MF ещё определяется или не прочитался
+        : picked === CUSTOM_PRINTER
+          ? { kind: 'custom' }
+          : picked
+            ? { kind: 'picked', id: picked }
+            : null;
+  const profileId = choice && choice.kind !== 'custom' ? choice.id : '';
+
+  // Стол из проекта неизвестного принтера — в поля своего стола (их можно поправить).
+  useEffect(() => {
+    if (projectBed) setBedInput(customBedFromProject(projectBed));
+  }, [projectBed]);
+
+  const customBed = parseCustomBed(bedInput);
+  const customKey = customBed ? `${customBed.width}|${customBed.depth}|${customBed.height}|${customBed.margin}` : '';
+  // Сцена перестраивает стол при смене объекта профиля: синтетический профиль — только при смене размеров.
+  const customProfile = useMemo(
+    () => (customBed ? customPrinterProfile(customBed, projectBed) : null),
+    // customBed пересоздаётся на каждом рендере; его значения — в customKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [customKey, projectBed]
+  );
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? null;
   const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
@@ -111,28 +162,43 @@ export default function PackPage() {
     if (!jobActive) setJobId(null);
   };
 
-  const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
+  const selectedProfile =
+    choice?.kind === 'custom' ? customProfile : (profiles.find((profile) => profile.id === profileId) ?? null);
   const nozzleCleanAvailable = selectedProfile === null || selectedProfile.supportsNozzleClean;
   const ams = useAmsCorrection(selectedProfile);
 
-  // Состояние детекта профиля по загруженному файлу: idle / detecting / ok / unknown.
+  // Состояние файла: idle (нет) / detecting (загрузка и определение) / ok (можно паковать) / unknown
+  // (3MF без printer_model — его не принять даже со своим столом) / error.
   const detection =
     file === null
       ? 'idle'
       : detectMutation.isPending
         ? 'detecting'
-        : detectMutation.data?.profileId != null
-          ? 'ok'
-          : 'unknown';
+        : detectMutation.isError
+          ? 'error'
+          : unknown3mf && !detected?.printerModel
+            ? 'unknown'
+            : 'ok';
   const detectionError = detectMutation.isError
     ? detectMutation.error instanceof Error
       ? detectMutation.error.message
       : 'Не удалось проверить файл'
     : detection === 'unknown'
-      ? detectMutation.data?.printerModel
-        ? `Для принтера «${detectMutation.data.printerModel}» не найден подходящий профиль.`
-        : 'В проекте не указан printer_model. Сохраните проект с выбранным принтером в слайсере.'
+      ? 'В проекте не указан printer_model. Сохраните проект с выбранным принтером в слайсере.'
       : null;
+  const pickerHint =
+    file !== null && !stl && detection === 'detecting'
+      ? 'Определяю принтер по файлу…'
+      : unknown3mf
+        ? projectBed
+          ? 'Принтер не в каталоге — размеры взяты из проекта'
+          : `Принтер${detected?.printerModel ? ` «${detected.printerModel}»` : ''} не в каталоге — укажите размеры стола`
+        : stl
+          ? 'STL: выберите принтер — проект соберём на сервере'
+          : file === null
+            ? 'можно выбрать заранее — стол появится справа'
+            : undefined;
+  const custom = choice?.kind === 'custom';
 
   const startMutation = useMutation({
     mutationFn: startPackJob,
@@ -177,6 +243,7 @@ export default function PackPage() {
     (edgeMargin.trim() === '' || numberInRange(edgeMargin, 0, 20));
   const canSubmit =
     Boolean(file) &&
+    // Свой стол: selectedProfile есть, только когда все размеры в границах (parseCustomBed).
     selectedProfile !== null &&
     numbersValid &&
     detection === 'ok' &&
@@ -192,15 +259,23 @@ export default function PackPage() {
 
     const form = new FormData();
     form.append('file', file);
-    form.append('profileId', profileId);
+    if (custom && customBed) {
+      form.append('customWidth', String(customBed.width));
+      form.append('customDepth', String(customBed.depth));
+      form.append('customHeight', String(customBed.height));
+      form.append('customMargin', String(customBed.margin));
+    } else {
+      form.append('profileId', profileId);
+    }
     form.append('clearance', clearance);
     form.append('resolution', resolution);
     // attempts не шлём: действует дефолт бэкенда (= CLI). Ползунок усилия убран — с поддержками
     // поиск всегда перебирает фиксированные 64 варианта, число попыток ни на что не влияло.
     form.append('nozzleClean', nozzleSpec);
     form.append('layout', layout);
-    // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки).
-    if (edgeMargin.trim() !== '') form.append('edgeMargin', edgeMargin.trim());
+    // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки). Свой стол
+    // несёт отступ в customMargin, второй (из «Дополнительно», там скрыт) не шлём.
+    if (!custom && edgeMargin.trim() !== '') form.append('edgeMargin', edgeMargin.trim());
     // Окно и коррекция — только если заданы: иначе действуют дефолты CLI.
     for (const [name, value] of timeFields) form.append(name, value);
     // Пустое перекрытие = без ограничений: поле не шлётся, флаг CLI не передаётся.
@@ -213,13 +288,16 @@ export default function PackPage() {
     job?.status === 'SUCCEEDED' && job.pack ? (
       <div className="form-actions">
         <p className="result-title">Упаковано объектов: {job.pack.objectCount}</p>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => sendToSchedule({ packJobId: job.jobId, profileId: job.pack?.profileId ?? profileId })}
-        >
-          В расписание <Icon name="arrow-right" />
-        </button>
+        {/* Расписание своего стола бэкенд не принимает: у разового профиля нет файла в каталоге. */}
+        {job.pack.profileId === 'custom' ? null : (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => sendToSchedule({ packJobId: job.jobId, profileId: job.pack?.profileId ?? profileId })}
+          >
+            В расписание <Icon name="arrow-right" />
+          </button>
+        )}
       </div>
     ) : null;
 
@@ -377,48 +455,96 @@ export default function PackPage() {
           disabled={jobActive || startMutation.isPending}
         />
       </Field>
+      {custom ? null : (
+        <Field
+          label="Отступ от края, мм"
+          hint={
+            selectedProfile ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)` : 'пусто — дефолт профиля'
+          }
+        >
+          <input
+            className="input"
+            type="number"
+            min={0}
+            step="any"
+            placeholder={selectedProfile ? String(selectedProfile.edgeMarginMm) : ''}
+            value={edgeMargin}
+            onChange={(event) => setEdgeMargin(event.target.value)}
+            disabled={jobActive || startMutation.isPending}
+          />
+        </Field>
+      )}
+    </>
+  );
+
+  const bedComplete = (['width', 'depth', 'height'] as const).every((key) => {
+    const value = Number(bedInput[key]);
+    return bedInput[key].trim() !== '' && value >= 50 && value <= 1000;
+  });
+  const bedField = (key: keyof CustomBedInput, label: string, min: number, max: number, hint?: string) => {
+    const raw = bedInput[key];
+    const value = Number(raw);
+    // Пустое поле не краснеет (его ещё не заполнили); кнопка «Упаковать» без всех размеров неактивна.
+    const outOfRange = raw.trim() !== '' && !(Number.isFinite(value) && value >= min && value <= max);
+    // Все поля в границах, а стол не собирается — значит, отступ съедает его (как CustomBed.validate).
+    const marginTooLarge = key === 'margin' && !outOfRange && !customBed && bedComplete;
+    const invalid = outOfRange || marginTooLarge;
+    return (
       <Field
-        label="Отступ от края, мм"
-        hint={
-          selectedProfile ? `пусто — дефолт профиля (${selectedProfile.edgeMarginMm} мм)` : 'пусто — дефолт профиля'
-        }
+        label={label}
+        error={invalid}
+        hint={outOfRange ? `${min}–${max} мм` : marginTooLarge ? 'отступ больше половины стола' : hint}
       >
         <input
           className="input"
           type="number"
-          min={0}
+          min={min}
+          max={max}
           step="any"
-          placeholder={selectedProfile ? String(selectedProfile.edgeMarginMm) : ''}
-          value={edgeMargin}
-          onChange={(event) => setEdgeMargin(event.target.value)}
-          disabled={jobActive || startMutation.isPending}
+          inputMode="decimal"
+          placeholder={key === 'margin' ? '5' : undefined}
+          value={raw}
+          onChange={(event) => setBedInput((bed) => ({ ...bed, [key]: event.target.value }))}
+          disabled={busy}
         />
       </Field>
-    </>
-  );
+    );
+  };
+  const customBedFields = custom ? (
+    <div className="nested custom-bed">
+      <div className="row3">
+        {bedField('width', 'Ширина, мм', 50, 1000)}
+        {bedField('depth', 'Глубина, мм', 50, 1000)}
+        {bedField('height', 'Высота, мм', 50, 1000)}
+      </div>
+      {bedField('margin', 'Отступ от края, мм', 0, 30, 'линия прочистки неизвестна — держим запас')}
+    </div>
+  ) : null;
 
   return (
     <div className={`work${calibOpen ? ' with-side' : ''}`}>
       <form id="pack-form" className="form-col" onSubmit={handleSubmit}>
-        <FileDrop file={file} onFileChange={handleFileChange} disabled={busy} />
+        <FileDrop file={file} onFileChange={handleFileChange} disabled={busy} allowStl />
         {detectionError ? <div className="error-block">{detectionError}</div> : null}
-        {/* Профиль не выбирается: его определяет printer_model в файле, сервер примет только его. */}
-        <Field
-          label="Профиль принтера"
-          hint={
-            detection === 'detecting'
-              ? 'Определяю принтер по файлу…'
-              : detection === 'ok'
-                ? 'Определён по файлу'
-                : detection === 'unknown'
-                  ? 'Профиль не определён'
-                  : undefined
-          }
-        >
-          <output className="input">
-            {selectedProfile ? selectedProfile.name : profilesQuery.isPending ? 'Загрузка…' : '—'}
-          </output>
-        </Field>
+        {/* 3MF известного принтера — выбор заблокирован (сервер примет только его), неизвестного — только
+            свой стол; STL и «до файла» — любой принтер каталога. Не Field: label-обёртка уводила бы клик по опции в поле. */}
+        <div className="field">
+          <label className="field-label" htmlFor="pack-printer">
+            Принтер
+          </label>
+          <PrinterPicker
+            id="pack-printer"
+            profiles={profiles}
+            value={choice?.kind === 'custom' ? CUSTOM_PRINTER : (choice?.id ?? null)}
+            onChange={setPicked}
+            locked={choice?.kind === 'detected'}
+            customOnly={unknown3mf}
+            disabled={busy || (file !== null && !stl && detection === 'detecting')}
+            placeholder={profilesQuery.isPending ? 'Загрузка…' : 'Выберите принтер'}
+          />
+          {pickerHint ? <span className="field-hint">{pickerHint}</span> : null}
+        </div>
+        {customBedFields}
         <Field
           label="Раскладка"
           hint={layout === 'grid' ? 'быстро и равномерно, без поворотов' : 'подбор с поворотами и нависаниями'}
@@ -481,7 +607,7 @@ export default function PackPage() {
             <p>
               {selectedProfile
                 ? `${selectedProfile.name} · рабочая область ${selectedProfile.bedWidthMm} × ${selectedProfile.bedDepthMm} мм`
-                : 'Загрузите слева проект .3mf с одним объектом'}
+                : 'Загрузите слева проект .3mf или модель .stl и выберите принтер'}
             </p>
           </div>
           {job?.status === 'SUCCEEDED' ? (

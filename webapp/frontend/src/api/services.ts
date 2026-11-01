@@ -27,7 +27,12 @@ export async function detectProfile(file: File, signal?: AbortSignal): Promise<D
   const form = new FormData();
   form.append('file', file);
   const result = await api.postForm<Partial<DetectProfileResponse>>('/profiles/detect', form, signal);
-  return { profileId: result?.profileId ?? null, printerModel: result?.printerModel ?? null };
+  return {
+    profileId: result?.profileId ?? null,
+    printerModel: result?.printerModel ?? null,
+    kind: result?.kind ?? (file.name.toLowerCase().endsWith('.stl') ? 'stl' : '3mf'),
+    projectBed: result?.projectBed ?? null,
+  };
 }
 
 export async function startPackJob(form: FormData): Promise<StartJobResponse> {
@@ -64,8 +69,14 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
   const fileId = file instanceof File ? uploadedFiles.get(file) : undefined;
   if (file instanceof File && !fileId) throw new Error('Загрузите файл и дождитесь определения принтера');
   const body: Record<string, unknown> = { kind };
+  // Свой стол: в локальном API — поля custom*, в серверном — объект customBed.
+  const customBed: Record<string, number> = {};
   for (const [name, value] of form.entries()) {
     if (name === 'file' || name === 'seed' || name === 'candidates') continue;
+    if (name.startsWith('custom')) {
+      customBed[name.slice('custom'.length).toLowerCase()] = Number(value);
+      continue;
+    }
     body[name] = [
       'clearance',
       'resolution',
@@ -83,6 +94,7 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
         ? value === 'true'
         : value;
   }
+  if (Object.keys(customBed).length > 0) body.customBed = customBed;
   if (fileId) body.fileId = fileId;
   let key = pendingRequests.get(form);
   if (!key) {
