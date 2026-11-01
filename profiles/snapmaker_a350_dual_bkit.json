@@ -1,0 +1,103 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [
+    [
+      0.0,
+      318.0,
+      320.0,
+      350.0
+    ]
+  ],
+  "id": "snapmaker_a350_dual_bkit",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Snapmaker A350 Dual BKit (0.4 nozzle)",
+  "plate_outline": [
+    [
+      -7.0,
+      -2.0
+    ],
+    [
+      -7.0,
+      352.0
+    ],
+    [
+      -5.5,
+      355.5
+    ],
+    [
+      -2.0,
+      357.0
+    ],
+    [
+      322.0,
+      357.0
+    ],
+    [
+      325.5,
+      355.5
+    ],
+    [
+      327.0,
+      352.0
+    ],
+    [
+      327.0,
+      -2.0
+    ],
+    [
+      325.5,
+      -5.5
+    ],
+    [
+      322.0,
+      -7.0
+    ],
+    [
+      -2.0,
+      -7.0
+    ],
+    [
+      -5.5,
+      -5.5
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    320.0,
+    350.0
+  ],
+  "printable_height": 279.0,
+  "printer_model": "Snapmaker A350 Dual BKit",
+  "printer_name": "Snapmaker A350 Dual BKit",
+  "purge_lines": [
+    [
+      100.0,
+      0.0,
+      0.0,
+      0.0,
+      0.5000003751316243
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20 Standard @Snapmaker (0.4 nozzle)",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 150 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Snapmaker"
+}

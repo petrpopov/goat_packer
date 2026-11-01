@@ -1,0 +1,103 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [
+    [
+      312.0,
+      0.0,
+      324.0,
+      200.0
+    ]
+  ],
+  "id": "snapmaker_j1",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Snapmaker J1 (0.4 nozzle)",
+  "plate_outline": [
+    [
+      -3.0,
+      -7.5
+    ],
+    [
+      -3.0,
+      207.5
+    ],
+    [
+      -1.1,
+      211.4
+    ],
+    [
+      2.0,
+      212.5
+    ],
+    [
+      322.0,
+      212.5
+    ],
+    [
+      325.9,
+      210.6
+    ],
+    [
+      327.0,
+      207.5
+    ],
+    [
+      327.0,
+      -7.5
+    ],
+    [
+      325.1,
+      -11.4
+    ],
+    [
+      322.0,
+      -12.5
+    ],
+    [
+      2.0,
+      -12.5
+    ],
+    [
+      -1.9,
+      -10.6
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    324.0,
+    200.0
+  ],
+  "printable_height": 200.0,
+  "printer_model": "Snapmaker J1",
+  "printer_name": "Snapmaker J1",
+  "purge_lines": [
+    [
+      137.0,
+      0.0,
+      0.0,
+      0.0,
+      0.5000001644500002
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20 Standard @Snapmaker J1 (0.4 nozzle)",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 90 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Snapmaker"
+}

@@ -1,0 +1,119 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "qidi_x_plus_3",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Qidi X-Plus 3 0.4 nozzle",
+  "plate_outline": [
+    [
+      0.0,
+      2.0
+    ],
+    [
+      0.0,
+      278.0
+    ],
+    [
+      1.0,
+      279.7
+    ],
+    [
+      278.0,
+      280.0
+    ],
+    [
+      279.7,
+      279.0
+    ],
+    [
+      280.0,
+      2.0
+    ],
+    [
+      279.0,
+      0.3
+    ],
+    [
+      2.0,
+      0.0
+    ],
+    [
+      0.3,
+      1.0
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    280.0,
+    280.0
+  ],
+  "printable_height": 270.0,
+  "printer_model": "Qidi X-Plus 3",
+  "printer_name": "Qidi X-Plus 3",
+  "purge_lines": [
+    [
+      123.0,
+      123.0,
+      208.0,
+      123.0,
+      0.48105637508093707
+    ],
+    [
+      208.0,
+      123.0,
+      208.0,
+      125.0,
+      0.481056375080937
+    ],
+    [
+      208.0,
+      125.0,
+      123.0,
+      125.0,
+      0.48105637508093707
+    ],
+    [
+      123.0,
+      125.0,
+      123.0,
+      208.0,
+      0.48105637508093696
+    ],
+    [
+      123.0,
+      208.0,
+      125.0,
+      208.0,
+      0.481056375080937
+    ],
+    [
+      125.0,
+      208.0,
+      125.0,
+      126.0,
+      0.48105637508093696
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Qidi XPlus3",
+      "filament: Generic PLA @System",
+      "purge lines detected: 6",
+      "probe plate: 160 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Qidi"
+}

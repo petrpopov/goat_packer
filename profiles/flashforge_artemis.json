@@ -1,0 +1,88 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "flashforge_artemis",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Flashforge Artemis 0.4 Nozzle",
+  "plate_outline": [
+    [
+      -100.0,
+      -99.0
+    ],
+    [
+      -100.0,
+      100.0
+    ],
+    [
+      -99.3,
+      102.3
+    ],
+    [
+      -97.0,
+      103.0
+    ],
+    [
+      97.0,
+      103.0
+    ],
+    [
+      99.3,
+      102.3
+    ],
+    [
+      100.0,
+      100.0
+    ],
+    [
+      100.0,
+      -99.0
+    ],
+    [
+      99.3,
+      -101.3
+    ],
+    [
+      97.0,
+      -102.0
+    ],
+    [
+      -97.0,
+      -102.0
+    ],
+    [
+      -99.3,
+      -101.3
+    ]
+  ],
+  "printable_area": [
+    -95.0,
+    -97.5,
+    95.0,
+    97.5
+  ],
+  "printable_height": 200.0,
+  "printer_model": "Flashforge Artemis",
+  "printer_name": "Flashforge Artemis",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Flashforge Artemis 0.4 Nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 30 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Flashforge"
+}

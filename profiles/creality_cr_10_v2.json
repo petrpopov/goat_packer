@@ -1,0 +1,123 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_cr_10_v2",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality CR-10 V2 0.4 nozzle",
+  "plate_outline": [
+    [
+      -5.0,
+      5.7
+    ],
+    [
+      -5.0,
+      309.7
+    ],
+    [
+      -3.9,
+      312.3
+    ],
+    [
+      303.9,
+      312.3
+    ],
+    [
+      305.0,
+      309.7
+    ],
+    [
+      305.0,
+      5.7
+    ],
+    [
+      303.9,
+      3.2
+    ],
+    [
+      210.0,
+      2.7
+    ],
+    [
+      206.3,
+      1.7
+    ],
+    [
+      194.1,
+      -10.1
+    ],
+    [
+      190.7,
+      -12.0
+    ],
+    [
+      111.2,
+      -12.3
+    ],
+    [
+      107.5,
+      -11.3
+    ],
+    [
+      95.3,
+      0.5
+    ],
+    [
+      91.9,
+      2.5
+    ],
+    [
+      -2.0,
+      2.7
+    ],
+    [
+      -3.9,
+      3.2
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    300.0,
+    300.0
+  ],
+  "printable_height": 400.0,
+  "printer_model": "Creality CR-10 V2",
+  "printer_name": "Creality CR-10 V2",
+  "purge_lines": [
+    [
+      2.0,
+      10.0,
+      2.0,
+      190.0,
+      0.7158577010132992
+    ],
+    [
+      2.3,
+      190.0,
+      2.3,
+      10.0,
+      0.7158577010132992
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality CR10V2",
+      "filament: Generic PLA @System",
+      "purge lines detected: 2",
+      "probe plate: 121 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

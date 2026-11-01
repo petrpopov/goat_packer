@@ -1,0 +1,160 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_k1_max",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality K1 Max (0.4 nozzle)",
+  "plate_outline": [
+    [
+      -5.0,
+      3.3
+    ],
+    [
+      -5.0,
+      311.0
+    ],
+    [
+      -4.0,
+      314.0
+    ],
+    [
+      -1.0,
+      315.0
+    ],
+    [
+      52.2,
+      315.0
+    ],
+    [
+      58.5,
+      309.7
+    ],
+    [
+      60.0,
+      309.3
+    ],
+    [
+      61.5,
+      309.7
+    ],
+    [
+      67.8,
+      315.0
+    ],
+    [
+      232.2,
+      315.0
+    ],
+    [
+      238.5,
+      309.7
+    ],
+    [
+      240.0,
+      309.3
+    ],
+    [
+      241.5,
+      309.7
+    ],
+    [
+      247.8,
+      315.0
+    ],
+    [
+      301.0,
+      315.0
+    ],
+    [
+      304.0,
+      314.0
+    ],
+    [
+      305.0,
+      311.0
+    ],
+    [
+      305.0,
+      3.3
+    ],
+    [
+      304.0,
+      -3.1
+    ],
+    [
+      300.2,
+      -14.2
+    ],
+    [
+      298.6,
+      -15.0
+    ],
+    [
+      280.3,
+      -14.6
+    ],
+    [
+      275.5,
+      -1.4
+    ],
+    [
+      273.6,
+      0.0
+    ],
+    [
+      26.4,
+      0.0
+    ],
+    [
+      24.5,
+      -1.4
+    ],
+    [
+      19.7,
+      -14.6
+    ],
+    [
+      1.4,
+      -15.0
+    ],
+    [
+      -0.5,
+      -13.6
+    ],
+    [
+      -4.4,
+      -1.4
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    300.0,
+    300.0
+  ],
+  "printable_height": 300.0,
+  "printer_model": "Creality K1 Max",
+  "printer_name": "Creality K1 Max",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality K1Max (0.4 nozzle)",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 196 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

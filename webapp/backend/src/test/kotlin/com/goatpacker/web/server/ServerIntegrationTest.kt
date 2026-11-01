@@ -129,7 +129,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
     @Test fun `unknown printer upload carries the project bed for the custom-bed form`() {
         val c=Client();c.guest()
         val settings=mapOf("printable_area" to listOf("0x0","250x0","250x210","0x210"),"bed_exclude_area" to listOf("0x0","20x0","20x30","0x30"),"printable_height" to "220")
-        val unknown=c.uploadRaw("cat.3mf",descriptorProject3mf("Prusa MK4",settings))
+        val unknown=c.uploadRaw("cat.3mf",descriptorProject3mf("Acme Unknown 3000",settings))
         assertTrue(unknown["profileId"].isNull);assertEquals("3mf",unknown["kind"].asText())
         assertEquals(listOf(0.0,0.0,250.0,210.0),unknown["projectBed"]["printableArea"].map { it.asDouble() })
         assertEquals(listOf(listOf(0.0,0.0,20.0,30.0)),unknown["projectBed"]["exclusionRectangles"].map { r->r.map { it.asDouble() } })
@@ -139,7 +139,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
     @Test fun `custom bed job packs an unknown printer 3MF with an ad-hoc profile from the confirmed project bed`() {
         val c=Client();c.guest()
         val settings=mapOf("printable_area" to listOf("-5x0","245x0","245x210","-5x210"),"bed_exclude_area" to listOf("0x0"),"printable_height" to "220")
-        val file=c.uploadRaw("cat.3mf",descriptorProject3mf("Prusa MK4",settings))["fileId"].asText()
+        val file=c.uploadRaw("cat.3mf",descriptorProject3mf("Acme Unknown 3000",settings))["fileId"].asText()
         val bed=mapOf("width" to 250,"depth" to 210,"height" to 220)
         fun send(body:Map<String,Any?>,expected:Int)=c.call("POST","/api/v2/jobs",body,expected,headers=mapOf("Idempotency-Key" to newId()))
         send(mapOf("fileId" to file,"profileId" to "bambu_p1s","customBed" to bed),400)
@@ -154,7 +154,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         // Размеры совпали со столом проекта — берутся его начало координат и исключения.
         assertEquals(listOf(-5.0,0.0,245.0,210.0),profile["printable_area"].map { it.asDouble() })
         assertEquals(5.0,profile["edge_margin_mm"].asDouble(),1e-9)
-        assertEquals("Prusa MK4",profile["printer_name"].asText());assertEquals("orca",profile["slicer_kind"].asText())
+        assertEquals("Acme Unknown 3000",profile["printer_name"].asText());assertEquals("orca",profile["slicer_kind"].asText())
         val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
         try {
             worker.dispatch()
@@ -167,7 +167,7 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
     }
     @Test fun `unknown printer 3MF needs a custom bed, the catalog pick is refused`() {
         val c=Client();c.guest()
-        val file=c.uploadRaw("cat.3mf",descriptorProject3mf("Prusa MK4"))["fileId"].asText()
+        val file=c.uploadRaw("cat.3mf",descriptorProject3mf("Acme Unknown 3000"))["fileId"].asText()
         assertEquals("Принтер файла не соответствует выбранному профилю",c.job(file,expected=400)["message"].asText())
     }
     @Test fun `concurrent workers cannot exceed global slots or claim same job`() {

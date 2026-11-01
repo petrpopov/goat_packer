@@ -1,0 +1,108 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "anycubic_kobra_2_max",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Anycubic Kobra 2 Max 0.4 nozzle",
+  "plate_outline": [
+    [
+      -5.0,
+      5.5
+    ],
+    [
+      -5.0,
+      429.5
+    ],
+    [
+      -3.9,
+      432.1
+    ],
+    [
+      422.0,
+      432.5
+    ],
+    [
+      424.6,
+      431.4
+    ],
+    [
+      425.0,
+      5.5
+    ],
+    [
+      423.9,
+      2.9
+    ],
+    [
+      285.1,
+      2.5
+    ],
+    [
+      272.3,
+      -9.9
+    ],
+    [
+      267.3,
+      -12.4
+    ],
+    [
+      154.0,
+      -12.5
+    ],
+    [
+      148.7,
+      -10.8
+    ],
+    [
+      134.9,
+      2.5
+    ],
+    [
+      -2.0,
+      2.5
+    ],
+    [
+      -3.9,
+      2.9
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    420.0,
+    420.0
+  ],
+  "printable_height": 500.0,
+  "printer_model": "Anycubic Kobra 2 Max",
+  "printer_name": "Anycubic Kobra 2 Max",
+  "purge_lines": [
+    [
+      0.0,
+      3.0,
+      180.0,
+      3.0,
+      1.9089538693687977
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Anycubic Kobra 2 Max 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 391 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Anycubic"
+}

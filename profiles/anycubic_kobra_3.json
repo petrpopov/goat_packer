@@ -1,0 +1,157 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [
+    [
+      0.0,
+      0.0,
+      255.0,
+      2.0
+    ],
+    [
+      0.0,
+      2.0,
+      2.0,
+      253.0
+    ],
+    [
+      0.0,
+      253.0,
+      255.0,
+      255.0
+    ],
+    [
+      253.0,
+      2.0,
+      255.0,
+      253.0
+    ]
+  ],
+  "id": "anycubic_kobra_3",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Anycubic Kobra 3 0.4 nozzle",
+  "plate_outline": [
+    [
+      -0.5,
+      4.9
+    ],
+    [
+      -0.5,
+      259.5
+    ],
+    [
+      0.1,
+      260.9
+    ],
+    [
+      1.5,
+      261.5
+    ],
+    [
+      29.6,
+      261.5
+    ],
+    [
+      33.0,
+      258.5
+    ],
+    [
+      101.3,
+      258.5
+    ],
+    [
+      104.8,
+      261.5
+    ],
+    [
+      150.2,
+      261.5
+    ],
+    [
+      153.6,
+      258.5
+    ],
+    [
+      222.0,
+      258.5
+    ],
+    [
+      225.3,
+      261.5
+    ],
+    [
+      253.5,
+      261.5
+    ],
+    [
+      254.9,
+      260.9
+    ],
+    [
+      255.5,
+      259.5
+    ],
+    [
+      255.5,
+      -4.5
+    ],
+    [
+      254.9,
+      -5.9
+    ],
+    [
+      253.5,
+      -6.5
+    ],
+    [
+      140.9,
+      -6.5
+    ],
+    [
+      138.9,
+      -5.7
+    ],
+    [
+      130.5,
+      2.6
+    ],
+    [
+      128.6,
+      3.5
+    ],
+    [
+      0.9,
+      3.5
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    255.0,
+    255.0
+  ],
+  "printable_height": 260.0,
+  "printer_model": "Anycubic Kobra 3",
+  "printer_name": "Anycubic Kobra 3",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Anycubic Kobra 3 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 121 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Anycubic"
+}

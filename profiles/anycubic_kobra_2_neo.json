@@ -1,0 +1,120 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "anycubic_kobra_2_neo",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Anycubic Kobra 2 Neo 0.4 nozzle",
+  "plate_outline": [
+    [
+      -4.0,
+      8.5
+    ],
+    [
+      -4.0,
+      226.2
+    ],
+    [
+      -2.5,
+      229.9
+    ],
+    [
+      0.2,
+      231.4
+    ],
+    [
+      219.8,
+      231.4
+    ],
+    [
+      222.5,
+      229.9
+    ],
+    [
+      224.0,
+      226.2
+    ],
+    [
+      224.0,
+      8.5
+    ],
+    [
+      222.5,
+      4.7
+    ],
+    [
+      218.7,
+      3.2
+    ],
+    [
+      168.3,
+      3.1
+    ],
+    [
+      155.8,
+      -9.1
+    ],
+    [
+      151.1,
+      -11.4
+    ],
+    [
+      69.0,
+      -11.4
+    ],
+    [
+      64.2,
+      -9.1
+    ],
+    [
+      51.7,
+      3.1
+    ],
+    [
+      0.2,
+      3.3
+    ],
+    [
+      -3.1,
+      5.5
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    220.0,
+    220.0
+  ],
+  "printable_height": 250.0,
+  "printer_model": "Anycubic Kobra 2 Neo",
+  "printer_name": "Anycubic Kobra 2 Neo",
+  "purge_lines": [
+    [
+      10.0,
+      5.0,
+      60.0,
+      5.0,
+      3.0
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Anycubic Kobra 2 Neo 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 47 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Anycubic"
+}

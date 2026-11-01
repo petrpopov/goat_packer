@@ -1,0 +1,200 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "sovol_sv06_plus_ace",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Sovol SV06 Plus ACE 0.4 nozzle",
+  "plate_outline": [
+    [
+      -5.0,
+      -7.7
+    ],
+    [
+      -5.0,
+      308.6
+    ],
+    [
+      -4.1,
+      312.4
+    ],
+    [
+      -2.5,
+      314.6
+    ],
+    [
+      0.8,
+      316.6
+    ],
+    [
+      3.4,
+      317.0
+    ],
+    [
+      36.1,
+      317.0
+    ],
+    [
+      38.4,
+      316.0
+    ],
+    [
+      40.1,
+      311.4
+    ],
+    [
+      41.4,
+      310.7
+    ],
+    [
+      76.8,
+      310.7
+    ],
+    [
+      78.1,
+      311.4
+    ],
+    [
+      79.8,
+      316.0
+    ],
+    [
+      82.1,
+      317.0
+    ],
+    [
+      217.9,
+      317.0
+    ],
+    [
+      220.2,
+      316.0
+    ],
+    [
+      221.9,
+      311.4
+    ],
+    [
+      223.2,
+      310.7
+    ],
+    [
+      258.6,
+      310.7
+    ],
+    [
+      259.9,
+      311.4
+    ],
+    [
+      261.3,
+      315.6
+    ],
+    [
+      263.4,
+      317.0
+    ],
+    [
+      296.6,
+      317.0
+    ],
+    [
+      299.2,
+      316.6
+    ],
+    [
+      302.5,
+      314.6
+    ],
+    [
+      304.1,
+      312.4
+    ],
+    [
+      305.0,
+      308.6
+    ],
+    [
+      305.0,
+      -7.7
+    ],
+    [
+      300.4,
+      -15.9
+    ],
+    [
+      298.0,
+      -17.0
+    ],
+    [
+      269.5,
+      -17.0
+    ],
+    [
+      267.7,
+      -15.9
+    ],
+    [
+      263.7,
+      -9.7
+    ],
+    [
+      261.3,
+      -8.6
+    ],
+    [
+      38.7,
+      -8.6
+    ],
+    [
+      36.3,
+      -9.7
+    ],
+    [
+      32.3,
+      -15.9
+    ],
+    [
+      30.5,
+      -17.0
+    ],
+    [
+      2.0,
+      -17.0
+    ],
+    [
+      -0.7,
+      -15.5
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    300.0,
+    300.0
+  ],
+  "printable_height": 350.0,
+  "printer_model": "Sovol SV06 Plus ACE",
+  "printer_name": "Sovol SV06 Plus ACE",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Sovol SV06 Plus ACE",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 196 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Sovol"
+}

@@ -1,0 +1,148 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "bambu_lab_x2d",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Bambu Lab X2D 0.4 nozzle",
+  "plate_outline": [
+    [
+      -1.0,
+      7.5
+    ],
+    [
+      -1.0,
+      250.5
+    ],
+    [
+      -0.3,
+      253.6
+    ],
+    [
+      1.6,
+      256.2
+    ],
+    [
+      6.5,
+      258.0
+    ],
+    [
+      90.9,
+      258.0
+    ],
+    [
+      93.8,
+      258.9
+    ],
+    [
+      100.2,
+      265.1
+    ],
+    [
+      102.6,
+      266.0
+    ],
+    [
+      152.9,
+      266.0
+    ],
+    [
+      155.8,
+      265.1
+    ],
+    [
+      162.2,
+      258.9
+    ],
+    [
+      164.4,
+      258.1
+    ],
+    [
+      249.5,
+      258.0
+    ],
+    [
+      252.6,
+      257.3
+    ],
+    [
+      255.2,
+      255.4
+    ],
+    [
+      257.0,
+      250.5
+    ],
+    [
+      257.0,
+      -2.5
+    ],
+    [
+      256.3,
+      -5.6
+    ],
+    [
+      254.4,
+      -8.2
+    ],
+    [
+      249.5,
+      -10.0
+    ],
+    [
+      83.1,
+      -10.0
+    ],
+    [
+      80.2,
+      -9.1
+    ],
+    [
+      72.5,
+      -1.5
+    ],
+    [
+      69.8,
+      -0.1
+    ],
+    [
+      5.4,
+      0.1
+    ],
+    [
+      0.8,
+      2.6
+    ]
+  ],
+  "printable_area": [
+    20.5,
+    0.0,
+    256.0,
+    256.0
+  ],
+  "printable_height": 261.0,
+  "printer_model": "Bambu Lab X2D",
+  "printer_name": "Bambu Lab X2D",
+  "purge_lines": [],
+  "slicer_kind": "bambu",
+  "slicer_path": "/opt/slicers/bambu/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @BBL X2D",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 132 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "BBL"
+}

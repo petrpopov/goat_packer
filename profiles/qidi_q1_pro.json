@@ -1,0 +1,140 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [
+    [
+      25.0,
+      240.0,
+      115.0,
+      245.0
+    ],
+    [
+      208.0,
+      240.0,
+      245.0,
+      245.0
+    ]
+  ],
+  "id": "qidi_q1_pro",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Qidi Q1 Pro 0.4 nozzle",
+  "plate_outline": [
+    [
+      -2.5,
+      0.5
+    ],
+    [
+      -2.5,
+      244.5
+    ],
+    [
+      -1.6,
+      246.6
+    ],
+    [
+      0.5,
+      247.5
+    ],
+    [
+      244.5,
+      247.5
+    ],
+    [
+      247.1,
+      246.0
+    ],
+    [
+      247.5,
+      0.5
+    ],
+    [
+      246.6,
+      -1.6
+    ],
+    [
+      244.5,
+      -2.5
+    ],
+    [
+      0.5,
+      -2.5
+    ],
+    [
+      -2.1,
+      -1.0
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    245.0,
+    245.0
+  ],
+  "printable_height": 240.0,
+  "printer_model": "Qidi Q1 Pro",
+  "printer_name": "Qidi Q1 Pro",
+  "purge_lines": [
+    [
+      91.3804,
+      105.523,
+      176.38,
+      105.523,
+      0.4810586388862965
+    ],
+    [
+      176.38,
+      105.523,
+      176.38,
+      107.523,
+      0.481056375080937
+    ],
+    [
+      176.38,
+      107.523,
+      91.3804,
+      107.523,
+      0.4810586388862965
+    ],
+    [
+      91.3804,
+      107.523,
+      91.3804,
+      190.523,
+      0.48105637508093696
+    ],
+    [
+      91.3804,
+      190.523,
+      93.3804,
+      190.523,
+      0.481056375080937
+    ],
+    [
+      93.3804,
+      190.523,
+      93.3804,
+      108.523,
+      0.48105637508093696
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Qidi Q1 Pro",
+      "filament: Generic PLA @System",
+      "purge lines detected: 6",
+      "probe plate: 79 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Qidi"
+}

@@ -1,0 +1,134 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "flashforge_ad5x",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Flashforge AD5X 0.4 nozzle",
+  "plate_outline": [
+    [
+      -7.5,
+      3.1
+    ],
+    [
+      -7.5,
+      228.1
+    ],
+    [
+      -5.4,
+      232.1
+    ],
+    [
+      -2.5,
+      233.1
+    ],
+    [
+      222.5,
+      233.1
+    ],
+    [
+      226.6,
+      231.0
+    ],
+    [
+      227.5,
+      228.1
+    ],
+    [
+      227.5,
+      3.1
+    ],
+    [
+      225.4,
+      -1.0
+    ],
+    [
+      222.5,
+      -1.9
+    ],
+    [
+      168.5,
+      -2.1
+    ],
+    [
+      166.8,
+      -3.5
+    ],
+    [
+      162.8,
+      -13.1
+    ],
+    [
+      57.2,
+      -13.1
+    ],
+    [
+      53.2,
+      -3.5
+    ],
+    [
+      51.5,
+      -2.1
+    ],
+    [
+      -2.5,
+      -1.9
+    ],
+    [
+      -6.5,
+      0.1
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    220.0,
+    220.0
+  ],
+  "printable_height": 220.0,
+  "printer_model": "Flashforge AD5X",
+  "printer_name": "Flashforge AD5X",
+  "purge_lines": [
+    [
+      50.0,
+      220.0,
+      70.0,
+      220.0,
+      1.4431691252428112
+    ],
+    [
+      70.0,
+      220.0,
+      200.0,
+      220.0,
+      0.7400867308937493
+    ],
+    [
+      200.0,
+      219.6,
+      130.0,
+      219.6,
+      0.6872233929727672
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @FF AD5X",
+      "filament: Generic PLA @System",
+      "purge lines detected: 3",
+      "probe plate: 100 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Flashforge"
+}

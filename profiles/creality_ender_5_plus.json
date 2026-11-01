@@ -1,0 +1,123 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_ender_5_plus",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality Ender-5 Plus 0.4 nozzle",
+  "plate_outline": [
+    [
+      -13.5,
+      -2.0
+    ],
+    [
+      -13.5,
+      362.0
+    ],
+    [
+      -12.4,
+      364.6
+    ],
+    [
+      360.5,
+      365.0
+    ],
+    [
+      363.1,
+      363.9
+    ],
+    [
+      363.5,
+      -2.0
+    ],
+    [
+      362.4,
+      -4.6
+    ],
+    [
+      239.6,
+      -5.0
+    ],
+    [
+      236.0,
+      -6.5
+    ],
+    [
+      227.9,
+      -14.3
+    ],
+    [
+      225.4,
+      -15.0
+    ],
+    [
+      124.6,
+      -15.0
+    ],
+    [
+      122.1,
+      -14.3
+    ],
+    [
+      114.0,
+      -6.5
+    ],
+    [
+      110.4,
+      -5.0
+    ],
+    [
+      -10.5,
+      -5.0
+    ],
+    [
+      -12.4,
+      -4.6
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    350.0,
+    350.0
+  ],
+  "printable_height": 400.0,
+  "printer_model": "Creality Ender-5 Plus",
+  "printer_name": "Creality Ender-5 Plus",
+  "purge_lines": [
+    [
+      2.0,
+      10.0,
+      2.0,
+      140.0,
+      0.6607917240122761
+    ],
+    [
+      2.3,
+      140.0,
+      2.3,
+      10.0,
+      0.6607917240122761
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality Ender5Plus",
+      "filament: Generic PLA @System",
+      "purge lines detected: 2",
+      "probe plate: 169 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

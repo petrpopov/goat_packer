@@ -69,7 +69,7 @@ class DetectProfileTest(
 
     @Test
     fun `неизвестный принтер и файл без printer_model дают null`() {
-        for (body in listOf(mini3mf("Prusa MK4"), mini3mf(null))) {
+        for (body in listOf(mini3mf("Acme Unknown 3000"), mini3mf(null))) {
             val node = json.readTree(detect(body)).path("profileId")
             assertTrue(node.isMissingNode || node.isNull || node.asText("").isEmpty(), "ожидался null: $node")
         }
@@ -77,8 +77,8 @@ class DetectProfileTest(
 
     @Test
     fun `неизвестный принтер всё же назван в printerModel — фронт покажет чей файл`() {
-        val response = json.readTree(detect(mini3mf("Prusa MK4")))
-        assertEquals("Prusa MK4", response["printerModel"].asText())
+        val response = json.readTree(detect(mini3mf("Acme Unknown 3000")))
+        assertEquals("Acme Unknown 3000", response["printerModel"].asText())
     }
 
     @Test
@@ -118,7 +118,7 @@ class DetectProfileTest(
         val bytes = ByteArrayOutputStream()
         ZipOutputStream(bytes).use { zip ->
             zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
-            zip.write("""{"printer_model":"Prusa MK4","printable_area":"0x0,250x0,250x210,0x210","bed_exclude_area":["0x0"],"printable_height":"220"}""".toByteArray())
+            zip.write("""{"printer_model":"Acme Unknown 3000","printable_area":"0x0,250x0,250x210,0x210","bed_exclude_area":["0x0"],"printable_height":"220"}""".toByteArray())
             zip.closeEntry()
         }
         val bed = json.readTree(detect(bytes.toByteArray()))["projectBed"]

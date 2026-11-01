@@ -1,0 +1,103 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [
+    [
+      0.0,
+      213.0,
+      230.0,
+      250.0
+    ]
+  ],
+  "id": "snapmaker_a250_dual_qs_b_kit",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Snapmaker A250 Dual QS+B Kit (0.4 nozzle)",
+  "plate_outline": [
+    [
+      -5.0,
+      -1.0
+    ],
+    [
+      -5.0,
+      251.0
+    ],
+    [
+      -3.8,
+      253.8
+    ],
+    [
+      -1.0,
+      255.0
+    ],
+    [
+      231.0,
+      255.0
+    ],
+    [
+      233.8,
+      253.8
+    ],
+    [
+      235.0,
+      251.0
+    ],
+    [
+      235.0,
+      -1.0
+    ],
+    [
+      233.8,
+      -3.8
+    ],
+    [
+      231.0,
+      -5.0
+    ],
+    [
+      -1.0,
+      -5.0
+    ],
+    [
+      -3.8,
+      -3.8
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    230.0,
+    250.0
+  ],
+  "printable_height": 169.0,
+  "printer_model": "Snapmaker A250 Dual QS+B Kit",
+  "printer_name": "Snapmaker A250 Dual QS+B Kit",
+  "purge_lines": [
+    [
+      55.0,
+      0.0,
+      0.0,
+      0.0,
+      0.49999979203298783
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20 Standard @Snapmaker (0.4 nozzle)",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 68 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Snapmaker"
+}

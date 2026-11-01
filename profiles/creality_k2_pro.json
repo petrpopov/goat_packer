@@ -1,0 +1,135 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_k2_pro",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality K2 Pro 0.4 nozzle",
+  "plate_outline": [
+    [
+      -5.0,
+      2.1
+    ],
+    [
+      -5.0,
+      309.5
+    ],
+    [
+      -4.1,
+      311.6
+    ],
+    [
+      -2.0,
+      312.5
+    ],
+    [
+      302.0,
+      312.5
+    ],
+    [
+      304.1,
+      311.6
+    ],
+    [
+      305.0,
+      309.5
+    ],
+    [
+      305.0,
+      2.1
+    ],
+    [
+      300.7,
+      -11.6
+    ],
+    [
+      298.6,
+      -12.5
+    ],
+    [
+      245.1,
+      -12.4
+    ],
+    [
+      241.2,
+      -11.2
+    ],
+    [
+      219.4,
+      1.3
+    ],
+    [
+      215.2,
+      2.4
+    ],
+    [
+      86.3,
+      2.5
+    ],
+    [
+      80.6,
+      1.3
+    ],
+    [
+      55.9,
+      -12.3
+    ],
+    [
+      1.4,
+      -12.5
+    ],
+    [
+      -0.2,
+      -12.1
+    ],
+    [
+      -1.4,
+      -10.4
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    300.0,
+    300.0
+  ],
+  "printable_height": 300.0,
+  "printer_model": "Creality K2 Pro",
+  "printer_name": "Creality K2 Pro",
+  "purge_lines": [
+    [
+      0.0,
+      150.0,
+      0.0,
+      0.0,
+      1.2026409377023426
+    ],
+    [
+      0.0,
+      0.0,
+      150.0,
+      0.0,
+      1.2026409377023426
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality K2 Pro 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 2",
+      "probe plate: 196 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

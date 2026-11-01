@@ -1,0 +1,136 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "bambu_lab_h2d_pro",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Bambu Lab H2D Pro 0.4 nozzle",
+  "plate_outline": [
+    [
+      -2.5,
+      -8.3
+    ],
+    [
+      -2.5,
+      330.3
+    ],
+    [
+      -1.6,
+      332.4
+    ],
+    [
+      0.5,
+      333.3
+    ],
+    [
+      38.4,
+      333.3
+    ],
+    [
+      45.9,
+      328.3
+    ],
+    [
+      304.1,
+      328.3
+    ],
+    [
+      311.6,
+      333.3
+    ],
+    [
+      349.5,
+      333.3
+    ],
+    [
+      351.6,
+      332.4
+    ],
+    [
+      352.5,
+      330.3
+    ],
+    [
+      352.5,
+      -8.3
+    ],
+    [
+      351.0,
+      -11.8
+    ],
+    [
+      347.5,
+      -13.3
+    ],
+    [
+      242.1,
+      -13.2
+    ],
+    [
+      239.5,
+      -11.8
+    ],
+    [
+      227.0,
+      0.8
+    ],
+    [
+      223.4,
+      2.3
+    ],
+    [
+      125.6,
+      2.2
+    ],
+    [
+      123.0,
+      0.8
+    ],
+    [
+      110.5,
+      -11.8
+    ],
+    [
+      106.9,
+      -13.3
+    ],
+    [
+      2.5,
+      -13.3
+    ],
+    [
+      -1.0,
+      -11.8
+    ]
+  ],
+  "printable_area": [
+    25.0,
+    0.0,
+    325.0,
+    320.0
+  ],
+  "printable_height": 325.0,
+  "printer_model": "Bambu Lab H2D Pro",
+  "printer_name": "Bambu Lab H2D Pro",
+  "purge_lines": [],
+  "slicer_kind": "bambu",
+  "slicer_path": "/opt/slicers/bambu/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @BBL H2DP",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 210 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "BBL"
+}

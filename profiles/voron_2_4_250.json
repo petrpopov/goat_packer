@@ -1,0 +1,116 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "voron_2_4_250",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Voron 2.4 250 0.4 nozzle",
+  "plate_outline": [
+    [
+      -2.5,
+      5.5
+    ],
+    [
+      -2.5,
+      254.5
+    ],
+    [
+      -1.6,
+      256.6
+    ],
+    [
+      0.5,
+      257.5
+    ],
+    [
+      249.5,
+      257.5
+    ],
+    [
+      251.6,
+      256.6
+    ],
+    [
+      252.5,
+      254.5
+    ],
+    [
+      252.5,
+      5.5
+    ],
+    [
+      251.6,
+      3.4
+    ],
+    [
+      249.5,
+      2.5
+    ],
+    [
+      176.2,
+      2.5
+    ],
+    [
+      174.1,
+      1.6
+    ],
+    [
+      165.9,
+      -6.6
+    ],
+    [
+      163.8,
+      -7.5
+    ],
+    [
+      86.2,
+      -7.5
+    ],
+    [
+      84.1,
+      -6.6
+    ],
+    [
+      74.5,
+      2.4
+    ],
+    [
+      0.5,
+      2.5
+    ],
+    [
+      -1.6,
+      3.4
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    250.0,
+    250.0
+  ],
+  "printable_height": 225.0,
+  "printer_model": "Voron 2.4 250",
+  "printer_name": "Voron 2.4 250",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Voron",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 128 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Voron"
+}
