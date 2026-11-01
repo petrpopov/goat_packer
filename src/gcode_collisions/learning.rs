@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use geo::Polygon;
 
-use super::parser::{extents_of, parse};
+use super::parser::{Parser, extents_of, parse};
 use super::types::{ObjectFirstLayer, PlateAnalysis};
 use crate::footprint::{Footprint, LayerZone};
 use crate::geometry::{polygon_from_loop, strip_polygon, union_exterior_loops};
@@ -50,37 +50,52 @@ pub fn layer_zones_from_sample(
             .enumerate()
             .filter_map(|(object, label)| Some((object, *matched.get(label)?)))
             .collect();
-        runs.push((parser, index_of));
+        runs.push(SampleRun { parser, index_of });
     }
-    let analysis = PlateAnalysis {
+    let analysis = merged_analysis(&runs);
+    Ok((band_zones(&runs, placements), analysis))
+}
+
+/// One slice of the sample: its parsed lines and which parsed object is which placement.
+struct SampleRun {
+    parser: Parser,
+    /// Parser object index → placement index.
+    index_of: HashMap<usize, usize>,
+}
+
+/// What every run found, side by side: collisions, first layers, extents.
+fn merged_analysis(runs: &[SampleRun]) -> PlateAnalysis {
+    PlateAnalysis {
         collisions: runs
             .iter()
-            .flat_map(|(parser, _)| parser.collisions.values().cloned())
+            .flat_map(|run| run.parser.collisions.values().cloned())
             .collect(),
         first_layer: runs
             .iter()
-            .flat_map(|(parser, _)| parser.first_layer.iter().cloned())
+            .flat_map(|run| run.parser.first_layer.iter().cloned())
             .collect(),
-        layers: runs
-            .iter()
-            .map(|(parser, _)| parser.layer)
-            .max()
-            .unwrap_or(0),
-        labelled_lines: runs.iter().map(|(parser, _)| parser.labelled_lines).sum(),
+        layers: runs.iter().map(|run| run.parser.layer).max().unwrap_or(0),
+        labelled_lines: runs.iter().map(|run| run.parser.labelled_lines).sum(),
         extents: runs
             .iter()
-            .flat_map(|(parser, _)| extents_of(parser))
+            .flat_map(|run| extents_of(&run.parser))
             .collect(),
-    };
+    }
+}
+
+/// The height bands: supports from every matched object of every run, the body from one object
+/// of the first run (bodies don't vary), each band's strips unioned. A band without both a
+/// support and a body is dropped.
+fn band_zones(runs: &[SampleRun], placements: &[PackedPlacement]) -> Vec<LayerZone> {
     let mut bands: BTreeMap<usize, (Vec<Polygon>, Vec<Polygon>)> = BTreeMap::new();
-    for (run, (parser, index_of)) in runs.iter().enumerate() {
-        // The body comes from one object of the first run: bodies don't vary.
-        let body_object = *index_of.keys().min().expect("matched is not empty");
-        for line in &parser.kept {
-            let Some(&index) = index_of.get(&line.object) else {
+    for (run_index, run) in runs.iter().enumerate() {
+        let body_object = *run.index_of.keys().min().expect("matched is not empty");
+        for line in &run.parser.kept {
+            let Some(&index) = run.index_of.get(&line.object) else {
                 continue;
             };
-            if !line.strip.support && (run != 0 || line.object != body_object || line.infill) {
+            if !line.strip.support && (run_index != 0 || line.object != body_object || line.infill)
+            {
                 continue;
             }
             let placement = &placements[index];
@@ -99,15 +114,14 @@ pub fn layer_zones_from_sample(
             }
         }
     }
-    let zones = bands
+    bands
         .into_values()
         .filter(|(support, body)| !support.is_empty() && !body.is_empty())
         .map(|(support, body)| LayerZone {
             support_loops: union_exterior_loops(&support),
             body_loops: union_exterior_loops(&body),
         })
-        .collect();
-    Ok((zones, analysis))
+        .collect()
 }
 
 /// Farthest an object's first-layer body centre may sit from its placement's expected body

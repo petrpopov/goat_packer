@@ -44,6 +44,26 @@ pub fn optimize_schedule(
     batches: &[BatchTiming],
     config: &ScheduleConfig,
 ) -> SchedulerResult<OptimizedSchedule> {
+    check_inputs(batches, config)?;
+    let mut day_candidates: Vec<Option<ScheduleState>> = vec![None];
+    day_candidates.extend(
+        day_job_states(batches, config)?
+            .into_iter()
+            .flatten()
+            .map(Some),
+    );
+    let (completion_seconds, best) = best_with_overnight_job(&day_candidates, batches, config)
+        .ok_or("no overnight batch fits the horizon")?;
+    Ok(OptimizedSchedule {
+        printer: printer.to_owned(),
+        total_objects: best.total_objects,
+        total_filament_grams: best.total_filament_grams,
+        completion_seconds,
+        jobs: best.jobs,
+    })
+}
+
+fn check_inputs(batches: &[BatchTiming], config: &ScheduleConfig) -> SchedulerResult<()> {
     if batches.is_empty() {
         return Err("at least one batch timing is required".into());
     }
@@ -58,43 +78,57 @@ pub fn optimize_schedule(
     {
         return Err("batch size and duration must be positive".into());
     }
+    Ok(())
+}
 
+/// The best day schedule ending at each second (index = end second, up to the night start): a
+/// dynamic program over "last job ends at t", extended by every batch after the turnaround.
+fn day_job_states(
+    batches: &[BatchTiming],
+    config: &ScheduleConfig,
+) -> SchedulerResult<Vec<Option<ScheduleState>>> {
     let latest_day_end = config
         .night_start_seconds
         .saturating_sub(config.turnaround_seconds);
     let mut day_states: Vec<Option<ScheduleState>> =
         vec![None; usize::try_from(config.night_start_seconds)? + 1];
-    if config.day_start_seconds < config.night_start_seconds {
+    if config.day_start_seconds >= config.night_start_seconds {
+        return Ok(day_states);
+    }
+    for batch in batches {
+        insert_day_job_state(
+            &mut day_states,
+            None,
+            batch,
+            config.day_start_seconds,
+            latest_day_end,
+        )?;
+    }
+    for end_index in usize::try_from(config.day_start_seconds)?..=usize::try_from(latest_day_end)? {
+        let Some(state) = day_states[end_index].clone() else {
+            continue;
+        };
+        let next_start = u64::try_from(end_index)?.saturating_add(config.turnaround_seconds);
         for batch in batches {
             insert_day_job_state(
                 &mut day_states,
-                None,
+                Some(&state),
                 batch,
-                config.day_start_seconds,
+                next_start,
                 latest_day_end,
             )?;
         }
-        for end_index in
-            usize::try_from(config.day_start_seconds)?..=usize::try_from(latest_day_end)?
-        {
-            let Some(state) = day_states[end_index].clone() else {
-                continue;
-            };
-            let next_start = u64::try_from(end_index)?.saturating_add(config.turnaround_seconds);
-            for batch in batches {
-                insert_day_job_state(
-                    &mut day_states,
-                    Some(&state),
-                    batch,
-                    next_start,
-                    latest_day_end,
-                )?;
-            }
-        }
     }
+    Ok(day_states)
+}
 
-    let mut day_candidates: Vec<Option<ScheduleState>> = vec![None];
-    day_candidates.extend(day_states.into_iter().flatten().map(Some));
+/// The best schedule when one overnight job starts at the night start after any day schedule;
+/// returns it with its completion time. `None` when no overnight batch fits the horizon.
+fn best_with_overnight_job(
+    day_candidates: &[Option<ScheduleState>],
+    batches: &[BatchTiming],
+    config: &ScheduleConfig,
+) -> Option<(u64, ScheduleState)> {
     let mut best: Option<(u64, ScheduleState)> = None;
     for day in day_candidates {
         for batch in batches {
@@ -130,14 +164,7 @@ pub fn optimize_schedule(
             }
         }
     }
-    let (completion_seconds, best) = best.ok_or("no overnight batch fits the horizon")?;
-    Ok(OptimizedSchedule {
-        printer: printer.to_owned(),
-        total_objects: best.total_objects,
-        total_filament_grams: best.total_filament_grams,
-        completion_seconds,
-        jobs: best.jobs,
-    })
+    best
 }
 
 fn insert_day_job_state(

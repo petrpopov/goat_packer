@@ -7,10 +7,14 @@
 //! `round` is banker's rounding where Rust rounds halves away from zero. The draw order, colors,
 //! widths, and the screen transform below mirror the Python one for one.
 
-use crate::Point;
+use crate::geometry::Point;
 use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Pixmap, Shader, Stroke, Transform};
 
 type Rgba = [u8; 4];
+
+/// The drawing keeps this fraction of the canvas free around the bed, at least `MIN_MARGIN_PX`.
+const MARGIN_FRACTION: f64 = 0.03;
+const MIN_MARGIN_PX: f64 = 3.0;
 
 // Colors ported verbatim from `_draw_preview` (RGBA).
 const BACKGROUND: Rgba = [245, 247, 250, 255];
@@ -64,34 +68,43 @@ pub fn render(input: &PreviewInput, size: u32) -> Vec<u8> {
     let Some(screen) = Screen::new(input.printable, size) else {
         return encode(pixmap);
     };
+    draw_bed(&mut pixmap, input, &screen, size);
+    draw_safe_area(&mut pixmap, input, &screen, size);
+    draw_purge_lines(&mut pixmap, input, &screen, size);
+    draw_exclusions(&mut pixmap, input, &screen);
+    draw_keepouts(&mut pixmap, input, &screen);
+    draw_footprints(&mut pixmap, input, &screen);
+    encode(pixmap)
+}
 
-    // 1. Bed polygon: fill plus an outline whose width grows with the canvas
-    //    (`width=max(1, size // 256)` in the Python).
-    if let Some(bed) = ring_path(input.printable.iter().copied(), &screen) {
-        fill_even_odd(&mut pixmap, &bed, BED_FILL);
-        stroke(&mut pixmap, &bed, BED_OUTLINE, canvas_outline_width(size));
+/// 1. Bed polygon: fill plus an outline whose width grows with the canvas
+///    (`width=max(1, size // 256)` in the Python).
+fn draw_bed(pixmap: &mut Pixmap, input: &PreviewInput, screen: &Screen, size: u32) {
+    if let Some(bed) = ring_path(input.printable.iter().copied(), screen) {
+        fill_even_odd(pixmap, &bed, BED_FILL);
+        stroke(pixmap, &bed, BED_OUTLINE, canvas_outline_width(size));
     }
+}
 
-    // 2. Safe-area rectangle inset by edge_margin, outline-only.
-    if input.edge_margin > 0.0 {
-        let m = input.edge_margin;
-        let corners = [
-            (screen.min_x + m, screen.min_y + m),
-            (screen.max_x - m, screen.min_y + m),
-            (screen.max_x - m, screen.max_y - m),
-            (screen.min_x + m, screen.max_y - m),
-        ];
-        if let Some(safe_area) = ring_path(corners.iter().copied(), &screen) {
-            stroke(
-                &mut pixmap,
-                &safe_area,
-                SAFE_AREA_OUTLINE,
-                canvas_outline_width(size),
-            );
-        }
+/// 2. Safe-area rectangle inset by edge_margin, outline-only.
+fn draw_safe_area(pixmap: &mut Pixmap, input: &PreviewInput, screen: &Screen, size: u32) {
+    if input.edge_margin <= 0.0 {
+        return;
     }
+    let m = input.edge_margin;
+    let corners = [
+        (screen.min_x + m, screen.min_y + m),
+        (screen.max_x - m, screen.min_y + m),
+        (screen.max_x - m, screen.max_y - m),
+        (screen.min_x + m, screen.max_y - m),
+    ];
+    if let Some(safe_area) = ring_path(corners.iter().copied(), screen) {
+        stroke(pixmap, &safe_area, SAFE_AREA_OUTLINE, canvas_outline_width(size));
+    }
+}
 
-    // 3. Purge lines, stroked at `max(2, round(width · scale))` screen pixels.
+/// 3. Purge lines, stroked at `max(2, round(width · scale))` screen pixels.
+fn draw_purge_lines(pixmap: &mut Pixmap, input: &PreviewInput, screen: &Screen, size: u32) {
     for &(x0, y0, x1, y1, width) in input.purge_lines {
         if ![x0, y0, x1, y1].iter().all(|v| v.is_finite()) {
             continue;
@@ -103,20 +116,24 @@ pub fn render(input: &PreviewInput, size: u32) -> Vec<u8> {
         builder.line_to(sx1, sy1);
         if let Some(line) = builder.finish() {
             let stroke_width = purge_stroke_width(width, screen.scale, size);
-            stroke(&mut pixmap, &line, PURGE_LINE, stroke_width);
+            stroke(pixmap, &line, PURGE_LINE, stroke_width);
         }
     }
+}
 
-    // 4. Exclusion polygons (fill only; the Python skips polygons with fewer than 3 points).
+/// 4. Exclusion polygons (fill only; the Python skips polygons with fewer than 3 points).
+fn draw_exclusions(pixmap: &mut Pixmap, input: &PreviewInput, screen: &Screen) {
     for exclusion in input.exclusions {
         if exclusion.len() >= 3
-            && let Some(path) = ring_path(exclusion.iter().copied(), &screen)
+            && let Some(path) = ring_path(exclusion.iter().copied(), screen)
         {
-            fill_even_odd(&mut pixmap, &path, EXCLUSION_FILL);
+            fill_even_odd(pixmap, &path, EXCLUSION_FILL);
         }
     }
+}
 
-    // 5. Keepout rectangles, fill plus a 1 px outline (PIL's `draw.rectangle` default width).
+/// 5. Keepout rectangles, fill plus a 1 px outline (PIL's `draw.rectangle` default width).
+fn draw_keepouts(pixmap: &mut Pixmap, input: &PreviewInput, screen: &Screen) {
     for &(min_x, min_y, max_x, max_y) in input.keepouts {
         if ![min_x, min_y, max_x, max_y].iter().all(|v| v.is_finite()) {
             continue;
@@ -131,13 +148,15 @@ pub fn render(input: &PreviewInput, size: u32) -> Vec<u8> {
             (f64::from(ax.max(bx)), f64::from(ay.max(by))),
             (f64::from(ax.min(bx)), f64::from(ay.max(by))),
         ];
-        if let Some(rect) = ring_path(corners.iter().copied(), &screen) {
-            fill_even_odd(&mut pixmap, &rect, KEEPOUT_FILL);
-            stroke(&mut pixmap, &rect, KEEPOUT_OUTLINE, 1.0);
+        if let Some(rect) = ring_path(corners.iter().copied(), screen) {
+            fill_even_odd(pixmap, &rect, KEEPOUT_FILL);
+            stroke(pixmap, &rect, KEEPOUT_OUTLINE, 1.0);
         }
     }
+}
 
-    // 6. Footprints.
+/// 6. Footprints.
+fn draw_footprints(pixmap: &mut Pixmap, input: &PreviewInput, screen: &Screen) {
     for (index, rings) in input.polygons.iter().enumerate() {
         let fill = if input.pick {
             pick_fill(index)
@@ -149,18 +168,16 @@ pub fn render(input: &PreviewInput, size: u32) -> Vec<u8> {
         // rings and fill it with FillRule::EvenOdd, which punches the holes out of the footprint
         // directly — no separate hole redraw. (Unlike PIL's trick, whatever sits beneath a hole
         // shows through instead of painted-over bed color; cosmetic, accepted by contract 7.)
-        if let Some(footprint) = footprint_path(rings, &screen) {
-            fill_even_odd(&mut pixmap, &footprint, fill);
+        if let Some(footprint) = footprint_path(rings, screen) {
+            fill_even_odd(pixmap, &footprint, fill);
         }
         // PIL outlined only the exterior ring; holes stay outline-free.
         if let Some(exterior) = rings.first()
-            && let Some(outline) = ring_path(exterior.iter().map(|p| (p.x, p.y)), &screen)
+            && let Some(outline) = ring_path(exterior.iter().map(|p| (p.x, p.y)), screen)
         {
-            stroke(&mut pixmap, &outline, FOOTPRINT_OUTLINE, 1.0);
+            stroke(pixmap, &outline, FOOTPRINT_OUTLINE, 1.0);
         }
     }
-
-    encode(pixmap)
 }
 
 /// The world→screen transform of `_draw_preview`: a 3% margin and a uniform scale that fits the
@@ -195,7 +212,7 @@ impl Screen {
             .fold(f64::NEG_INFINITY, f64::max);
         // Python: margin = max(3, round(size * 0.03)); its banker's rounding can differ from
         // Rust's by half a pixel at most (cosmetic).
-        let margin = 3.0f64.max((f64::from(size) * 0.03).round());
+        let margin = MIN_MARGIN_PX.max((f64::from(size) * MARGIN_FRACTION).round());
         let span_x = max_x - min_x;
         let span_y = max_y - min_y;
         if span_x <= 0.0 || span_y <= 0.0 {
