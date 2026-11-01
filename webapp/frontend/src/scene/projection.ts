@@ -21,10 +21,14 @@ export interface ProjectionMask {
 
 /** positions — по 9 чисел на треугольник (как ModelMesh.positions); z не используется. */
 export function projectTriangles(positions: Float32Array, triangles: number, res = 4, pad = 3): ProjectionMask {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (let t = 0; t < triangles; t++)
     for (let k = 0; k < 3; k++) {
-      const x = positions[t * 9 + k * 3], y = positions[t * 9 + k * 3 + 1];
+      const x = positions[t * 9 + k * 3],
+        y = positions[t * 9 + k * 3 + 1];
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
@@ -38,9 +42,12 @@ export function projectTriangles(positions: Float32Array, triangles: number, res
   const py = (y: number) => height - (y - minY + pad) * res;
   for (let t = 0; t < triangles; t++) {
     const o = t * 9;
-    let ax = px(positions[o]), ay = py(positions[o + 1]);
-    let bx = px(positions[o + 3]), by = py(positions[o + 4]);
-    const cx = px(positions[o + 6]), cy = py(positions[o + 7]);
+    let ax = px(positions[o]),
+      ay = py(positions[o + 1]);
+    let bx = px(positions[o + 3]),
+      by = py(positions[o + 4]);
+    const cx = px(positions[o + 6]),
+      cy = py(positions[o + 7]);
     let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
     if (area === 0) continue; // вертикальная грань: в проекции — линия
     if (area < 0) {
@@ -50,8 +57,10 @@ export function projectTriangles(positions: Float32Array, triangles: number, res
       area = -area;
     }
     // Центры пикселей внутри треугольника (границы включительно — соседние грани без щелей).
-    const i0 = Math.max(0, Math.floor(Math.min(ax, bx, cx))), i1 = Math.min(width - 1, Math.ceil(Math.max(ax, bx, cx)));
-    const j0 = Math.max(0, Math.floor(Math.min(ay, by, cy))), j1 = Math.min(height - 1, Math.ceil(Math.max(ay, by, cy)));
+    const i0 = Math.max(0, Math.floor(Math.min(ax, bx, cx))),
+      i1 = Math.min(width - 1, Math.ceil(Math.max(ax, bx, cx)));
+    const j0 = Math.max(0, Math.floor(Math.min(ay, by, cy))),
+      j1 = Math.min(height - 1, Math.ceil(Math.max(ay, by, cy)));
     for (let j = j0; j <= j1; j++) {
       const y = j + 0.5;
       for (let i = i0; i <= i1; i++) {

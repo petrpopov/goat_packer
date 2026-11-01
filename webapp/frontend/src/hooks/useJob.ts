@@ -2,13 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
 import { getJob } from '@/api/services';
 import type { JobStatusResponse } from '@/api/types';
-
-const POLL_INTERVAL_MS = 1000;
-
-const ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT']);
+import { JOB_POLL_MS } from '@/config';
+import { isActiveStatus, isJobGone } from '@/utils/jobs';
 
 /**
- * Поллинг статуса задачи: GET /api/jobs/{id} раз в 1000 мс, пока идёт она сама или её проверка
+ * Поллинг статуса задачи: GET /api/jobs/{id} раз в JOB_POLL_MS, пока идёт она сама или её проверка
  * нарезкой (check — внутри той же задачи); на терминальном статусе обеих опрос останавливается.
  */
 export function useJob(jobId: string | null) {
@@ -23,10 +21,18 @@ export function useJob(jobId: string | null) {
     },
     retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
     refetchInterval: (query) => {
-      if (query.state.error instanceof ApiError && [404, 410].includes(query.state.error.status)) return false;
-      const status = query.state.data?.status;
-      const check = query.state.data?.check?.status;
-      return !status || ACTIVE_STATUSES.has(status) || (check && ACTIVE_STATUSES.has(check)) ? POLL_INTERVAL_MS : false;
+      if (isJobGone(query.state.error)) return false;
+      const job = query.state.data;
+      return !job || isActiveStatus(job.status) || isActiveStatus(job.check?.status) ? JOB_POLL_MS : false;
     },
   });
+}
+
+/** Задача и её состояние для страниц: gone — её больше нет, active — ещё идёт (или статус не получен). */
+export function useJobView(jobId: string | null) {
+  const query = useJob(jobId);
+  const job = query.data ?? null;
+  const gone = isJobGone(query.error);
+  const active = jobId !== null && !gone && (!job || isActiveStatus(job.status));
+  return { query, job, gone, active };
 }

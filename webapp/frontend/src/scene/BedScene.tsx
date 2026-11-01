@@ -5,9 +5,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { PrinterProfile } from '@/api/types';
 import { useUiStore } from '@/store/useUiStore';
 import { bedSpec, type BedSpec, type Rect } from './bed';
+import { bedGroup as buildBedGroup, towerMesh as buildTowerMesh } from './bedMeshes';
+import { footprintTexture, type FootprintSource } from './footprintTexture';
 import type { Placement } from './layout';
 import type { ModelMesh } from './model3d';
-import { projectTriangles, type ProjectionMask } from './projection';
+import { projectTriangles } from './projection';
+import { cssColor, degToRad, disposeTree, HIDDEN_Z, paintTokens, placementMatrix } from './three';
 
 export interface BedSceneProps {
   profile: PrinterProfile;
@@ -30,6 +33,8 @@ export interface BedSceneProps {
   /** Подписи в углах сцены. */
   caption?: string;
   readout?: string;
+  /** Сколько объектов получилось на столе — числом под легендой; null — итога ещё нет. */
+  objectCount?: number | null;
 }
 
 const LAYER_MM = 0.2;
@@ -40,118 +45,28 @@ const DROP_FROM_MM = 120;
 const GHOSTS = 48;
 const GHOST_TICK_MS = 200;
 const GHOST_JITTER_MM = 6;
-
-/** oklch/hex CSS-переменная → THREE.Color (через canvas: THREE не понимает oklch). */
-function cssColor(name: string): THREE.Color {
-  const c = document.createElement('canvas');
-  c.width = c.height = 1;
-  const x = c.getContext('2d', { willReadFrequently: true })!;
-  x.fillStyle = cssValue(name) || '#888';
-  x.fillRect(0, 0, 1, 1);
-  const d = x.getImageData(0, 0, 1, 1).data;
-  return new THREE.Color(d[0] / 255, d[1] / 255, d[2] / 255).convertSRGBToLinear();
-}
-const cssValue = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
-function shapeOf(points: [number, number][]): THREE.Shape {
-  const s = new THREE.Shape();
-  points.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y)));
-  s.closePath();
-  return s;
-}
-const rectPoints = (r: { x0: number; y0: number; x1: number; y1: number }): [number, number][] => [
-  [r.x0, r.y0],
-  [r.x1, r.y0],
-  [r.x1, r.y1],
-  [r.x0, r.y1],
-];
-
-/** Освобождает GPU-ресурсы поддерева (геометрии, материалы, их текстуры). */
-function disposeTree(root: THREE.Object3D) {
-  root.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    mesh.geometry?.dispose();
-    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    for (const m of materials) {
-      (m as THREE.MeshBasicMaterial).map?.dispose();
-      m.dispose();
-    }
-  });
-}
-
-/** Источник подложки: контуры пакера (even-odd, их немного) или растр проекции меша. */
-type FootprintSource = { kind: 'loops'; polygons: [number, number][][] } | { kind: 'mask'; projection: ProjectionMask };
-
-/** Подложка «проекция + контур»: заливка 28 % и обводка 1.6 мм цветом --accent-2. */
-function footprintTexture(source: FootprintSource): {
-  texture: THREE.CanvasTexture;
-  size: [number, number];
-  center: [number, number];
-} {
-  const silhouette = document.createElement('canvas');
-  let w: number, h: number, res: number, minX: number, minY: number, maxX: number, maxY: number;
-  if (source.kind === 'mask') {
-    const p = source.projection;
-    ({ width: w, height: h, res, minX, minY, maxX, maxY } = p);
-    silhouette.width = w;
-    silhouette.height = h;
-    const image = new ImageData(w, h);
-    for (let i = 0; i < p.mask.length; i++) if (p.mask[i]) image.data.set([255, 255, 255, 255], i * 4);
-    silhouette.getContext('2d')!.putImageData(image, 0, 0);
-  } else {
-    minX = minY = Infinity;
-    maxX = maxY = -Infinity;
-    for (const poly of source.polygons)
-      for (const [x, y] of poly) {
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-      }
-    if (!Number.isFinite(minX)) minX = minY = maxX = maxY = 0;
-    res = 4;
-    const pad = 3;
-    w = Math.max(2, Math.ceil((maxX - minX + pad * 2) * res));
-    h = Math.max(2, Math.ceil((maxY - minY + pad * 2) * res));
-    const X = (x: number) => (x - minX + pad) * res,
-      Y = (y: number) => h - (y - minY + pad) * res;
-    silhouette.width = w;
-    silhouette.height = h;
-    const sx = silhouette.getContext('2d')!;
-    sx.fillStyle = '#fff';
-    sx.beginPath();
-    for (const poly of source.polygons)
-      poly.forEach(([x, y], i) => (i ? sx.lineTo(X(x), Y(y)) : sx.moveTo(X(x), Y(y))));
-    sx.fill('evenodd');
-  }
-  const tint = (color: string) => {
-    const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    const x = c.getContext('2d')!;
-    x.drawImage(silhouette, 0, 0);
-    x.globalCompositeOperation = 'source-in';
-    x.fillStyle = color;
-    x.fillRect(0, 0, w, h);
-    return c;
-  };
-  const out = document.createElement('canvas');
-  out.width = w;
-  out.height = h;
-  const ox = out.getContext('2d')!;
-  const ring = tint(cssValue('--accent-2')),
-    r = 0.8 * res;
-  for (let a = 0; a < 16; a++) ox.drawImage(ring, Math.cos((a / 8) * Math.PI) * r, Math.sin((a / 8) * Math.PI) * r);
-  ox.globalCompositeOperation = 'destination-out';
-  ox.drawImage(silhouette, 0, 0);
-  ox.globalCompositeOperation = 'source-over';
-  ox.globalAlpha = 0.28;
-  ox.drawImage(ring, 0, 0);
-  ox.globalAlpha = 1;
-  const texture = new THREE.CanvasTexture(out);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return { texture, size: [w / res, h / res], center: [(minX + maxX) / 2, (minY + maxY) / 2] };
-}
+/** Проекции перебора: доля шага сетки от размера подложки и прозрачность. */
+const GHOST_CELL = 0.9;
+const GHOST_OPACITY = 0.7;
+/** Высоты подложек и проекций над столом, мм (над башней). */
+const FOOTPRINT_Z = 0.06;
+const GHOST_Z = 0.07;
+/** Камера: near/far и масштаб колесом; исходная точка обзора — сдвиг от центра стола, мм. */
+const CAMERA_NEAR = 1;
+const CAMERA_FAR = 2000;
+const ZOOM_RANGE = { min: 0.7, max: 12 };
+const VIEW_OFFSET = { x: 420, y: -420, z: 360 };
+const MAX_PIXEL_RATIO = 2;
+/** Свет: небо/земля полусферы и «солнце» сверху-спереди-слева. */
+const HEMI_LIGHT = { sky: 0xffffff, ground: 0x666666, intensity: 1.6 };
+const SUN_LIGHT = { color: 0xffffff, intensity: 1.5, position: [-150, -260, 420] as const };
+/** Полупрозрачная плоскость среза слоя и её поле за краем стола, мм. */
+const SLICE_OPACITY = 0.06;
+const SLICE_MARGIN_MM = 16;
+/** Без среза: плоскость отсечения далеко над моделью. */
+const NO_CLIP_Z = 1e4;
+/** Падение: каждая копия падает за долю общего времени, старты разнесены на остаток. */
+const DROP_SHARE = 0.4;
 
 interface SceneApi {
   rebuild: (theme: string) => void;
@@ -177,34 +92,34 @@ export default function BedScene(props: BedSceneProps) {
   useEffect(() => {
     const host = hostRef.current!;
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     renderer.localClippingEnabled = true;
     host.prepend(renderer.domElement);
 
     const scene = new THREE.Scene();
     // near/far 1..2000: шире — z-fighting слоёв стола (они в десятых долях мм друг от друга).
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2000);
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA_NEAR, CAMERA_FAR);
     camera.up.set(0, 0, 1);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.6));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.5);
-    sun.position.set(-150, -260, 420);
+    scene.add(new THREE.HemisphereLight(HEMI_LIGHT.sky, HEMI_LIGHT.ground, HEMI_LIGHT.intensity));
+    const sun = new THREE.DirectionalLight(SUN_LIGHT.color, SUN_LIGHT.intensity);
+    sun.position.set(...SUN_LIGHT.position);
     scene.add(sun);
     // Вращение, масштаб колесом (к курсору — рассмотреть угол стола) и сдвиг правой кнопкой — всегда,
     // а не только на готовом столе: идущую нарезку тоже хочется разглядеть.
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.zoomToCursor = true;
-    controls.minZoom = 0.7;
-    controls.maxZoom = 12;
+    controls.minZoom = ZOOM_RANGE.min;
+    controls.maxZoom = ZOOM_RANGE.max;
     /** Камера в исходной точке обзора; false — поставить заново (новый стол, «Сбросить вид»). */
     let viewSet = false;
 
-    const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e4);
+    const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), NO_CLIP_Z);
     const objectMaterial = new THREE.MeshLambertMaterial({ clippingPlanes: [clipPlane] });
     // Внутренние грани, видимые сквозь срез, — сигнальным цветом: «горячий» срез слоя.
     const capMaterial = new THREE.MeshBasicMaterial({ side: THREE.BackSide, clippingPlanes: [clipPlane] });
     const sliceMaterial = new THREE.MeshBasicMaterial({
       transparent: true,
-      opacity: 0.06,
+      opacity: SLICE_OPACITY,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
@@ -236,15 +151,8 @@ export default function BedScene(props: BedSceneProps) {
       theme: '',
     };
 
-    const colored = <T extends THREE.Mesh | THREE.LineSegments>(mesh: T, token: string): T => {
-      mesh.userData.token = token;
-      return mesh;
-    };
     const paint = () => {
-      bedGroup.traverse((o) => {
-        const token = o.userData.token as string | undefined;
-        if (token) ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).color.copy(cssColor(token));
-      });
+      paintTokens(bedGroup);
       if (towerMesh) (towerMesh.material as THREE.MeshBasicMaterial).color.copy(cssColor('--accent-2'));
       objectMaterial.color.copy(cssColor('--object'));
       capMaterial.color.copy(cssColor('--signal'));
@@ -254,108 +162,10 @@ export default function BedScene(props: BedSceneProps) {
     const buildBed = (profile: PrinterProfile, usableOverride: Rect | null) => {
       scene.remove(bedGroup);
       disposeTree(bedGroup);
-      bedGroup = new THREE.Group();
       const spec = bedSpec(profile);
       // Отступ от края пользователь может задать свой: реальная рабочая область — из раскладки.
       bed = usableOverride ? { ...spec, usable: usableOverride } : spec;
-      const plate = colored(
-        new THREE.Mesh(
-          new THREE.ExtrudeGeometry(shapeOf(bed.plate), { depth: 3, bevelEnabled: false }),
-          new THREE.MeshLambertMaterial()
-        ),
-        '--plate'
-      );
-      plate.position.z = -3.8;
-      // Без вырезов (край области может совпадать с краем пластины — триангуляция ломается):
-      // вся пластина цвета запретной зоны, рабочая область поверх.
-      const forbidden = colored(
-        new THREE.Mesh(
-          new THREE.ShapeGeometry(shapeOf(bed.plate)),
-          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.55, depthWrite: false })
-        ),
-        '--keepout'
-      );
-      forbidden.position.z = -0.3;
-      const top = colored(
-        new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(rectPoints(bed.usable))), new THREE.MeshBasicMaterial()),
-        '--plate-top'
-      );
-      top.position.z = -0.2;
-      bedGroup.add(plate, forbidden, top);
-      const u = bed.usable,
-        grid: number[] = [];
-      for (let x = Math.ceil(u.x0 / 32) * 32; x <= u.x1; x += 32) grid.push(x, u.y0, 0, x, u.y1, 0);
-      for (let y = Math.ceil(u.y0 / 32) * 32; y <= u.y1; y += 32) grid.push(u.x0, y, 0, u.x1, y, 0);
-      const gridLines = colored(
-        new THREE.LineSegments(
-          new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(grid, 3)),
-          new THREE.LineBasicMaterial({ transparent: true, opacity: 0.7 })
-        ),
-        '--plate-grid'
-      );
-      gridLines.position.z = -0.1;
-      bedGroup.add(gridLines);
-      for (const r of bed.exclusions) {
-        const ex = colored(
-          new THREE.Mesh(
-            new THREE.ShapeGeometry(shapeOf(rectPoints(r))),
-            new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, depthWrite: false })
-          ),
-          '--keepout'
-        );
-        ex.position.z = 0.02;
-        bedGroup.add(ex);
-      }
-      // Размерные линии вдоль передней и правой сторон.
-      const [front, side] = bed.labels;
-      const a = bed.area,
-        dims = [
-          a.x0,
-          front.y,
-          0,
-          a.x1,
-          front.y,
-          0,
-          a.x0,
-          front.y - 4,
-          0,
-          a.x0,
-          front.y + 4,
-          0,
-          a.x1,
-          front.y - 4,
-          0,
-          a.x1,
-          front.y + 4,
-          0,
-          side.x,
-          a.y0,
-          0,
-          side.x,
-          a.y1,
-          0,
-          side.x - 4,
-          a.y0,
-          0,
-          side.x + 4,
-          a.y0,
-          0,
-          side.x - 4,
-          a.y1,
-          0,
-          side.x + 4,
-          a.y1,
-          0,
-        ];
-      bedGroup.add(
-        colored(
-          new THREE.LineSegments(
-            new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(dims, 3)),
-            new THREE.LineBasicMaterial()
-          ),
-          '--fg-dim'
-        )
-      );
+      bedGroup = buildBedGroup(bed);
       scene.add(bedGroup);
     };
 
@@ -400,17 +210,15 @@ export default function BedScene(props: BedSceneProps) {
     /** Матрицы копий: progress 0..1 — время падения (1 — все на столе). */
     const placeCopies = (progress: number) => {
       if (!solid || !cap) return;
-      const m = new THREE.Matrix4(),
-        q = new THREE.Quaternion(),
-        s = new THREE.Vector3(1, 1, 1),
-        z = new THREE.Vector3(0, 0, 1);
+      const m = new THREE.Matrix4();
       spots.forEach((p, i) => {
-        // По порядку пакера — от центра наружу; каждая копия падает за ~40 % общего времени.
-        const local = progress >= 1 ? 1 : Math.min(1, Math.max(0, (progress - (i / spots.length) * 0.6) / 0.4));
+        // По порядку пакера — от центра наружу; каждая копия падает за DROP_SHARE общего времени.
+        const start = (i / spots.length) * (1 - DROP_SHARE);
+        const local = progress >= 1 ? 1 : Math.min(1, Math.max(0, (progress - start) / DROP_SHARE));
         const eased = 1 - (1 - local) ** 3;
-        q.setFromAxisAngle(z, (p.angleDeg * Math.PI) / 180);
         // Ещё не начавшая падать копия — за дальней плоскостью камеры.
-        m.compose(new THREE.Vector3(p.x, p.y, progress >= 1 || local > 0 ? (1 - eased) * DROP_FROM_MM : -9999), q, s);
+        const z = progress >= 1 || local > 0 ? (1 - eased) * DROP_FROM_MM : HIDDEN_Z;
+        placementMatrix(m, p.x, p.y, z, degToRad(p.angleDeg));
         solid!.setMatrixAt(i, m);
         cap!.setMatrixAt(i, m);
       });
@@ -422,11 +230,7 @@ export default function BedScene(props: BedSceneProps) {
       disposeObjects();
       const { model, placements = [], footprintLoops, tower } = propsRef.current;
       if (tower) {
-        towerMesh = new THREE.Mesh(
-          new THREE.ShapeGeometry(shapeOf(rectPoints(tower))),
-          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.35, depthWrite: false })
-        );
-        towerMesh.position.z = 0.04;
+        towerMesh = buildTowerMesh(tower);
         scene.add(towerMesh);
       }
       if (!model || !bed) return;
@@ -436,7 +240,7 @@ export default function BedScene(props: BedSceneProps) {
       );
       geometry.computeVertexNormals();
       modelGeometry = geometry;
-      height = Math.max(model.size[2], 0.2);
+      height = Math.max(model.size[2], LAYER_MM);
       spots = placements.length
         ? placements
         : [{ x: (bed.usable.x0 + bed.usable.x1) / 2, y: (bed.usable.y0 + bed.usable.y1) / 2, angleDeg: 0 }];
@@ -453,22 +257,22 @@ export default function BedScene(props: BedSceneProps) {
         new THREE.MeshBasicMaterial({ map: fp.texture, transparent: true, depthWrite: false }),
         spots.length
       );
-      const m = new THREE.Matrix4(),
-        q = new THREE.Quaternion(),
-        s = new THREE.Vector3(1, 1, 1),
-        z = new THREE.Vector3(0, 0, 1);
+      const m = new THREE.Matrix4();
       spots.forEach((p, i) => {
         // Контур — сразу на месте: копии падают на свои подложки.
-        q.setFromAxisAngle(z, (p.angleDeg * Math.PI) / 180);
-        const offset = new THREE.Vector3(fp.center[0], fp.center[1], 0).applyQuaternion(q);
-        m.compose(new THREE.Vector3(p.x + offset.x, p.y + offset.y, 0.06), q, s);
+        const angle = degToRad(p.angleDeg);
+        const offset = new THREE.Vector3(fp.center[0], fp.center[1], 0).applyAxisAngle(
+          new THREE.Vector3(0, 0, 1),
+          angle
+        );
+        placementMatrix(m, p.x + offset.x, p.y + offset.y, FOOTPRINT_Z, angle);
         footprints!.setMatrixAt(i, m);
       });
       placeCopies(drop ? 0 : 1);
       dropStart = drop ? performance.now() : 0;
       scene.add(solid, cap, footprints);
-      // Перебор раскладок (v2-макет): проекции модели по сетке рабочей области, кадр раз в 200 мс.
-      const cell = Math.max(fp.size[0], fp.size[1]) * 0.9;
+      // Перебор раскладок (v2-макет): проекции модели по сетке рабочей области, кадр раз в GHOST_TICK_MS.
+      const cell = Math.max(fp.size[0], fp.size[1]) * GHOST_CELL;
       const u = bed.usable;
       const columns = Math.max(1, Math.floor((u.x1 - u.x0) / cell));
       const rows = Math.max(1, Math.floor((u.y1 - u.y0) / cell));
@@ -483,7 +287,7 @@ export default function BedScene(props: BedSceneProps) {
         new THREE.MeshBasicMaterial({
           map: footprintTexture(footprintSource).texture,
           transparent: true,
-          opacity: 0.7,
+          opacity: GHOST_OPACITY,
           depthWrite: false,
         }),
         Math.min(GHOSTS, ghostSpots.length)
@@ -496,22 +300,16 @@ export default function BedScene(props: BedSceneProps) {
     /** Кадр перебора: каждая четвёртая проекция на своём месте со сдвигом и поворотом, остальные скрыты. */
     const placeGhosts = (tick: number) => {
       if (!ghosts) return;
-      const m = new THREE.Matrix4(),
-        q = new THREE.Quaternion(),
-        s = new THREE.Vector3(1, 1, 1),
-        z = new THREE.Vector3(0, 0, 1);
+      const m = new THREE.Matrix4();
       for (let i = 0; i < ghosts.count; i++) {
         const spot = ghostSpots[(i * 7) % ghostSpots.length];
         const on = (i * 7 + tick) % 4 === 0;
-        q.setFromAxisAngle(z, ((tick + i) % 4) * 0.5);
-        m.compose(
-          new THREE.Vector3(
-            spot.x + Math.sin(tick + i) * GHOST_JITTER_MM,
-            spot.y + Math.cos(tick * 2 + i) * GHOST_JITTER_MM,
-            on ? 0.07 : -9999
-          ),
-          q,
-          s
+        placementMatrix(
+          m,
+          spot.x + Math.sin(tick + i) * GHOST_JITTER_MM,
+          spot.y + Math.cos(tick * 2 + i) * GHOST_JITTER_MM,
+          on ? GHOST_Z : HIDDEN_Z,
+          ((tick + i) % 4) * 0.5
         );
         ghosts.setMatrixAt(i, m);
       }
@@ -532,7 +330,7 @@ export default function BedScene(props: BedSceneProps) {
       camera.top = half;
       camera.bottom = -half;
       if (!viewSet) {
-        camera.position.set(cx + 420, cy - 420, 360);
+        camera.position.set(cx + VIEW_OFFSET.x, cy + VIEW_OFFSET.y, VIEW_OFFSET.z);
         controls.target.set(cx, cy, 0);
         camera.zoom = 1;
         camera.lookAt(cx, cy, 0);
@@ -566,14 +364,14 @@ export default function BedScene(props: BedSceneProps) {
       }
       // Падение — показ готовой раскладки: срез слоя на это время снят, иначе копии в воздухе не видны.
       // clip = 1 — без среза: плоскость ровно на верхней грани даёт z-fighting верха копий.
-      const clipZ = p.mode === 'running' && !dropping && p.clip < 1 ? Math.max(LAYER_MM, p.clip * height) : 1e4;
+      const clipZ = p.mode === 'running' && !dropping && p.clip < 1 ? Math.max(LAYER_MM, p.clip * height) : NO_CLIP_Z;
       clipPlane.constant = clipZ;
       // Без среза изнанка не нужна: иначе её край просвечивает оранжевым по контуру модели.
       if (cap) cap.visible = !searching && clipZ < height;
       slicePlane.visible = p.mode === 'running' && !dropping && p.clip < 1 && bed !== null;
       if (bed && slicePlane.visible) {
         const a = bed.area;
-        slicePlane.scale.set(a.x1 - a.x0 + 16, a.y1 - a.y0 + 16, 1);
+        slicePlane.scale.set(a.x1 - a.x0 + SLICE_MARGIN_MM, a.y1 - a.y0 + SLICE_MARGIN_MM, 1);
         slicePlane.position.set((a.x0 + a.x1) / 2, (a.y0 + a.y1) / 2, clipZ);
       }
       renderer.render(scene, camera);
@@ -688,6 +486,11 @@ export default function BedScene(props: BedSceneProps) {
           <span>
             башня очистки <i className="swatch swatch-tower" />
           </span>
+        )}
+        {props.objectCount != null && (
+          <b className="scene-count" aria-label={`Объектов на столе: ${props.objectCount}`}>
+            {props.objectCount}
+          </b>
         )}
       </div>
       {props.caption && <div className="scene-tag scene-tag-bl">{props.caption}</div>}

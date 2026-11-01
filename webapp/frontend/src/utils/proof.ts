@@ -5,7 +5,10 @@ export function satisfiesProof(challenge: Challenge, nonce: string): boolean {
   let bits = 0;
   for (const byte of digest) {
     if (byte === 0) bits += 8;
-    else { bits += Math.clz32(byte) - 24; break; }
+    else {
+      bits += Math.clz32(byte) - 24;
+      break;
+    }
   }
   return bits >= challenge.difficulty;
 }

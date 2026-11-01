@@ -1,12 +1,14 @@
 import { useMutation } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { ApiError, serverMode } from '@/api/http';
 import { deleteJob } from '@/api/services';
+import type { CalibrationInfo, JobStatusResponse, PackJobInfo } from '@/api/types';
 import { pushToast } from '@/store/useToastStore';
-import type { ReactNode } from 'react';
-import type { JobStatusResponse } from '@/api/types';
-import { formatHoursMinutes, packTimeLines } from '@/utils/format';
+import { formatDateTime, formatHoursMinutes, formatWaitMinutes, packTimeLines } from '@/utils/format';
+import { isActiveStatus, isJobGone } from '@/utils/jobs';
 import { looksLikeJson } from '@/utils/progress';
 import ArtifactList from './ArtifactList';
+import JobError from './JobError';
 import MarkdownView from './MarkdownView';
 import ProgressBar from './ProgressBar';
 import StatusPill from './StatusPill';
@@ -28,30 +30,7 @@ function pollErrorMessage(pollError: unknown): string {
   return 'Не удалось получить статус задачи';
 }
 
-/** Разделитель «заголовок / сырые детали» из CliErrorTranslator бэкенда. */
-const DETAILS_SEPARATOR = '\n— детали —\n';
-
-/**
- * Ошибка джобы: человекопонятный заголовок крупно, сырой хвост журнала — свёрнутым блоком
- * (бэкенд склеивает их через DETAILS_SEPARATOR; без разделителя показываем как раньше).
- */
-function JobError({ error }: { error: string }) {
-  const splitAt = error.indexOf(DETAILS_SEPARATOR);
-  const headline = splitAt >= 0 ? error.slice(0, splitAt) : error;
-  const details = splitAt >= 0 ? error.slice(splitAt + DETAILS_SEPARATOR.length) : null;
-  return (
-    <>
-      <div className="error-block">{headline}</div>
-      {details ? (
-        <details className="params">
-          <summary className="params-summary">Подробности журнала</summary>
-          <pre className="error-details">{details}</pre>
-        </details>
-      ) : null}
-    </>
-  );
-}
-
+/** Карточка задачи расписания/калибровки/истории: статус, очередь, прогресс, ошибка, итог и файлы. */
 export default function JobCard({ jobId, job, pollError, successContent, onDismiss }: JobCardProps) {
   const cancel = useMutation({
     mutationFn: () => {
@@ -69,7 +48,7 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
       Отменить задачу
     </button>
   );
-  if (pollError instanceof ApiError && [404, 410].includes(pollError.status)) {
+  if (isJobGone(pollError)) {
     return (
       <section className="card">
         <div className="error-block">
@@ -92,7 +71,8 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
 
   if (!job) return jobId ? <section className="card">Получаю статус задачи… {cancelButton}</section> : null;
 
-  const active = ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status);
+  const active = isActiveStatus(job.status);
+  const failed = job.status === 'FAILED';
 
   return (
     <section className="card job-card">
@@ -107,14 +87,12 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
         <p>
           Место в очереди: {job.queuePosition ?? '—'}.{' '}
           {job.estimatedWaitFromSeconds != null && job.estimatedWaitToSeconds != null
-            ? `Ожидание примерно ${Math.floor(job.estimatedWaitFromSeconds / 60)}–${Math.ceil(job.estimatedWaitToSeconds / 60)} мин. `
+            ? `Ожидание примерно ${formatWaitMinutes(job.estimatedWaitFromSeconds, job.estimatedWaitToSeconds)} мин. `
             : ''}
           {job.estimateReason ?? 'Время ожидания уточняется.'}
         </p>
       )}
-      {serverMode && job.expiresAt && (
-        <p className="hint">Файлы доступны до {new Date(job.expiresAt).toLocaleString()}</p>
-      )}
+      {serverMode && job.expiresAt && <p className="hint">Файлы доступны до {formatDateTime(job.expiresAt)}</p>}
       {active && job.canManage !== false && cancelButton}
       {active ? (
         <ProgressBar
@@ -123,42 +101,52 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
         />
       ) : null}
 
-      {job.status === 'FAILED' && job.error ? <JobError error={job.error} /> : null}
-      {job.status === 'FAILED' && !job.error ? <div className="error-block">Задача завершилась с ошибкой</div> : null}
-
+      {failed ? <JobError error={job.error || 'Задача завершилась с ошибкой'} collapsible /> : null}
       {active && pollError ? <div className="error-block">{pollErrorMessage(pollError)}</div> : null}
 
-      {job.status === 'FAILED' && <ArtifactList artifacts={job.artifacts} />}
+      {failed && <ArtifactList artifacts={job.artifacts} />}
       {job.status === 'SUCCEEDED' && (
         <>
           {successContent}
-          {job.pack?.time ? (
-            <div className="stack-sm">
-              {packTimeLines(job.pack.time).map((line) => (
-                <p className="time-summary" key={line}>
-                  {line}
-                </p>
-              ))}
-            </div>
-          ) : null}
-          {job.pack?.supportsDetected ? (
-            <p className="time-summary">обнаружены поддержки: поворот моделей заблокирован</p>
-          ) : null}
-          {job.calibration ? (
-            <div className="stack-sm">
-              <p className="time-summary">
-                Оценка слайсера: A — {formatHoursMinutes(job.calibration.estimateASeconds)}, B —{' '}
-                {formatHoursMinutes(job.calibration.estimateBSeconds)}; смен в B: {job.calibration.changesSliced}
-              </p>
-              <details className="params" open>
-                <summary className="params-summary">Инструкция</summary>
-                <MarkdownView source={job.calibration.instructions} />
-              </details>
-            </div>
-          ) : null}
+          {job.pack ? <PackSummary pack={job.pack} /> : null}
+          {job.calibration ? <CalibrationSummary calibration={job.calibration} /> : null}
           <ArtifactList artifacts={job.artifacts} />
         </>
       )}
     </section>
+  );
+}
+
+function PackSummary({ pack }: { pack: PackJobInfo }) {
+  return (
+    <>
+      {pack.time ? (
+        <div className="stack-sm">
+          {packTimeLines(pack.time).map((line) => (
+            <p className="time-summary" key={line}>
+              {line}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {pack.supportsDetected ? (
+        <p className="time-summary">обнаружены поддержки: поворот моделей заблокирован</p>
+      ) : null}
+    </>
+  );
+}
+
+function CalibrationSummary({ calibration }: { calibration: CalibrationInfo }) {
+  return (
+    <div className="stack-sm">
+      <p className="time-summary">
+        Оценка слайсера: A — {formatHoursMinutes(calibration.estimateASeconds)}, B —{' '}
+        {formatHoursMinutes(calibration.estimateBSeconds)}; смен в B: {calibration.changesSliced}
+      </p>
+      <details className="params" open>
+        <summary className="params-summary">Инструкция</summary>
+        <MarkdownView source={calibration.instructions} />
+      </details>
+    </div>
   );
 }

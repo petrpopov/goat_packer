@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { ApiError } from '@/api/http';
-import { fetchProfiles, startCalibrationJob } from '@/api/services';
+import { useMutation } from '@tanstack/react-query';
+import { startCalibrationJob } from '@/api/services';
 import AmsCalculator from '@/components/AmsCalculator';
 import Field from '@/components/Field';
 import FileDrop from '@/components/FileDrop';
 import Icon from '@/components/Icon';
 import JobCard from '@/components/JobCard';
-import { useJob } from '@/hooks/useJob';
+import { useJobView } from '@/hooks/useJob';
 import { useProfileDetection } from '@/hooks/useProfileDetection';
+import { useProfiles } from '@/hooks/useProfiles';
 import { pushToast } from '@/store/useToastStore';
 import { calibrationValues, readStoredCalibration, storeCalibration } from '@/utils/calibration';
+import { apiErrorMessage, errorMessage } from '@/utils/jobs';
 
 type Variant = 'normal' | 'perfectionist';
 
@@ -19,8 +20,6 @@ const VARIANTS: { value: Variant; label: string }[] = [
   { value: 'normal', label: 'Обычный — 10 смен, ≈±12 с' },
   { value: 'perfectionist', label: 'Перфекционист — 30 смен, ≈±4 с' },
 ];
-
-const ACTIVE = ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'];
 
 /**
  * «Калибровка AMS»: из своего проекта получить два тестовых кубика (A без смен, B со сменами),
@@ -33,8 +32,7 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
 
-  const profilesQuery = useQuery({ queryKey: ['profiles'], queryFn: fetchProfiles });
-  const profiles = useMemo(() => profilesQuery.data ?? [], [profilesQuery.data]);
+  const { profiles, loading: profilesLoading } = useProfiles();
 
   const detection = useProfileDetection(file);
   const detectedProfileId = detection.data?.profileId ?? null;
@@ -43,10 +41,7 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
   const profile = profiles.find((candidate) => candidate.id === profileId) ?? null;
   const calibrationNeeded = profile === null || profile.filamentChangeSeconds != null;
 
-  const jobQuery = useJob(jobId);
-  const job = jobQuery.data ?? null;
-  const jobGone = jobQuery.error instanceof ApiError && [404, 410].includes(jobQuery.error.status);
-  const jobActive = Boolean(jobId) && !jobGone && (!job || ACTIVE.includes(job.status));
+  const { query: jobQuery, job, active: jobActive } = useJobView(jobId);
   const result = job?.status === 'SUCCEEDED' ? (job.calibration ?? null) : null;
 
   // Значения теста запоминаются: калькулятор нужен после печати, часто уже без этой задачи.
@@ -55,9 +50,7 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
   }, [result]);
 
   const detectionError = detection.isError
-    ? detection.error instanceof Error
-      ? detection.error.message
-      : 'Не удалось проверить файл'
+    ? errorMessage(detection.error, 'Не удалось проверить файл')
     : file !== null && detection.isSuccess && detectedProfileId === null
       ? detection.data?.printerModel
         ? `Для принтера «${detection.data.printerModel}» не найден подходящий профиль.`
@@ -70,7 +63,7 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
       setJobId(response.jobId);
       pushToast('Готовлю тестовые файлы', 'success');
     },
-    onError: (error) => pushToast(error instanceof ApiError ? error.message : 'Не удалось выполнить запрос', 'error'),
+    onError: (error) => pushToast(apiErrorMessage(error, 'Не удалось выполнить запрос'), 'error'),
   });
 
   const busy = jobActive || startMutation.isPending;
@@ -93,7 +86,14 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
       {embedded ? (
         <div className="side-head">
           <h2>Калибровка смены прутка</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть" data-tip="Закрыть" data-tip-align="end">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onClose}
+            aria-label="Закрыть"
+            data-tip="Закрыть"
+            data-tip-align="end"
+          >
             <Icon name="x" />
           </button>
         </div>
@@ -121,7 +121,7 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
                 onChange={(event) => setChosenProfileId(event.target.value)}
                 disabled={detectedProfileId !== null || busy}
               >
-                <option value="">{profilesQuery.isPending ? 'Загрузка…' : '— выберите профиль —'}</option>
+                <option value="">{profilesLoading ? 'Загрузка…' : '— выберите профиль —'}</option>
                 {profiles.map((candidate) => (
                   <option key={candidate.id} value={candidate.id}>
                     {candidate.name}

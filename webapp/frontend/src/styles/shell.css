@@ -80,6 +80,10 @@
 .btn-lg { height: 40px; padding: 0 20px; font-size: 14px; }
 .link { color: var(--accent); font-weight: 500; text-decoration: none; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
 .link:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Ссылка-кнопка в сетке формы: по левому краю, а не на всю ширину. */
+.link-start { justify-self: start; }
+/* Мелкая ссылка рядом с подписью поля («Забыли пароль?»). */
+.link-small { font-size: 12px; }
 
 @media (max-width: 760px) {
   .app-body, .app.rail .app-body { grid-template-columns: 1fr; }

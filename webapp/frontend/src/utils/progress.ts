@@ -1,6 +1,7 @@
 /** Этапы упаковки для шкалы и строки статуса (протокол stage-событий colored_3mf_packer). */
 
 import type { JobStage, PackStageId } from '../api/types';
+import { formatDuration } from './format';
 
 /** Канонический порядок этапов; необязательные — те, в которые пакер заходит не всегда. */
 const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
@@ -14,30 +15,6 @@ const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
   { id: 'window_slice', label: 'Подбор под окно времени', optional: true },
   { id: 'writing', label: 'Запись результата', optional: false },
 ];
-
-/** «1 объект», «3 объекта», «37 объектов». */
-export function objectsText(count: number): string {
-  const mod100 = count % 100;
-  const mod10 = count % 10;
-  const word =
-    mod100 >= 11 && mod100 <= 14
-      ? 'объектов'
-      : mod10 === 1
-        ? 'объект'
-        : mod10 >= 2 && mod10 <= 4
-          ? 'объекта'
-          : 'объектов';
-  return `${count} ${word}`;
-}
-
-/** Длительность: «45 с», «2 мин 05 с», «1 ч 03 мин». */
-export function formatDuration(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  if (total < 60) return `${total} с`;
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${minutes} мин ${String(total % 60).padStart(2, '0')} с`;
-  return `${Math.floor(minutes / 60)} ч ${String(minutes % 60).padStart(2, '0')} мин`;
-}
 
 /** Оставшееся время этапа: «осталось ≈ 3 мин»; null — у пакера нет оценки. */
 export function remainingText(elapsedSeconds: number, expectedSeconds: number | null): string | null {
@@ -55,10 +32,12 @@ export function stageElapsed(stage: JobStage, receivedAtMs: number | undefined, 
   return stage.elapsedSeconds + sinceReceived;
 }
 
-/** Строка времени этапа: «идёт 2 мин 05 с · осталось ≈ 3 мин». */
-export function stageTimeLine(elapsedSeconds: number, expectedSeconds: number | null): string {
-  const remaining = remainingText(elapsedSeconds, expectedSeconds);
-  return `идёт ${formatDuration(elapsedSeconds)}${remaining ? ` · ${remaining}` : ''}`;
+/**
+ * Время идущего этапа: «осталось ≈ 3 мин», а без оценки пакера — сколько он уже длится («2 мин 05 с»).
+ * Без слова «идёт»: тикающее время и так говорит, что этап не закончился.
+ */
+export function stageClockText(elapsedSeconds: number, expectedSeconds: number | null): string {
+  return remainingText(elapsedSeconds, expectedSeconds) ?? formatDuration(elapsedSeconds);
 }
 
 /**

@@ -1,33 +1,9 @@
-import { downloadArtifact } from '@/api/services';
 import type { JobArtifact } from '@/api/types';
-import { pushToast } from '@/store/useToastStore';
-import { formatBytes } from '@/utils/format';
+import { describeArtifact, isPlateFile, startDownload, visibleArtifacts } from '@/utils/artifacts';
+import { formatBytes, formatShortDateTime } from '@/utils/format';
 import Icon from './Icon';
 
-/** Служебные файлы: состояние упаковки нужно только кнопке «Нарезать стол», не пользователю. */
-const HIDDEN = new Set(['pack_state.json']);
-
-/** Человеческие подписи файлов упаковки; результат — первым. */
-function describe(name: string): { label: string; order: number } {
-  if (name.endsWith('.3mf')) return { label: `${name} — стол для слайсера`, order: 0 };
-  if (name === 'log.txt') return { label: 'Журнал упаковки', order: 1 };
-  if (name.endsWith('verification.json')) return { label: 'Отчёт проверки (JSON)', order: 2 };
-  if (name === 'placements.json') return { label: 'Координаты объектов (JSON)', order: 3 };
-  return { label: name, order: 4 };
-}
-
-export function visibleArtifacts(artifacts: JobArtifact[]): JobArtifact[] {
-  return artifacts
-    .filter((artifact) => !HIDDEN.has(artifact.name))
-    .sort((a, b) => describe(a.name).order - describe(b.name).order);
-}
-
-export function startDownload(artifact: JobArtifact): void {
-  downloadArtifact(artifact).catch((error: unknown) =>
-    pushToast(error instanceof Error ? error.message : 'Не удалось скачать файл', 'error')
-  );
-}
-
+/** Файлы задачи в панели «Инфо»: подписи по-человечески, стол первым, срок хранения внизу. */
 export default function JobFiles({
   artifacts,
   expiresAt,
@@ -53,8 +29,8 @@ export default function JobFiles({
                 startDownload(artifact);
               }}
             >
-              <Icon name={artifact.name.endsWith('.3mf') ? 'download' : 'file'} />
-              <span className="name">{labelOf?.(artifact) ?? describe(artifact.name).label}</span>
+              <Icon name={isPlateFile(artifact) ? 'download' : 'file'} />
+              <span className="name">{labelOf?.(artifact) ?? describeArtifact(artifact.name).label}</span>
               <small>{formatBytes(artifact.sizeBytes)}</small>
             </a>
           ))}
@@ -62,18 +38,7 @@ export default function JobFiles({
       ) : (
         <p className="hint">Файлов нет.</p>
       )}
-      {expiresAt ? (
-        <p className="hint">
-          Файлы хранятся до{' '}
-          {new Date(expiresAt).toLocaleString('ru-RU', {
-            day: '2-digit',
-            month: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
-          .
-        </p>
-      ) : null}
+      {expiresAt ? <p className="hint">Файлы хранятся до {formatShortDateTime(expiresAt)}.</p> : null}
     </>
   );
 }

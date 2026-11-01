@@ -3,6 +3,7 @@
  * Чистые функции — без React, покрыты tests/printers.test.ts.
  */
 import type { PrinterProfile, ProjectBed } from '../api/types';
+import { pluralRu } from './format';
 
 /** Минимум полей профиля, который нужен группировке (PrinterProfile подходит целиком). */
 export interface PrinterLike {
@@ -126,14 +127,10 @@ export function customBedFromProject(projectBed: ProjectBed): CustomBedInput {
   };
 }
 
-/** STL — по имени файла (так же решает бэкенд). */
 /** Объявление для экранного диктора при поиске: «Найдено 1 принтер / 3 принтера / 5 принтеров». */
 export function foundPrintersMessage(count: number): string {
-  const tens = count % 100;
-  const ones = count % 10;
-  const word =
-    tens >= 11 && tens <= 14 ? 'принтеров' : ones === 1 ? 'принтер' : ones >= 2 && ones <= 4 ? 'принтера' : 'принтеров';
-  return `Найдено ${count} ${word}`;
+  return `Найдено ${count} ${pluralRu(count, ['принтер', 'принтера', 'принтеров'])}`;
 }
 
+/** STL — по имени файла (так же решает бэкенд). */
 export const isStlName = (name: string) => name.trim().toLowerCase().endsWith('.stl');

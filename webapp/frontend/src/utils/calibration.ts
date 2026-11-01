@@ -4,6 +4,8 @@
  * одним и тем же расчётом и одним ключом хранения.
  */
 
+import { inRange, LIMITS } from './forms';
+
 /** Значения calibration.json, нужные калькулятору (секунды и число смен в B). */
 export interface CalibrationValues {
   estimateASeconds: number;
@@ -144,7 +146,8 @@ function writeEntry(key: string, profileId: string, value: unknown, storage: Key
 export function readStoredChangeSeconds(storage: KeyValueStorage | null = browserStorage()): Record<string, number> {
   const result: Record<string, number> = {};
   for (const [profileId, value] of Object.entries(readMap(CHANGE_SECONDS_KEY, storage))) {
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 600) result[profileId] = value;
+    if (typeof value === 'number' && Number.isFinite(value) && inRange(String(value), LIMITS.changeSeconds))
+      result[profileId] = value;
   }
   return result;
 }

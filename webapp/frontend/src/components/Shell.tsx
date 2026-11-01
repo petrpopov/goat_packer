@@ -4,7 +4,7 @@ import AccountMenu from '@/components/AccountMenu';
 import BrandMark from '@/components/BrandMark';
 import Icon, { type IconName } from '@/components/Icon';
 import { useLinkHandler } from '@/hooks/useLinkHandler';
-import type { Session } from '@/pages/ServerPages';
+import type { Session } from '@/api/types';
 import { useUiStore } from '@/store/useUiStore';
 import type { Route } from '@/utils/routes';
 

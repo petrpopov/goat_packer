@@ -4,7 +4,9 @@ import type { DragEvent } from 'react';
 import { pushToast } from '@/store/useToastStore';
 import { formatBytes } from '@/utils/format';
 
-const MAX_FILE_SIZE_BYTES = (serverMode ? 50 : 200) * 1024 * 1024;
+/** Предел файла, МБ: сервер принимает меньше, чем локальный бэкенд. */
+const MAX_FILE_SIZE_MB = serverMode ? 50 : 200;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 interface FileDropProps {
   file: File | null;
@@ -19,7 +21,7 @@ function validateFile(file: File, allowStl: boolean): string | null {
   if (!name.endsWith('.3mf') && !(allowStl && name.endsWith('.stl')))
     return allowStl ? 'Выберите .3mf или .stl' : 'Поддерживаются только файлы .3mf';
   if (file.size === 0) return 'Файл пуст';
-  if (file.size > MAX_FILE_SIZE_BYTES) return `Файл больше ${MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ`;
+  if (file.size > MAX_FILE_SIZE_BYTES) return `Файл больше ${MAX_FILE_SIZE_MB} МБ`;
   return null;
 }
 
@@ -94,7 +96,7 @@ export default function FileDrop({ file, onFileChange, disabled = false, allowSt
       ) : (
         <>
           <span className="file-name">Перетащите файл {kinds} сюда</span>
-          <span className="file-size">или нажмите для выбора · до {MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ</span>
+          <span className="file-size">или нажмите для выбора · до {MAX_FILE_SIZE_MB} МБ</span>
         </>
       )}
       <input

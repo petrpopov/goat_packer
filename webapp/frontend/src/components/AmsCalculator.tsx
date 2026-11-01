@@ -3,7 +3,9 @@ import { pushToast } from '@/store/useToastStore';
 import { useCalibrationStore } from '@/store/useCalibrationStore';
 import { computeChangeSeconds, parseCalibrationJson, storeCalibration } from '@/utils/calibration';
 import type { CalibrationValues } from '@/utils/calibration';
+import { LIMITS, rangeHint } from '@/utils/forms';
 import Field from './Field';
+import NumberInput from './NumberInput';
 
 interface AmsCalculatorProps {
   /** Принтер, для которого сохраняется результат; null — сохранить нельзя. */
@@ -40,7 +42,8 @@ export default function AmsCalculator({ profileId, profileName, initial }: AmsCa
   const outcome = computeChangeSeconds(clocks, values);
   const allClocks = Object.values(clocks).every((value) => value.trim() !== '');
   // Поле коррекции на бэкенде принимает 0–600 с.
-  const storable = outcome.ok && outcome.realSeconds >= 0 && outcome.realSeconds <= 600;
+  const storable =
+    outcome.ok && outcome.realSeconds >= LIMITS.changeSeconds.min && outcome.realSeconds <= LIMITS.changeSeconds.max;
 
   const applyPasted = () => {
     const parsed = parseCalibrationJson(pasted);
@@ -92,41 +95,16 @@ export default function AmsCalculator({ profileId, profileName, initial }: AmsCa
         <summary className="params-summary">Значения из calibration.json</summary>
         <div className="form-grid">
           <Field label="Оценка A, с">
-            <input
-              className="input"
-              type="number"
-              step="any"
-              value={estimateA}
-              onChange={(e) => setEstimateA(e.target.value)}
-            />
+            <NumberInput value={estimateA} onChange={setEstimateA} />
           </Field>
           <Field label="Оценка B, с">
-            <input
-              className="input"
-              type="number"
-              step="any"
-              value={estimateB}
-              onChange={(e) => setEstimateB(e.target.value)}
-            />
+            <NumberInput value={estimateB} onChange={setEstimateB} />
           </Field>
           <Field label="Смен в B">
-            <input
-              className="input"
-              type="number"
-              min={1}
-              step={1}
-              value={changes}
-              onChange={(e) => setChanges(e.target.value)}
-            />
+            <NumberInput min={1} step={1} value={changes} onChange={setChanges} />
           </Field>
           <Field label="Смена в слайсере, с">
-            <input
-              className="input"
-              type="number"
-              step="any"
-              value={slicerChange}
-              onChange={(e) => setSlicerChange(e.target.value)}
-            />
+            <NumberInput value={slicerChange} onChange={setSlicerChange} />
           </Field>
         </div>
         <div className="stack-sm">
@@ -160,7 +138,9 @@ export default function AmsCalculator({ profileId, profileName, initial }: AmsCa
               Использовать как коррекцию
             </button>
             {!profileId ? <span className="field-hint">выберите принтер, чтобы сохранить</span> : null}
-            {profileId && !storable ? <span className="field-hint">коррекция принимает 0–600 с</span> : null}
+            {profileId && !storable ? (
+              <span className="field-hint">коррекция принимает {rangeHint(LIMITS.changeSeconds, 'с')}</span>
+            ) : null}
           </div>
         </div>
       ) : allClocks ? (
