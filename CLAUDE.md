@@ -29,6 +29,8 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - `SLICER_KEEPOUT_SAFETY_MM = 4.0` is empirical (false "gcode path conflicts" on dense plates). Don't lower it from a single-object test.
 - `slicer_kind` is inferred from `printer_model`, not 3MF `Application` metadata (Orca forks still say BambuStudio).
 - No prime tower (`parse_prime_tower_bounds` -> `None`) is legitimate, not an error.
+- Slices are read in plate coordinates: BambuStudio writes G-code minus the project's `extruder_offset` (P1S `0x2`) and its GUI adds it back before the "G-code path goes beyond plate boundaries" check (CLI has no such check). `slice_project` shifts every slice (`gcode_frame`), the profile's `purge_lines` (start G-code frame) move by the same offset at startup.
+- The GUI re-clamps the stored tower on 3MF open to `[15 mm, bed − estimated size − 15 mm]` (Orca 1 mm; `plate_centre::gui_tower_anchor_range`); the CLI keeps it. Tower corners, free spots and centre-out targets stay inside that range, or the GUI moves the tower onto objects.
 - Every slicer call goes through `slicer_cli::slice_command`, which passes `--arrange 0`: without it Orca re-arranges the plate on slice (25 of 38 sliced on U1). BambuStudio takes the same flag; don't narrow it to `slicer_kind = orca`.
 
 ## `colored_3mf_packer` (`src/bin/colored_3mf_packer.rs`) invariants

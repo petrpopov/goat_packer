@@ -11,6 +11,7 @@ pub mod bed_outline;
 pub mod colored_packer;
 pub mod embedded_mesh;
 pub mod gcode_collisions;
+pub mod gcode_frame;
 pub mod nozzle_clean;
 pub mod orca_presets;
 pub mod orca_project;

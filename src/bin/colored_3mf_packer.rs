@@ -19,12 +19,14 @@ use goat_packer::{
         PlateAnalysis, SupportCollision, analyze_plate, layer_zones_from_sample, match_placements,
         nudge_apart,
     },
+    gcode_frame::{extruder_offset, gcode_to_plate_frame},
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     plate_centre::{
         RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, ensure_relocated_tower_clear,
         loops_bounds, plate_centre,
         relocate_keepout, relocate_wipe_tower_in_3mf, smallest_containing_zone,
-        tower_corner_error_mm, union_rect, free_tower_spot,
+        tower_corner_error_mm, union_rect, free_tower_spot, gui_tower_anchor_range,
+        wipe_tower_anchor,
     },
     progress::{self, RepackReason, Stage, expected_reslice_seconds, expected_slice_seconds},
     print_time::{
@@ -374,6 +376,15 @@ fn run() -> AppResult<()> {
         profile.edge_margin_mm = edge_margin;
     }
     validate_source_printer(&args.source_3mf, &profile)?;
+    // The profile's purge lines come from the start G-code, i.e. G-code coordinates; slices are
+    // read in plate coordinates (see `gcode_frame`), so the lines move by the same offset.
+    let gcode_offset = extruder_offset(&source_project_settings(&args.source_3mf)?)?;
+    for line in &mut profile.purge_lines {
+        line[0] += gcode_offset.0;
+        line[1] += gcode_offset.1;
+        line[2] += gcode_offset.0;
+        line[3] += gcode_offset.1;
+    }
     // Read once: the assembled output copies project_settings.config byte-for-byte, so the
     // source's per-change assumption holds for every plate sliced below.
     let slicer_change_s = slicer_change_seconds(&source_project_settings(&args.source_3mf)?);
@@ -402,6 +413,7 @@ fn run() -> AppResult<()> {
     // standalone STL's keyring-hole position did not match the embedded mesh's.
     let footprint_stl = args.work_dir.join("embedded_source.stl");
     derive_embedded_stl(&args.source_3mf, &footprint_stl)?;
+    let gui_tower = gui_tower_range(&args.source_3mf, &profile, &footprint_stl)?;
     // `--finish-state`: the plate was packed by an earlier run without the final slice; its
     // plan and layout come back from the state file and only the final slice and its checks
     // run (spec 2026-11-01-sample-slice-layer-zones-design).
@@ -629,7 +641,10 @@ fn run() -> AppResult<()> {
         let usable_bed = profile.usable_bed()?;
         let centre_relocation: Option<RelocatedTower> = match (centre, probe_tower) {
             (Some(centre), Some(tower)) => {
-                let moved = relocate_keepout(tower.keepout, centre, usable_bed);
+                let moved = keep_in_gui_range(
+                    relocate_keepout(tower.keepout, centre, usable_bed),
+                    gui_tower.map(|range| range.keepout_min_range(tower.keepout)),
+                );
                 // The clamp only knows the bed; a centre near an exclusion corner or purge line
                 // would put the printed tower on it.
                 ensure_relocated_tower_clear(moved.keepout, &fixed_keepouts)?;
@@ -695,7 +710,13 @@ fn run() -> AppResult<()> {
         let mut tower_from_contest = false;
         let mut packed = match (centre, probe_tower) {
             (None, Some(tower)) => {
-                let (relocation, packed) = choose_tower_position(&args, &profile, &plan, tower.keepout)?;
+                let (relocation, packed) = choose_tower_position(
+                    &args,
+                    &profile,
+                    &plan,
+                    tower.keepout,
+                    gui_tower.map(|range| range.keepout_min_range(tower.keepout)),
+                )?;
                 if let Some(relocated) = relocation {
                     plan.tower_keepout = Some(relocated.keepout);
                     plan.relocation = Some(relocated);
@@ -769,7 +790,14 @@ fn run() -> AppResult<()> {
         // spot the tower goes there instead: same objects, no scrap printed into the tower.
         // Centre-out plates keep their tower at the target.
         if let (None, Some(probe), false) = (centre, probe_tower, tower_pinned)
-            && let Some(relocated) = clear_tower_of_patches(&args, &profile, &plan, &packed, probe.keepout)?
+            && let Some(relocated) = clear_tower_of_patches(
+                &args,
+                &profile,
+                &plan,
+                &packed,
+                probe.keepout,
+                gui_tower.map(|range| range.keepout_min_range(probe.keepout)),
+            )?
         {
             plan.tower_keepout = Some(relocated.keepout);
             plan.relocation = Some(relocated);
@@ -1433,6 +1461,66 @@ const CORNER_TOWER_GROWTH: f64 = 0.3;
 /// tower falls back to the source position (see `run`).
 const CORNER_TOWER_INSET_MM: f64 = 6.0;
 
+/// Where the slicer GUI keeps the stored tower position on open (`gui_tower_anchor_range`),
+/// plus the source's stored position to translate it into keepout coordinates.
+#[derive(Clone, Copy, Debug)]
+struct GuiTowerRange {
+    anchor_range: Rect,
+    source_anchor: (f64, f64),
+}
+
+impl GuiTowerRange {
+    /// The same range for the min corner of a tower keepout measured with the source position:
+    /// the stored position and the keepout's min corner move together (`RelocatedTower::shift`).
+    fn keepout_min_range(self, probe_keepout: Rect) -> Rect {
+        let offset_x = self.source_anchor.0 - probe_keepout.min_x;
+        let offset_y = self.source_anchor.1 - probe_keepout.min_y;
+        Rect::new(
+            self.anchor_range.min_x - offset_x,
+            self.anchor_range.min_y - offset_y,
+            self.anchor_range.max_x - offset_x,
+            self.anchor_range.max_y - offset_y,
+        )
+    }
+}
+
+/// `None` when the project shows no tower or the GUI range is empty.
+fn gui_tower_range(
+    source: &Path,
+    profile: &PrinterProfile,
+    footprint_stl: &Path,
+) -> AppResult<Option<GuiTowerRange>> {
+    let settings = source_project_settings(source)?;
+    let mesh = extract_footprint(footprint_stl)?;
+    let Some(anchor_range) = gui_tower_anchor_range(
+        &settings,
+        &profile.slicer_kind,
+        profile.printable_bed(),
+        mesh.max_z - mesh.min_z,
+    ) else {
+        return Ok(None);
+    };
+    let Ok(source_anchor) = wipe_tower_anchor(&settings) else {
+        return Ok(None);
+    };
+    Ok(Some(GuiTowerRange { anchor_range, source_anchor }))
+}
+
+/// Moves a relocated tower (keepout and setting shift together) so its keepout's min corner
+/// lies in `range`, where the slicer GUI leaves it on open.
+fn keep_in_gui_range(relocated: RelocatedTower, range: Option<Rect>) -> RelocatedTower {
+    let Some(range) = range else {
+        return relocated;
+    };
+    let keepout = relocated.keepout;
+    let dx = keepout.min_x.clamp(range.min_x, range.max_x) - keepout.min_x;
+    let dy = keepout.min_y.clamp(range.min_y, range.max_y) - keepout.min_y;
+    RelocatedTower {
+        keepout: Rect::new(keepout.min_x + dx, keepout.min_y + dy, keepout.max_x + dx, keepout.max_y + dy),
+        shift: (relocated.shift.0 + dx, relocated.shift.1 + dy),
+    }
+}
+
 /// Spec 2026-10-31 rule 3: the source tower position competes with the four usable-bed
 /// corners; the densest plate wins, ties keep the source position (then the corner order).
 /// A corner keepout reserves the growth room above the tower (`CORNER_TOWER_GROWTH`), and a
@@ -1444,6 +1532,7 @@ fn choose_tower_position(
     profile: &PrinterProfile,
     plan: &PackPlan,
     probe_keepout: Rect,
+    gui_range: Option<Rect>,
 ) -> AppResult<(Option<RelocatedTower>, PackResult)> {
     let bed = profile.usable_bed()?;
     let footprint = plan.rule_footprint();
@@ -1455,10 +1544,28 @@ fn choose_tower_position(
         (name, Some(RelocatedTower { keepout, shift }))
     };
     let inset = CORNER_TOWER_INSET_MM;
-    let (left, right) = (bed.min_x + inset, bed.max_x - inset - width);
-    let (bottom, top) = (bed.min_y + inset, bed.max_y - inset - depth);
+    // The slicer GUI would pull a corner tower back into its range on open (see
+    // `gui_tower_anchor_range`), so the corners are where it keeps them.
+    let clamp_x = |x: f64| gui_range.map_or(x, |range| x.clamp(range.min_x, range.max_x));
+    let clamp_y = |y: f64| gui_range.map_or(y, |range| y.clamp(range.min_y, range.max_y));
+    let (left, right) = (clamp_x(bed.min_x + inset), clamp_x(bed.max_x - inset - width));
+    let (bottom, top) = (clamp_y(bed.min_y + inset), clamp_y(bed.max_y - inset - depth));
+    // A source tower outside the range moves on open as well; it competes where it will print.
+    let source = keep_in_gui_range(
+        RelocatedTower { keepout: probe_keepout, shift: (0.0, 0.0) },
+        gui_range,
+    );
+    let source = (source.shift != (0.0, 0.0)).then(|| {
+        let keepout = Rect::new(
+            source.keepout.min_x,
+            source.keepout.min_y,
+            source.keepout.min_x + width,
+            source.keepout.min_y + (probe_keepout.max_y - probe_keepout.min_y),
+        );
+        RelocatedTower { keepout, shift: source.shift }
+    });
     let candidates = [
-        ("source position", None),
+        ("source position", source),
         corner("bottom-left corner", left, bottom),
         corner("bottom-right corner", right, bottom),
         corner("top-left corner", left, top),
@@ -1521,6 +1628,7 @@ fn clear_tower_of_patches(
     plan: &PackPlan,
     packed: &PackResult,
     probe_keepout: Rect,
+    gui_range: Option<Rect>,
 ) -> AppResult<Option<RelocatedTower>> {
     let Some(reserved) = plan.tower_keepout else {
         return Ok(None);
@@ -1563,7 +1671,20 @@ fn clear_tower_of_patches(
     let width = reserved.max_x - reserved.min_x;
     let depth = (reserved.max_y - reserved.min_y)
         .max((probe_keepout.max_y - probe_keepout.min_y) * (1.0 + CORNER_TOWER_GROWTH));
-    let area = profile.usable_bed()?.inset(CORNER_TOWER_INSET_MM)?;
+    let mut area = profile.usable_bed()?.inset(CORNER_TOWER_INSET_MM)?;
+    // Only spots the slicer GUI keeps on open (see `gui_tower_anchor_range`).
+    if let Some(range) = gui_range {
+        area = Rect::new(
+            area.min_x.max(range.min_x),
+            area.min_y.max(range.min_y),
+            area.max_x.min(range.max_x + width),
+            area.max_y.min(range.max_y + depth),
+        );
+        if area.min_x >= area.max_x || area.min_y >= area.max_y {
+            println!("prime tower touches the supports of {touching} placement(s); no free spot the slicer GUI keeps");
+            return Ok(None);
+        }
+    }
     let Some(spot) = free_tower_spot(
         reserved,
         (width, depth),
@@ -1977,7 +2098,10 @@ fn slice_project(
         .map(|entry| entry.path())
         .find(|path| path.extension().is_some_and(|extension| extension == "gcode"))
         .ok_or("slicer output did not contain G-code")?;
-    let gcode = fs::read(gcode_path)?;
+    // Everything below reads the slice in plate coordinates, the frame of the meshes, the bed
+    // and the build items (see `gcode_frame`).
+    let offset = extruder_offset(&source_project_settings(project)?)?;
+    let gcode = gcode_to_plate_frame(&fs::read(gcode_path)?, offset);
     // Same sources as the scheduler's benchmark: BambuStudio writes its summary (with the
     // change count) to result.json, Orca only leaves the estimate in the G-code.
     let estimate = if profile.slicer_kind == "bambu" {
