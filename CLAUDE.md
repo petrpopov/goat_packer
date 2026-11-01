@@ -14,7 +14,9 @@ CI: Woodpecker `ci.ezheg.xyz` (`.woodpecker/`): `check` on every push, `release`
 
 Tests must stay self-contained: generated temp data or `tests/fixtures/` only; no sibling-dir paths, symlinks, env-gated no-op tests, shared `/tmp` names. The packer and tests never call a slicer or network; the production colored-3MF pipeline does (slicer path comes from the printer profile).
 
-## Packing core (`src/lib.rs`, `src/packing_search.rs`)
+## Packing core (`src/packing.rs`, `src/packing_search.rs`, `src/raster_mask.rs`, `src/collision.rs`, `src/validation.rs`)
+
+Module map: `geometry` (Point/Rect/loops), `footprint` (+ `stl`, `gcode_footprint` build it), `span_raster`/`pixel_mask`/`raster_mask` (pixels per angle), `collision` (zone pairs, bed, exclusions), `packing`/`grid`/`packing_search`/`frame` (the search and the lattice baseline), `validation` (`validate_result`), `options` (`PackOptions`, `PackResult`). `lib.rs` only declares modules and re-exports the public API. G-code vocabulary and arc maths shared by the readers live in `gcode_text`.
 
 - Search is deterministic; `seed`/`candidates`/`stall` are compatibility fields, not random controls. More effort extends a prefix, never discards an earlier winner. Rayon only parallelizes independent angle families.
 - `validate_result` must stay independent of the search's no-fit maps (it re-rasterizes). `verify_outputs` is a further independent check (`geo`, exact geometry) sharing no packing code: use it as second opinion on any layout change. It covers clearance between mesh silhouettes/bodies, keepouts, margins, transforms; it does NOT check `--support-overlap-mm` (support cores are only checked by `validate_result`).
@@ -23,7 +25,7 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - Support landing (`Footprint::support_landing_loops` = probe's first-layer body): pairs are full patch vs foreign landing zone (both ways) + silhouette vs silhouette (`zone_pairs`, used by no-fit, grid and `validate_result`). Empty landing = old two-zone rule, byte-identical. The silhouette zone (`body_loops`) also carries the probe's support interfaces above layer 1 (`support_interface_loops`): they print up to ~2.5 mm past the overhangs, and without them neighbours' walls met them at z ≈ 23 mm and the strict fallback cost a P1S goat plate 43 → 38. Evidence: a hand-made 40-goat P1S plate printed supports under neighbours' silhouettes with no line contact. `PackOptions::body_exclusions` (the tower keepout) are checked against the body bbox only; supports may enter.
 - geo's `unary_union` takes its fill rule from the FIRST ring's winding and drops rings wound the other way: orient polygons before mixing sources (`union_exterior_loops`).
 
-## Printer profiles / slicer quirks (`src/colored_packer.rs`)
+## Printer profiles / slicer quirks (`src/colored_packer/`: `profile.rs`, `cli_settings.rs`, `prime_tower.rs`)
 
 - `PrinterProfile` (`profiles/*.json`) is the only source of printer geometry; never hardcode it. New printer = new JSON, not a code branch.
 - `support_edge_margin_mm` (optional): the printed patch (supports/brim) is checked against the printable area inset by it (`PackOptions::bed`), while `edge_margin_mm` binds only the model body (`PackOptions::body_bed`, body-zone bbox). U1 sets 0: its 4 mm margin on the 47.6 mm goat patch held the packer at 45 while a hand-made plate printed 48 with supports 0.7 mm from the edge and meshes 3.7 mm off it. Absent = the margin binds everything (macro purges near the edge). `None` body bed = byte-identical layouts.
@@ -34,7 +36,9 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - The GUI re-clamps the stored tower on 3MF open to `[15 mm, bed − estimated size − 15 mm]` (Orca 1 mm; `plate_centre::gui_tower_anchor_range`); the CLI keeps it. Tower corners, free spots and centre-out targets stay inside that range, or the GUI moves the tower onto objects.
 - Every slicer call goes through `slicer_cli::slice_command`, which passes `--arrange 0`: without it Orca re-arranges the plate on slice (25 of 38 sliced on U1). BambuStudio takes the same flag; don't narrow it to `slicer_kind = orca`.
 
-## `colored_3mf_packer` (`src/bin/colored_3mf_packer.rs`) invariants
+## `colored_3mf_packer` (`src/bin/colored_3mf_packer/`) invariants
+
+One module per pipeline step: `args`, `job` (profile + facts read at startup), `probe` (probe slice, tower, footprint), `prepare` (tower position, first pack, sample), `finish` (`PlateRun`: final slice and checks, repack loop), `time_window` + `time_report`, `tower`, `plan` (`PackPlan`, `pack`), `slicing` (`slice_project`, `prepare_cli_copy`), `support_learning` (`sample_supports`, `nudge_touching`), `source`, `assembly`, `placement`, `report`.
 
 - Collision geometry comes from the mesh embedded in the source 3MF (`embedded_mesh`), never a separate STL (a drifted STL silently invalidated collisions). Its bbox center must be compensated (rotation-aware) in every build-item transform in `assemble`; otherwise clones with a source translation fall off the bed.
 - `assemble` uses the default mesh mode, never `reuse_source_object_instances` (triggers "gcode path conflicts"). `project_settings.config` is copied byte-for-byte (single exception: a moved tower — centre-out window plate or tower contest — shifts `wipe_tower_x/y[0]` after assembly, `plate_centre::relocate_wipe_tower_in_3mf`); `paint_color` lives in the mesh, so coloring survives.
@@ -47,15 +51,15 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - Final G-code check (`gcode_collisions::analyze_plate`, every layer, support of A vs body lines of B): the slicer re-generates supports per plate and their size drifts between slices, so on contact the packer learns the realized first-layer support (`learn_support_patch`), repacks, and on a second contact falls back to the strict silhouette rule; leftovers go to `support_collisions` in the report (not fatal).
 - Tower contest (no centre-out): source position vs the four usable-bed corners (`CORNER_TOWER_INSET_MM` from the edge, `CORNER_TOWER_GROWTH` room above), densest wins, ties keep the source; a final slice failing with a corner tower repacks once at the source position. After every pack (no centre-out), a tower whose keepout touches any full patch (supports included) moves to the nearest free spot (`clear_tower_of_patches` → `plate_centre::free_tower_spot`, same inset/growth room as the corners); same fallback to the source on a failed slice.
 - Progress: `progress::stage` prints the human line plus (with `GOAT_LOG_FORMAT=json`) a `{"event":"stage",...}` event; `bounded_output` adds a `slicer_progress` heartbeat every 2 s. Stage ids are mirrored in the webapp's `ProgressTracker.kt`.
-- Centre-out (`--time-window-hours`, opt out `--no-centre`; `src/plate_centre.rs`): placements are ordered by distance from the smallest (by area) `heat_zones` centre and the window keeps a prefix; the tower keepout moves there by the same shift as the setting (no re-probe), and the first final slice must show the tower keepout's min corner within 5 mm of the target's (`wipe_tower_x/y` anchors that corner and growth is one-sided, so centres are not compared) or it errors. No window = no reorder; the tower may still move to a corner (tower contest).
+- Centre-out (`--time-window-hours`, opt out `--no-centre`; `src/plate_centre/`): placements are ordered by distance from the smallest (by area) `heat_zones` centre and the window keeps a prefix; the tower keepout moves there by the same shift as the setting (no re-probe), and the first final slice must show the tower keepout's min corner within 5 mm of the target's (`wipe_tower_x/y` anchors that corner and growth is one-sided, so centres are not compared) or it errors. No window = no reorder; the tower may still move to a corner (tower contest).
 - `prepare_cli_copy` (and `ams_calibration`'s CLI copy) use `colored_packer::apply_cli_settings_workarounds`: resizes `flush_volumes_matrix` to `filament_colour.len()^2` and optionally blanks `machine_start_gcode`; Orca CLI rejects mismatches. Blanked start G-code means U1 estimates (and the time window) exclude the start sequence; `--prep-min` must cover it.
 - Time window (`--time-window-hours`): first aim = line through the probe (1 object, sliced from the source, with the same `--nozzle-clean` injection) and the max plate; every shrink after an overshoot uses the secant through that window plate and the max plate (both sliced from the output with identical settings), not the probe line. A grown tower on a window plate is an error only if it reaches a kept placement. The relocated tower must not overlap any `fixed_keepouts` area (error suggests `--no-centre`).
 - `--nozzle-clean` (`src/nozzle_clean.rs`): wipe body is profile-owned (`nozzle_clean_gcode`); absent field = unsupported, explicit error (A2L has no hardware-validated sequence). Details: `docs/superpowers/specs/2026-09-02-nozzle-clean-injection-design.md`.
 
-## Scheduler (`src/scheduler.rs`, `src/bin/daily_scheduler.rs`)
+## Scheduler (`src/scheduler/`, `src/bin/daily_scheduler/`)
 
 - Source must be single-plate (`plate_count_3mf` guard); build-item order is assumed to be one dense plate.
-- xmltree drops namespace prefixes; `emit_core_xml` restores `p:UUID`/`p:path`/`xml:lang` by string replacement. `assemble.rs` avoids this by quick-xml round-trip, so keep new 3MF edits there.
+- xmltree drops namespace prefixes; `emit_core_xml` restores `p:UUID`/`p:path`/`xml:lang` by string replacement. `assemble/` avoids this by quick-xml round-trip, so keep new 3MF edits there.
 - Multi-plate 3MF (`build_schedule_plates_3mf`), both locked by `tests/scheduler_plate_grid.rs`: plate grid is `cols = ceil(sqrt(n))` (not round), row-major, slot offset `bed_size * 1.2`; `wipe_tower_x/y` entries are used verbatim per plate, so every plate gets the SAME entry as the source (shifting it puts the tower off-bed, omitting it auto-places it onto objects).
 - Benchmark `adaptive` (default) slices few sizes and interpolates (`origin: "interpolated"`); `--reuse-benchmarks` re-reads a prior `--output-report`.
 
@@ -64,7 +68,7 @@ Tests must stay self-contained: generated temp data or `tests/fixtures/` only; n
 - Generates two cube projects from the user's own 3MF (settings byte-for-byte, `Application` metadata copied: the slicers only load `project_settings.config` from a 3MF they recognise).
 - A per-layer `ToolChange` applies to the layer whose `print_z == top_z` (that layer is already in the new filament), so entries carry the first layer of each band; an entry at the first layer's own z recolours it without a change (Bambu reported one change short). The binary errors when `changes_sliced != changes_expected`.
 
-## Webapp jobs and the printer catalog (`webapp/`, `src/bin/source_project.rs`, `src/bin/printer_catalog.rs`)
+## Webapp jobs and the printer catalog (`webapp/`, `src/bin/source_project.rs`, `src/bin/printer_catalog/`)
 
 - Job inputs are named `input.3mf` / `input.stl` in the job directory.
 - Server sessions slide (`SESSION_SECONDS` = 7 d since last use, renewed at most daily with a fresh cookie): a hard 7-day expiry gave a guest 401 mid-work, and the next page load silently made a new guest without their jobs. Errors written outside controllers go through `writeError` (UTF-8): the servlet default ISO-8859-1 turned Russian messages into «????».

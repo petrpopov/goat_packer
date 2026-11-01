@@ -113,9 +113,9 @@ impl Grid {
     }
 
     /// Grows every occupied pixel into a square of `radius` pixels around it.
-    fn dilate(&self, occupied: &mut Vec<bool>, radius: usize) {
+    fn dilate(&self, occupied: &mut [bool], radius: usize) {
         let (columns, rows) = (self.columns, self.rows);
-        let original = occupied.clone();
+        let original = occupied.to_vec();
         for row in 0..rows {
             for column in 0..columns {
                 if !original[row * columns + column] {
