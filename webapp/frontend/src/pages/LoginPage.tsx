@@ -36,7 +36,12 @@ function PasswordField(props: {
           minLength={isNew ? PASSWORD_MIN : undefined}
           maxLength={PASSWORD_MAX}
         />
-        <button type="button" className="icon-btn" onClick={() => setShown((v) => !v)} aria-label={shown ? 'Скрыть пароль' : 'Показать пароль'}>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => setShown((v) => !v)}
+          aria-label={shown ? 'Скрыть пароль' : 'Показать пароль'}
+        >
           <Icon name={shown ? 'eye-off' : 'eye'} />
         </button>
       </div>
@@ -93,8 +98,19 @@ export default function LoginPage({ step }: { step: LoginStep }) {
   const back = <p className="auth-foot">{link('/login', 'Вернуться ко входу')}</p>;
   const loginField = (label: string) => (
     <div className="field">
-      <label className="field-label" htmlFor="lg">{label}</label>
-      <input id="lg" className="input" autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} required minLength={3} maxLength={120} />
+      <label className="field-label" htmlFor="lg">
+        {label}
+      </label>
+      <input
+        id="lg"
+        className="input"
+        autoComplete="username"
+        value={login}
+        onChange={(e) => setLogin(e.target.value)}
+        required
+        minLength={3}
+        maxLength={120}
+      />
     </div>
   );
   const submitButton = (text: string) => (
@@ -102,7 +118,11 @@ export default function LoginPage({ step }: { step: LoginStep }) {
       {text}
     </button>
   );
-  const errorBlock = error ? <div className="error-block" role="alert">{error}</div> : null;
+  const errorBlock = error ? (
+    <div className="error-block" role="alert">
+      {error}
+    </div>
+  ) : null;
 
   let body: ReactNode;
   if (step === 'register') {
@@ -116,7 +136,14 @@ export default function LoginPage({ step }: { step: LoginStep }) {
             <label className="field-label" htmlFor="em">
               Email <span className="field-hint">необязательно</span>
             </label>
-            <input id="em" className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input
+              id="em"
+              className="input"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
             <span className="field-hint">
               для восстановления пароля <span className="stub-badge">скоро</span>
             </span>
@@ -148,7 +175,8 @@ export default function LoginPage({ step }: { step: LoginStep }) {
         <h1>Проверьте почту</h1>
         <p className="auth-sub">Если у аккаунта указан email, ссылка уже в пути. Она действует 1 час.</p>
         <div className="auth-note">
-          <span className="stub-badge">заготовка</span> Письма пока не отправляются. Сейчас пароль сбрасывает администратор — {link('/login/code', 'ввести его код')}.
+          <span className="stub-badge">заготовка</span> Письма пока не отправляются. Сейчас пароль сбрасывает
+          администратор — {link('/login/code', 'ввести его код')}.
         </div>
         {back}
       </>
@@ -160,8 +188,17 @@ export default function LoginPage({ step }: { step: LoginStep }) {
         <p className="auth-sub">Код выдаёт администратор, он одноразовый</p>
         <form onSubmit={submit}>
           <div className="field">
-            <label className="field-label" htmlFor="tk">Код</label>
-            <input id="tk" className="input mono" autoComplete="one-time-code" value={token} onChange={(e) => setToken(e.target.value)} required />
+            <label className="field-label" htmlFor="tk">
+              Код
+            </label>
+            <input
+              id="tk"
+              className="input mono"
+              autoComplete="one-time-code"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              required
+            />
           </div>
           <PasswordField label="Новый пароль" autoComplete="new-password" value={password} onChange={setPassword} />
           {errorBlock}
@@ -183,7 +220,7 @@ export default function LoginPage({ step }: { step: LoginStep }) {
             value={password}
             onChange={setPassword}
             aside={
-              <a className="link" style={{ fontSize: 12 }} href="/login/forgot" onClick={onLink}>
+              <a className="link link-small" href="/login/forgot" onClick={onLink}>
                 Забыли пароль?
               </a>
             }
@@ -192,7 +229,9 @@ export default function LoginPage({ step }: { step: LoginStep }) {
           {submitButton('Войти')}
         </form>
         <p className="auth-foot">Нет аккаунта? {link('/login/register', 'Создать аккаунт')}</p>
-        <div className="auth-note">Можно работать и без входа: гостевые задачи хранятся 24 часа. {link('/pack', 'К упаковке')}</div>
+        <div className="auth-note">
+          Можно работать и без входа: гостевые задачи хранятся 24 часа. {link('/pack', 'К упаковке')}
+        </div>
       </>
     );
   }

@@ -1,17 +1,12 @@
-import { serverApi, serverMode } from '@/api/http';
-import { pushToast } from '@/store/useToastStore';
 import type { JobArtifact } from '@/api/types';
+import { startDownload, visibleArtifacts } from '@/utils/artifacts';
 import { formatBytes } from '@/utils/format';
 
-interface ArtifactListProps {
-  artifacts: JobArtifact[];
-}
-
-/** Служебные файлы: состояние упаковки нужно только кнопке «Нарезать стол», не пользователю. */
-const HIDDEN = new Set(['pack_state.json']);
-
-export default function ArtifactList({ artifacts: all }: ArtifactListProps) {
-  const artifacts = all.filter((artifact) => !HIDDEN.has(artifact.name));
+/** Файлы задачи в карточке (расписание, калибровка, история): имя, размер, «Скачать». */
+export default function ArtifactList({ artifacts: all }: { artifacts: JobArtifact[] }) {
+  // Порядок — как отдал сервер: здесь важны имена файлов, а не подписи упаковки.
+  const shown = new Set(visibleArtifacts(all));
+  const artifacts = all.filter((artifact) => shown.has(artifact));
   if (artifacts.length === 0) return null;
 
   return (
@@ -25,19 +20,10 @@ export default function ArtifactList({ artifacts: all }: ArtifactListProps) {
             className="btn"
             href={artifact.downloadUrl}
             download={artifact.name}
-            onClick={
-              serverMode
-                ? (event) => {
-                    event.preventDefault();
-                    void serverApi
-                      .post<{ url: string }>(artifact.downloadUrl.replace('/api/v2', ''))
-                      .then((r) => {
-                        location.href = r.url;
-                      })
-                      .catch((e) => pushToast(e.message, 'error'));
-                  }
-                : undefined
-            }
+            onClick={(event) => {
+              event.preventDefault();
+              startDownload(artifact);
+            }}
           >
             Скачать
           </a>

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { TOAST_TTL_MS } from '@/config';
 
 export type ToastKind = 'success' | 'error';
 
@@ -7,8 +8,6 @@ export interface Toast {
   kind: ToastKind;
   message: string;
 }
-
-const TOAST_TTL_MS = 5000;
 
 let nextToastId = 1;
 

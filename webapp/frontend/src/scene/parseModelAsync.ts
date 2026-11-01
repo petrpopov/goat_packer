@@ -8,13 +8,17 @@ import type { ParseRequest, ParseResponse } from './model3d.worker';
 export const PREVIEW_MAX_BYTES = 80 * 1024 * 1024;
 
 /** Разбор модели в отдельном воркере; cancel() останавливает его (новый файл, уход со страницы). */
-export function parseModelInWorker(name: string, buffer: ArrayBuffer): { promise: Promise<ModelMesh>; cancel: () => void } {
+export function parseModelInWorker(
+  name: string,
+  buffer: ArrayBuffer
+): { promise: Promise<ModelMesh>; cancel: () => void } {
   const worker = new Worker(new URL('./model3d.worker.ts', import.meta.url), { type: 'module' });
   const promise = new Promise<ModelMesh>((resolve, reject) => {
     worker.onmessage = (event: MessageEvent<ParseResponse>) => {
       worker.terminate();
       const data = event.data;
-      if (data.ok) resolve({ positions: data.positions, triangles: data.triangles, size: data.size, projection: data.projection });
+      if (data.ok)
+        resolve({ positions: data.positions, triangles: data.triangles, size: data.size, projection: data.projection });
       else reject(new Error(data.error));
     };
     worker.onerror = (event) => {

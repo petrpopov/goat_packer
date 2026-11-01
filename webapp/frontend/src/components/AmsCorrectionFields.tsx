@@ -1,4 +1,6 @@
+import { inRange, LIMITS, rangeHint } from '@/utils/forms';
 import Field from './Field';
+import NumberInput from './NumberInput';
 
 interface AmsCorrectionFieldsProps {
   available: boolean;
@@ -6,7 +8,6 @@ interface AmsCorrectionFieldsProps {
   onToggle: (on: boolean) => void;
   seconds: string;
   onSecondsChange: (value: string) => void;
-  invalid?: boolean;
   disabled?: boolean;
   /** Открыть панель калибровки (только в упаковке). */
   onCalibrate?: () => void;
@@ -19,10 +20,11 @@ export default function AmsCorrectionFields({
   onToggle,
   seconds,
   onSecondsChange,
-  invalid = false,
   disabled = false,
   onCalibrate,
 }: AmsCorrectionFieldsProps) {
+  // Пусто — значение профиля, это не ошибка.
+  const invalid = seconds.trim() !== '' && !inRange(seconds, LIMITS.changeSeconds);
   return (
     <>
       <div className="field">
@@ -45,21 +47,22 @@ export default function AmsCorrectionFields({
         </span>
       </div>
       {on && (
-        <Field label="Смена прутка, с" error={invalid} hint={invalid ? '0–600 с' : 'пусто — значение профиля'}>
-          <input
-            className="input"
-            type="number"
-            min={0}
-            max={600}
-            step="any"
+        <Field
+          label="Смена прутка, с"
+          error={invalid}
+          hint={invalid ? rangeHint(LIMITS.changeSeconds, 'с') : 'пусто — значение профиля'}
+        >
+          <NumberInput
+            min={LIMITS.changeSeconds.min}
+            max={LIMITS.changeSeconds.max}
             value={seconds}
-            onChange={(event) => onSecondsChange(event.target.value)}
+            onChange={onSecondsChange}
             disabled={disabled}
           />
         </Field>
       )}
       {on && onCalibrate && (
-        <button type="button" className="link" style={{ justifySelf: 'start' }} onClick={onCalibrate}>
+        <button type="button" className="link link-start" onClick={onCalibrate}>
           Откалибровать…
         </button>
       )}

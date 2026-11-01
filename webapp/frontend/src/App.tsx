@@ -1,12 +1,15 @@
 import { useEffect } from 'react';
 import { serverMode } from '@/api/http';
-import { AdminPage, HistoryPage, ServerGate, useSession } from '@/pages/ServerPages';
-import type { Session } from '@/pages/ServerPages';
+import type { Session } from '@/api/types';
+import ServerGate from '@/components/ServerGate';
+import { useSession } from '@/hooks/useSession';
+import AdminPage from '@/pages/admin/AdminPage';
+import HistoryPage from '@/pages/HistoryPage';
 import Shell from '@/components/Shell';
 import ToastHost from '@/components/ToastHost';
 import LoginPage from '@/pages/LoginPage';
-import PackPage from '@/pages/PackPage';
-import SchedulePage from '@/pages/SchedulePage';
+import PackPage from '@/pages/pack/PackPage';
+import SchedulePage from '@/pages/schedule/SchedulePage';
 import { useUiStore } from '@/store/useUiStore';
 
 export default function App() {
@@ -37,7 +40,8 @@ function Workspace({ user }: { user?: Session }) {
   }, [route.name, navigate, setCalibOpen]);
   // Локальный режим без аккаунтов: история, вход и админка открывают упаковку.
   const serverOnly = route.name === 'jobs' || route.name === 'job' || route.name === 'login' || route.name === 'admin';
-  const visible = (!serverMode && serverOnly) || (route.name === 'admin' && user?.role !== 'ADMIN') ? 'pack' : route.name;
+  const visible =
+    (!serverMode && serverOnly) || (route.name === 'admin' && user?.role !== 'ADMIN') ? 'pack' : route.name;
 
   return (
     <Shell user={user}>

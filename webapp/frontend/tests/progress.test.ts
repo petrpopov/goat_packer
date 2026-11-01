@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { JobStage } from '../src/api/types';
 import {
-  formatDuration,
   looksLikeJson,
-  objectsText,
   remainingText,
   sceneClip,
   stageElapsed,
@@ -12,6 +10,7 @@ import {
   stripStage,
   stageClockText,
 } from '../src/utils/progress';
+import { formatDuration, objectsText } from '../src/utils/format';
 
 function stage(partial: Partial<JobStage>): JobStage {
   return {

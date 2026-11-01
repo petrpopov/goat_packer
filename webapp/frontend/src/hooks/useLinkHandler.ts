@@ -8,7 +8,15 @@ import { useUiStore } from '@/store/useUiStore';
 export function useLinkHandler() {
   const navigate = useUiStore((s) => s.navigate);
   return (event: MouseEvent<HTMLAnchorElement>) => {
-    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
     event.preventDefault();
     navigate(event.currentTarget.getAttribute('href') ?? '/');
   };

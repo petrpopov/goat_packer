@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { serverApi } from '@/api/http';
+import { logout as endSession } from '@/api/server';
 import Icon from '@/components/Icon';
 import { useLinkHandler } from '@/hooks/useLinkHandler';
-import type { Session } from '@/pages/ServerPages';
+import type { Session } from '@/api/types';
 import { pushToast } from '@/store/useToastStore';
 
 /** «petr» → «PE», «petr.popov» → «PP». */
@@ -53,7 +53,7 @@ export default function AccountMenu({ user }: { user?: Session }) {
   const logout = async () => {
     setOpen(false);
     try {
-      await serverApi.post('/auth/logout');
+      await endSession();
       // Полная загрузка, а не navigate: кэш react-query и сторы прошлого пользователя (его задачи)
       // иначе ещё мгновение видны следующему — как перезагрузка в master.
       location.assign('/pack');

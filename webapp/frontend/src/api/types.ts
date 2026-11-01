@@ -259,3 +259,69 @@ export interface PackCheck {
 export interface StartJobResponse {
   jobId: string;
 }
+
+// ───── Серверный режим: сессия, «Мои задачи», админка (/api/v2) ─────
+
+export interface Session {
+  id: string;
+  kind: 'GUEST' | 'USER';
+  login: string | null;
+  role: 'USER' | 'ADMIN';
+  storageQuotaBytes: number;
+}
+
+export interface PageOf<T> {
+  items: T[];
+  total: number;
+}
+
+/** Исходник, загруженный в профиль (RECEIVING — ещё принимается). */
+export interface UploadedFile {
+  fileId: string;
+  originalName: string;
+  sizeBytes: number;
+  state: string;
+}
+
+export interface AdminUser extends Session {
+  blocked: boolean;
+  blockReason: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  storageUsedBytes: number;
+  resetRequired: boolean;
+}
+
+export interface WorkerState {
+  id: string;
+  cpuLimit: number;
+  memoryLimitBytes: number;
+  capacity: number;
+  activeCount: number;
+  lastSeenAt: string;
+  mode: string;
+}
+
+export interface SystemState {
+  configuredParallelism: number;
+  effectiveParallelism: number;
+  paused: boolean;
+  activeJobs: number;
+  queuedJobs: number;
+  workers: WorkerState[];
+  storageUsedBytes: number;
+  storageLimitBytes: number;
+  apiAvailableProcessors: number;
+  apiHeapMaxBytes: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  targetId: string | null;
+  details: string;
+  createdAt: string;
+}
+
+/** Фильтр списка пользователей в админке: '' — все. */
+export type UserKindFilter = '' | 'USER' | 'GUEST';

@@ -16,7 +16,10 @@ export interface AuthFields {
  * Запрос к /api/v2/auth/* для шага формы. null — заготовка без сервера: письма для сброса
  * пароля пока не отправляются, экран «Проверьте почту» показывается без запроса.
  */
-export function authRequest(step: LoginStep, fields: AuthFields): { path: string; body: Record<string, string> } | null {
+export function authRequest(
+  step: LoginStep,
+  fields: AuthFields
+): { path: string; body: Record<string, string> } | null {
   const password = fields.password ?? '';
   switch (step) {
     case 'signin':

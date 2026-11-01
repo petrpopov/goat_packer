@@ -1,7 +1,16 @@
 import type { PrinterProfile } from '../api/types';
 
-export interface Rect { x0: number; y0: number; x1: number; y1: number }
-export interface BedLabel { x: number; y: number; text: string }
+export interface Rect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+export interface BedLabel {
+  x: number;
+  y: number;
+  text: string;
+}
 export interface BedSpec {
   /** Контур пластины, мм, координаты стола (y — к задней стороне). */
   plate: [number, number][];
@@ -24,7 +33,12 @@ export function bedSpec(profile: PrinterProfile): BedSpec {
   const usable = { x0: x0 + m, y0: y0 + m, x1: x1 - m, y1: y1 - m };
   const plate: [number, number][] = profile.plateOutline?.length
     ? profile.plateOutline.map(([x, y]) => [x, y])
-    : [[x0 - 3, y0 - 3], [x1 + 3, y0 - 3], [x1 + 3, y1 + 3], [x0 - 3, y1 + 3]];
+    : [
+        [x0 - 3, y0 - 3],
+        [x1 + 3, y0 - 3],
+        [x1 + 3, y1 + 3],
+        [x0 - 3, y1 + 3],
+      ];
   const exclusions = profile.exclusionRectangles.map(([a, b, c, d]) => ({ x0: a, y0: b, x1: c, y1: d }));
   const minY = Math.min(...plate.map((p) => p[1]));
   const maxX = Math.max(...plate.map((p) => p[0]));

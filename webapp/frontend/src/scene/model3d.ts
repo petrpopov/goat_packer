@@ -24,7 +24,8 @@ function parseStl(buffer: ArrayBuffer): Float32Array {
     const count = dv.getUint32(80, true);
     if (84 + count * 50 === buffer.byteLength) {
       const out = new Float32Array(count * 9);
-      for (let i = 0; i < count; i++) for (let k = 0; k < 9; k++) out[i * 9 + k] = dv.getFloat32(84 + i * 50 + 12 + k * 4, true);
+      for (let i = 0; i < count; i++)
+        for (let k = 0; k < 9; k++) out[i * 9 + k] = dv.getFloat32(84 + i * 50 + 12 + k * 4, true);
       return out;
     }
   }
@@ -58,9 +59,19 @@ function attrs(tag: string): Record<string, string> {
   return out;
 }
 
-interface MeshObject { vertices: number[]; triangles: number[] }
-interface ComponentRef { objectId: string; path: string | null; transform: Matrix }
-interface ModelFile { objects: Map<string, MeshObject | ComponentRef[]>; items: { objectId: string }[] }
+interface MeshObject {
+  vertices: number[];
+  triangles: number[];
+}
+interface ComponentRef {
+  objectId: string;
+  path: string | null;
+  transform: Matrix;
+}
+interface ModelFile {
+  objects: Map<string, MeshObject | ComponentRef[]>;
+  items: { objectId: string }[];
+}
 
 function parseModelXml(xml: string): ModelFile {
   const objects = new Map<string, MeshObject | ComponentRef[]>();
@@ -99,8 +110,11 @@ function parseModelXml(xml: string): ModelFile {
 function parse3mf(buffer: ArrayBuffer): Float32Array {
   const files = unzipSync(new Uint8Array(buffer), { filter: (f) => f.name.toLowerCase().endsWith('.model') });
   const models = new Map<string, ModelFile>();
-  for (const [path, data] of Object.entries(files)) models.set('/' + path.replace(/^\/+/, ''), parseModelXml(strFromU8(data)));
-  const rootPath = models.has('/3D/3dmodel.model') ? '/3D/3dmodel.model' : [...models.keys()].find((p) => models.get(p)!.items.length) ?? '';
+  for (const [path, data] of Object.entries(files))
+    models.set('/' + path.replace(/^\/+/, ''), parseModelXml(strFromU8(data)));
+  const rootPath = models.has('/3D/3dmodel.model')
+    ? '/3D/3dmodel.model'
+    : ([...models.keys()].find((p) => models.get(p)!.items.length) ?? '');
   const root = models.get(rootPath);
   const first = root?.items[0];
   if (!root || !first) throw new Error('В 3MF не найден объект для печати');
@@ -115,8 +129,14 @@ function parse3mf(buffer: ArrayBuffer): Float32Array {
     }
     const v = object.vertices;
     for (const index of object.triangles) {
-      const x = v[index * 3], y = v[index * 3 + 1], z = v[index * 3 + 2];
-      out.push(x * m[0] + y * m[3] + z * m[6] + m[9], x * m[1] + y * m[4] + z * m[7] + m[10], x * m[2] + y * m[5] + z * m[8] + m[11]);
+      const x = v[index * 3],
+        y = v[index * 3 + 1],
+        z = v[index * 3 + 2];
+      out.push(
+        x * m[0] + y * m[3] + z * m[6] + m[9],
+        x * m[1] + y * m[4] + z * m[7] + m[10],
+        x * m[2] + y * m[5] + z * m[8] + m[11]
+      );
     }
   };
   emit(rootPath, first.objectId, IDENTITY, 0);
@@ -125,15 +145,26 @@ function parse3mf(buffer: ArrayBuffer): Float32Array {
 }
 
 function centred(positions: Float32Array): ModelMesh {
-  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
   for (let i = 0; i < positions.length; i += 3) {
-    minX = Math.min(minX, positions[i]); maxX = Math.max(maxX, positions[i]);
-    minY = Math.min(minY, positions[i + 1]); maxY = Math.max(maxY, positions[i + 1]);
-    minZ = Math.min(minZ, positions[i + 2]); maxZ = Math.max(maxZ, positions[i + 2]);
+    minX = Math.min(minX, positions[i]);
+    maxX = Math.max(maxX, positions[i]);
+    minY = Math.min(minY, positions[i + 1]);
+    maxY = Math.max(maxY, positions[i + 1]);
+    minZ = Math.min(minZ, positions[i + 2]);
+    maxZ = Math.max(maxZ, positions[i + 2]);
   }
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const cx = (minX + maxX) / 2,
+    cy = (minY + maxY) / 2;
   for (let i = 0; i < positions.length; i += 3) {
-    positions[i] -= cx; positions[i + 1] -= cy; positions[i + 2] -= minZ;
+    positions[i] -= cx;
+    positions[i + 1] -= cy;
+    positions[i + 2] -= minZ;
   }
   return { positions, triangles: positions.length / 9, size: [maxX - minX, maxY - minY, maxZ - minZ] };
 }

@@ -2,7 +2,11 @@ import type { PackLayout } from '../api/types';
 import type { Rect } from './bed';
 
 /** Копия на столе: центр габарита модели, мм, и угол против часовой. */
-export interface Placement { x: number; y: number; angleDeg: number }
+export interface Placement {
+  x: number;
+  y: number;
+  angleDeg: number;
+}
 
 export interface SceneLayout {
   placements: Placement[];
