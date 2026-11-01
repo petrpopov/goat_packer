@@ -90,6 +90,13 @@ pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>
     let [ax0, ay0, ax1, ay1] = printable;
     let contains = min_x <= ax0 + 1e-6 && min_y <= ay0 + 1e-6 && max_x >= ax1 - 1e-6 && max_y >= ay1 - 1e-6;
     let (dx, dy) = if contains { (0.0, 0.0) } else { ((ax0 + ax1) / 2.0 - (min_x + max_x) / 2.0, (ay0 + ay1) / 2.0 - (min_y + max_y) / 2.0) };
+    // After the shift the plate must still cover the printable area: a smaller trace is not the
+    // plate (Orca 2.4.2: OrangeStorm Giga's model is 410 mm on an 810 mm bed, Guider 3 Ultra's
+    // traced face is a 120×30 mm detail), and a wrong outline is worse than none.
+    const COVER_TOLERANCE_MM: f64 = 1.0;
+    if max_x - min_x < ax1 - ax0 - COVER_TOLERANCE_MM || max_y - min_y < ay1 - ay0 - COVER_TOLERANCE_MM {
+        return None;
+    }
     let round = |v: f64| (v * 10.0).round() / 10.0;
     (points.len() >= 3 && points.len() <= 60).then(|| points.iter().map(|p| [round(p[0] + dx), round(p[1] + dy)]).collect())
 }
@@ -138,6 +145,12 @@ mod tests {
         for _ in 0..16 {
             assert_eq!(outline_from_stl(&stl, [0.0, 0.0, 256.0, 256.0]).unwrap(), first);
         }
+    }
+
+    #[test]
+    fn trace_smaller_than_the_printable_area_is_not_the_plate() {
+        assert!(outline_from_stl(&slab(200.0, 191.0, 610.0, 614.0), [0.0, 0.0, 810.0, 805.0]).is_none());
+        assert!(outline_from_stl(&slab(-60.0, -15.0, 60.0, 15.0), [-150.0, -165.0, 150.0, 165.0]).is_none());
     }
 
     #[test]
