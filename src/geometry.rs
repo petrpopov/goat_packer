@@ -78,6 +78,16 @@ impl Rect {
         )
     }
 
+    /// Every side moved `margin` outward.
+    pub fn grown(self, margin: f64) -> Self {
+        Self::new(
+            self.min_x - margin,
+            self.min_y - margin,
+            self.max_x + margin,
+            self.max_y + margin,
+        )
+    }
+
     pub fn translated(self, dx: f64, dy: f64) -> Self {
         Self::new(
             self.min_x + dx,

@@ -1,7 +1,7 @@
 //! What a packing run is given (`PackOptions`) and what it returns (`PackResult`).
 
 use crate::footprint::Footprint;
-use crate::geometry::{Rect, polygon_area};
+use crate::geometry::{Point, Rect, polygon_area, rotate_loops};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,6 +57,25 @@ pub struct PackedPlacement {
     pub x_mm: f64,
     pub y_mm: f64,
     pub angle_deg: f64,
+}
+
+impl PackedPlacement {
+    /// `loops`, given in the footprint frame, in bed coordinates: rotated by this placement's
+    /// angle, then moved to its position.
+    pub fn place_loops(&self, loops: &[Vec<Point>]) -> Vec<Vec<Point>> {
+        rotate_loops(loops, self.angle_deg)
+            .into_iter()
+            .map(|loop_| {
+                loop_
+                    .into_iter()
+                    .map(|p| Point {
+                        x: p.x + self.x_mm,
+                        y: p.y + self.y_mm,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
