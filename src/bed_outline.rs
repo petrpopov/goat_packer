@@ -1,7 +1,9 @@
 //! Our own simplified plate outline traced from a slicer bed model (top face boundary). The
 //! model file is read at catalog-build time and never stored or shipped (AGPL); only the
 //! resulting polygon goes into `profiles/*.json` as `plate_outline`.
-use std::collections::HashMap;
+// BTree, not Hash: iteration order picks the ring's start vertex, and `simplify` keeps different
+// vertices from a different start, so a HashMap made every re-extract rewrite every outline.
+use std::collections::{BTreeMap, BTreeSet};
 
 use geo::{Area, Coord, LineString, Polygon, Simplify};
 
@@ -40,21 +42,21 @@ pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>
     }
     let z_top = level_area.iter().max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0))).map(|l| l.0)?;
     let key = |v: &[f64; 3]| -> Key { ((v[0] * 100.0).round() as i64, (v[1] * 100.0).round() as i64) };
-    let mut edges: HashMap<(Key, Key), u32> = HashMap::new();
+    let mut edges: BTreeMap<(Key, Key), u32> = BTreeMap::new();
     for t in tris.iter().filter(|t| t.iter().all(|v| (v[2] - z_top).abs() < 1e-3)) {
         for i in 0..3 {
             let (a, b) = (key(&t[i]), key(&t[(i + 1) % 3]));
             *edges.entry(if a < b { (a, b) } else { (b, a) }).or_default() += 1;
         }
     }
-    let mut adjacency: HashMap<Key, Vec<Key>> = HashMap::new();
+    let mut adjacency: BTreeMap<Key, Vec<Key>> = BTreeMap::new();
     for ((a, b), count) in edges {
         if count == 1 {
             adjacency.entry(a).or_default().push(b);
             adjacency.entry(b).or_default().push(a);
         }
     }
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = BTreeSet::new();
     let mut best: Option<(f64, Vec<Key>)> = None;
     for &start in adjacency.keys() {
         if seen.contains(&start) {
@@ -127,6 +129,15 @@ mod tests {
         let outline = outline_from_stl(&slab(-140.0, -146.5, 140.0, 146.5), [0.5, 1.0, 270.5, 271.0]).unwrap();
         let cx = (outline.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min) + outline.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max)) / 2.0;
         assert!((cx - 135.5).abs() < 0.11);
+    }
+
+    #[test]
+    fn outline_is_deterministic() {
+        let stl = slab(-2.0, -5.0, 258.0, 260.0);
+        let first = outline_from_stl(&stl, [0.0, 0.0, 256.0, 256.0]).unwrap();
+        for _ in 0..16 {
+            assert_eq!(outline_from_stl(&stl, [0.0, 0.0, 256.0, 256.0]).unwrap(), first);
+        }
     }
 
     #[test]
