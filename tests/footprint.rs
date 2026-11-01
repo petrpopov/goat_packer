@@ -613,3 +613,40 @@ fn loops_touch_rect_detects_real_overlaps_only() {
         Rect::new(30.2, 12.0, 36.0, 28.0)
     ));
 }
+
+#[test]
+fn support_interface_loops_project_interfaces_above_the_first_layer() {
+    let gcode = "\
+G1 X0 Y0 F600
+; CHANGE_LAYER
+; FEATURE: Support interface
+; LINE_WIDTH: 0.4
+G1 X50 Y50
+G1 X60 Y50 E1
+; CHANGE_LAYER
+; FEATURE: Outer wall
+G1 X10 Y10
+G1 X20 Y10 E1
+; FEATURE: Support interface
+G1 X30 Y12
+G1 X40 Y12 E1
+; WIPE_TOWER_START
+G1 X200 Y200 E1
+; WIPE_TOWER_END
+; CHANGE_LAYER
+; FEATURE: Prime tower
+G1 X210 Y210 E1
+; FEATURE: Support interface
+G1 X30 Y20
+G1 X40 Y20 E1
+";
+    let loops = goat_packer::support_interface_loops(gcode.as_bytes(), (20.0, 10.0));
+    let bounds = goat_packer::plate_centre::loops_bounds(&loops).unwrap();
+    // Layer 2 and 3 interfaces only (x 30..40 at y 12 and y 20, widened by half a line),
+    // shifted by the model centre; layer 1, the wall and the tower are left out.
+    assert!((bounds.min_x - 10.0).abs() < 1e-6, "{bounds:?}");
+    assert!((bounds.max_x - 20.0).abs() < 1e-6, "{bounds:?}");
+    assert!((bounds.min_y - 1.8).abs() < 1e-6, "{bounds:?}");
+    assert!((bounds.max_y - 10.2).abs() < 1e-6, "{bounds:?}");
+    assert_eq!(loops.len(), 2);
+}

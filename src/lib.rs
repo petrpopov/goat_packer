@@ -237,144 +237,7 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
 /// start gcode) never touch the patch. Returns `None` when the first layer holds no object
 /// extrusions to union.
 pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> Option<Footprint> {
-    let text = String::from_utf8_lossy(gcode);
-    let mut x = 0.0f64;
-    let mut y = 0.0f64;
-    let mut layer = 0usize;
-    let mut extrusion_type = String::new();
-    let mut line_width = 0.5f64;
-    let mut in_tower_section = false;
-    let mut sink = StripSink::default();
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line == ";LAYER_CHANGE" || line == "; CHANGE_LAYER" {
-            layer += 1;
-            if layer > 1 {
-                break;
-            }
-            continue;
-        }
-        if line.contains("WIPE_TOWER_END") {
-            in_tower_section = false;
-            continue;
-        }
-        if line.contains("WIPE_TOWER_START") {
-            in_tower_section = true;
-            continue;
-        }
-        if let Some(kind) = line
-            .strip_prefix(";TYPE:")
-            .or_else(|| line.strip_prefix("; FEATURE:"))
-            .or_else(|| line.strip_prefix(";FEATURE:"))
-        {
-            extrusion_type = kind.trim().to_owned();
-            continue;
-        }
-        if let Some(value) = line
-            .strip_prefix(";WIDTH:")
-            .or_else(|| line.strip_prefix("; LINE_WIDTH:"))
-            .or_else(|| line.strip_prefix(";LINE_WIDTH:"))
-        {
-            if let Ok(width) = value.trim().parse::<f64>() {
-                line_width = width;
-            }
-            continue;
-        }
-        if line.starts_with("G2") || line.starts_with("G3") {
-            // Arc-fitted gcode (Bambu Studio's `enable_arc_fitting`) draws whole walls as
-            // G2/G3 sweeps with an I/J centre. Skipping the line like any other comment
-            // froze the tracked position at the last G1, so the next G1 inked a phantom
-            // chord across whatever the arcs went around — on the magnet goat one 16.7 mm
-            // chord over the head put a single stray pixel past the mesh silhouette,
-            // `patch_within_silhouette` failed, and a bed that packs 18 rotated objects
-            // locked to one orientation (15). Follow the arc: track its endpoint and ink
-            // the sweep.
-            let parsed_x = gcode_axis_token(line, 'X');
-            let parsed_y = gcode_axis_token(line, 'Y');
-            let next_x = parsed_x.unwrap_or(x);
-            let next_y = parsed_y.unwrap_or(y);
-            let filament = gcode_axis_token(line, 'E').unwrap_or(0.0);
-            let in_layer_1 = layer >= 1
-                && !in_tower_section
-                && !extrusion_type.to_lowercase().contains("tower")
-                && (parsed_x.is_some() || parsed_y.is_some());
-            if filament > 0.0 && in_layer_1 {
-                let is_body = !extrusion_type.to_lowercase().contains("support");
-                if let (Some(i), Some(j)) =
-                    (gcode_axis_token(line, 'I'), gcode_axis_token(line, 'J'))
-                {
-                    let center_x = x + i;
-                    let center_y = y + j;
-                    let radius = (i * i + j * j).sqrt();
-                    if radius > 1e-9 {
-                        let start_angle = (y - center_y).atan2(x - center_x);
-                        let end_angle = (next_y - center_y).atan2(next_x - center_x);
-                        // G2 sweeps clockwise (angle decreasing), G3 counter-clockwise;
-                        // slicers never emit full-turn arcs, so unwrap to |sweep| ≤ 2π.
-                        let mut sweep = end_angle - start_angle;
-                        if line.starts_with("G2") {
-                            if sweep >= 0.0 {
-                                sweep -= std::f64::consts::TAU;
-                            }
-                        } else if sweep <= 0.0 {
-                            sweep += std::f64::consts::TAU;
-                        }
-                        let length = radius * sweep.abs();
-                        // Same density cut as straight moves, judged over the whole sweep:
-                        // Arachne thin-tip arcs print far under a normal line's flow but
-                        // an order of magnitude above a travel-smeared un-retraction.
-                        if length > 0.3 && filament / length > 0.001 {
-                            let steps = (((length / 0.5).ceil()) as usize).max(2);
-                            let (mut from_x, mut from_y) = (x, y);
-                            for step in 1..=steps {
-                                let angle = start_angle + sweep * (step as f64) / (steps as f64);
-                                let to_x = center_x + radius * angle.cos();
-                                let to_y = center_y + radius * angle.sin();
-                                sink.record((from_x, from_y), (to_x, to_y), line_width, is_body);
-                                from_x = to_x;
-                                from_y = to_y;
-                            }
-                        }
-                    }
-                }
-                // Arcs without an I/J centre (R-form) carry no centre to rebuild the sweep
-                // from; slicer output does not use them, so they only move the head.
-            }
-            x = next_x;
-            y = next_y;
-            continue;
-        }
-        if !(line.starts_with("G0") || line.starts_with("G1")) {
-            continue;
-        }
-        let parsed_x = gcode_axis_token(line, 'X');
-        let parsed_y = gcode_axis_token(line, 'Y');
-        let parsed_e = gcode_axis_token(line, 'E');
-        let next_x = parsed_x.unwrap_or(x);
-        let next_y = parsed_y.unwrap_or(y);
-        let extruding = parsed_e.unwrap_or(0.0) > 0.0;
-        if extruding
-            && layer >= 1
-            && !in_tower_section
-            && !extrusion_type.to_lowercase().contains("tower")
-            && (parsed_x.is_some() || parsed_y.is_some())
-        {
-            let length = ((next_x - x).powi(2) + (next_y - y).powi(2)).sqrt();
-            let filament = parsed_e.unwrap_or(0.0);
-            // A 0.5 x 0.25 line spends ~0.05 mm of filament per mm of travel, but Arachne
-            // thins real walls far below that: the long tip lines of a P1S goat print at
-            // 0.001-0.004 filament-mm per mm — exactly the segments that stick out past the
-            // mesh silhouette. Real Bambu/Orca un-retractions carry no X/Y and are already
-            // filtered above; only a travel-smeared smear (measured ~0.0002/mm in the
-            // fixture) stays below this cut, an order of magnitude under the real lines.
-            if length > 0.3 && filament / length > 0.001 {
-                let is_body = !extrusion_type.to_lowercase().contains("support");
-                sink.record((x, y), (next_x, next_y), line_width, is_body);
-            }
-        }
-        x = next_x;
-        y = next_y;
-    }
+    let sink = parse_strips(gcode, Some(1), |_, feature| Some(!feature.contains("support")));
     let (patch_min_x, patch_min_y, patch_max_x, patch_max_y) = sink.patch_bounds?;
     if sink.strips.is_empty() {
         return None;
@@ -453,6 +316,45 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
     })
 }
 
+/// Top-down projection of every support-interface line above the first layer, as exterior
+/// loops in the same frame as `first_layer_footprint(gcode, Some(model_center))`. Interfaces
+/// are the tops of the supports, right under the model's overhangs, and the slicer prints them
+/// up to ~2 mm past the overhang's outline (P1S goat probe: p99 1.5 mm, max 2.0 mm). Two
+/// silhouettes 0.7 mm apart then meet at the overhang's height: on a 43-goat P1S plate four
+/// pairs touched a neighbour's outer wall at z ≈ 23 mm with exactly these lines. Empty when the
+/// G-code prints no interfaces.
+pub fn support_interface_loops(gcode: &[u8], model_center: (f64, f64)) -> Vec<Vec<Point>> {
+    let sink = parse_strips(gcode, None, |layer, feature| {
+        (layer >= 2 && feature.contains("support interface")).then_some(false)
+    });
+    let polygons: Vec<&Polygon> = sink.strips.iter().map(|(polygon, _)| polygon).collect();
+    let union = unary_union(polygons.iter().copied());
+    let mut loops: Vec<Vec<Point>> = union
+        .0
+        .iter()
+        .filter_map(|polygon| {
+            let mut loop_: Vec<Point> = polygon
+                .exterior()
+                .coords()
+                .map(|coord| Point {
+                    x: coord.x - model_center.0,
+                    y: coord.y - model_center.1,
+                })
+                .collect();
+            if loop_.len() < 3 {
+                return None;
+            }
+            let first = loop_[0];
+            if loop_.last() != Some(&first) {
+                loop_.push(first);
+            }
+            Some(loop_)
+        })
+        .collect();
+    loops.retain(|loop_| polygon_area(loop_).abs() >= 0.01);
+    loops
+}
+
 /// A printed line as geometry: the rectangle swept by the nozzle along the move.
 fn strip_polygon(x0: f64, y0: f64, x1: f64, y1: f64, width: f64) -> Polygon {
     let length = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
@@ -491,6 +393,158 @@ fn strip_polygon(x0: f64, y0: f64, x1: f64, y1: f64, width: f64) -> Polygon {
 
 /// Ink collected from layer 1: the strip polygons plus the patch/body bounds they reach.
 /// Straight G1 moves and the sampled points of a G2/G3 arc sweep land here alike.
+/// Every printed object line of `gcode` that `keep(layer, feature_lowercase)` accepts, as
+/// strips (`Some(true)` = body, `Some(false)` = support, `None` = skipped); the parsing rules
+/// are `first_layer_footprint`'s (dialects, tower sections, arcs, un-retractions). Stops after
+/// `last_layer` when given.
+fn parse_strips(
+    gcode: &[u8],
+    last_layer: Option<usize>,
+    keep: impl Fn(usize, &str) -> Option<bool>,
+) -> StripSink {
+    let text = String::from_utf8_lossy(gcode);
+    let mut x = 0.0f64;
+    let mut y = 0.0f64;
+    let mut layer = 0usize;
+    let mut extrusion_type = String::new();
+    let mut line_width = 0.5f64;
+    let mut in_tower_section = false;
+    let mut sink = StripSink::default();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line == ";LAYER_CHANGE" || line == "; CHANGE_LAYER" {
+            layer += 1;
+            if last_layer.is_some_and(|last| layer > last) {
+                break;
+            }
+            continue;
+        }
+        if line.contains("WIPE_TOWER_END") {
+            in_tower_section = false;
+            continue;
+        }
+        if line.contains("WIPE_TOWER_START") {
+            in_tower_section = true;
+            continue;
+        }
+        if let Some(kind) = line
+            .strip_prefix(";TYPE:")
+            .or_else(|| line.strip_prefix("; FEATURE:"))
+            .or_else(|| line.strip_prefix(";FEATURE:"))
+        {
+            extrusion_type = kind.trim().to_owned();
+            continue;
+        }
+        if let Some(value) = line
+            .strip_prefix(";WIDTH:")
+            .or_else(|| line.strip_prefix("; LINE_WIDTH:"))
+            .or_else(|| line.strip_prefix(";LINE_WIDTH:"))
+        {
+            if let Ok(width) = value.trim().parse::<f64>() {
+                line_width = width;
+            }
+            continue;
+        }
+        if line.starts_with("G2") || line.starts_with("G3") {
+            // Arc-fitted gcode (Bambu Studio's `enable_arc_fitting`) draws whole walls as
+            // G2/G3 sweeps with an I/J centre. Skipping the line like any other comment
+            // froze the tracked position at the last G1, so the next G1 inked a phantom
+            // chord across whatever the arcs went around — on the magnet goat one 16.7 mm
+            // chord over the head put a single stray pixel past the mesh silhouette,
+            // `patch_within_silhouette` failed, and a bed that packs 18 rotated objects
+            // locked to one orientation (15). Follow the arc: track its endpoint and ink
+            // the sweep.
+            let parsed_x = gcode_axis_token(line, 'X');
+            let parsed_y = gcode_axis_token(line, 'Y');
+            let next_x = parsed_x.unwrap_or(x);
+            let next_y = parsed_y.unwrap_or(y);
+            let filament = gcode_axis_token(line, 'E').unwrap_or(0.0);
+            let kept = (layer >= 1
+                && !in_tower_section
+                && !extrusion_type.to_lowercase().contains("tower")
+                && (parsed_x.is_some() || parsed_y.is_some()))
+            .then(|| keep(layer, &extrusion_type.to_lowercase()))
+            .flatten();
+            if let (true, Some(is_body)) = (filament > 0.0, kept) {
+                if let (Some(i), Some(j)) =
+                    (gcode_axis_token(line, 'I'), gcode_axis_token(line, 'J'))
+                {
+                    let center_x = x + i;
+                    let center_y = y + j;
+                    let radius = (i * i + j * j).sqrt();
+                    if radius > 1e-9 {
+                        let start_angle = (y - center_y).atan2(x - center_x);
+                        let end_angle = (next_y - center_y).atan2(next_x - center_x);
+                        // G2 sweeps clockwise (angle decreasing), G3 counter-clockwise;
+                        // slicers never emit full-turn arcs, so unwrap to |sweep| ≤ 2π.
+                        let mut sweep = end_angle - start_angle;
+                        if line.starts_with("G2") {
+                            if sweep >= 0.0 {
+                                sweep -= std::f64::consts::TAU;
+                            }
+                        } else if sweep <= 0.0 {
+                            sweep += std::f64::consts::TAU;
+                        }
+                        let length = radius * sweep.abs();
+                        // Same density cut as straight moves, judged over the whole sweep:
+                        // Arachne thin-tip arcs print far under a normal line's flow but
+                        // an order of magnitude above a travel-smeared un-retraction.
+                        if length > 0.3 && filament / length > 0.001 {
+                            let steps = (((length / 0.5).ceil()) as usize).max(2);
+                            let (mut from_x, mut from_y) = (x, y);
+                            for step in 1..=steps {
+                                let angle = start_angle + sweep * (step as f64) / (steps as f64);
+                                let to_x = center_x + radius * angle.cos();
+                                let to_y = center_y + radius * angle.sin();
+                                sink.record((from_x, from_y), (to_x, to_y), line_width, is_body);
+                                from_x = to_x;
+                                from_y = to_y;
+                            }
+                        }
+                    }
+                }
+                // Arcs without an I/J centre (R-form) carry no centre to rebuild the sweep
+                // from; slicer output does not use them, so they only move the head.
+            }
+            x = next_x;
+            y = next_y;
+            continue;
+        }
+        if !(line.starts_with("G0") || line.starts_with("G1")) {
+            continue;
+        }
+        let parsed_x = gcode_axis_token(line, 'X');
+        let parsed_y = gcode_axis_token(line, 'Y');
+        let parsed_e = gcode_axis_token(line, 'E');
+        let next_x = parsed_x.unwrap_or(x);
+        let next_y = parsed_y.unwrap_or(y);
+        let extruding = parsed_e.unwrap_or(0.0) > 0.0;
+        if extruding
+            && layer >= 1
+            && !in_tower_section
+            && !extrusion_type.to_lowercase().contains("tower")
+            && (parsed_x.is_some() || parsed_y.is_some())
+        {
+            let length = ((next_x - x).powi(2) + (next_y - y).powi(2)).sqrt();
+            let filament = parsed_e.unwrap_or(0.0);
+            // A 0.5 x 0.25 line spends ~0.05 mm of filament per mm of travel, but Arachne
+            // thins real walls far below that: the long tip lines of a P1S goat print at
+            // 0.001-0.004 filament-mm per mm — exactly the segments that stick out past the
+            // mesh silhouette. Real Bambu/Orca un-retractions carry no X/Y and are already
+            // filtered above; only a travel-smeared smear (measured ~0.0002/mm in the
+            // fixture) stays below this cut, an order of magnitude under the real lines.
+            if length > 0.3 && filament / length > 0.001
+                && let Some(is_body) = keep(layer, &extrusion_type.to_lowercase())
+            {
+                sink.record((x, y), (next_x, next_y), line_width, is_body);
+            }
+        }
+        x = next_x;
+        y = next_y;
+    }
+    sink
+}
+
 #[derive(Default)]
 struct StripSink {
     strips: Vec<(Polygon, bool)>,

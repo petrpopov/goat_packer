@@ -8,7 +8,7 @@ use std::{
 use goat_packer::{
     Footprint, PackOptions, PackResult, Point, Rect, extract_footprint, first_layer_footprint,
     grid_layout, loops_touch_rect, pack_footprint, patch_overshoot_mm, patch_within_silhouette,
-    union_loops, validate_result,
+    support_interface_loops, union_loops, validate_result,
     assemble::{AssembleOptions, assemble_project, source_model_center},
     colored_packer::{
         PrimeTowerBounds, PrinterProfile, apply_cli_settings_workarounds,
@@ -547,6 +547,25 @@ fn run() -> AppResult<()> {
                 let mut combined = patch.clone();
                 combined.loops = union_loops(&patch, &silhouette);
                 combined.body_loops = silhouette.loops.clone();
+                // Support interfaces print up to ~2 mm past the overhangs they carry, at the
+                // overhang's height: they belong to this object's 3D extent, so they join the
+                // silhouette that keeps clearance from the neighbours' silhouettes (four
+                // P1S goat pairs touched a neighbour's wall at z ≈ 23 mm without this, and the
+                // strict-rule fallback cost the plate 4 goats).
+                if let Some(center) = model_world_center {
+                    let interfaces = support_interface_loops(&probe_gcode, center);
+                    if !interfaces.is_empty() {
+                        let mut interface_zone = silhouette.clone();
+                        interface_zone.loops = interfaces;
+                        let overshoot =
+                            patch_overshoot_mm(&interface_zone, &silhouette, args.resolution);
+                        eprintln!(
+                            "support interfaces reach past the mesh silhouette by up to \
+                             {overshoot:.1} mm; the silhouette zone includes them"
+                        );
+                        combined.body_loops = union_loops(&silhouette, &interface_zone);
+                    }
+                }
                 combined.support_landing_loops = patch.body_loops.clone();
                 // The patch is the measured print (tips included), so purge checks run
                 // against its real extent already — no extra overshoot.
