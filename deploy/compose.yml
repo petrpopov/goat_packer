@@ -1,6 +1,9 @@
+# Стек goat-packer: Dokploy на main (переменные — в Dokploy) или руками с deploy/.env, см. deploy/README.md.
+# Образы приложения собирает deploy/build-images.sh в Docker этой же машины (реестра нет: pull_policy never).
 name: goat-packer
 x-runtime: &runtime
   restart: unless-stopped
+  security_opt: [no-new-privileges:true]
   logging:
     driver: json-file
     options: {max-size: '10m', max-file: '3'}
@@ -29,9 +32,12 @@ services:
       S3_BUCKET: goat
     volumes: [object-data:/data]
     mem_limit: 512m
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O /dev/null http://127.0.0.1:8333/healthz || exit 1']
+      interval: 5s
+      retries: 20
   api:
     <<: *runtime
-    # Образы собирает CI прямо в Docker этой машины (deploy/build-images.sh), реестра нет.
     image: goat-packer-api:${GOAT_VERSION:?set GOAT_VERSION (e.g. v0.1.0)}
     pull_policy: never
     environment: &app-env
@@ -61,11 +67,10 @@ services:
     mem_limit: 768m
     read_only: true
     tmpfs: ['/tmp:rw,noexec,nosuid,size=256m,uid=1000,gid=1000']
-    security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     depends_on:
       postgres: {condition: service_healthy}
-      storage: {condition: service_started}
+      storage: {condition: service_healthy}
     healthcheck:
       test: [CMD-SHELL, 'curl -fsS http://localhost:19190/api/v2/health || exit 1']
       interval: 10s
@@ -83,10 +88,12 @@ services:
       EXECUTION_CPU_BUDGET: ${EXECUTION_CPU_BUDGET:-2}
       EXECUTION_MEMORY_MIB: ${EXECUTION_MEMORY_MIB:-4096}
       WORKER_CPUS: ${WORKER_CPUS:-2}
-      WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-4096}
+      # WORKER_MEMORY_MIB — из app-env (api проверяет по нему запас под tmpfs задачи).
       # Runner той же версии, что и приложение: в нём бинарники упаковщика этого релиза.
       RUNNER_BAMBU_IMAGE: goat-packer-runner-bambu:${GOAT_VERSION}
       RUNNER_ORCA_IMAGE: goat-packer-runner-orca:${GOAT_VERSION}
+      # Путь scratch на ХОСТЕ: worker создаёт sandbox-контейнеры через сокет хоста, и их тома задаются путями
+      # хоста. Поэтому HOST_WORK_ROOT и источник монтирования /scratch — одна переменная.
       HOST_WORK_ROOT: ${SCRATCH_ROOT:-/srv/goat/scratch}
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
@@ -98,9 +105,10 @@ services:
       interval: 10s
       retries: 12
       start_period: 30s
+    # Без cap_drop: worker — root с сокетом Docker хоста (то есть и так root на хосте), а файлы задач в /scratch
+    # принадлежат uid 1000 sandbox'а. Изоляция — у контейнеров задач (NativeLauncher: network none, cap-drop ALL, …).
     read_only: true
     tmpfs: ['/tmp:rw,noexec,nosuid,size=128m']
-    security_opt: [no-new-privileges:true]
     depends_on: {api: {condition: service_healthy}}
   gateway:
     <<: *runtime
@@ -114,6 +122,20 @@ services:
       # Туннель Pangolin приходит с шлюза Docker-сети: X-Forwarded-For от него — адрес клиента; пусто — не доверять.
       GOAT_TRUSTED_UPSTREAM: ${GOAT_TRUSTED_UPSTREAM:-}
     mem_limit: 64m
+    # Публичный вход: root только у мастера nginx (порт 80, переход на пользователя nginx), корень read-only.
+    # tmpfs — то, что пишет entrypoint образа (conf.d из шаблона, realip.conf) и сам nginx (кэш, pid).
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE]
+    read_only: true
+    tmpfs:
+      - /etc/nginx/conf.d:size=1m,mode=0755
+      - /etc/nginx/goat:size=1m,mode=0755
+      - /var/cache/nginx:size=16m
+      - /var/run:size=1m
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 10s
+      retries: 6
     depends_on: {api: {condition: service_healthy}}
 volumes:
   postgres-data:
