@@ -13,6 +13,7 @@ pub mod embedded_mesh;
 pub mod gcode_collisions;
 pub mod nozzle_clean;
 pub mod orca_presets;
+pub mod orca_project;
 pub mod plate_centre;
 pub mod plate_preview;
 pub mod print_time;

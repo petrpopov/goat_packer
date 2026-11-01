@@ -1,0 +1,3 @@
+{ "type": "machine", "name": "MyMarlin 0.4 nozzle", "inherits": "fdm_machine_common", "from": "system",
+  "instantiation": "true", "printer_model": "Generic Marlin Printer",
+  "printable_area": ["0x0", "250x0", "250x250", "0x250"], "bed_exclude_area": ["0x0", "20x0", "20x20", "0x20"] }

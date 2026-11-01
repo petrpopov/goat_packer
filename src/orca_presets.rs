@@ -4,7 +4,7 @@
 //! are AGPL and are never copied (spec 2026-11-01-printer-catalog-and-stl-design, «Licensing»).
 use std::{collections::BTreeMap, fs, io, path::Path};
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 /// Orca's shared filament vendor: `inherits` of a vendor filament falls back here.
 pub const FILAMENT_LIBRARY: &str = "OrcaFilamentLibrary";
@@ -157,11 +157,6 @@ impl PresetIndex {
         let roots = || processes.iter().filter(|(_, m)| m.get("inherits").and_then(Value::as_str).is_none_or(str::is_empty));
         roots().find(|(n, _)| *n == "fdm_process_common").or_else(|| roots().next()).map(|(n, _)| (*n).to_owned())
     }
-
-    /// The resolved preset ready for `--load-settings`/`--load-filaments` (see `flatten_for_cli`).
-    pub fn cli_preset(&self, vendor: &str, name: &str, machine: &str) -> Result<Map<String, Value>, String> {
-        Ok(flatten_for_cli(self.resolve(vendor, name)?, machine))
-    }
 }
 
 /// Orca numbers: `"0.2"`, `["0.2"]` or a JSON number.
@@ -219,21 +214,6 @@ fn machine_keys(vendor: &str, machine: &str) -> Vec<String> {
         keys.push(normalize(rest));
     }
     keys
-}
-
-/// A merged preset as the Orca CLI accepts it for `--load-settings` (spike 2026-11-01): no
-/// `inherits`, `from: system`, `instantiation: true`, and `compatible_printers` set to exactly
-/// the machine — the CLI compares only that list with the printer and ignores
-/// `compatible_printers_condition` (return code -17 "printer is not compatible with the process
-/// preset" otherwise). Harmless on the machine and the filament.
-pub fn flatten_for_cli(mut merged: Map<String, Value>, machine: &str) -> Map<String, Value> {
-    merged.remove("inherits");
-    merged.insert("from".into(), json!("system"));
-    merged.insert("instantiation".into(), json!("true"));
-    if merged.get("type").and_then(Value::as_str) != Some("machine") {
-        merged.insert("compatible_printers".into(), json!([machine]));
-    }
-    merged
 }
 
 /// Orca point lists: `["0x0","256x0",…]`, one string `"0x0,220x0,…"`, or an array holding one
@@ -389,6 +369,7 @@ fn rectilinear_rects(points: &[(f64, f64)]) -> Option<Vec<[f64; 4]>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::path::PathBuf;
 
     fn fixture() -> PresetIndex {
@@ -545,23 +526,6 @@ mod tests {
         let keys = machine_keys("Prusa", "Prusa MK4S HF0.4 nozzle");
         assert!(keys.contains(&normalize("MK4S HF0.4")));
         assert!(!keys.contains(&normalize("MK4S 0.4")));
-    }
-
-    #[test]
-    fn cli_presets_are_flat_system_presets_compatible_with_the_machine() {
-        let index = fixture();
-        let machine = "Acme Ring 0.4 nozzle";
-        let process = index.cli_preset("Acme", "0.20mm Speed @Acme Ring 0.4", machine).unwrap();
-        assert!(process.get("inherits").is_none());
-        assert_eq!(process["from"], "system");
-        assert_eq!(process["instantiation"], "true");
-        assert_eq!(process["compatible_printers"], json!([machine]));
-        assert_eq!(process["layer_height"], "0.2");
-        let printer = index.cli_preset("Acme", machine, machine).unwrap();
-        assert!(printer.get("inherits").is_none() && printer.get("compatible_printers").is_none());
-        assert_eq!(printer["printable_height"], "250");
-        let filament = index.cli_preset(FILAMENT_LIBRARY, DEFAULT_FILAMENT, machine).unwrap();
-        assert_eq!(filament["compatible_printers"], json!([machine]));
     }
 
     #[test]

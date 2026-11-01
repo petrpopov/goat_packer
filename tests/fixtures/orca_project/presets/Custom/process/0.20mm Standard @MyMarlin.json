@@ -1,0 +1,2 @@
+{ "type": "process", "name": "0.20mm Standard @MyMarlin", "inherits": "fdm_process_marlin_common", "from": "system",
+  "instantiation": "true" }
