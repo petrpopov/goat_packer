@@ -195,6 +195,13 @@ class Job(
     @Volatile
     var packParams: PackParams? = null
 
+    /** Имя загруженного файла и профиль для статуса pack-джоба (локальный режим); доводка копирует их у родителя. */
+    @Volatile
+    var originalName: String? = null
+
+    @Volatile
+    var profileDto: com.goatpacker.web.dto.ProfileDto? = null
+
     @Volatile
     var scheduleResult: ScheduleJobResult? = null
 

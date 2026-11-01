@@ -23,6 +23,10 @@ class JobsController(
     fun artifact(@PathVariable id: String, @PathVariable name: String): ResponseEntity<FileSystemResource> =
         jobService.artifact(id, name)
 
+    /** Вход pack-джоба (загруженный файл) для скачивания. */
+    @GetMapping("/{id}/input")
+    fun input(@PathVariable id: String): ResponseEntity<FileSystemResource> = jobService.input(id)
+
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: String): ResponseEntity<Void> = jobService.delete(id)
 }

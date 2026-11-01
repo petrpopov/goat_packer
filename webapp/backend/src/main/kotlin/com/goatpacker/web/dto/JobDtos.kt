@@ -144,6 +144,26 @@ data class JobStageDto(
     }
 }
 
+/**
+ * Настройки pack-джоба как отправлены (для режима «только чтение» формы при открытии по URL).
+ * [layout] search|grid; [nozzleClean] сырая спека, "" = выключена; [customBed] — свой стол или null.
+ */
+@JsonInclude(JsonInclude.Include.ALWAYS)
+data class PackParamsDto(
+    val clearance: Double,
+    val resolution: Double,
+    val layout: String,
+    val nozzleClean: String,
+    val edgeMargin: Double?,
+    val finalSlice: Boolean,
+    val timeWindowHours: Double?,
+    val timeMarginPct: Double?,
+    val amsCorrection: Boolean,
+    val changeSeconds: Double?,
+    val supportOverlapMm: Double?,
+    val customBed: CustomBed?,
+)
+
 /** Статусная сводка джоба — то, что фронтенд поллит раз в секунду. */
 @JsonInclude(JsonInclude.Include.ALWAYS)
 data class JobStatusDto(
@@ -164,4 +184,10 @@ data class JobStatusDto(
     val stage: JobStageDto? = null,
     /** Последняя раскладка пакера (layout-событие как есть); есть и после успеха. null — раскладки нет. */
     val layout: com.fasterxml.jackson.databind.JsonNode? = null,
+    /** Имя загруженного файла; только pack-джоб (иначе null). */
+    val originalName: String? = null,
+    /** Профиль принтера, как элемент /profiles (для своего стола — разовый, id `custom`); только pack. */
+    val profile: ProfileDto? = null,
+    /** Настройки упаковки как отправлены; только pack. */
+    val params: PackParamsDto? = null,
 )

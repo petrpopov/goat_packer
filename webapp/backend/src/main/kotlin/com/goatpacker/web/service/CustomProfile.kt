@@ -20,6 +20,17 @@ object CustomProfile {
     /** Допуск сверки введённых размеров со столом проекта, мм (поля формы округляют до десятых). */
     private const val PROJECT_BED_TOLERANCE_MM = 0.5
 
+    /** DTO разового профиля по снимку profile.json (серверный джоб хранит только его): тот же вид, что собирает [build]. */
+    fun dtoOf(node: com.fasterxml.jackson.databind.JsonNode): ProfileDto {
+        val area = node.path("printable_area").map { it.asDouble() }.takeIf { it.size == 4 } ?: listOf(0.0, 0.0, 0.0, 0.0)
+        return ProfileDto(
+            id = ID, name = node.path("printer_name").asText(NAME), vendor = "", slicerKind = node.path("slicer_kind").asText("orca"),
+            bedWidthMm = area[2] - area[0], bedDepthMm = area[3] - area[1], edgeMarginMm = node.path("edge_margin_mm").asDouble(),
+            supportsNozzleClean = false, filamentChangeSeconds = null,
+            printableArea = area, exclusionRectangles = node.path("exclusion_rectangles").map { r -> r.map { it.asDouble() } },
+        )
+    }
+
     data class Built(val dto: ProfileDto, val json: String)
 
     /**

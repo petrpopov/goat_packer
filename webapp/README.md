@@ -83,6 +83,15 @@ bun run dev
   33–78, проверка G-code 78–82, перепаковка 82–86, окно времени 86–95, запись 95–99) с интерполяцией по времени,
   монотонно; `phaseMessage` — русское описание этапа, JSON-события слайсера сообщением не бывают.
 - `GET /api/jobs/{id}/artifacts/{name}` — скачивание артефакта.
+- Только у PACK-джобов (у остальных `null`) статус несёт данные для открытия по URL `/pack/<id>`: `originalName` (имя
+  загруженного файла), `profile` (тот же объект, что элемент `/profiles`; для своего стола — разовый профиль с id `custom`
+  и столом проекта; `null`, если профиль пропал из каталога) и `params` (настройки как отправлены: `clearance`,
+  `resolution`, `layout`, `nozzleClean`, `edgeMargin`, `finalSlice`, `timeWindowHours`, `timeMarginPct`, `amsCorrection`,
+  `changeSeconds`, `supportOverlapMm`, `customBed` `{width,depth,height,margin}`|null; у доводки — настройки родителя).
+  Серверный режим: те же поля в `GET /api/v2/jobs/{id}`; в списке `/api/v2/jobs` `profile`/`params` нет.
+- `GET /api/jobs/{id}/input` — загруженный файл pack-джоба (`Content-Disposition: attachment; filename=<originalName>`).
+  Серверный режим: `POST /api/v2/jobs/{id}/input/download` → `{url, filename}` (доступ и подписанная ссылка как у
+  артефактов, запасной маршрут `GET /api/v2/jobs/{id}/input/file`; не PACK — 400).
 - `DELETE /api/jobs/{id}` — отменить и удалить.
 
 Ошибки — JSON `{"code","message","error"}` с русским описанием.

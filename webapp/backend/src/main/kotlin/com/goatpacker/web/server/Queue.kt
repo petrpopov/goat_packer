@@ -330,7 +330,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
 @RestController @RequestMapping("/api/v2") @Profile("server")
 class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRepository,private val artifacts:ArtifactRepository,
     private val store:ObjectStore,private val profiles:ProfileService,private val mapper:ObjectMapper,
-    private val limits:AdmissionLimits,private val jdbc:JdbcTemplate) {
+    private val blobs:BlobRepository,private val limits:AdmissionLimits,private val jdbc:JdbcTemplate) {
     @GetMapping("/health") fun health():Map<String,String> {jdbc.queryForObject("select 1",Int::class.java);return mapOf("status" to "ok","queue" to "postgres")}
     @GetMapping("/profiles") fun profiles()=profiles.list()
     data class Access(val jobId:String="",val token:String="")
@@ -363,7 +363,30 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
         try { store.get(a.objectKey,tmp);return org.springframework.http.ResponseEntity.ok().header("Content-Disposition",org.springframework.http.ContentDisposition.attachment().filename(a.downloadName,Charsets.UTF_8).build().toString()).body(Files.readAllBytes(tmp)) }
         finally { Files.deleteIfExists(tmp) }
     }
+    @PostMapping("/jobs/{id}/input/download") fun inputDownload(@PathVariable id:String,
+        @RequestHeader(name="X-Job-Token",required=false) token:String?):Map<String,String> {
+        val job=queue.readable(id,actor().id,token)
+        if(job.kind!="PACK") bad("Вход есть только у упаковки")
+        val blob=blobs.findById(job.inputBlobId).orElse(null) ?: missing()
+        val seconds=job.expiresAt?.let { (it.epochSecond-Instant.now().epochSecond).coerceIn(1,300) } ?: 300
+        val url=store.signedGet(blob.objectKey,job.originalName,seconds) ?: "/api/v2/jobs/$id/input/file"
+        return mapOf("url" to url,"filename" to job.originalName)
+    }
+    @GetMapping("/jobs/{id}/input/file") fun inputFile(@PathVariable id:String):org.springframework.http.ResponseEntity<ByteArray> {
+        val job=queue.readable(id,actor().id,null)
+        if(job.kind!="PACK") bad("Вход есть только у упаковки")
+        val blob=blobs.findById(job.inputBlobId).orElse(null) ?: missing()
+        val tmp=Files.createTempFile("goat-download-", ".bin")
+        try { store.get(blob.objectKey,tmp);return org.springframework.http.ResponseEntity.ok().header("Content-Disposition",org.springframework.http.ContentDisposition.attachment().filename(job.originalName,Charsets.UTF_8).build().toString()).body(Files.readAllBytes(tmp)) }
+        finally { Files.deleteIfExists(tmp) }
+    }
     // withLayout=false — для списка: раскладка до десятков КБ на строку, а список опрашивается каждые 5 с.
+    /** Каталожный профиль — DTO из каталога (null, если исчез); разовый стол — из снимка profileJson. */
+    private fun profileView(j:QueueJobEntity,req:JobRequest):com.goatpacker.web.dto.ProfileDto? =
+        if(req.customBed!=null) runCatching { com.goatpacker.web.service.CustomProfile.dtoOf(mapper.readTree(j.profileJson)) }.getOrNull()
+        else profiles.list().find { it.id==j.profileId }
+    private fun paramsView(r:JobRequest)=com.goatpacker.web.dto.PackParamsDto(r.clearance,r.resolution,r.layout,r.nozzleClean,r.edgeMargin,r.finalSlice,
+        r.timeWindowHours,r.timeMarginPct,r.amsCorrection,r.changeSeconds,r.supportOverlapMm,r.customBed)
     private fun view(j:QueueJobEntity,debug:Boolean,withLayout:Boolean=true):Map<String,Any?> {
         val ahead=if(j.status in setOf("QUEUED","RETRY_WAIT")) jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RETRY_WAIT') and (created_at,id)<(?,?)",Long::class.java,java.sql.Timestamp.from(j.createdAt),j.id)!! else null
         val capacity=jdbc.queryForObject("select coalesce(sum(capacity),0) from worker_nodes where last_seen_at>now()-interval '30 seconds'",Int::class.java)!!
@@ -390,7 +413,12 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
             "pack" to if(j.kind=="PACK") result else null,"schedule" to if(j.kind=="SCHEDULE") result else null,
             "calibration" to if(j.kind=="CALIBRATION") result else null,"stage" to stageView(j),
             // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
-            ) + if(withLayout) mapOf("layout" to j.layoutJson?.let { runCatching { mapper.readTree(it) }.getOrNull() }) else emptyMap()
+            ) + if(withLayout) {
+            // Профиль и настройки — только в статусе одной задачи: список лёгкий.
+            val req=if(j.kind=="PACK") runCatching { mapper.readValue(j.paramsJson,JobRequest::class.java) }.getOrNull() else null
+            mapOf("layout" to j.layoutJson?.let { runCatching { mapper.readTree(it) }.getOrNull() },
+                "profile" to req?.let { profileView(j,it) },"params" to req?.let(::paramsView))
+        } else emptyMap()
     }
     /** Этап пакера для статуса: прошедшее время считается сейчас (по часам API, startedAtMs — исполнителя). */
     private fun stageView(j:QueueJobEntity):com.goatpacker.web.dto.JobStageDto? =

@@ -11,6 +11,7 @@ import com.goatpacker.web.dto.ScheduleJobDto
 import com.goatpacker.web.exception.ResourceNotFoundException
 import com.goatpacker.web.job.Job
 import com.goatpacker.web.job.JobArtifacts
+import com.goatpacker.web.job.JobKind
 import com.goatpacker.web.job.JobStatus
 import com.goatpacker.web.job.JobStore
 import com.goatpacker.web.job.JobProcessKiller
@@ -79,6 +80,9 @@ class JobService(
             // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
             layout = snap.layout?.let { runCatching { layoutMapper.readTree(it) }.getOrNull() },
             error = snap.error,
+            originalName = job.originalName.takeIf { job.kind == JobKind.PACK },
+            profile = job.profileDto.takeIf { job.kind == JobKind.PACK },
+            params = job.packParams?.takeIf { job.kind == JobKind.PACK }?.toDto(),
             createdAt = job.createdAt,
             finishedAt = snap.finishedAt,
             artifacts = artifacts,
@@ -155,6 +159,21 @@ class JobService(
             contentType = MEDIA_TYPES[extension] ?: MediaType.APPLICATION_OCTET_STREAM
         }
 
+        return ResponseEntity.ok().headers(headers).body(FileSystemResource(path))
+    }
+
+    /** Загруженный вход pack-джоба (input.3mf/input.stl) — те же байты, что получил пакер. */
+    fun input(id: String): ResponseEntity<FileSystemResource> {
+        val job = requireJob(id)
+        if (job.kind != JobKind.PACK) throw com.goatpacker.web.exception.BadRequestException("Вход есть только у упаковки")
+        val path = listOf(StlInputs.INPUT_STL, StlInputs.INPUT_3MF).map { job.directory.resolve(it) }.firstOrNull { Files.isRegularFile(it) }
+            ?: throw ResourceNotFoundException("Входной файл джобы $id не найден")
+        // Для STL-джоба input.3mf — проект, собранный source_project, но input.stl есть всегда и проверяется первым.
+        val name = job.originalName ?: path.fileName.toString()
+        val headers = HttpHeaders().apply {
+            contentDisposition = ContentDisposition.attachment().filename(name, StandardCharsets.UTF_8).build()
+            contentType = MediaType.APPLICATION_OCTET_STREAM
+        }
         return ResponseEntity.ok().headers(headers).body(FileSystemResource(path))
     }
 

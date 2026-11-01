@@ -54,7 +54,15 @@ data class PackParams(
     val finalSlice: Boolean = true,
     /** --finish-state: доводка упакованного стола (полная нарезка и проверки) по его состоянию. */
     val finishState: Path? = null,
-)
+    /** Свой стол, если джоб на разовом профиле: отдаётся в статусе (форма только для чтения). */
+    val customBed: com.goatpacker.web.dto.CustomBed? = null,
+) {
+    fun toDto() = com.goatpacker.web.dto.PackParamsDto(
+        clearance = clearance, resolution = resolution, layout = layout, nozzleClean = nozzleClean, edgeMargin = edgeMargin,
+        finalSlice = finalSlice, timeWindowHours = timeWindowHours, timeMarginPct = timeMarginPct, amsCorrection = amsCorrection,
+        changeSeconds = changeSeconds, supportOverlapMm = supportOverlapMm, customBed = customBed,
+    )
+}
 
 /** Параметры calibration-джоба — CLI-аргументы ams_calibration. */
 data class CalibrationParams(

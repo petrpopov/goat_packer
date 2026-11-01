@@ -125,6 +125,7 @@ class PackService(
             supportOverlapMm = form.supportOverlapMm,
             sourceCommand = sourceCommand,
             finalSlice = form.finalSlice ?: true,
+            customBed = customBed,
         )
 
         val job = Job(
@@ -138,6 +139,8 @@ class PackService(
             file.transferTo(job.directory.resolve(StlInputs.inputName(fileName)).toFile())
             if (profile.file != catalog?.file) Files.writeString(params.profilePath, profileJson)
             job.packParams = params
+            job.originalName = fileName.substringAfterLast('/').substringAfterLast('\\')
+            job.profileDto = profile.dto
             store.put(job)
             jobRunner.runPack(job, params)
         } catch (ex: RejectedExecutionException) {
@@ -194,6 +197,8 @@ class PackService(
                 finishState = Path.of(FINISH_STATE),
             )
             job.packParams = finishParams
+            job.originalName = parent.originalName
+            job.profileDto = parent.profileDto
             store.put(job)
             jobRunner.runPack(job, finishParams)
         } catch (ex: RejectedExecutionException) {

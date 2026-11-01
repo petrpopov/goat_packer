@@ -74,6 +74,13 @@ class PackJobFlowTest(
         val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
         val body = mockMvc.awaitJobCompletion(jobId)
         assertEquals("custom", body["pack"]["profileId"].asText())
+        // Статус для рабочей области по URL: синтетический профиль стола и введённый стол в настройках.
+        assertEquals("custom", body["profile"]["id"].asText())
+        assertEquals(250.0, body["profile"]["bedWidthMm"].asDouble(), 1e-9)
+        assertEquals(210.0, body["profile"]["bedDepthMm"].asDouble(), 1e-9)
+        assertEquals(3.0, body["profile"]["edgeMarginMm"].asDouble(), 1e-9)
+        assertEquals(3.0, body["params"]["customBed"]["margin"].asDouble(), 1e-9)
+        assertEquals(220.0, body["params"]["customBed"]["height"].asDouble(), 1e-9)
         val dir = tmpRoot.resolve("jobs").resolve(jobId)
         val profile = json.readTree(dir.resolve("profile.json").toFile())
         // Пакер сверяет printer_model проекта с printer_name профиля — разовый профиль назван так же.
@@ -93,6 +100,31 @@ class PackJobFlowTest(
         packCustom(miniProject3mf("Acme Unknown 3000"), "customWidth" to "40", "customDepth" to "210", "customHeight" to "220").andExpect(status().isBadRequest)
         packCustom(miniProject3mf("Acme Unknown 3000"), "customWidth" to "250", "customDepth" to "210", "customHeight" to "220", "customMargin" to "31")
             .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `статус pack-джоба несёт имя файла, профиль и настройки, вход скачивается теми же байтами`() {
+        val data = miniProject3mf("Bambu Lab A2L")
+        val create = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, data))
+                .param("profileId", "bambu_a2l").param("clearance", "1.2").param("finalSlice", "false"),
+        ).andExpect(status().isAccepted).andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        val body = mockMvc.awaitJobCompletion(jobId)
+        assertEquals("goat.3mf", body["originalName"].asText())
+        assertEquals("bambu_a2l", body["profile"]["id"].asText())
+        val catalog = json.readTree(mockMvc.perform(get("/api/profiles")).andReturn().response.contentAsString)
+        assertEquals(catalog.first { it["id"].asText() == "bambu_a2l" }, body["profile"])
+        assertEquals(1.2, body["params"]["clearance"].asDouble(), 1e-9)
+        assertEquals(false, body["params"]["finalSlice"].asBoolean())
+        assertEquals("search", body["params"]["layout"].asText())
+        assertTrue(body["params"]["customBed"].isNull)
+        val input = mockMvc.perform(get("/api/jobs/$jobId/input")).andExpect(status().isOk).andReturn().response
+        assertTrue(input.contentAsByteArray.contentEquals(data))
+        assertTrue(input.getHeader("Content-Disposition")!!.contains("goat.3mf"))
+        mockMvc.perform(delete("/api/jobs/$jobId")).andExpect(status().isNoContent)
+        mockMvc.perform(get("/api/jobs/$jobId/input")).andExpect(status().isNotFound)
     }
 
     @Test

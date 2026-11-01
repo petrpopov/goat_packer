@@ -58,6 +58,12 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             assertEquals(expected,res.status,"$method $path: ${res.contentAsString}")
             return if(res.contentAsString.isBlank()) json.createObjectNode() else json.readTree(res.contentAsString)
         }
+        fun bytes(path:String,expected:Int=200):ByteArray {
+            val builder=request(HttpMethod.GET,path).with { it.remoteAddr=ip;it }
+            if(cookies.isNotEmpty()) builder.cookie(*cookies.values.toTypedArray())
+            val res=mvc.perform(builder).andReturn().response
+            assertEquals(expected,res.status,"GET $path");return res.contentAsByteArray
+        }
         fun guest()=call("POST","/api/v2/auth/guest")
         fun login(name:String="admin",pass:String="Test-admin-secret-123",expected:Int=200)=call("POST","/api/v2/auth/login",mapOf("login" to name,"password" to pass),expected)
         fun upload(printer:String="Bambu Lab P1S",profile:String="bambu_p1s"):String {
@@ -174,6 +180,32 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         assertEquals(unknown["projectBed"],c.call("GET","/api/v2/uploads/${unknown["fileId"].asText()}")["projectBed"])
         assertTrue(c.uploadRaw("p1s.3mf",descriptorProject3mf("Bambu Lab P1S",settings))["projectBed"].isNull)
     }
+    @Test fun `pack status carries originalName, profile and params for the read-only workspace, and the input downloads like an artifact`() {
+        val a=Client();a.guest();val b=Client();b.guest()
+        val data=descriptorProject3mf("Bambu Lab P1S")
+        val file=a.upload()
+        val created=a.job(file,extra=mapOf("clearance" to 1.5,"finalSlice" to false));val id=created["jobId"].asText()
+        val st=a.call("GET","/api/v2/jobs/$id")
+        assertEquals("cat.3mf",st["originalName"].asText())
+        assertEquals("bambu_p1s",st["profile"]["id"].asText())
+        assertEquals(profilesOf(a).first { it["id"].asText()=="bambu_p1s" },st["profile"])
+        assertEquals(1.5,st["params"]["clearance"].asDouble(),1e-9);assertFalse(st["params"]["finalSlice"].asBoolean())
+        assertEquals("search",st["params"]["layout"].asText());assertTrue(st["params"]["customBed"].isNull)
+        // Список лёгкий: профиль и настройки только в статусе одной задачи.
+        assertFalse(a.call("GET","/api/v2/jobs")["items"][0].has("profile"))
+        val dl=a.call("POST","/api/v2/jobs/$id/input/download")
+        assertEquals("cat.3mf",dl["filename"].asText())
+        assertArrayEquals(data,a.bytes(dl["url"].asText()))
+        // Без доступа — как для артефактов; по токену чтения — можно.
+        b.call("POST","/api/v2/jobs/$id/input/download",expected=404)
+        b.bytes("/api/v2/jobs/$id/input/file",404)
+        b.call("POST","/api/v2/jobs/$id/input/download",headers=mapOf("X-Job-Token" to created["readToken"].asText()))
+        // Не упаковка: вход не отдаётся, профиль и настройки в статусе null.
+        val sid=a.job(file)["jobId"].asText();jdbc.update("update queue_jobs set kind='SCHEDULE' where id=?",sid)
+        a.call("POST","/api/v2/jobs/$sid/input/download",expected=400)
+        assertTrue(a.call("GET","/api/v2/jobs/$sid")["params"].isNull)
+    }
+    private fun profilesOf(c:Client)=c.call("GET","/api/v2/profiles")
     @Test fun `custom bed job packs an unknown printer 3MF with an ad-hoc profile from the confirmed project bed`() {
         val c=Client();c.guest()
         val settings=mapOf("printable_area" to listOf("-5x0","245x0","245x210","-5x210"),"bed_exclude_area" to listOf("0x0"),"printable_height" to "220")
@@ -197,6 +229,10 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         // Стол — проекта: его начало координат и исключения; отступ — введённый.
         assertEquals(listOf(-5.0,0.0,245.0,210.0),profile["printable_area"].map { it.asDouble() })
         assertEquals(7.0,profile["edge_margin_mm"].asDouble(),1e-9)
+        val st=c.call("GET","/api/v2/jobs/$id")
+        assertEquals("custom",st["profile"]["id"].asText());assertEquals(250.0,st["profile"]["bedWidthMm"].asDouble(),1e-9)
+        assertEquals(210.0,st["profile"]["bedDepthMm"].asDouble(),1e-9);assertEquals(7.0,st["profile"]["edgeMarginMm"].asDouble(),1e-9)
+        assertEquals(7.0,st["params"]["customBed"]["margin"].asDouble(),1e-9);assertEquals(250.0,st["params"]["customBed"]["width"].asDouble(),1e-9)
         assertEquals("Acme Unknown 3000",profile["printer_name"].asText());assertEquals("orca",profile["slicer_kind"].asText())
         val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
         try {
