@@ -4,6 +4,10 @@ COPY webapp/frontend/package.json webapp/frontend/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
 COPY webapp/frontend/ ./
 ENV VITE_SERVER_MODE=true
+# Версия и коммит в углу меню (в контексте сборки нет .git: их передаёт build-images.sh).
+ARG GOAT_VERSION=dev
+ARG GOAT_COMMIT=
+ENV GOAT_VERSION=$GOAT_VERSION GOAT_COMMIT=$GOAT_COMMIT
 RUN bun run build
 FROM nginx:1.28-alpine
 LABEL goat-packer=1

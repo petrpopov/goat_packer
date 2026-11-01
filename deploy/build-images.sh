@@ -38,5 +38,6 @@ for kind in bambu orca; do
 done
 build -f deploy/Dockerfile.backend --target api -t "goat-packer-api:$version"
 build -f deploy/Dockerfile.backend --target worker -t "goat-packer-worker:$version"
-build -f deploy/Dockerfile.frontend -t "goat-packer-gateway:$version"
+build -f deploy/Dockerfile.frontend --build-arg GOAT_VERSION="$version" \
+  --build-arg GOAT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)" -t "goat-packer-gateway:$version"
 docker image ls --filter "reference=goat-packer-*:$version"

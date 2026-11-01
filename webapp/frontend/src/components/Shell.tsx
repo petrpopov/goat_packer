@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { serverMode } from '@/api/http';
 import AccountMenu from '@/components/AccountMenu';
+import BrandMark from '@/components/BrandMark';
 import Icon, { type IconName } from '@/components/Icon';
 import { useLinkHandler } from '@/hooks/useLinkHandler';
 import type { Session } from '@/pages/ServerPages';
@@ -60,10 +61,7 @@ export default function Shell({ user, children }: { user?: Session; children: Re
           <Icon name="sidebar" />
         </button>
         <a className="brand" href="/pack" onClick={onLink}>
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z" fill="var(--accent-soft)" stroke="var(--accent-fill)" strokeWidth="1.6" strokeLinejoin="round" />
-            <path d="M4 7.5 12 12l8-4.5M12 12v9" fill="none" stroke="var(--accent-fill)" strokeWidth="1.6" strokeLinejoin="round" />
-          </svg>
+          <BrandMark />
           Goat Packer
         </a>
         <div className="topbar-spacer" />
@@ -88,6 +86,10 @@ export default function Shell({ user, children }: { user?: Session; children: Re
               {navLink(ADMIN_ITEM)}
             </>
           )}
+          <div className="build-tag" title={`Версия ${__GOAT_BUILD__.version}, коммит ${__GOAT_BUILD__.commit || 'неизвестен'}`}>
+            {__GOAT_BUILD__.version}
+            {__GOAT_BUILD__.commit && <span> · {__GOAT_BUILD__.commit}</span>}
+          </div>
         </nav>
         <main className="app-content">{children}</main>
       </div>

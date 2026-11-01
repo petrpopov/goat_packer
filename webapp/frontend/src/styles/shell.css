@@ -86,3 +86,7 @@
   .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .nav-sep { display: none; }
 }
+/* Версия и коммит сборки внизу меню: справка для отчёта об ошибке, не навигация. */
+.build-tag { margin-top: auto; padding: 8px 10px 2px; font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.app.rail .build-tag { display: none; }
+@media (max-width: 760px) { .build-tag { display: none; } }
