@@ -16,6 +16,10 @@ object CliErrorTranslator {
     private data class Pattern(val regex: Regex, val message: (MatchResult) -> String)
 
     private val PATTERNS = listOf(
+        // source_project: модель выше printable_height принтера — раньше общего шаблона STL.
+        Pattern(Regex("STL could not be converted: the model is taller than the printer: (.+)")) {
+            "Модель выше, чем позволяет принтер (${it.groupValues[1].trim()})"
+        },
         // source_project (STL → 3MF перед упаковкой) пишет все свои ошибки одной строкой с этим префиксом.
         Pattern(Regex("STL could not be converted: (.+)")) {
             "Не удалось подготовить проект из STL: ${it.groupValues[1].trim()}"

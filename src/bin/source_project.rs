@@ -4,7 +4,7 @@
 //!   source_project --stl model.stl [--presets /opt/slicer/resources/profiles]
 //!     [--orca /opt/slicers/orca/AppRun]
 //!     (--vendor BBL --machine "Bambu Lab P1S 0.4 nozzle" | --custom-bed W,D,H)
-//!     --output input.3mf --work-dir work
+//!     [--edge-margin 5] --output input.3mf --work-dir work
 //!
 //! Presets are read at run time from the slicer installed in the image (plain JSON) and
 //! flattened by `orca_project`; nothing from Orca is shipped by us. A catalog printer loads its
@@ -13,7 +13,9 @@
 //! carries: in runner-bambu `/opt/slicers/orca/AppRun` is Bambu Studio, and its own BBL tree
 //! exports the same way (verified 2026-11-01 on P1S/A2L: export, pack, final slice OK; the
 //! filament falls back to the vendor's `Generic PLA`, see `orca_project::catalog_presets`). The
-//! A2L has a machine preset only in Bambu Studio's tree. Every failure exits 1 with one line
+//! A2L has a machine preset only in Bambu Studio's tree. The model must fit the printable area
+//! minus `--edge-margin` (the profile's `edge_margin_mm`, the packer keeps the same margin) and
+//! `printable_height`, checked before the export. Every failure exits 1 with one line
 //! `error: STL could not be converted: …` (the webapp's CliErrorTranslator keys on it).
 use std::{
     fs,
@@ -41,6 +43,7 @@ struct Args {
     presets: PathBuf,
     orca: PathBuf,
     printer: Printer,
+    edge_margin: f64,
     output: PathBuf,
     work_dir: PathBuf,
 }
@@ -57,6 +60,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
     let (mut stl, mut vendor, mut machine, mut custom, mut output, mut work_dir) = (None, None, None, None, None, None);
     let mut presets = PathBuf::from(DEFAULT_PRESETS);
     let mut orca = PathBuf::from(DEFAULT_ORCA);
+    let mut edge_margin = 0.0;
     while let Some(option) = args.next() {
         let value = args.next().ok_or_else(|| format!("missing value for {option}"))?;
         match option.as_str() {
@@ -66,6 +70,14 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
             "--vendor" => vendor = Some(value),
             "--machine" => machine = Some(value),
             "--custom-bed" => custom = Some(parse_bed(&value)?),
+            "--edge-margin" => {
+                edge_margin = value
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|m| m.is_finite() && *m >= 0.0)
+                    .ok_or_else(|| format!("--edge-margin {value}: expected a non-negative number of mm"))?
+            }
             "--output" => output = Some(PathBuf::from(value)),
             "--work-dir" => work_dir = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown option {option}").into()),
@@ -83,6 +95,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
         presets,
         orca,
         printer,
+        edge_margin,
         output: output.ok_or("missing --output")?,
         work_dir: work_dir.ok_or("missing --work-dir")?,
     })
@@ -102,9 +115,43 @@ fn parse_bed(value: &str) -> Result<(f64, f64, f64), Error> {
     }
 }
 
+/// The printable `area` shrunk by `margin` on every side, if a `size` (W, D, H) model fits it
+/// and `height` (the machine's `printable_height`, when known).
+fn usable_area(area: [f64; 4], margin: f64, size: [f64; 3], height: Option<f64>) -> Result<[f64; 4], Error> {
+    let usable = [area[0] + margin, area[1] + margin, area[2] - margin, area[3] - margin];
+    let (bed_w, bed_d) = (area[2] - area[0], area[3] - area[1]);
+    let (use_w, use_d) = (usable[2] - usable[0], usable[3] - usable[1]);
+    if use_w <= 0.0 || use_d <= 0.0 {
+        return Err(format!("the {margin} mm edge margin leaves no printable area on a {bed_w:.1}x{bed_d:.1} mm bed").into());
+    }
+    if size[0] > use_w || size[1] > use_d {
+        let minus = if margin > 0.0 { format!(" ({bed_w:.1}x{bed_d:.1} mm minus the {margin} mm edge margin)") } else { String::new() };
+        return Err(format!(
+            "the model's footprint {:.1}x{:.1} mm does not fit the printable area {use_w:.1}x{use_d:.1} mm{minus}",
+            size[0], size[1]
+        )
+        .into());
+    }
+    if let Some(height) = height.filter(|h| size[2] > *h) {
+        return Err(format!("the model is taller than the printer: {:.1} mm, printable height {height:.1} mm", size[2]).into());
+    }
+    Ok(usable)
+}
+
+/// `printable_height` of the machine preset (Orca writes numbers as strings).
+fn printable_height(presets: &CliPresets) -> Option<f64> {
+    match presets.machine.get("printable_height")? {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+    .filter(|h: &f64| h.is_finite() && *h > 0.0)
+}
+
 fn run(args: &Args) -> Result<(), Error> {
     let stl = fs::read(&args.stl).map_err(|e| format!("cannot read {}: {e}", args.stl.display()))?;
-    let footprint = orca_project::stl_xy_size(&stl).map_err(|e| format!("{}: {e}", args.stl.display()))?;
+    let size = orca_project::stl_size(&stl).map_err(|e| format!("{}: {e}", args.stl.display()))?;
+    let footprint = (size[0], size[1]);
     if !args.presets.is_dir() {
         return Err(format!("slicer presets {} not found", args.presets.display()).into());
     }
@@ -114,14 +161,7 @@ fn run(args: &Args) -> Result<(), Error> {
         Printer::Custom { width, depth, height } => orca_project::custom_presets(&index, *width, *depth, *height)?,
     };
     let (area, exclusions) = presets.bed()?;
-    let (bed_w, bed_d) = (area[2] - area[0], area[3] - area[1]);
-    if footprint.0 > bed_w || footprint.1 > bed_d {
-        return Err(format!(
-            "the model's footprint {:.1}x{:.1} mm does not fit the printable area {bed_w:.1}x{bed_d:.1} mm",
-            footprint.0, footprint.1
-        )
-        .into());
-    }
+    let usable = usable_area(area, args.edge_margin, size, printable_height(&presets))?;
 
     fs::create_dir_all(&args.work_dir)?;
     let files = orca_project::write_cli_presets(&presets, &args.work_dir.join("presets"))?;
@@ -137,11 +177,17 @@ fn run(args: &Args) -> Result<(), Error> {
     if let Some(parent) = args.output.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(&exported, &args.output)?;
-    let origin = orca_project::free_spot(area, &exclusions, footprint);
+    // Moved, not copied: on the runner the job directory is a size-limited tmpfs, and a second
+    // copy of a large project would eat into the packer's room. Copy only across filesystems.
+    if fs::rename(&exported, &args.output).is_err() {
+        fs::copy(&exported, &args.output)?;
+    }
+    let origin = orca_project::free_spot(usable, &exclusions, footprint);
     orca_project::place_build_item(&args.output, (origin.0 + footprint.0 / 2.0, origin.1 + footprint.1 / 2.0))?;
     let settings = orca_project::project_settings(&args.output)?;
     orca_project::check_project_settings(&settings, &presets)?;
+    // The export's leftovers (result.json, a copied 3MF) are not needed past this point.
+    let _ = fs::remove_dir_all(&export_dir);
     print_summary(&args.output, &presets);
     Ok(())
 }
@@ -200,6 +246,28 @@ mod tests {
             assert!(args(&with(&["--custom-bed", bad])).is_err(), "{bad}");
         }
         assert!(args(&with(&["--custom-bed", "300,250,220", "--vendor", "Prusa", "--machine", "M"])).is_err());
+    }
+
+    #[test]
+    fn edge_margin_is_optional_and_non_negative() {
+        assert_eq!(args(&with(&["--custom-bed", "300,250,220"])).unwrap().edge_margin, 0.0);
+        assert_eq!(args(&with(&["--custom-bed", "300,250,220", "--edge-margin", "5"])).unwrap().edge_margin, 5.0);
+        for bad in ["-1", "x", "inf"] {
+            assert!(args(&with(&["--custom-bed", "300,250,220", "--edge-margin", bad])).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn model_must_fit_the_area_minus_the_margin_and_the_height() {
+        let area = [0.0, 0.0, 250.0, 210.0];
+        assert_eq!(usable_area(area, 5.0, [240.0, 200.0, 100.0], Some(220.0)).unwrap(), [5.0, 5.0, 245.0, 205.0]);
+        let wide = usable_area(area, 5.0, [245.0, 100.0, 10.0], None).unwrap_err().to_string();
+        assert!(wide.contains("does not fit the printable area 240.0x200.0 mm (250.0x210.0 mm minus the 5 mm edge margin)"), "{wide}");
+        assert!(usable_area(area, 0.0, [245.0, 100.0, 10.0], None).is_ok());
+        let tall = usable_area(area, 0.0, [10.0, 10.0, 230.0], Some(220.0)).unwrap_err().to_string();
+        assert!(tall.starts_with("the model is taller than the printer"), "{tall}");
+        assert!(usable_area(area, 0.0, [10.0, 10.0, 230.0], None).is_ok());
+        assert!(usable_area(area, 105.0, [1.0, 1.0, 1.0], None).is_err());
     }
 
     #[test]

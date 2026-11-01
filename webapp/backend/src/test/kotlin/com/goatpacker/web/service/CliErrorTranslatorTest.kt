@@ -22,6 +22,12 @@ class CliErrorTranslatorTest {
     }
 
     @Test
+    fun `модель выше принтера — свой заголовок`() {
+        val tail = "error: STL could not be converted: the model is taller than the printer: 230.0 mm, printable height 220.0 mm"
+        assertEquals("Модель выше, чем позволяет принтер (230.0 mm, printable height 220.0 mm)", CliErrorTranslator.translate(tail))
+    }
+
+    @Test
     fun `ошибка подготовки проекта из STL переводится с причиной`() {
         val tail = "error: STL could not be converted: the model's footprint 300.0x20.0 mm does not fit the printable area 250.0x210.0 mm"
         val headline = CliErrorTranslator.translate(tail)!!

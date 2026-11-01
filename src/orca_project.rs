@@ -376,11 +376,18 @@ pub fn failure_line(bytes: &[u8]) -> Option<String> {
 
 /// XY extent (width, depth) of an STL, binary or ASCII.
 pub fn stl_xy_size(bytes: &[u8]) -> Result<(f64, f64), Error> {
-    let mut min = [f64::INFINITY; 2];
-    let mut max = [f64::NEG_INFINITY; 2];
-    let mut add = |x: f64, y: f64| {
-        min = [min[0].min(x), min[1].min(y)];
-        max = [max[0].max(x), max[1].max(y)];
+    stl_size(bytes).map(|[w, d, _]| (w, d))
+}
+
+/// Extent `[width, depth, height]` of an STL, binary or ASCII.
+pub fn stl_size(bytes: &[u8]) -> Result<[f64; 3], Error> {
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    let mut add = |p: [f64; 3]| {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(p[axis]);
+            max[axis] = max[axis].max(p[axis]);
+        }
     };
     let binary_len = bytes.get(80..84).map(|c| 84 + 50 * u32::from_le_bytes(c.try_into().expect("4 bytes")) as usize);
     if binary_len == Some(bytes.len()) {
@@ -388,16 +395,16 @@ pub fn stl_xy_size(bytes: &[u8]) -> Result<(f64, f64), Error> {
             for vertex in 0..3 {
                 let at = 12 + vertex * 12;
                 let f = |o: usize| f64::from(f32::from_le_bytes(triangle[at + o..at + o + 4].try_into().expect("4 bytes")));
-                add(f(0), f(4));
+                add([f(0), f(4), f(8)]);
             }
         }
     } else if bytes.trim_ascii_start().starts_with(b"solid") {
         for line in String::from_utf8_lossy(bytes).lines() {
             let mut words = line.split_whitespace();
             if words.next() == Some("vertex") {
-                let xy: Vec<f64> = words.take(2).filter_map(|w| w.parse().ok()).collect();
-                if let [x, y] = xy[..] {
-                    add(x, y);
+                let xyz: Vec<f64> = words.take(3).filter_map(|w| w.parse().ok()).collect();
+                if let [x, y, z] = xyz[..] {
+                    add([x, y, z]);
                 }
             }
         }
@@ -407,7 +414,7 @@ pub fn stl_xy_size(bytes: &[u8]) -> Result<(f64, f64), Error> {
     if !(min[0].is_finite() && max[0].is_finite()) {
         return Err("STL has no triangles".into());
     }
-    Ok((max[0] - min[0], max[1] - min[1]))
+    Ok([max[0] - min[0], max[1] - min[1], max[2] - min[2]])
 }
 
 #[cfg(test)]
@@ -585,8 +592,10 @@ mod tests {
         let path = dir.path().join("t.stl");
         crate::embedded_mesh::write_binary_stl(&path, &[[(1.0, 2.0, 0.0), (21.0, 2.0, 0.0), (1.0, 12.0, 5.0)]]).unwrap();
         assert_eq!(stl_xy_size(&fs::read(&path).unwrap()).unwrap(), (20.0, 10.0));
+        assert_eq!(stl_size(&fs::read(&path).unwrap()).unwrap(), [20.0, 10.0, 5.0]);
         let ascii = b"solid t\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 30 0 0\n   vertex 0 5.5 0\n  endloop\n endfacet\nendsolid t\n";
         assert_eq!(stl_xy_size(ascii).unwrap(), (30.0, 5.5));
+        assert_eq!(stl_size(ascii).unwrap(), [30.0, 5.5, 0.0]);
         assert!(stl_xy_size(b"garbage").is_err());
         assert!(stl_xy_size(b"solid empty\nendsolid empty\n").is_err());
     }
