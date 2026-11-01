@@ -29,14 +29,16 @@ offset SquashFS) и собираются один раз; AppImage при сбо
   образы (`kdr-ci-linux:1`, базы слайсеров, версии для отката). Кнопку «Reload Traefik» для `main` не нажимать.
 - **Стек** `goat-packer` (composeId `9extEhTelEZyZ7NbPJS1y`): источник — этот репозиторий, ветка `master`,
   `deploy/compose.yml`, автодеплой выключен. Переменные — в Dokploy: `GOAT_VERSION`, пароли, `COOKIE_SECURE=true`,
-  `GOAT_PUBLIC_SCHEME=https`, `GOAT_TRUSTED_UPSTREAM=172.16.0.0/12` (newt приходит с шлюза Docker-сети;
-  без него лимиты по IP общие на всех), `S3_PUBLIC_ENDPOINT=https://goat.ezheg.xyz`, `WEB_PORT=18088`, `WORKER_ID=main-1`,
+  `GOAT_PUBLIC_SCHEME=https`, `ADMISSION_LIMITS=false` (сайт закрыт SSO Pangolin — лимитов частоты,
+  активных задач, бюджета и личной квоты нет; общий потолок хранилища остаётся), `S3_PUBLIC_ENDPOINT=https://goat.ezheg.xyz`, `WEB_PORT=18088`, `WORKER_ID=main-1`,
   `SCRATCH_ROOT=/srv/goat-packer/scratch`, ресурсы (1 слот: 2 CPU, 4 GiB).
 - **Доступ**: Pangolin `goat.ezheg.xyz` (SSO) → newt на `main` → `127.0.0.1:18088`. Файлы идут по `/goat/` того же имени.
 - **Релиз** = деплой: тег `v*` → образы → `deploy/dokploy-deploy.sh` (ключ Dokploy в
   `/var/lib/ci/goat_packer/secrets/dokploy.env` на `main`, root 600; API через туннель CI `127.0.0.1:13000`)
   → `deploy/smoke.py` против `127.0.0.1:18088`.
 - **Откат**: в Dokploy сменить `GOAT_VERSION` на предыдущий тег (хранятся три последние) → Deploy.
+- **Открыть сайт наружу** (без SSO): вернуть лимиты (`ADMISSION_LIMITS=true`) и задать `GOAT_TRUSTED_UPSTREAM=172.16.0.0/12` —
+  newt приходит в gateway с шлюза Docker-сети, без этого лимиты по IP (nginx и бэкенда) общие на всех.
 - **Свой домен** (позже): включить traefik на `main`, привязать домен к сервису `gateway` в Dokploy
   (Let's Encrypt), открыть 80/443 в ufw, `S3_PUBLIC_ENDPOINT=https://<домен>`, снять SSO/ресурс Pangolin.
 

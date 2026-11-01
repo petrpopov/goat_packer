@@ -82,6 +82,19 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         jdbc.update("delete from compute_budgets");jdbc.update("delete from bot_challenges");jdbc.update("delete from object_gc");jdbc.update("delete from worker_nodes");jdbc.update("delete from artifacts");jdbc.update("delete from queue_jobs");jdbc.update("delete from uploads");jdbc.update("delete from blobs")
         jdbc.update("update platform_config set max_parallel=1,paused=false where id=1")
     }
+    @Test fun `admission limits switched off let a guest run past the daily and active job limits`() {
+        props.admissionLimits=false
+        try {
+            val client=Client();client.guest()
+            val file=client.upload()
+            // Гостю обычно 4 задачи в сутки и 2 активных: без лимитов проходят все шесть.
+            repeat(6) { client.job(file) }
+        } finally {props.admissionLimits=true}
+        val other=Client();other.guest()
+        val file=other.upload()
+        repeat(2) { other.job(file) }
+        other.job(file,expected=429)
+    }
     @Test fun `server denies legacy endpoints admin to guests and mutation without csrf`() {
         val guest=Client();guest.guest()
         guest.call("GET","/api/v2/admin/users",expected=403)

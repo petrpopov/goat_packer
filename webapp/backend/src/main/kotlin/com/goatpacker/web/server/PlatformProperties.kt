@@ -37,6 +37,13 @@ class PlatformProperties {
     var allowLocalRunner = false
     var production = false
     var requireChallenge = false
+    /**
+     * Лимиты частоты (задачи в сутки, загрузки, сессии), активных задач на владельца, суточный
+     * вычислительный бюджет и личная квота хранения. false — сайт закрыт снаружи (SSO Pangolin),
+     * посторонних нет: свои работают без ограничений. Общий потолок хранилища, размер очереди и число
+     * одновременных загрузок действуют всегда.
+     */
+    var admissionLimits = true
     var powDifficulty = 16
     var maxRetries = 1
     var guestComputeSeconds = 3600L

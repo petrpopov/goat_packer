@@ -90,7 +90,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         val current=jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java)!!
         if(current>=props.maxQueue) limited("Очередь заполнена — попробуйте позже")
         val ownedCount=jdbc.queryForObject("select count(*) from queue_jobs where owner_id=? and status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java,ownerId)!!
-        if(ownedCount>=if(owner.kind=="GUEST") 2 else 4) limited("Достигнут лимит ваших активных задач")
+        if(props.admissionLimits && ownedCount>=if(owner.kind=="GUEST") 2 else 4) limited("Достигнут лимит ваших активных задач")
         quotas.reserve(owner,props.outputReservationBytes)
         val budgetDay=java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         reserveCompute(owner,budgetDay,props.jobTimeoutSeconds)
@@ -282,7 +282,8 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         for((key,limit) in listOf(owner.id to (if(owner.kind=="GUEST") props.guestComputeSeconds else props.accountComputeSeconds),"GLOBAL" to props.globalComputeSeconds)) {
             jdbc.update("insert into compute_budgets(owner_id,day) values (?,?) on conflict do nothing",key,day)
             val total=jdbc.queryForObject("select used_seconds+reserved_seconds from compute_budgets where owner_id=? and day=?",Long::class.java,key,day)!!
-            if(seconds>limit-total) limited("Суточный вычислительный бюджет исчерпан")
+            // Без лимитов резерв всё равно пишется: учёт времени по дням остаётся.
+            if(props.admissionLimits && seconds>limit-total) limited("Суточный вычислительный бюджет исчерпан")
             jdbc.update("update compute_budgets set reserved_seconds=reserved_seconds+? where owner_id=? and day=?",seconds,key,day)
         }
     }

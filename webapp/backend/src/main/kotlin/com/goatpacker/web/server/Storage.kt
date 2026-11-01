@@ -79,7 +79,8 @@ class Quotas(private val jdbc:JdbcTemplate,private val props:PlatformProperties)
         coalesce((select sum(reserved_bytes) from queue_jobs),0)+coalesce((select sum(size_bytes) from object_gc),0)""",Long::class.java)!!
     fun reserve(owner:PrincipalEntity,bytes:Long) {
         if(owner.blocked) throw ServerError(403,"BLOCKED","Доступ заблокирован")
-        if(bytes<0 || bytes>owner.storageQuota-ownerBytes(owner.id)) limited("Квота хранения исчерпана")
+        // Без лимитов (ADMISSION_LIMITS=false) личной квоты нет; общий потолок хранилища — всегда (диск).
+        if(bytes<0 || (props.admissionLimits && bytes>owner.storageQuota-ownerBytes(owner.id))) limited("Квота хранения исчерпана")
         if(bytes>props.storageLimitBytes-totalBytes()) limited("Хранилище временно заполнено")
     }
 }

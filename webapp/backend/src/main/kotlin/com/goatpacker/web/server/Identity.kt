@@ -38,8 +38,9 @@ fun actor():Actor = SecurityContextHolder.getContext().authentication?.principal
     ?: throw ServerError(401,"UNAUTHORIZED","Нужна гостевая сессия или вход")
 
 @Service @Profile("server")
-class AdmissionLimits(private val jdbc:JdbcTemplate) {
+class AdmissionLimits(private val jdbc:JdbcTemplate,private val props:PlatformProperties) {
     @Transactional fun hit(key:String, maximum:Int, seconds:Int=60, message:String="Слишком много запросов — повторите позже") {
+        if(!props.admissionLimits) return
         val used=jdbc.queryForObject("""insert into request_limits(key,window_start,used) values (?,now(),1)
             on conflict(key) do update set
             used=case when request_limits.window_start < now()- (? * interval '1 second') then 1 else request_limits.used+1 end,

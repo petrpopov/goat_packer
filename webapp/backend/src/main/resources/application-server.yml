@@ -56,6 +56,7 @@ platform:
   public-url: ${PUBLIC_URL:http://localhost:3007}
   production: ${PRODUCTION_MODE:false}
   require-challenge: ${REQUIRE_CHALLENGE:false}
+  admission-limits: ${ADMISSION_LIMITS:true}
   pow-difficulty: ${POW_DIFFICULTY:16}
   max-retries: ${MAX_RETRIES:1}
   max-queue: ${MAX_QUEUE:20}

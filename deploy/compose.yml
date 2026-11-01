@@ -46,6 +46,8 @@ services:
       S3_BUCKET: goat
       PRODUCTION_MODE: ${PRODUCTION_MODE:-true}
       REQUIRE_CHALLENGE: ${REQUIRE_CHALLENGE:-true}
+      # false — без лимитов частоты, активных задач, бюджета и личной квоты (сайт закрыт SSO, чужих нет); общий потолок диска остаётся.
+      ADMISSION_LIMITS: ${ADMISSION_LIMITS:-true}
       WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-4096}
       JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-1800}
       GLOBAL_COMPUTE_SECONDS: ${GLOBAL_COMPUTE_SECONDS:-72000}
