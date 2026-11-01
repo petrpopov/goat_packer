@@ -236,10 +236,17 @@ pub fn flatten_for_cli(mut merged: Map<String, Value>, machine: &str) -> Map<Str
     merged
 }
 
-/// Orca point lists: `["0x0","256x0",…]` or one string `"0x0,220x0,…"`.
+/// Orca point lists: `["0x0","256x0",…]`, one string `"0x0,220x0,…"`, or an array holding one
+/// comma string (Qidi Q2 / X-Max 4 `bed_exclude_area: ["0x0,11x0,11x16,0x16"]`, which used to
+/// parse as nothing and silently dropped the exclusion).
 pub fn parse_points(value: &Value) -> Option<Vec<(f64, f64)>> {
     let items: Vec<String> = match value {
-        Value::Array(a) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(Value::as_str)
+            .flat_map(|s| s.split(','))
+            .map(str::to_owned)
+            .collect(),
         Value::String(s) => s.split(',').map(str::to_owned).collect(),
         _ => return None,
     };
@@ -415,6 +422,12 @@ mod tests {
     fn exclusion_polygon_becomes_its_bounding_rect() {
         let tri = serde_json::json!(["0x0", "30x0", "0x20"]);
         assert_eq!(exclusion_rects(Some(&tri)), vec![[0.0, 0.0, 30.0, 20.0]]);
+    }
+
+    #[test]
+    fn array_with_one_comma_string_is_a_point_list() {
+        let qidi_q2 = serde_json::json!(["0x0,11x0,11x16,0x16"]);
+        assert_eq!(exclusion_rects(Some(&qidi_q2)), vec![[0.0, 0.0, 11.0, 16.0]]);
     }
 
     #[test]
