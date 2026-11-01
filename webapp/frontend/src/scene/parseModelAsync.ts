@@ -14,7 +14,7 @@ export function parseModelInWorker(name: string, buffer: ArrayBuffer): { promise
     worker.onmessage = (event: MessageEvent<ParseResponse>) => {
       worker.terminate();
       const data = event.data;
-      if (data.ok) resolve({ positions: data.positions, triangles: data.triangles, size: data.size });
+      if (data.ok) resolve({ positions: data.positions, triangles: data.triangles, size: data.size, projection: data.projection });
       else reject(new Error(data.error));
     };
     worker.onerror = (event) => {

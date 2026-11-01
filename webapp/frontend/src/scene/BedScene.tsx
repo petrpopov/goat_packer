@@ -6,6 +6,7 @@ import { useUiStore } from '@/store/useUiStore';
 import { bedSpec, type BedSpec, type Rect } from './bed';
 import type { Placement } from './layout';
 import type { ModelMesh } from './model3d';
+import { projectTriangles, type ProjectionMask } from './projection';
 
 export interface BedSceneProps {
   profile: PrinterProfile;
@@ -67,36 +68,34 @@ function disposeTree(root: THREE.Object3D) {
   });
 }
 
+/** Источник подложки: контуры пакера (even-odd, их немного) или растр проекции меша. */
+type FootprintSource = { kind: 'loops'; polygons: [number, number][][] } | { kind: 'mask'; projection: ProjectionMask };
+
 /** Подложка «проекция + контур»: заливка 28 % и обводка 1.6 мм цветом --accent-2. */
-function footprintTexture(polygons: [number, number][][], evenOdd: boolean): { texture: THREE.CanvasTexture; size: [number, number]; center: [number, number] } {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const poly of polygons) for (const [x, y] of poly) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
-  if (!Number.isFinite(minX)) minX = minY = maxX = maxY = 0;
-  const res = 4, pad = 3;
-  const w = Math.max(2, Math.ceil((maxX - minX + pad * 2) * res)), h = Math.max(2, Math.ceil((maxY - minY + pad * 2) * res));
-  const X = (x: number) => (x - minX + pad) * res, Y = (y: number) => h - (y - minY + pad) * res;
+function footprintTexture(source: FootprintSource): { texture: THREE.CanvasTexture; size: [number, number]; center: [number, number] } {
   const silhouette = document.createElement('canvas');
-  silhouette.width = w; silhouette.height = h;
-  const sx = silhouette.getContext('2d')!;
-  sx.fillStyle = sx.strokeStyle = '#fff';
-  if (evenOdd) {
-    sx.beginPath();
-    for (const poly of polygons) poly.forEach(([x, y], i) => (i ? sx.lineTo(X(x), Y(y)) : sx.moveTo(X(x), Y(y))));
-    sx.fill('evenodd');
+  let w: number, h: number, res: number, minX: number, minY: number, maxX: number, maxY: number;
+  if (source.kind === 'mask') {
+    const p = source.projection;
+    ({ width: w, height: h, res, minX, minY, maxX, maxY } = p);
+    silhouette.width = w; silhouette.height = h;
+    const image = new ImageData(w, h);
+    for (let i = 0; i < p.mask.length; i++) if (p.mask[i]) image.data.set([255, 255, 255, 255], i * 4);
+    silhouette.getContext('2d')!.putImageData(image, 0, 0);
   } else {
-    // Все треугольники меша — подпути ОДНОГО пути с одной заливкой: по пути на треугольник
-    // (заливка + обводка от щелей антиалиасинга) на сотнях тысяч граней canvas работал секундами.
-    // nonzero объединяет подпути, только если обход у всех один: нижние грани в проекции идут
-    // по часовой и вычли бы верхние — такие треугольники обходятся в обратном порядке.
+    minX = minY = Infinity; maxX = maxY = -Infinity;
+    for (const poly of source.polygons) for (const [x, y] of poly) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+    if (!Number.isFinite(minX)) minX = minY = maxX = maxY = 0;
+    res = 4;
+    const pad = 3;
+    w = Math.max(2, Math.ceil((maxX - minX + pad * 2) * res)); h = Math.max(2, Math.ceil((maxY - minY + pad * 2) * res));
+    const X = (x: number) => (x - minX + pad) * res, Y = (y: number) => h - (y - minY + pad) * res;
+    silhouette.width = w; silhouette.height = h;
+    const sx = silhouette.getContext('2d')!;
+    sx.fillStyle = '#fff';
     sx.beginPath();
-    for (const [[ax, ay], [bx, by], [cx, cy]] of polygons) {
-      const ccw = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) >= 0;
-      sx.moveTo(X(ax), Y(ay));
-      if (ccw) { sx.lineTo(X(bx), Y(by)); sx.lineTo(X(cx), Y(cy)); }
-      else { sx.lineTo(X(cx), Y(cy)); sx.lineTo(X(bx), Y(by)); }
-      sx.closePath();
-    }
-    sx.fill('nonzero');
+    for (const poly of source.polygons) poly.forEach(([x, y], i) => (i ? sx.lineTo(X(x), Y(y)) : sx.moveTo(X(x), Y(y))));
+    sx.fill('evenodd');
   }
   const tint = (color: string) => {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -166,7 +165,7 @@ export default function BedScene(props: BedSceneProps) {
     let cap: THREE.InstancedMesh | null = null;
     let footprints: THREE.InstancedMesh | null = null;
     let towerMesh: THREE.Mesh | null = null;
-    let footprintSource: { polygons: [number, number][][]; evenOdd: boolean } | null = null;
+    let footprintSource: FootprintSource | null = null;
     let height = 1;
     let spots: Placement[] = [];
     let dropStart = 0;
@@ -228,7 +227,7 @@ export default function BedScene(props: BedSceneProps) {
     const paintFootprints = () => {
       if (!footprints || !footprintSource) return;
       const material = footprints.material as THREE.MeshBasicMaterial;
-      const fp = footprintTexture(footprintSource.polygons, footprintSource.evenOdd);
+      const fp = footprintTexture(footprintSource);
       material.map?.dispose();
       material.map = fp.texture;
       material.needsUpdate = true;
@@ -287,12 +286,10 @@ export default function BedScene(props: BedSceneProps) {
       cap = new THREE.InstancedMesh(geometry, capMaterial, spots.length);
       // Сфера отсечения InstancedMesh считается один раз — по кадру падения она была бы неверной.
       solid.frustumCulled = cap.frustumCulled = false;
-      const evenOdd = Boolean(footprintLoops?.length);
-      const polygons: [number, number][][] = footprintLoops?.length
-        ? footprintLoops
-        : Array.from({ length: model.triangles }, (_, t) => [0, 1, 2].map((k) => [model.positions[t * 9 + k * 3], model.positions[t * 9 + k * 3 + 1]] as [number, number]));
-      footprintSource = { polygons, evenOdd };
-      const fp = footprintTexture(polygons, evenOdd);
+      footprintSource = footprintLoops?.length
+        ? { kind: 'loops', polygons: footprintLoops }
+        : { kind: 'mask', projection: model.projection ?? projectTriangles(model.positions, model.triangles) };
+      const fp = footprintTexture(footprintSource);
       footprints = new THREE.InstancedMesh(new THREE.PlaneGeometry(fp.size[0], fp.size[1]), new THREE.MeshBasicMaterial({ map: fp.texture, transparent: true, depthWrite: false }), spots.length);
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), z = new THREE.Vector3(0, 0, 1);
       spots.forEach((p, i) => {

@@ -1,3 +1,4 @@
+import type { ProjectionMask } from './projection';
 import { strFromU8, unzipSync } from 'fflate';
 
 /** Треугольники модели (по 9 чисел), XY-центр габарита в 0, низ на z = 0 — как кладёт пакер. */
@@ -6,6 +7,8 @@ export interface ModelMesh {
   triangles: number;
   /** Габарит, мм: [x, y, z]. */
   size: [number, number, number];
+  /** Растр проекции на стол (считается в воркере разбора; без него сцена строит его сама). */
+  projection?: ProjectionMask;
 }
 
 export function parseModel(name: string, buffer: ArrayBuffer): ModelMesh {
