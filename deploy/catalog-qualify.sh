@@ -88,6 +88,8 @@ qualify_one() {
 }
 export -f qualify_one
 
+# $1 раскрывает дочерний bash (имя черновика от xargs), а не этот: одинарные кавычки намеренно.
+# shellcheck disable=SC2016
 find "$drafts" -maxdepth 1 -name '*.json' -exec basename {} \; | sort | xargs -P "$jobs" -I{} bash -c 'set -euo pipefail; qualify_one "$1"' _ {}
 
 echo "отчёт: $out/report.md; прошли: $(grep -c '| qualified |' "$out/report.md" || true), не прошли: $(grep -c '| failed |' "$out/report.md" || true)"
