@@ -32,6 +32,7 @@ output.input { display: flex; align-items: center; color: var(--fg-muted); }
 .scene-dim { position: absolute; transform: translate(-50%, -50%); padding: 1px 5px; border-radius: 3px; background: var(--scene-bg); color: var(--fg-muted); font: 500 11.5px var(--font-mono); white-space: nowrap; }
 .scene-legend { position: absolute; top: 12px; right: 14px; display: grid; gap: 4px; color: var(--fg-dim); font-size: 12px; pointer-events: none; }
 .scene-legend span { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.scene-count { justify-self: end; margin-top: 4px; color: var(--fg); font: 600 22px var(--font-mono); line-height: 1; }
 .swatch { width: 12px; height: 9px; border-radius: 2px; }
 .swatch-keepout { background: var(--keepout); opacity: 0.8; }
 .swatch-footprint { border: 2px solid var(--accent-2); }

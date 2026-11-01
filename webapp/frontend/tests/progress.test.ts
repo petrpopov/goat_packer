@@ -10,7 +10,7 @@ import {
   stageItems,
   stageRows,
   stripStage,
-  stageTimeLine,
+  stageClockText,
 } from '../src/utils/progress';
 
 function stage(partial: Partial<JobStage>): JobStage {
@@ -29,7 +29,11 @@ function stage(partial: Partial<JobStage>): JobStage {
 
 describe('stage timing text', () => {
   test('durations', () => {
-    expect(formatDuration(45.7)).toBe('45 с');
+    expect(formatDuration(45.7)).toBe('46 с');
+    // Ненулевая длительность меньше секунды — «1 с», не «0 с».
+    expect(formatDuration(0.3)).toBe('1 с');
+    expect(formatDuration(0)).toBe('0 с');
+    expect(formatDuration(59.2)).toBe('1 мин 00 с');
     expect(formatDuration(125)).toBe('2 мин 05 с');
     expect(formatDuration(3780)).toBe('1 ч 03 мин');
   });
@@ -41,8 +45,8 @@ describe('stage timing text', () => {
     // До полутора оценок — ещё норма, не тревога.
     expect(remainingText(400, 317)).toBe('осталось < 1 мин');
     expect(remainingText(500, 317)).toBe('дольше обычного');
-    expect(stageTimeLine(125, null)).toBe('идёт 2 мин 05 с');
-    expect(stageTimeLine(20, 200)).toBe('идёт 20 с · осталось ≈ 3 мин');
+    expect(stageClockText(125, null)).toBe('2 мин 05 с');
+    expect(stageClockText(20, 200)).toBe('осталось ≈ 3 мин');
   });
 
   test('elapsed ticks locally from the moment of receipt', () => {

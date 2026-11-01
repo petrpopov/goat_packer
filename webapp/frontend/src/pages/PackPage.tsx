@@ -30,8 +30,8 @@ import { formatBytes, formatHoursMinutes } from '@/utils/format';
 import {
   formatDuration,
   objectsText,
-  remainingText,
   sceneClip,
+  stageClockText,
   stageElapsed,
   stageRows,
   stripStage,
@@ -705,8 +705,7 @@ export default function PackPage() {
   ) : null;
   /** Время до конца этапа или сколько он уже идёт (если у пакера нет оценки). */
   const stageClock = (stage: JobStage, receivedAtMs: number | undefined) => {
-    const elapsed = stageElapsed(stage, receivedAtMs, nowAfter(receivedAtMs));
-    return remainingText(elapsed, stage.expectedSeconds) ?? `идёт ${formatDuration(elapsed)}`;
+    return stageClockText(stageElapsed(stage, receivedAtMs, nowAfter(receivedAtMs)), stage.expectedSeconds);
   };
   const queueText = (position: number | null | undefined) =>
     position != null ? (
@@ -753,10 +752,12 @@ export default function PackPage() {
     </button>
   );
   const jobName = job?.originalName ?? shownFile?.name ?? '';
+  // Рядом с именем — сколько объектов получилось (id задачи пользователю ничего не говорит); без итога — ничего.
+  const resultCount = job?.status === 'SUCCEEDED' && result ? result.objectCount : null;
   const jobTitle = jobId ? (
     <>
       <span className="fname">{jobName || 'Задача'}</span>
-      <span className="job-id">#{jobId.slice(0, 8)}</span>
+      {resultCount != null ? <span className="job-id">{objectsText(resultCount)}</span> : null}
     </>
   ) : null;
 
@@ -1169,7 +1170,7 @@ export default function PackPage() {
                     shownFile && shownFile.size > PREVIEW_MAX_BYTES
                       ? 'Модель слишком большая для предпросмотра'
                       : searching
-                        ? 'идёт поиск раскладки'
+                        ? 'поиск раскладки'
                         : model
                           ? 'колесо — масштаб, перетаскивание — поворот, правая кнопка — сдвиг'
                           : ''
@@ -1179,6 +1180,7 @@ export default function PackPage() {
                   tower={placed.tower}
                   usableOverride={placed.bed}
                   readout={model ? `Модель: ${model.size.map((v) => Math.round(v)).join(' × ')} мм` : ''}
+                  objectCount={resultCount}
                 />
               </Suspense>
             </ErrorBoundary>
@@ -1308,11 +1310,7 @@ function StageList({
           {row.state === 'current' ? <span className="spin" aria-hidden="true" /> : <i aria-hidden="true" />}
           {row.label}
           <span className="t">
-            {row.seconds == null
-              ? ''
-              : row.state === 'current'
-                ? `идёт ${formatDuration(row.seconds)}`
-                : formatDuration(row.seconds)}
+            {row.seconds == null ? '' : formatDuration(row.seconds)}
           </span>
         </li>
       ))}

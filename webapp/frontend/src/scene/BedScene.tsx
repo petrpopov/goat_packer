@@ -30,6 +30,8 @@ export interface BedSceneProps {
   /** Подписи в углах сцены. */
   caption?: string;
   readout?: string;
+  /** Сколько объектов получилось на столе — числом под легендой; null — итога ещё нет. */
+  objectCount?: number | null;
 }
 
 const LAYER_MM = 0.2;
@@ -688,6 +690,11 @@ export default function BedScene(props: BedSceneProps) {
           <span>
             башня очистки <i className="swatch swatch-tower" />
           </span>
+        )}
+        {props.objectCount != null && (
+          <b className="scene-count" aria-label={`Объектов на столе: ${props.objectCount}`}>
+            {props.objectCount}
+          </b>
         )}
       </div>
       {props.caption && <div className="scene-tag scene-tag-bl">{props.caption}</div>}

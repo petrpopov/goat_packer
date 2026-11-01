@@ -30,9 +30,12 @@ export function objectsText(count: number): string {
   return `${count} ${word}`;
 }
 
-/** Длительность: «45 с», «2 мин 05 с», «1 ч 03 мин». */
+/**
+ * Длительность: «45 с», «2 мин 05 с», «1 ч 03 мин». Секунды округляются вверх: этап, занявший
+ * 0.3 с, — «1 с», а не «0 с» (единое правило для всех длительностей интерфейса).
+ */
 export function formatDuration(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
+  const total = Number.isFinite(seconds) ? Math.max(0, Math.ceil(seconds)) : 0;
   if (total < 60) return `${total} с`;
   const minutes = Math.floor(total / 60);
   if (minutes < 60) return `${minutes} мин ${String(total % 60).padStart(2, '0')} с`;
@@ -55,10 +58,12 @@ export function stageElapsed(stage: JobStage, receivedAtMs: number | undefined, 
   return stage.elapsedSeconds + sinceReceived;
 }
 
-/** Строка времени этапа: «идёт 2 мин 05 с · осталось ≈ 3 мин». */
-export function stageTimeLine(elapsedSeconds: number, expectedSeconds: number | null): string {
-  const remaining = remainingText(elapsedSeconds, expectedSeconds);
-  return `идёт ${formatDuration(elapsedSeconds)}${remaining ? ` · ${remaining}` : ''}`;
+/**
+ * Время идущего этапа: «осталось ≈ 3 мин», а без оценки пакера — сколько он уже длится («2 мин 05 с»).
+ * Без слова «идёт»: тикающее время и так говорит, что этап не закончился.
+ */
+export function stageClockText(elapsedSeconds: number, expectedSeconds: number | null): string {
+  return remainingText(elapsedSeconds, expectedSeconds) ?? formatDuration(elapsedSeconds);
 }
 
 /**
