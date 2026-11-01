@@ -120,6 +120,7 @@ fn run() -> Result<(), String> {
         let rotated = rotate_input(&footprint, rotation);
         for seed in first_seed..last_seed {
             let options = PackOptions {
+                body_bed: None,
                 body_exclusions: Vec::new(),
                 bed: profile.usable_bed()?,
                 exclusions: exclusions.clone(),

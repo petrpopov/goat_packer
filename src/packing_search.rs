@@ -233,10 +233,7 @@ impl FreeCenters {
     fn new(mask: &RasterMask, options: &PackOptions) -> Self {
         let r = options.resolution;
         let b = mask.bed_physical_bounds;
-        let min_x = (-b.min_x / r - 1e-9).ceil() as i32;
-        let min_y = (-b.min_y / r - 1e-9).ceil() as i32;
-        let max_x = ((options.bed.max_x - options.bed.min_x - b.max_x) / r + 1e-9).floor() as i32;
-        let max_y = ((options.bed.max_y - options.bed.min_y - b.max_y) / r + 1e-9).floor() as i32;
+        let (min_x, min_y, max_x, max_y) = crate::origin_range(options, mask);
         let width = (max_x - min_x + 1).max(0) as usize;
         let height = (max_y - min_y + 1).max(0) as usize;
         let mut this = Self {

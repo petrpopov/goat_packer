@@ -7,7 +7,7 @@ use std::{
 
 use goat_packer::{
     Footprint, PackOptions, PackResult, Point, Rect, extract_footprint, first_layer_footprint_of,
-    grid_layout, loops_touch_rect, pack_footprint, patch_overshoot_mm, patch_within_silhouette,
+    grid_layout, grow_beyond, loops_touch_rect, pack_footprint, patch_overshoot_mm, patch_within_silhouette,
     support_interface_loops_of, union_loops, validate_result,
     assemble::{AssembleOptions, assemble_project, source_model_center},
     colored_packer::{
@@ -960,6 +960,45 @@ fn run() -> AppResult<()> {
             println!("support check skipped: the G-code carries no object labels");
             break;
         }
+        // The slicer GUI refuses a plate whose lines leave the printable area; the CLI that
+        // produced this slice does not check. Supports drift between slices past the bed-edge
+        // reserve too (`SUPPORT_EDGE_RESERVE_MM`), so the realized first layer is learned and
+        // the plate repacked once; still outside after that is an error, not a silent file.
+        let off_plate = analysis.off_plate(profile.printable_bed());
+        if !off_plate.is_empty() {
+            let bed = profile.printable_bed();
+            for (label, extent) in &off_plate {
+                println!(
+                    "plate check: object {label} prints x [{:.2}, {:.2}] y [{:.2}, {:.2}] — past \
+                     the printable area {:.0}..{:.0} x {:.0}..{:.0}",
+                    extent.min_x, extent.max_x, extent.min_y, extent.max_y,
+                    bed.min_x, bed.max_x, bed.min_y, bed.max_y
+                );
+            }
+            if !plan.lock_orientation || plan.patch_learned {
+                return Err(format!(
+                    "{} object(s) print past the plate boundary in the final slice even after \
+                     learning the realized supports; the slicer GUI would refuse this plate",
+                    off_plate.len()
+                )
+                .into());
+            }
+            let learned = learn_support_patch(&plan.footprint, &packed, &analysis)?;
+            println!(
+                "plate check: learned the final slice's support patch ({:.1}x{:.1} mm, probe \
+                 {:.1}x{:.1} mm); repacking",
+                learned.width, learned.height, plan.footprint.width, plan.footprint.height
+            );
+            plan.footprint = learned;
+            plan.patch_learned = true;
+            repacked = true;
+            progress::repack(
+                RepackReason::SupportOffPlate,
+                &format!("re-packing ({} attempts, seed {})...", args.attempts, args.seed),
+            );
+            packed = plan.pack(&args, &profile)?;
+            continue;
+        }
         if support_collisions.is_empty() {
             println!(
                 "support check: {} layers, no support touches a foreign body",
@@ -1425,10 +1464,19 @@ struct PackPlan {
 impl PackPlan {
     /// The footprint the current rule packs: under the strict rule the landing zone is the
     /// whole silhouette again.
+    /// The footprint every layout is packed and validated against: the learned one, plus the
+    /// strict rule's empty landing and the bed-edge reserve for supports. The reserve lives
+    /// only here, never in `self.footprint`: learning a patch unions `bed_loops` into the
+    /// collision patch, and a grown bed zone must not leak into object-vs-object clearance.
     fn rule_footprint(&self) -> Footprint {
         let mut footprint = self.footprint.clone();
         if self.rule == SupportRule::Silhouette {
             footprint.support_landing_loops.clear();
+        }
+        if self.lock_orientation && !footprint.body_loops.is_empty() {
+            let bed = footprint.bed_loops.clone().unwrap_or_else(|| footprint.loops.clone());
+            footprint.bed_loops =
+                Some(grow_beyond(&bed, &footprint.body_loops, SUPPORT_EDGE_RESERVE_MM));
         }
         footprint
     }
@@ -1812,6 +1860,15 @@ fn sample_supports(
     Ok(())
 }
 
+/// How much farther than the learned patch a later slice may print a support, at the bed
+/// edges and exclusion areas (`PackPlan::rule_footprint`). The patch comes from the probe and
+/// the 3-object sample; a 44-goat P1S plate packed with its patch flush on the bed edge
+/// (x 255.84 of 256) printed every goat's first-layer support base 0.5 mm wider in the full
+/// plate's slice, and the base's G3 arcs reached x = 256.34: BambuStudio's GUI refused the
+/// plate ("G-code path goes beyond plate boundaries") on the three rightmost goats. The CLI
+/// has no such check. Three times the measured drift; bodies keep the plain edge margin.
+const SUPPORT_EDGE_RESERVE_MM: f64 = 1.5;
+
 /// Slices a nudged plate may take before the support check falls back to a repack: each
 /// round is a full final slice, and supports regenerate (and drift) on every one.
 const MAX_NUDGE_ROUNDS: usize = 2;
@@ -1878,9 +1935,16 @@ fn pack_options(
     fixed_keepouts: &[Rect],
     tower_keepout: Option<Rect>,
 ) -> AppResult<PackOptions> {
+    // A profile with its own support margin lets the patch use more of the bed than the
+    // model: the edge margin then binds the body only (`PackOptions::body_bed`).
+    let (bed, body_bed) = match profile.support_edge_margin_mm {
+        Some(_) => (profile.support_bed()?, Some(profile.usable_bed()?)),
+        None => (profile.usable_bed()?, None),
+    };
     Ok(PackOptions {
+        body_bed,
         body_exclusions: tower_keepout.into_iter().collect(),
-        bed: profile.usable_bed()?,
+        bed,
         exclusions: fixed_keepouts.to_vec(),
         resolution: args.resolution,
         clearance: args.clearance,
@@ -2482,6 +2546,7 @@ mod tests {
             no_check_for_final_tower_probe: false,
             printable_area: [0.0, 0.0, 20.0, 20.0],
             edge_margin_mm: 0.0,
+            support_edge_margin_mm: None,
             exclusion_rectangles: vec![],
             purge_lines: vec![],
             tower_marker_style: "wipe_tower".into(),
@@ -2526,6 +2591,7 @@ mod tests {
 
         let footprint = extract_footprint(&stl).unwrap();
         let options = PackOptions {
+            body_bed: None,
             body_exclusions: Vec::new(),
             bed: profile.usable_bed().unwrap(),
             exclusions: vec![],

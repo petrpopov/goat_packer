@@ -1494,6 +1494,29 @@ fn aabb_hits_exclusion(options: &PackOptions, mask: &RasterMask, x_px: i32, y_px
     )
 }
 
+/// Placement origins (pixels from `options.bed.min`) that keep a mask on the bed: the whole
+/// printed extent inside `bed`, the body inside `body_bed` (see `PackOptions::body_bed`).
+/// Inclusive `(min_x, min_y, max_x, max_y)`; empty when a min exceeds its max.
+pub(crate) fn origin_range(options: &PackOptions, mask: &RasterMask) -> (i32, i32, i32, i32) {
+    let r = options.resolution;
+    let within = |bounds: Rect, area: Rect| {
+        (
+            ((area.min_x - options.bed.min_x - bounds.min_x) / r - 1e-9).ceil() as i32,
+            ((area.min_y - options.bed.min_y - bounds.min_y) / r - 1e-9).ceil() as i32,
+            ((area.max_x - options.bed.min_x - bounds.max_x) / r + 1e-9).floor() as i32,
+            ((area.max_y - options.bed.min_y - bounds.max_y) / r + 1e-9).floor() as i32,
+        )
+    };
+    let full = within(mask.bed_physical_bounds, options.bed);
+    match options.body_bed {
+        None => full,
+        Some(area) => {
+            let body = within(mask.body_bounds, area);
+            (full.0.max(body.0), full.1.max(body.1), full.2.min(body.2), full.3.min(body.3))
+        }
+    }
+}
+
 fn bounds_hit_exclusion(bounds: Rect, x: f64, y: f64, pad: f64, exclusions: &[Rect]) -> bool {
     exclusions.iter().any(|r| {
         x + bounds.min_x - pad < r.max_x
@@ -1505,7 +1528,17 @@ fn bounds_hit_exclusion(bounds: Rect, x: f64, y: f64, pad: f64, exclusions: &[Re
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PackOptions {
+    /// Where the whole printed extent (`Footprint::bed_loops`: patch ∪ silhouette) must stay;
+    /// also the origin of the placement pixel grid.
     pub bed: Rect,
+    /// Where the model body (the body zone's bbox: silhouette plus support interfaces; the
+    /// whole extent for bodyless footprints) must stay when the supports may use more of the
+    /// bed than the model: a profile's edge margin keeps the meshes off the edge, while the
+    /// supports only need the printable area. A hand-made 48-goat Snapmaker U1 plate printed
+    /// its support bases 0.7 mm from the printable edge with the meshes 3.7 mm off it; with
+    /// the 4 mm margin binding the 47.6 mm support patch the packer found 45. `None` = `bed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_bed: Option<Rect>,
     pub exclusions: Vec<Rect>,
     /// Exclusions only the model body must clear (body bbox + clearance), while the support
     /// part of the patch may enter: the prime tower keepout. Tree supports reaching into the
@@ -1583,6 +1616,7 @@ fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), 
         || options.angle_step_deg <= 0.0
         || options.angle_step_deg > 360.0
         || !valid_rect(&options.bed)
+        || options.body_bed.is_some_and(|r| !valid_rect(&r))
         || options.exclusions.iter().any(|r| !valid_rect(r))
         || options.body_exclusions.iter().any(|r| !valid_rect(r))
         || options
@@ -1687,16 +1721,7 @@ fn grid_layout_inner(footprint: &Footprint, options: &PackOptions) -> PackResult
         }
 
         let mut placed: Vec<GridPlacement> = Vec::new();
-        let min_x = (-mask.bed_physical_bounds.min_x / options.resolution - 1e-9).ceil() as i32;
-        let min_y = (-mask.bed_physical_bounds.min_y / options.resolution - 1e-9).ceil() as i32;
-        let max_x = ((options.bed.max_x - options.bed.min_x - mask.bed_physical_bounds.max_x)
-            / options.resolution
-            + 1e-9)
-            .floor() as i32;
-        let max_y = ((options.bed.max_y - options.bed.min_y - mask.bed_physical_bounds.max_y)
-            / options.resolution
-            + 1e-9)
-            .floor() as i32;
+        let (min_x, min_y, max_x, max_y) = origin_range(options, &mask);
         let mut y = min_y;
         while y <= max_y {
             let mut x = min_x;
@@ -1917,6 +1942,21 @@ pub fn validate_result(
                 "placement {index} leaves bed: {translated_bounds:?}"
             ));
         }
+        if let Some(body_bed) = options.body_bed {
+            let body = Rect::new(
+                x_mm + mask.body_bounds.min_x,
+                y_mm + mask.body_bounds.min_y,
+                x_mm + mask.body_bounds.max_x,
+                y_mm + mask.body_bounds.max_y,
+            );
+            if body.min_x < body_bed.min_x - 1e-6
+                || body.min_y < body_bed.min_y - 1e-6
+                || body.max_x > body_bed.max_x + 1e-6
+                || body.max_y > body_bed.max_y + 1e-6
+            {
+                return Err(format!("placement {index} body leaves the body bed: {body:?}"));
+            }
+        }
         // Exclusion feasibility follows the placement's bbox — the semantics BambuStudio's
         // own validation uses (see aabb_hits_exclusion).
         if bounds_hit_exclusion(
@@ -1974,6 +2014,22 @@ pub fn union_loops(first: &Footprint, second: &Footprint) -> Vec<Vec<Point>> {
         .chain(second.loops.iter())
         .map(|loop_| polygon_from_loop(loop_))
         .collect();
+    union_exterior_loops(&owned)
+}
+
+/// `loops` with the part outside `inner` grown by `reach` mm (exterior rings, holes filled):
+/// a bed-extent zone whose supports (the patch beyond the body) may print farther in a later
+/// slice than in the ones they were learned from. The body itself does not grow.
+pub fn grow_beyond(loops: &[Vec<Point>], inner: &[Vec<Point>], reach: f64) -> Vec<Vec<Point>> {
+    use geo::{BooleanOps, Buffer, MultiPolygon};
+    assert!(reach.is_finite() && reach >= 0.0, "reach must be non-negative");
+    let polygons_of = |loops: &[Vec<Point>]| -> Vec<Polygon> {
+        filled_exterior_loops(loops).iter().map(|loop_| polygon_from_loop(loop_)).collect()
+    };
+    let outer = polygons_of(loops);
+    let beyond = MultiPolygon::new(outer.clone()).difference(&MultiPolygon::new(polygons_of(inner)));
+    let grown = beyond.buffer(reach);
+    let owned: Vec<Polygon> = outer.into_iter().chain(grown.0).collect();
     union_exterior_loops(&owned)
 }
 

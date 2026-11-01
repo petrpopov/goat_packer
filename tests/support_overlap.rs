@@ -41,6 +41,7 @@ fn skirted() -> Footprint {
 
 fn options(support_overlap_mm: Option<f64>) -> PackOptions {
     PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         // One row of objects: every neighbour pair is a horizontal pair. 34.5 mm fits five
         // at the unlimited 6.5 mm pitch but only four at the 8 mm pitch of X = 0.

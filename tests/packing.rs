@@ -51,6 +51,7 @@ fn concave_shapes_can_interlock_while_bounding_boxes_overlap() {
 fn packer_places_four_squares_without_overlap() {
     let square = polygon(&[(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]);
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 10.0, 10.0),
         exclusions: vec![],
@@ -74,6 +75,7 @@ fn packer_places_four_squares_without_overlap() {
 fn packer_never_uses_exclusion_area() {
     let square = polygon(&[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]);
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 8.0, 8.0),
         exclusions: vec![Rect::new(0.0, 0.0, 4.0, 4.0)],
@@ -109,6 +111,7 @@ fn bed_bounds_measure_bed_loops_not_the_silhouette_alone() {
     spike.push(spike[0]);
     fp.bed_loops = Some(vec![spike]);
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 10.0, 10.0),
         exclusions: vec![],
@@ -165,6 +168,7 @@ fn grid_tiles_the_bed_and_validate_result_accepts_it() {
     // unlike the old three-cell baseline, all six physically fitting cells must survive.
     let square = polygon(&[(-1.5, -3.), (1.5, -3.), (1.5, 3.), (-1.5, 3.)]);
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 13.0, 13.0),
         exclusions: vec![],
@@ -204,6 +208,7 @@ fn grid_skips_cells_that_touch_an_exclusion() {
     // dropped, not nudged sideways.
     let square = polygon(&[(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]);
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 16.0, 8.0),
         exclusions: vec![Rect::new(8.0, 0.0, 16.0, 8.0)],
@@ -236,6 +241,7 @@ fn layouts_exceed_the_old_128_cap_and_honor_an_explicit_one() {
     // 2x2 squares, 0 clearance, 1 mm pixels on a 40x40 bed: a 20x20 grid = 400 cells.
     let square = polygon(&[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]);
     let mut options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 40.0, 40.0),
         exclusions: vec![],
@@ -289,6 +295,7 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         triangle_count: 4,
     };
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 40.0, 40.0),
         exclusions: vec![],
@@ -332,6 +339,7 @@ fn grid_picks_the_orientation_that_fits_more_cells() {
     // lattice fits one column of 7 rows; rotated fits 3 columns x 2 rows = 6 — upright wins.
     let rectangle = polygon(&[(-4., -1.), (4., -1.), (4., 1.), (-4., 1.)]);
     let options = PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 10.0, 20.0),
         exclusions: vec![],
@@ -362,6 +370,7 @@ mod support;
 
 fn stable_options() -> PackOptions {
     PackOptions {
+        body_bed: None,
         body_exclusions: Vec::new(),
         bed: Rect::new(-3.25, 10.75, 30.75, 38.75),
         exclusions: vec![Rect::new(10., 10.75, 14., 14.75)],

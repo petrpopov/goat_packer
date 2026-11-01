@@ -16,6 +16,7 @@ fn test_profile(nozzle_clean_gcode: Option<&str>) -> PrinterProfile {
         no_check_for_final_tower_probe: false,
         printable_area: [0.0, 0.0, 256.0, 256.0],
         edge_margin_mm: 0.0,
+        support_edge_margin_mm: None,
         exclusion_rectangles: vec![],
         purge_lines: vec![],
         tower_marker_style: "wipe_tower".to_owned(),

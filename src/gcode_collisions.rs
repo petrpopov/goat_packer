@@ -75,6 +75,29 @@ pub struct PlateAnalysis {
     /// Printed lines attributed to an object; 0 means no object labels were found, so the
     /// check proved nothing.
     pub labelled_lines: usize,
+    /// Every object's printed extent over all layers: line centres, arcs sampled along the
+    /// sweep — what BambuStudio's G-code viewer measures (`all_paths_inside`: the paths' bbox,
+    /// arc interpolation points included, line widths not).
+    pub extents: Vec<(String, crate::Rect)>,
+}
+
+impl PlateAnalysis {
+    /// Objects whose printed lines leave `area` (the printable area), with their extent. The
+    /// slicer GUI refuses to export such a plate ("G-code path goes beyond plate
+    /// boundaries"); its CLI writes it without a word.
+    pub fn off_plate(&self, area: crate::Rect) -> Vec<(String, crate::Rect)> {
+        const EPSILON_MM: f64 = 1e-3;
+        self.extents
+            .iter()
+            .filter(|(_, b)| {
+                b.min_x < area.min_x - EPSILON_MM
+                    || b.min_y < area.min_y - EPSILON_MM
+                    || b.max_x > area.max_x + EPSILON_MM
+                    || b.max_y > area.max_y + EPSILON_MM
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 /// Edge gaps below this count as touching: absorbs float noise in the slicers' own
@@ -107,6 +130,7 @@ struct Parser {
     first_layer: Vec<ObjectFirstLayer>,
     collisions: BTreeMap<(usize, usize), SupportCollision>,
     labelled_lines: usize,
+    extents: Vec<Option<crate::Rect>>,
     z: f64,
     /// Every labelled line with its layer height, kept only for `layer_zones_from_sample`.
     keep_lines: bool,
@@ -133,6 +157,7 @@ impl Parser {
             label: label.to_owned(),
             strips: Vec::new(),
         });
+        self.extents.push(None);
         index
     }
 
@@ -143,6 +168,13 @@ impl Parser {
         let support = self.feature.to_lowercase().contains("support");
         let width = self.width;
         self.labelled_lines += 1;
+        let extent = self.extents[object].get_or_insert(crate::Rect::new(from.0, from.1, from.0, from.1));
+        for (x, y) in [from, to] {
+            extent.min_x = extent.min_x.min(x);
+            extent.min_y = extent.min_y.min(y);
+            extent.max_x = extent.max_x.max(x);
+            extent.max_y = extent.max_y.max(y);
+        }
         if self.keep_lines {
             self.kept.push(KeptLine {
                 object,
@@ -409,12 +441,23 @@ fn layer_collisions(lines: &[Line]) -> Vec<(usize, usize, f64)> {
 /// object's first-layer lines (for learning the realized support patch).
 pub fn analyze_plate(gcode: &[u8]) -> PlateAnalysis {
     let parser = parse(gcode, false);
+    let extents = extents_of(&parser);
     PlateAnalysis {
+        extents,
         collisions: parser.collisions.into_values().collect(),
         first_layer: parser.first_layer,
         layers: parser.layer,
         labelled_lines: parser.labelled_lines,
     }
+}
+
+fn extents_of(parser: &Parser) -> Vec<(String, crate::Rect)> {
+    parser
+        .labels
+        .iter()
+        .zip(&parser.extents)
+        .filter_map(|(label, extent)| Some((label.clone(), (*extent)?)))
+        .collect()
 }
 
 fn parse(gcode: &[u8], keep_lines: bool) -> Parser {
@@ -470,6 +513,7 @@ pub fn layer_zones_from_sample(
         first_layer: runs.iter().flat_map(|(parser, _)| parser.first_layer.iter().cloned()).collect(),
         layers: runs.iter().map(|(parser, _)| parser.layer).max().unwrap_or(0),
         labelled_lines: runs.iter().map(|(parser, _)| parser.labelled_lines).sum(),
+        extents: runs.iter().flat_map(|(parser, _)| extents_of(parser)).collect(),
     };
     let to_frame = |placement: &PackedPlacement, (x, y): (f64, f64)| {
         let (sin, cos) = (-placement.angle_deg).to_radians().sin_cos();
@@ -889,6 +933,25 @@ mod tests {
         assert_eq!(analysis.collisions[0].body_object, "b.stl id:1 copy 0");
         assert_eq!(analysis.first_layer.len(), 2);
         assert!(analysis.first_layer[1].strips.iter().all(|strip| strip.support));
+    }
+
+    #[test]
+    fn an_arc_bulging_past_the_plate_edge_is_off_plate() {
+        // The P1S support base: a G3 whose end points sit at x = 255.6 but whose sweep bulges
+        // to x ≈ 256.3 — BambuStudio's viewer samples the arc and refuses the plate.
+        let gcode = "; CHANGE_LAYER\n\
+                     ; start printing object, unique label id: 7\n; FEATURE: Support\n\
+                     G1 X255.6 Y170\nG3 X255.6 Y180 I-17.5 J5 E0.9\n\
+                     ; stop printing object, unique label id: 7\n\
+                     ; start printing object, unique label id: 8\n; FEATURE: Outer wall\n\
+                     G1 X100 Y100\nG1 X150 Y100 E1.0\n\
+                     ; stop printing object, unique label id: 8\n";
+        let analysis = analyze_plate(gcode.as_bytes());
+        let off = analysis.off_plate(crate::Rect::new(0.0, 0.0, 256.0, 256.0));
+        assert_eq!(off.len(), 1, "{off:?}");
+        assert_eq!(off[0].0, "7");
+        assert!(off[0].1.max_x > 256.2 && off[0].1.max_x < 256.4, "{:?}", off[0].1);
+        assert!(analysis.off_plate(crate::Rect::new(0.0, 0.0, 257.0, 256.0)).is_empty());
     }
 
     #[test]

@@ -64,6 +64,15 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             val res=mvc.perform(builder).andReturn().response
             assertEquals(expected,res.status,"GET $path");return res.contentAsByteArray
         }
+        /** Ответ целиком (заголовки, кодировка) — cookie из него запоминаются, статус не проверяется. */
+        fun raw(method:String,path:String):org.springframework.mock.web.MockHttpServletResponse {
+            val builder=request(HttpMethod.valueOf(method),path).with { it.remoteAddr=ip;it }
+            if(cookies.isNotEmpty()) builder.cookie(*cookies.values.toTypedArray())
+            if(method !in listOf("GET","HEAD")) cookies["XSRF-TOKEN"]?.let {builder.header("X-XSRF-TOKEN",it.value)}
+            val res=mvc.perform(builder).andReturn().response
+            res.getHeaders("Set-Cookie").forEach { value->val pair=value.substringBefore(';').split('=',limit=2);cookies[pair[0]]=Cookie(pair[0],pair[1]) }
+            return res
+        }
         fun guest()=call("POST","/api/v2/auth/guest")
         fun login(name:String="admin",pass:String="Test-admin-secret-123",expected:Int=200)=call("POST","/api/v2/auth/login",mapOf("login" to name,"password" to pass),expected)
         fun upload(printer:String="Bambu Lab P1S",profile:String="bambu_p1s"):String {
@@ -100,6 +109,23 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         guest.call("GET","/api/v2/admin/users",expected=403)
         guest.call("GET","/api/profiles",expected=403)
         assertEquals(403,mvc.perform(post("/api/v2/auth/guest")).andReturn().response.status)
+    }
+    @Test fun `a session slides with use and an expired one answers 401 in readable utf-8`() {
+        val client=Client();val id=client.guest()["id"].asText()
+        // Сессия за час до конца (гость зашёл почти неделю назад): обращение продлевает её и переписывает cookie.
+        jdbc.update("update auth_sessions set expires_at=now()+interval '1 hour' where owner_id=?",id)
+        val renewed=client.raw("GET","/api/v2/auth/me")
+        assertEquals(200,renewed.status)
+        assertTrue(renewed.getHeaders("Set-Cookie").any { it.startsWith("GP_SESSION=") && it.contains("Max-Age=604800") },renewed.getHeaders("Set-Cookie").toString())
+        assertTrue(jdbc.queryForObject("select expires_at>now()+interval '6 days' from auth_sessions where owner_id=?",Boolean::class.java,id)!!)
+        // Свежая сессия cookie не трогает: продление не чаще раза в сутки.
+        assertTrue(client.raw("GET","/api/v2/auth/me").getHeaders("Set-Cookie").none { it.startsWith("GP_SESSION=") })
+        // Истёкшая — 401 с русским текстом в UTF-8 (без кодировки сервлет писал ISO-8859-1, браузер показывал «????»).
+        jdbc.update("update auth_sessions set expires_at=now()-interval '1 minute' where owner_id=?",id)
+        val expired=client.raw("POST","/api/v2/jobs/${newId()}/check")
+        assertEquals(401,expired.status)
+        assertEquals("UTF-8",expired.characterEncoding.uppercase())
+        assertTrue(expired.getContentAsString(Charsets.UTF_8).contains("Сессия истекла"),expired.getContentAsString(Charsets.UTF_8))
     }
     @Test fun `administrator sees guests blocks access and cannot block self`() {
         val guest=Client();val id=guest.guest()["id"].asText()

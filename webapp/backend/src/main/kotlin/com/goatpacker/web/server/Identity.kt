@@ -56,13 +56,23 @@ class Identities(private val owners:PrincipalRepository,private val sessions:Ses
     private val encoder=BCryptPasswordEncoder(12)
     fun view(p:PrincipalEntity)=mapOf("id" to p.id,"kind" to p.kind,"login" to p.login,"role" to p.role,"blocked" to p.blocked,"storageQuotaBytes" to p.storageQuota)
     fun current():PrincipalEntity=owners.findById(actor().id).orElseThrow { ServerError(401,"UNAUTHORIZED","Сессия не найдена") }
-    fun authenticate(token:String?):Actor? {
+    /**
+     * Сессия скользящая: живёт [SESSION_SECONDS] с последнего обращения, а не с создания. С жёсткими 7 днями гость,
+     * открывший сайт ровно через неделю, получал 401 посреди работы («Проверить нарезкой»), а следующая загрузка
+     * страницы молча заводила нового гостя — без доступа к его задачам. Продлевается не чаще раза в сутки;
+     * [renewed] вызывается, когда браузеру нужно переписать cookie с новым сроком.
+     */
+    fun authenticate(token:String?,renewed:()->Unit={}):Actor? {
         if(token==null || token.length>100) return null
         val session=sessions.findById(Secrets.hash(token)).orElse(null) ?: return null
         val owner=owners.findById(session.ownerId).orElse(null) ?: return null
         if(owner.blocked) throw ServerError(403,"BLOCKED","Доступ заблокирован администратором")
         if(session.revoked || session.expiresAt.isBefore(Instant.now()) || owner.resetRequired) return null
         if(owner.lastSeenAt.isBefore(Instant.now().minusSeconds(60))) jdbc.update("update principals set last_seen_at=now() where id=? and last_seen_at<now()-interval '1 minute'",owner.id)
+        if(session.expiresAt.isBefore(Instant.now().plusSeconds(SESSION_SECONDS-86400))) {
+            jdbc.update("update auth_sessions set expires_at=? where token_hash=? and revoked=false",java.sql.Timestamp.from(Instant.now().plusSeconds(SESSION_SECONDS)),session.tokenHash)
+            renewed()
+        }
         return Actor(owner.id,owner.role,owner.kind,owner.login)
     }
     @Transactional fun bootstrap() {
@@ -129,7 +139,7 @@ class Identities(private val owners:PrincipalRepository,private val sessions:Ses
         // Bound session count without exposing any token to logs.
         jdbc.update("delete from auth_sessions where owner_id=? and (revoked=true or expires_at<now())",p.id)
         if(jdbc.queryForObject("select count(*) from auth_sessions where owner_id=?",Long::class.java,p.id)!!>=10) sessions.revoke(p.id)
-        val token=Secrets.token();sessions.save(SessionEntity(Secrets.hash(token),p.id,Instant.now().plusSeconds(7*86400)));return token
+        val token=Secrets.token();sessions.save(SessionEntity(Secrets.hash(token),p.id,Instant.now().plusSeconds(SESSION_SECONDS)));return token
     }
     private fun normalize(login:String):String {
         val value=login.trim().lowercase(Locale.ROOT)
@@ -139,37 +149,52 @@ class Identities(private val owners:PrincipalRepository,private val sessions:Ses
     private fun validatePassword(password:String) { if(password.length !in 12..72 || password.toByteArray().size>72) bad("Пароль: минимум 12 символов, максимум 72 байта") }
 }
 
-class SessionFilter(private val ids:Identities,private val mapper:ObjectMapper):OncePerRequestFilter() {
+/** Срок сессии: столько живут и строка `auth_sessions` (с последнего продления), и cookie. */
+const val SESSION_SECONDS=7L*86400
+fun sessionCookie(token:String,secure:Boolean,maxAge:Long=SESSION_SECONDS):String =
+    ResponseCookie.from("GP_SESSION",token).httpOnly(true).secure(secure).sameSite("Strict").path("/").maxAge(maxAge).build().toString()
+/**
+ * Ответ об ошибке вне контроллеров (фильтр, точки входа Spring Security) — всегда UTF-8: без явной кодировки
+ * сервлет пишет ISO-8859-1, и браузер показывал вместо русского сообщения «????? ???? ??? ???????? ??????».
+ */
+private val errorJson=ObjectMapper()
+fun writeError(res:HttpServletResponse,status:Int,code:String,message:String) {
+    res.status=status;res.contentType="application/json";res.characterEncoding="UTF-8"
+    res.writer.write(errorJson.writeValueAsString(mapOf("code" to code,"message" to message)))
+}
+
+class SessionFilter(private val ids:Identities,private val secureCookies:Boolean):OncePerRequestFilter() {
     override fun doFilterInternal(req:HttpServletRequest,res:HttpServletResponse,chain:FilterChain) {
         try {
             if(req.requestURI !in listOf("/api/v2/auth/logout","/api/v2/auth/csrf")) {
-                ids.authenticate(req.cookies?.find { it.name=="GP_SESSION" }?.value)?.let {
+                val token=req.cookies?.find { it.name=="GP_SESSION" }?.value
+                ids.authenticate(token) { res.addHeader("Set-Cookie",sessionCookie(token!!,secureCookies)) }?.let {
                     SecurityContextHolder.getContext().authentication=UsernamePasswordAuthenticationToken(it,null,listOf(SimpleGrantedAuthority("ROLE_${it.role}")))
                 }
             }
             chain.doFilter(req,res)
         } catch(ex:ServerError) {
-            res.status=ex.status;res.contentType="application/json";mapper.writeValue(res.writer,mapOf("code" to ex.code,"message" to ex.message))
+            writeError(res,ex.status,ex.code,ex.message)
         }
     }
 }
 @Configuration @Profile("server") @ConditionalOnWebApplication
 class ServerSecurity {
-    @Bean fun serverChain(http:HttpSecurity,ids:Identities,mapper:ObjectMapper,props:PlatformProperties):SecurityFilterChain {
+    @Bean fun serverChain(http:HttpSecurity,ids:Identities,props:PlatformProperties):SecurityFilterChain {
         val csrf=CookieCsrfTokenRepository.withHttpOnlyFalse().apply { setCookieCustomizer { it.secure(props.secureCookies).sameSite("Strict").path("/") } }
         return http.cors { }.sessionManagement { it.disable() }
             .securityContext { it.securityContextRepository(org.springframework.security.web.context.NullSecurityContextRepository()) }
             .requestCache { it.disable() }
             .csrf { it.csrfTokenRepository(csrf).csrfTokenRequestHandler(CsrfTokenRequestAttributeHandler()) }
-            .addFilterBefore(SessionFilter(ids,mapper),UsernamePasswordAuthenticationFilter::class.java)
+            .addFilterBefore(SessionFilter(ids,props.secureCookies),UsernamePasswordAuthenticationFilter::class.java)
             .authorizeHttpRequests {
                 it.requestMatchers("/api/v2/health","/api/v2/auth/csrf","/api/v2/auth/guest","/api/v2/auth/login","/api/v2/auth/register","/api/v2/auth/reset","/api/v2/auth/logout").permitAll()
                 it.requestMatchers("/api/v2/admin/**").hasRole("ADMIN")
                 it.requestMatchers("/api/v2/**").authenticated()
                 it.anyRequest().denyAll()
             }.exceptionHandling {
-                it.authenticationEntryPoint { _,res,_-> res.status=401;res.contentType="application/json";res.writer.write("""{"code":"UNAUTHORIZED","message":"Нужен вход или гостевая сессия"}""") }
-                it.accessDeniedHandler { _,res,_->res.status=403;res.contentType="application/json";res.writer.write("""{"code":"FORBIDDEN","message":"Недостаточно прав или неверный CSRF-токен"}""") }
+                it.authenticationEntryPoint { _,res,_->writeError(res,401,"UNAUTHORIZED","Сессия истекла — обновите страницу") }
+                it.accessDeniedHandler { _,res,_->writeError(res,403,"FORBIDDEN","Недостаточно прав или неверный CSRF-токен") }
             }.build()
     }
 }
@@ -198,11 +223,11 @@ class AuthController(private val ids:Identities,private val props:PlatformProper
     }
     @PostMapping("/logout") fun logout(req:HttpServletRequest,res:HttpServletResponse) {
         ids.logout(req.cookies?.find { it.name=="GP_SESSION" }?.value)
-        res.addHeader("Set-Cookie",ResponseCookie.from("GP_SESSION","").httpOnly(true).secure(props.secureCookies).sameSite("Strict").path("/").maxAge(0).build().toString())
+        res.addHeader("Set-Cookie",sessionCookie("",props.secureCookies,0))
     }
     @PostMapping("/reset") fun reset(@RequestBody form:ResetForm,req:HttpServletRequest) { limits.hit("reset:${req.remoteAddr}",5);ids.consumeReset(form.token,form.password) }
     private fun reply(pair:Pair<PrincipalEntity,String>,res:HttpServletResponse):Map<String,Any?> {
-        res.addHeader("Set-Cookie",ResponseCookie.from("GP_SESSION",pair.second).httpOnly(true).secure(props.secureCookies).sameSite("Strict").path("/").maxAge(7*86400).build().toString())
+        res.addHeader("Set-Cookie",sessionCookie(pair.second,props.secureCookies))
         return ids.view(pair.first)
     }
 }

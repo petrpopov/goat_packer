@@ -46,6 +46,7 @@ fn footprint(body_half: f64, landing: bool) -> Footprint {
 
 fn options() -> PackOptions {
     PackOptions {
+        body_bed: None,
         // One row: 34.5 mm holds five objects at a 6.5 mm pitch, four at 7.5 mm.
         bed: Rect::new(0.0, 0.0, 34.5, 9.0),
         exclusions: vec![],
@@ -146,4 +147,49 @@ fn search_respects_body_exclusions() {
     let grid = grid_layout(&fp, &options);
     validate_result(&fp, &options, &searched).unwrap();
     validate_result(&fp, &options, &grid).unwrap();
+}
+
+/// Rule 3: a body bed (`PackOptions::body_bed`, the profile's edge margin) binds the model,
+/// while the supports may print up to the wider `bed` (the printable area).
+fn edge_options(bed: Rect, body_bed: Option<Rect>) -> PackOptions {
+    PackOptions { bed, body_bed, ..options() }
+}
+
+#[test]
+fn supports_may_enter_the_edge_margin_the_body_may_not() {
+    let fp = footprint(3.0, true);
+    let margin = Rect::new(0.0, 0.0, 32.5, 9.0);
+    let options = edge_options(Rect::new(-2.0, 0.0, 34.5, 9.0), Some(margin));
+    // Patch -1..7 inside the bed, body 0..6 inside the margin.
+    assert!(validate_result(&fp, &options, &layout(&[3.0])).is_ok());
+    // The body leaves the margin by 0.25 mm while the patch is still on the bed.
+    let error = validate_result(&fp, &options, &layout(&[2.75])).unwrap_err();
+    assert!(error.contains("body leaves"), "{error}");
+    // Without a body bed the margin binds the whole patch, as before.
+    assert!(validate_result(&fp, &edge_options(margin, None), &layout(&[3.0])).is_err());
+}
+
+#[test]
+fn search_and_grid_use_the_edge_margin_for_the_supports() {
+    let fp = footprint(3.0, true);
+    let margin = Rect::new(0.0, 0.0, 32.5, 9.0);
+    // Patch-bound: centres 4..28.5 at a 6.5 pitch hold 4; body-bound: 3..29.5 hold 5.
+    for (options, expected) in [
+        (edge_options(margin, None), 4),
+        (edge_options(Rect::new(-1.0, 0.0, 33.5, 9.0), Some(margin)), 5),
+    ] {
+        let searched = pack_footprint(&fp, &options);
+        let grid = grid_layout(&fp, &options);
+        validate_result(&fp, &options, &searched).unwrap();
+        validate_result(&fp, &options, &grid).unwrap();
+        assert_eq!(searched.placements.len(), expected, "search, {:?}", options.body_bed);
+        assert_eq!(grid.placements.len(), expected, "grid, {:?}", options.body_bed);
+    }
+    // A body bed equal to the bed changes nothing.
+    let plain = pack_footprint(&fp, &edge_options(margin, None));
+    let same = pack_footprint(&fp, &edge_options(margin, Some(margin)));
+    assert_eq!(
+        serde_json::to_value(&plain.placements).unwrap(),
+        serde_json::to_value(&same.placements).unwrap()
+    );
 }

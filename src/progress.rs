@@ -48,6 +48,8 @@ pub enum RepackReason {
     TowerCornerFailed,
     /// Supports touched a foreign body: only the touching objects moved apart, no repack.
     SupportNudge,
+    /// Supports printed past the plate edge: the support patch was widened to the printed one.
+    SupportOffPlate,
 }
 
 impl RepackReason {
@@ -58,6 +60,7 @@ impl RepackReason {
             RepackReason::SupportStrict => "support_strict",
             RepackReason::TowerCornerFailed => "tower_corner_failed",
             RepackReason::SupportNudge => "support_nudge",
+            RepackReason::SupportOffPlate => "support_off_plate",
         }
     }
 }

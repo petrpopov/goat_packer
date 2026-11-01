@@ -16,6 +16,14 @@ pub struct PrinterProfile {
     pub no_check_for_final_tower_probe: bool,
     pub printable_area: [f64; 4],
     pub edge_margin_mm: f64,
+    /// Edge margin for the supports and brim (the printed patch beyond the model) when it
+    /// differs from `edge_margin_mm`, which then binds the model only (`PackOptions::body_bed`).
+    /// U1: the 4 mm margin keeps the meshes off the edge, but a hand-made 48-goat plate
+    /// printed its support bases 0.7 mm from the printable edge, and the 4 mm margin on the
+    /// 47.6 mm support patch held the packer at 45. Absent = `edge_margin_mm` binds
+    /// everything: a macro purge (`printer_catalog annotate`) may run anywhere near the edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support_edge_margin_mm: Option<f64>,
     pub exclusion_rectangles: Vec<[f64; 4]>,
     pub purge_lines: Vec<[f64; 5]>,
     pub tower_marker_style: String,
@@ -56,6 +64,15 @@ impl PrinterProfile {
 
     pub fn usable_bed(&self) -> Result<Rect, String> {
         self.printable_bed().inset(self.edge_margin_mm)
+    }
+
+    /// Where the supports and brim may print: the printable area inset by
+    /// `support_edge_margin_mm`, or `usable_bed` when the profile has no separate margin.
+    pub fn support_bed(&self) -> Result<Rect, String> {
+        match self.support_edge_margin_mm {
+            Some(margin) => self.printable_bed().inset(margin),
+            None => self.usable_bed(),
+        }
     }
 
     /// Fixed keepout rectangles: bed exclusion corners plus purge-line strips. The purge
@@ -196,6 +213,7 @@ pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> 
         return Err("tower_line_width_mm must be positive".into());
     }
     profile.usable_bed()?;
+    profile.support_bed()?;
     Ok(profile)
 }
 
@@ -385,6 +403,16 @@ mod tests {
     use super::*;
     use crate::{Footprint, Point, placement_is_allowed, rasterize_footprint};
 
+    #[test]
+    fn support_margin_widens_the_support_bed_only() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let u1 = load_printer_profile(&root.join("profiles/snapmaker_u1.json")).unwrap();
+        assert_eq!(u1.support_bed().unwrap(), u1.printable_bed());
+        assert_eq!(u1.usable_bed().unwrap(), Rect::new(4.5, 5.0, 266.5, 267.0));
+        let p1s = load_printer_profile(&root.join("profiles/p1s.json")).unwrap();
+        assert_eq!(p1s.support_bed().unwrap(), p1s.usable_bed().unwrap());
+    }
+
     /// The real P1S profile geometry: the purge line hugs the front edge (y=1.0..1.5,
     /// x 18..240) and one exclusion corner sits front-left.
     fn p1s_profile() -> PrinterProfile {
@@ -397,6 +425,7 @@ mod tests {
             no_check_for_final_tower_probe: false,
             printable_area: [0.0, 0.0, 256.0, 256.0],
             edge_margin_mm: 0.0,
+            support_edge_margin_mm: None,
             exclusion_rectangles: vec![[0.0, 0.0, 18.0, 28.0]],
             purge_lines: vec![
                 [18.0, 1.0, 240.0, 1.0, 0.5],
