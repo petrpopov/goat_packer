@@ -84,6 +84,10 @@ class JobLifecycleTest {
             ProfileDto("test", "Test", "bambu", 256.0, 256.0, 0.0, false), root.resolve("test.json")))
         Mockito.`when`(profiles.require("other")).thenReturn(ProfileService.ResolvedProfile(
             ProfileDto("other", "Other", "orca", 270.0, 270.0, 0.0, false), root.resolve("other.json")))
+        // Профили без пути образа: локальная копия не нужна (Mockito.any(...) ?: x — матчер для не-null параметров Kotlin).
+        val anyProfile = ProfileService.ResolvedProfile(ProfileDto("x", "X", "orca", 1.0, 1.0, 0.0, false), root)
+        Mockito.`when`(profiles.forLocalJob(Mockito.any(ProfileService.ResolvedProfile::class.java) ?: anyProfile, Mockito.any(java.nio.file.Path::class.java) ?: root))
+            .thenAnswer { it.arguments[0] as ProfileService.ResolvedProfile to null }
         val service = ScheduleService(properties(), profiles, store, Mockito.mock(JobRunner::class.java), Project3mf(ObjectMapper()))
         assertThrows<BadRequestException> { service.create(ScheduleJobForm(packJobId = pack.id, profileId = "other")) }
         val scheduled = service.create(ScheduleJobForm(packJobId = pack.id, profileId = "test"))

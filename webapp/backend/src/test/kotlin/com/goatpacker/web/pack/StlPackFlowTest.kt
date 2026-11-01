@@ -44,7 +44,7 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
     }
 
     private val json = ObjectMapper()
-    private val cube = "solid cube\nendsolid cube\n".toByteArray()
+    private val cube = "solid cube\nfacet normal 0 0 1\nendsolid cube\n".toByteArray()
 
     private fun pack(stl: ByteArray, vararg params: Pair<String, String>): String {
         val created = mockMvc.perform(
@@ -106,7 +106,7 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
 
     @Test
     fun `ошибка конвертации — понятная причина, пакер не запускается`() {
-        val jobId = pack("solid FAIL\nendsolid\n".toByteArray(), "profileId" to "prusa_mk4s")
+        val jobId = pack("solid FAIL\nfacet normal 0 0 1\nendsolid\n".toByteArray(), "profileId" to "prusa_mk4s")
         val body = awaitFailure(jobId)
         val error = body["error"].asText()
         assertTrue(error.startsWith("Не удалось подготовить проект из STL: the model's footprint"), error)

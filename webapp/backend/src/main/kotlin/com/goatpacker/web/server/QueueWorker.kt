@@ -97,9 +97,10 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
         try {
             Files.createDirectories(job.directory)
             val blob=blobs.findById(record.inputBlobId).orElseThrow()
-            // STL кладётся как input.stl: input.3mf из него собирает source_project перед пакером.
-            val stl=StlInputs.isStl(record.originalName)
-            val input=job.directory.resolve(StlInputs.inputName(record.originalName))
+            // STL (только упаковка) кладётся как input.stl: input.3mf из него собирает source_project перед
+            // пакером. Расписание по упаковке STL берёт packed.3mf — это уже проект (имя у старых записей могло остаться .stl).
+            val stl=record.kind=="PACK" && StlInputs.isStl(record.originalName)
+            val input=job.directory.resolve(if(stl) StlInputs.INPUT_STL else StlInputs.INPUT_3MF)
             store.get(blob.objectKey,input)
             if(Regex("[0-9a-f]{64}").matches(blob.sha256)) {
                 val digest=java.security.MessageDigest.getInstance("SHA-256")
@@ -112,7 +113,7 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
                 val kind=profile.path("slicer_kind").asText()
                 job.runtimeImage=queue.pinImage(record.id,record.fence,images[kind] ?: error("Unsupported runtime"))
                 profile.put("slicer_path",if(kind=="bambu") "/opt/slicers/bambu/AppRun" else "/opt/slicers/orca/AppRun")
-            }
+            } else com.goatpacker.web.service.LocalSlicer.localize(app,profile) // локальный раннер: слайсер из настроек, не путь образа
             Files.writeString(job.directory.resolve("profile.json"),mapper.writeValueAsString(profile))
             var last=0L
             var lastStage:Pair<String,Int>?=null

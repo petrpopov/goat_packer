@@ -39,7 +39,10 @@ class ScheduleService(
 
     fun create(form: ScheduleJobForm): JobCreatedDto {
         val profileId = form.profileId!!.trim()
-        val profile = profileService.require(profileId)
+        val jobId = UUID.randomUUID().toString()
+        val directory = properties.jobsRootPath.resolve(jobId)
+        // Каталожный профиль указывает слайсер runner-образа: джоб получает копию с локальным слайсером.
+        val (profile, profileCopy) = profileService.require(profileId).let { profileService.forLocalJob(it, directory) }
 
         val source = resolveSource(form)
         if (source is ScheduleSource.Uploaded) profileService.requireMatches(projects.inspect(form.file!!), profile)
@@ -67,16 +70,16 @@ class ScheduleService(
             changeSeconds = form.changeSeconds,
         )
 
-        val jobId = UUID.randomUUID().toString()
         val job = Job(
             id = jobId,
             kind = JobKind.SCHEDULE,
-            directory = properties.jobsRootPath.resolve(jobId),
+            directory = directory,
             createdAt = OffsetDateTime.now(),
         )
         Files.createDirectories(job.directory)
         try {
             val input = job.directory.resolve("input.3mf")
+            profileCopy?.let { Files.writeString(profile.file, it) }
             when (source) {
                 ScheduleSource.Uploaded -> form.file!!.transferTo(input.toFile())
                 is ScheduleSource.FromPackJob -> synchronized(source.job) {

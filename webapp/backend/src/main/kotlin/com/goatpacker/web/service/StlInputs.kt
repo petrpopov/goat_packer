@@ -13,6 +13,7 @@ object StlInputs {
     /** Сообщение этапа конвертации (до пробной нарезки пакера). */
     const val CONVERSION_MESSAGE = "Готовлю проект из STL…"
     const val LOCAL_PRESETS_MISSING = "STL в локальном режиме требует GOAT_SLICER_PRESETS"
+    const val INVALID_STL = "Файл .stl повреждён или не является STL"
 
     /** Вход джоба лежит в каталоге под этими именами; STL конвертируется в [INPUT_3MF]. */
     const val INPUT_3MF = "input.3mf"
@@ -30,6 +31,37 @@ object StlInputs {
         isStl(name) || name.orEmpty().trim().endsWith(".3mf", ignoreCase = true)
 
     fun inputName(originalName: String?): String = if (isStl(originalName)) INPUT_STL else INPUT_3MF
+
+    /**
+     * Имя исходника задачи, собранной из упаковки: упаковка STL отдаёт проект 3MF, и расписание по
+     * ней — обычный 3MF (`cat.stl` → `cat.3mf`). Иначе воркер положил бы packed.3mf как input.stl.
+     */
+    fun projectName(originalName: String): String =
+        if (isStl(originalName)) originalName.trim().dropLast(4) + ".3mf" else originalName
+
+    /**
+     * Дешёвая проверка, что файл похож на STL: бинарный — размер ровно 84 + 50·n (n из заголовка),
+     * ASCII — начинается с `solid` и в начале есть `facet`. Бинарный проверяется первым: заголовок
+     * бинарного STL тоже может начинаться со `solid`.
+     */
+    fun looksLikeStl(size: Long, input: java.io.InputStream): Boolean {
+        val head = input.readNBytes(64 * 1024)
+        if (head.size >= 84) {
+            val n = java.nio.ByteBuffer.wrap(head, 80, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xffffffffL
+            if (size == 84 + 50 * n) return true
+        }
+        val text = String(head, Charsets.ISO_8859_1)
+        return text.trimStart().startsWith("solid") && "facet" in text
+    }
+
+    fun requireValidStl(path: java.nio.file.Path) {
+        val valid = java.nio.file.Files.newInputStream(path).use { looksLikeStl(java.nio.file.Files.size(path), it) }
+        if (!valid) throw BadRequestException(INVALID_STL)
+    }
+
+    fun requireValidStl(file: org.springframework.web.multipart.MultipartFile) {
+        if (!file.inputStream.use { looksLikeStl(file.size, it) }) throw BadRequestException(INVALID_STL)
+    }
 
     /**
      * Аргументы принтера для source_project из json профиля: свой стол (id [CustomProfile.ID]) —
@@ -51,10 +83,17 @@ object StlInputs {
         return listOf("--vendor", vendor, "--machine", machine)
     }
 
-    /** Команда source_project: [bin] — путь к бинарнику (в docker-режиме важно только имя). */
-    fun command(bin: String, presets: String, slicer: String, profile: JsonNode): List<String> =
-        listOf(bin, "--stl", INPUT_STL, "--presets", presets, "--orca", slicer) + printerArgs(profile) +
+    /**
+     * Команда source_project: [bin] — путь к бинарнику (в docker-режиме важно только имя).
+     * `--edge-margin` — edge_margin_mm профиля: модель, не влезающая в стол за вычетом кромки,
+     * отсекается до экспорта (пакер всё равно её не разместил бы).
+     */
+    fun command(bin: String, presets: String, slicer: String, profile: JsonNode): List<String> {
+        val margin = profile.path("edge_margin_mm").asDouble(0.0).takeIf { it.isFinite() && it > 0 }
+        return listOf(bin, "--stl", INPUT_STL, "--presets", presets, "--orca", slicer) + printerArgs(profile) +
+            (margin?.let { listOf("--edge-margin", number(it)) } ?: emptyList()) +
             listOf("--output", INPUT_3MF, "--work-dir", WORK_DIR)
+    }
 
     /**
      * Локальный режим: пресеты и слайсер экспорта из настроек. Принтер Bambu с [AppProperties.bambuPresets]

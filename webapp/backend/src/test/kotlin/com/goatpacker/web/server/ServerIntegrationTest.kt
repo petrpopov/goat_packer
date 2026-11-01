@@ -119,10 +119,12 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         a.call("DELETE","/api/v2/jobs/$id")
         assertEquals("CANCELLED",a.call("GET","/api/v2/jobs/$id")["status"].asText())
     }
-    @Test fun `stl packs on any catalog printer or a custom bed, converted by source_project before the packer`() {
+    @Test fun `stl packs on any catalog printer or a custom bed, converted by source_project before the packer, and schedules from the packed project`() {
         val c=Client();c.guest()
         assertEquals("Нужен файл .3mf или .stl",c.call("POST","/api/v2/uploads",mapOf("name" to "cat.obj","sizeBytes" to 10),expected=400)["message"].asText())
-        val stl=c.uploadRaw("cat.stl","solid cat\nendsolid cat\n".toByteArray())
+        val broken=c.call("POST","/api/v2/uploads",mapOf("name" to "broken.stl","sizeBytes" to 10))["fileId"].asText()
+        assertEquals(com.goatpacker.web.service.StlInputs.INVALID_STL,c.call("PUT","/api/v2/uploads/$broken/content","PK34567890".toByteArray(),400,headers=mapOf("Origin" to "http://localhost:3007"))["message"].asText())
+        val stl=c.uploadRaw("cat.stl","solid cat\nfacet normal 0 0 1\nendsolid cat\n".toByteArray())
         assertEquals("READY",stl["state"].asText());assertEquals("stl",stl["kind"].asText());assertTrue(stl["profileId"].isNull,stl.toString())
         val file=stl["fileId"].asText()
         fun send(body:Map<String,Any?>,expected:Int)=c.call("POST","/api/v2/jobs",body,expected,headers=mapOf("Idempotency-Key" to newId()))
@@ -146,6 +148,17 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
                 assertEquals("SUCCEEDED",response["status"].asText(),response.toString())
                 assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"),response.toString())
             }
+            // «В расписание» после упаковки STL: источник — packed.3mf, т. е. проект. Имя становится .3mf, и
+            // воркер кладёт его как input.3mf (раньше — input.stl, и daily_scheduler не находил вход).
+            // Профиль каталога несёт слайсер образа: локальный раннер подменяет его (иначе фейк отказывает).
+            val schedule=send(mapOf("kind" to "SCHEDULE","packJobId" to catalog,"profileId" to "prusa_mk4s"),200)["jobId"].asText()
+            assertEquals("cat.3mf",jobs.findById(schedule).orElseThrow().originalName)
+            worker.dispatch()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+            while(jobs.findById(schedule).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+            val response=c.call("GET","/api/v2/jobs/$schedule")
+            assertEquals("SUCCEEDED",response["status"].asText(),response.toString())
+            assertTrue(response["artifacts"].any { it["name"].asText().startsWith("cat_prusa_mk4s_") && it["name"].asText().endsWith("_schedule.3mf") },response.toString())
         } finally {
             worker.stop()
             app.slicerPresets=saved[0];app.sourceProjectBin=saved[1];app.orcaSlicer=saved[2];app.resolveAbsolutePaths()
@@ -172,13 +185,18 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         send(mapOf("fileId" to file,"kind" to "SCHEDULE","customBed" to bed),400)
         send(mapOf("fileId" to file,"customBed" to bed+("height" to 1001)),400)
         send(mapOf("fileId" to file,"customBed" to bed+("margin" to 31)),400)
-        val id=send(mapOf("fileId" to file,"customBed" to bed),200)["jobId"].asText()
+        // Слайсер режет 3MF по столу проекта: размеры менять нельзя, только отступ.
+        assertEquals(com.goatpacker.web.service.CustomProfile.BED_FROM_PROJECT,send(mapOf("fileId" to file,"customBed" to bed+("width" to 300)),400)["message"].asText())
+        // Распознанный принтер — только своим профилем каталога.
+        val p1s=c.uploadRaw("p1s.3mf",descriptorProject3mf("Bambu Lab P1S"))["fileId"].asText()
+        assertEquals(com.goatpacker.web.service.CustomProfile.RECOGNISED_PRINTER,send(mapOf("fileId" to p1s,"customBed" to mapOf("width" to 256,"depth" to 256,"height" to 250)),400)["message"].asText())
+        val id=send(mapOf("fileId" to file,"customBed" to bed+("margin" to 7)),200)["jobId"].asText()
         val record=jobs.findById(id).orElseThrow()
         assertEquals("custom",record.profileId)
         val profile=json.readTree(record.profileJson)
-        // Размеры совпали со столом проекта — берутся его начало координат и исключения.
+        // Стол — проекта: его начало координат и исключения; отступ — введённый.
         assertEquals(listOf(-5.0,0.0,245.0,210.0),profile["printable_area"].map { it.asDouble() })
-        assertEquals(5.0,profile["edge_margin_mm"].asDouble(),1e-9)
+        assertEquals(7.0,profile["edge_margin_mm"].asDouble(),1e-9)
         assertEquals("Acme Unknown 3000",profile["printer_name"].asText());assertEquals("orca",profile["slicer_kind"].asText())
         val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
         try {

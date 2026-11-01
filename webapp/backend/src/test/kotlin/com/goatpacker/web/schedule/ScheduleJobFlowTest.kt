@@ -39,6 +39,7 @@ class ScheduleJobFlowTest(
             registry.add("app.scheduler-bin") { FakeBins.install(tmpRoot, "fake-scheduler.sh") }
             registry.add("app.profiles-dir") { "../../profiles" }
             registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
+            registry.add("app.orca-slicer") { "/local/orca" }
         }
     }
 
@@ -191,5 +192,23 @@ class ScheduleJobFlowTest(
         val args = schedulerArgs(jobId)
         assertTrue("--ams-correction" !in args, args.toString())
         assertTrue(args.none { it.contains("change-s=") }, args.toString())
+    }
+
+    @Test
+    fun `каталожный профиль локально — копия профиля с локальным слайсером, не путь образа`() {
+        val project = MockMultipartFile("file", "mk4s.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Prusa MK4S"))
+        val create = mockMvc.perform(multipart("/api/schedule/jobs").file(project).param("profileId", "prusa_mk4s"))
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        mockMvc.awaitJobCompletion(jobId)
+
+        val args = schedulerArgs(jobId)
+        val spec = args[args.indexOf("--printer") + 1].split(',')
+        val profilePath = Path.of(spec.first { it.startsWith("profile=") }.removePrefix("profile="))
+        assertEquals(tmpRoot.resolve("jobs").resolve(jobId).resolve("profile.json").toAbsolutePath(), profilePath.toAbsolutePath())
+        val profile = json.readTree(profilePath.toFile())
+        assertEquals("/local/orca", profile["slicer_path"].asText())
+        assertEquals("prusa_mk4s", profile["id"].asText())
     }
 }

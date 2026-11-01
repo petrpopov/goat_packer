@@ -59,6 +59,7 @@ class ProfileService(
         if (StlInputs.isStl(name)) {
             if (file.isEmpty) throw BadRequestException("Файл .stl пуст или не выбран")
             if (file.size > 200L * 1024 * 1024) throw BadRequestException("Файл больше 200 МБ")
+            StlInputs.requireValidStl(file)
             return Detection(null, null, kind = "stl")
         }
         return detect(projects.inspect(file))
@@ -121,6 +122,19 @@ class ProfileService(
         if (printerModel.isNullOrBlank()) throw BadRequestException("В проекте нет printer_model. Сохраните проект с выбранным принтером в слайсере")
         return CustomProfile.build(objectMapper, bed, projectBed, printerModel) { kind -> if (kind == "bambu") properties.bambuSlicer else properties.orcaSlicer }
     }
+
+    /**
+     * Копия каталожного профиля со слайсером из настроек (см. [LocalSlicer]) для локального
+     * запуска; null — профиль годится как есть.
+     */
+    fun localSlicerCopy(profile: ResolvedProfile): String? {
+        val node = objectMapper.readTree(profile.file.toFile()) as com.fasterxml.jackson.databind.node.ObjectNode
+        return if (LocalSlicer.localize(properties, node)) objectMapper.writeValueAsString(node) else null
+    }
+
+    /** Профиль для локального джоба в [directory]: как есть или копия profile.json (её пишет вызывающий). */
+    fun forLocalJob(profile: ResolvedProfile, directory: Path): Pair<ResolvedProfile, String?> =
+        localSlicerCopy(profile)?.let { profile.copy(file = directory.resolve("profile.json")) to it } ?: (profile to null)
 
     fun exists(profileId: String): Boolean = findById(profileId) != null
 

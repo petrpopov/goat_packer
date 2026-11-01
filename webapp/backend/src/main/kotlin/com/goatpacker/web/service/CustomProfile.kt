@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.goatpacker.web.dto.CustomBed
 import com.goatpacker.web.dto.ProfileDto
+import com.goatpacker.web.exception.BadRequestException
 
 /**
  * Разовый профиль для своего стола: тот же формат, что json-профили каталога (PrinterProfile в Rust),
@@ -13,14 +14,14 @@ import com.goatpacker.web.dto.ProfileDto
 object CustomProfile {
     const val ID = "custom"
     const val NAME = "Custom Printer"
+    const val BED_FROM_PROJECT = "Размеры стола берутся из проекта — их нельзя изменить"
+    const val RECOGNISED_PRINTER = "Принтер этого проекта есть в каталоге — выберите его, свой стол не нужен"
+
+    /** Допуск сверки введённых размеров со столом проекта, мм (поля формы округляют до десятых). */
+    private const val PROJECT_BED_TOLERANCE_MM = 0.5
 
     data class Built(val dto: ProfileDto, val json: String)
 
-    /**
-     * [projectBed] — стол из 3MF неизвестного принтера. Он берётся (с его началом координат и
-     * зонами исключения), только если пользователь подтвердил его размеры без правки: иначе
-     * введённые цифры важнее, и стол строится от (0, 0) без исключений.
-     */
     /**
      * Слайсер по printer_model — зеркало SLICER_KIND_BY_PRINTER_SUBSTRING (src/colored_packer.rs):
      * пакер отвергает профиль, чей slicer_kind спорит с моделью проекта. Незнакомая модель — Orca.
@@ -30,13 +31,23 @@ object CustomProfile {
     /**
      * [printerModel] — printer_model проекта: пакер требует printer_name профиля, равный ему
      * (validate_source_printer), поэтому разовый профиль называется так же; null — «Custom Printer».
+     *
+     * [projectBed] — стол из 3MF неизвестного принтера. Слайсер режет проект по его собственному
+     * printable_area (project_settings.config копируется байт в байт), поэтому стол — всегда стол
+     * проекта: его начало координат, зоны исключения и высота. Введённые размеры обязаны с ним
+     * совпасть (иначе 400 [BED_FROM_PROJECT]); от пользователя — только отступ от края. Без стола
+     * в проекте (STL или нераспознанная геометрия) стол строится от (0, 0) по введённым цифрам.
      */
     fun build(mapper: ObjectMapper, bed: CustomBed, projectBed: ProjectBed?, printerModel: String?, slicerPath: (String) -> String): Built {
-        val confirmed = projectBed?.takeIf { p ->
-            Math.abs(p.printableArea[2] - p.printableArea[0] - bed.width) < 0.01 && Math.abs(p.printableArea[3] - p.printableArea[1] - bed.depth) < 0.01
+        if (projectBed != null) {
+            val p = projectBed.printableArea
+            val differs = Math.abs(p[2] - p[0] - bed.width) > PROJECT_BED_TOLERANCE_MM || Math.abs(p[3] - p[1] - bed.depth) > PROJECT_BED_TOLERANCE_MM ||
+                (projectBed.printableHeight != null && Math.abs(projectBed.printableHeight - bed.height) > PROJECT_BED_TOLERANCE_MM)
+            if (differs) throw BadRequestException(BED_FROM_PROJECT)
         }
-        val area = confirmed?.printableArea ?: listOf(0.0, 0.0, bed.width, bed.depth)
-        val exclusions = confirmed?.exclusionRectangles ?: emptyList()
+        val area = projectBed?.printableArea ?: listOf(0.0, 0.0, bed.width, bed.depth)
+        val exclusions = projectBed?.exclusionRectangles ?: emptyList()
+        val height = projectBed?.printableHeight ?: bed.height
         val name = printerModel?.trim()?.takeIf { it.isNotEmpty() } ?: NAME
         val kind = slicerKind(name)
         val node: ObjectNode = mapper.createObjectNode().apply {
@@ -46,7 +57,7 @@ object CustomProfile {
             // Башня незнакомого принтера в пробе не проверяется: её размер мы не калибровали.
             put("no_check_for_final_tower_probe", true)
             putArray("printable_area").apply { area.forEach { add(it) } }
-            put("printable_height", bed.height)
+            put("printable_height", height)
             put("edge_margin_mm", bed.margin)
             putArray("exclusion_rectangles").apply { exclusions.forEach { r -> addArray().apply { r.forEach { add(it) } } } }
             putArray("purge_lines")

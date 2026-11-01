@@ -42,14 +42,19 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             return CreatedJob(it.id)
         }
         var customFile:UploadEntity?=null
+        // STL — только вход упаковки из загруженного файла. Расписание по упаковке STL получает её
+        // packed.3mf: имя источника становится .3mf, иначе воркер положил бы проект как input.stl.
+        var stl=false
         val (input,name)=if(request.fileId!=null) {
             val file=uploads.findById(request.fileId).orElse(null)?.takeIf { it.ownerId==ownerId && it.state=="READY" } ?: missing()
             if(file.expiresAt?.isBefore(Instant.now())==true) throw ServerError(410,"EXPIRED","Файл истёк")
-            val stl=com.goatpacker.web.service.StlInputs.isStl(file.originalName)
+            stl=com.goatpacker.web.service.StlInputs.isStl(file.originalName)
             if(stl && request.kind!="PACK") bad("STL можно только упаковать: для расписания и калибровки нужен проект .3mf")
             // Каталожный принтер для 3MF — только распознанный по файлу: пакер сверяет printer_model проекта с
-            // printer_name профиля. Нераспознанный 3MF упаковывается лишь со своим столом (CustomProfile).
+            // printer_name профиля. Нераспознанный 3MF упаковывается лишь со своим столом (CustomProfile),
+            // распознанный — только своим профилем (разовый стол спорил бы с каталогом).
             // STL — любой принтер каталога: source_project запишет в проект его printer_model.
+            if(!stl && request.customBed!=null && file.profileId!=null) bad(com.goatpacker.web.service.CustomProfile.RECOGNISED_PRINTER)
             if(!stl && request.customBed==null && file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
             customFile=file
             file.blobId!! to file.originalName
@@ -60,7 +65,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             // Output promoted to an immutable input blob reference; no dependency on parent's local files.
             val existing=jdbc.query("select id from blobs where object_key=?",{rs,_->rs.getString(1)},packed.objectKey).firstOrNull()
             val blob=existing ?: blobs.save(BlobEntity(sha256="artifact:${packed.id}",sizeBytes=packed.sizeBytes,objectKey=packed.objectKey)).id
-            blob to previous.originalName
+            blob to com.goatpacker.web.service.StlInputs.projectName(previous.originalName)
         }
         limits.hit("jobs:$ownerId",if(owner.kind=="GUEST") 4 else 10,86400)
         val current=jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java)!!
@@ -73,11 +78,10 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         // Разовый профиль собирается при постановке и хранится снимком, как каталожный (воркер лишь пишет его в profile.json).
         val (dto,profileJson)=request.customBed?.let { bed ->
             val bedFromProject=customFile?.projectBedJson?.let { mapper.readValue(it,com.goatpacker.web.service.ProjectBed::class.java) }
-            val stl=com.goatpacker.web.service.StlInputs.isStl(customFile?.originalName)
             profiles.custom(bed,bedFromProject,if(stl) com.goatpacker.web.service.CustomProfile.NAME else customFile?.printerModel).let { it.dto to it.json }
         } ?: profiles.require(request.profileId).let { it.dto to Files.readString(it.file) }
         // Принтер без пресета машины (orca_machine) из STL не собрать — отказ сразу, а не в воркере.
-        if(com.goatpacker.web.service.StlInputs.isStl(name)) {
+        if(stl) {
             val node=mapper.readTree(profileJson)
             com.goatpacker.web.service.StlInputs.printerArgs(node)
             if(props.runnerMode=="local") com.goatpacker.web.service.StlInputs.localTools(app,node)

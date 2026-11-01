@@ -25,6 +25,27 @@ class StlInputsTest {
         )
         val custom = CustomProfile.build(mapper, CustomBed(220.5, 220.0, 250.0, 5.0), null, CustomProfile.NAME) { "/s" }
         assertEquals(listOf("--custom-bed", "220.5,220,250"), StlInputs.printerArgs(mapper.readTree(custom.json)))
+        // Кромка профиля едет в source_project: модель должна влезть в стол за её вычетом.
+        assertEquals(
+            listOf("--custom-bed", "220.5,220,250", "--edge-margin", "5", "--output", "input.3mf"),
+            StlInputs.command("/b", "/p", "/s", mapper.readTree(custom.json)).drop(7).take(6),
+        )
+    }
+
+    @Test
+    fun `проверка STL — бинарный по размеру, ASCII по solid и facet`() {
+        fun binary(triangles: Int, extra: Int = 0): ByteArray = ByteArray(84 + 50 * triangles + extra).also {
+            "solid but binary".toByteArray().copyInto(it)
+            java.nio.ByteBuffer.wrap(it, 80, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(triangles)
+        }
+        fun valid(bytes: ByteArray) = StlInputs.looksLikeStl(bytes.size.toLong(), bytes.inputStream())
+        assertEquals(true, valid(binary(2)))
+        assertEquals(false, valid(binary(2, extra = 1)))
+        assertEquals(true, valid("  solid cube\n facet normal 0 0 1\n".toByteArray()))
+        assertEquals(false, valid("solid cube\nendsolid cube\n".toByteArray()))
+        assertEquals(false, valid("PK\u0003\u0004 not an stl".toByteArray()))
+        assertEquals(false, valid(ByteArray(0)))
+        assertEquals("cat.3mf", StlInputs.projectName("cat.STL")); assertEquals("cat.3mf", StlInputs.projectName("cat.3mf"))
     }
 
     @Test

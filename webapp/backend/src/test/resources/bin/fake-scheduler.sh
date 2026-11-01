@@ -26,11 +26,22 @@ printer_name="Bambu Lab A2L"
 plates_3mf="plates.3mf"
 # spec приходит одной строкой: profile=...,source=...,prep-min=10,plates-3mf=plates.3mf
 IFS=',' read -ra spec_parts <<< "$printer_spec"
+source_3mf=""
+profile_json=""
 for part in "${spec_parts[@]}"; do
   case "$part" in
     plates-3mf=*) plates_3mf="${part#plates-3mf=}";;
+    source=*) source_3mf="${part#source=}";;
+    profile=*) profile_json="${part#profile=}";;
   esac
 done
+
+# Как настоящий daily_scheduler: без исходного проекта и профиля работать не с чем.
+[[ -z "$source_3mf" || -f "$source_3mf" ]] || { echo "error: cannot read source $source_3mf: No such file or directory" >&2; exit 1; }
+# Локальный джоб не должен получить путь слайсера runner-образа (каталожные профили его несут).
+if [[ -n "$profile_json" ]] && grep -q '/opt/slicers/' "$profile_json"; then
+  echo "error: profile $profile_json points at the runner image slicer (/opt/slicers/...)" >&2; exit 1
+fi
 
 echo "$printer_name: 30 objects"
 echo "[$printer_name] slicing sample 1/5: batch 8/30"

@@ -39,7 +39,7 @@ class ValidationTest(
 
     @Test
     fun `pack из stl без пресетов слайсера локально — понятная 400, чужое расширение — подсказкой`() {
-        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, "solid goat\nendsolid goat\n".toByteArray())
+        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, "solid goat\nfacet normal 0 0 1\nendsolid goat\n".toByteArray())
         val body = mockMvc.perform(multipart("/api/pack/jobs").file(stl).param("profileId", "bambu_a2l"))
             .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
         org.junit.jupiter.api.Assertions.assertTrue("STL в локальном режиме требует GOAT_SLICER_PRESETS" in body, body)
@@ -159,13 +159,13 @@ class ValidationTest(
 
     @Test
     fun `pack с файлом не 3mf-расширения — 400`() {
+        // Проект 3MF, переименованный в .stl, — не STL: отказ до постановки (и в /profiles/detect).
         val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
-        mockMvc.perform(
-            multipart("/api/pack/jobs")
-                .file(stl)
-                .param("profileId", "bambu_a2l"),
-        )
-            .andExpect(status().isBadRequest)
+        for (path in listOf("/api/pack/jobs", "/api/profiles/detect")) {
+            val body = mockMvc.perform(multipart(path).file(stl).param("profileId", "bambu_a2l"))
+                .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
+            org.junit.jupiter.api.Assertions.assertTrue("Файл .stl повреждён или не является STL" in body, "$path: $body")
+        }
     }
 
     @Test

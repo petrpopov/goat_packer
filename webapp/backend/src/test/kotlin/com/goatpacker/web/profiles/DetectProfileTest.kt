@@ -130,7 +130,7 @@ class DetectProfileTest(
 
     @Test
     fun `stl не разбирается — принтер выберет пользователь`() {
-        val response = json.readTree(detect(byteArrayOf(1, 2, 3), "cat.STL"))
+        val response = json.readTree(detect("solid cat\nfacet normal 0 0 1\n".toByteArray(), "cat.STL"))
         assertEquals("stl", response["kind"].asText())
         assertTrue(response["profileId"].isNull && response["printerModel"].isNull, response.toString())
         assertEquals("3mf", json.readTree(detect(mini3mf("Snapmaker U1")))["kind"].asText())

@@ -44,7 +44,10 @@ class CalibrationService(
             throw BadRequestException("Файл должен иметь расширение .3mf, получено: «$fileName»")
         }
         val profileId = form.profileId!!.trim()
-        val profile = profileService.require(profileId)
+        val jobId = UUID.randomUUID().toString()
+        val directory = properties.jobsRootPath.resolve(jobId)
+        // Каталожный профиль указывает слайсер runner-образа: джоб получает копию с локальным слайсером.
+        val (profile, profileCopy) = profileService.require(profileId).let { profileService.forLocalJob(it, directory) }
         profileService.requireCalibrationSupported(profile)
         profileService.requireMatches(projects.inspect(file), profile)
 
@@ -53,16 +56,16 @@ class CalibrationService(
             profilePath = profile.file,
             variant = form.variant ?: "normal",
         )
-        val jobId = UUID.randomUUID().toString()
         val job = Job(
             id = jobId,
             kind = JobKind.CALIBRATION,
-            directory = properties.jobsRootPath.resolve(jobId),
+            directory = directory,
             createdAt = OffsetDateTime.now(),
         )
         Files.createDirectories(job.directory)
         try {
             file.transferTo(job.directory.resolve("input.3mf").toFile())
+            profileCopy?.let { Files.writeString(profile.file, it) }
             store.put(job)
             jobRunner.runCalibration(job, params)
         } catch (ex: RejectedExecutionException) {

@@ -143,6 +143,7 @@ class UploadController(private val tx:UploadTransactions,private val store:Objec
             if(copied!=upload.expectedBytes) bad("Загрузка неполная")
             // STL — сетка без настроек слайсера: не разбирается, принтер выберет пользователь при создании задачи.
             val stl=com.goatpacker.web.service.StlInputs.isStl(upload.originalName)
+            if(stl) com.goatpacker.web.service.StlInputs.requireValidStl(path)
             val inspection=if(stl) Project3mf.Inspection(false,null) else inspector.inspect(path).also(inspector::requireModel)
             val detection=profiles.detect(inspection)
             store.put(key,path)

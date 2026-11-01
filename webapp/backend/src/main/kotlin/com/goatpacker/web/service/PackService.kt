@@ -58,6 +58,7 @@ class PackService(
         // STL — сетка без настроек: проверять в нём нечего, принтер — выбор пользователя (любой из каталога).
         val inspection = if (stl) {
             if (file.size > 200L * 1024 * 1024) throw BadRequestException("Файл больше 200 МБ")
+            StlInputs.requireValidStl(file)
             null
         } else {
             projects.inspect(file)
@@ -71,6 +72,8 @@ class PackService(
                 profileService.custom(it, null, CustomProfile.NAME)
             } else {
                 projects.requireModel(inspection)
+                // Распознанный принтер упаковывается своим каталожным профилем: разовый стол спорил бы с ним.
+                if (profileService.detect(inspection).profileId != null) throw BadRequestException(CustomProfile.RECOGNISED_PRINTER)
                 profileService.custom(it, inspection.projectBed, inspection.printerModel)
             }
         }
@@ -80,7 +83,7 @@ class PackService(
             null
         }
         // Каталожные профили (printer_catalog) указывают слайсер runner-образа: локально — свой слайсер.
-        val localCopy = catalog?.let { localSlicerCopy(it) }
+        val localCopy = catalog?.let { profileService.localSlicerCopy(it) }
         val profileJson = custom?.json ?: localCopy ?: Files.readString(catalog!!.file)
         val profile = if (catalog != null && localCopy == null) catalog else {
             ProfileService.ResolvedProfile(custom?.dto ?: catalog!!.dto, directory.resolve("profile.json"))
@@ -145,18 +148,6 @@ class PackService(
 
         log.info("Создана pack-джоба {} (профиль {}, файл {} байт)", job.id, profile.dto.id, file.size)
         return JobCreatedDto(job.id)
-    }
-
-    /**
-     * Профиль из каталога OrcaSlicer несёт slicer_path runner-образа (/opt/slicers/<kind>/AppRun):
-     * локально такого пути нет, и джоб получает копию профиля со слайсером из настроек. Ручные
-     * профили (P1S и др. с путями macOS) идут как есть. null — копия не нужна.
-     */
-    private fun localSlicerCopy(profile: ProfileService.ResolvedProfile): String? {
-        val node = objectMapper.readTree(profile.file.toFile()) as com.fasterxml.jackson.databind.node.ObjectNode
-        if (!node.path("slicer_path").asText("").startsWith("/opt/slicers/")) return null
-        node.put("slicer_path", if (node.path("slicer_kind").asText() == "bambu") properties.bambuSlicer else properties.orcaSlicer)
-        return objectMapper.writeValueAsString(node)
     }
 
     /** Свой стол из полей custom*: все три размера или ни одного (отступ без размеров — ошибка формы). */

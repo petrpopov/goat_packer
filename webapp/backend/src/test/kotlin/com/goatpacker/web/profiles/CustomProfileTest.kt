@@ -30,14 +30,20 @@ class CustomProfileTest {
     }
 
     @Test
-    fun `стол из проекта берётся, только если размеры подтверждены без правки`() {
+    fun `стол 3MF — всегда стол проекта, размеры менять нельзя, отступ свой`() {
         val project = ProjectBed(listOf(-10.0, 5.0, 240.0, 215.0), listOf(listOf(-10.0, 5.0, 10.0, 25.0)), 220.0)
-        val same = mapper.readTree(CustomProfile.build(mapper, CustomBed(250.0, 210.0, 220.0), project, null) { "o" }.json)
+        // Поля формы округляют: расхождение до 0.5 мм — те же размеры.
+        val same = mapper.readTree(CustomProfile.build(mapper, CustomBed(250.4, 209.6, 220.0, 8.0), project, null) { "o" }.json)
         assertEquals(listOf(-10.0, 5.0, 240.0, 215.0), same["printable_area"].map { it.asDouble() })
         assertEquals(1, same["exclusion_rectangles"].size())
-        val edited = mapper.readTree(CustomProfile.build(mapper, CustomBed(300.0, 210.0, 220.0), project, null) { "o" }.json)
-        assertEquals(listOf(0.0, 0.0, 300.0, 210.0), edited["printable_area"].map { it.asDouble() })
-        assertTrue(edited["exclusion_rectangles"].isEmpty)
+        assertEquals(220.0, same["printable_height"].asDouble()); assertEquals(8.0, same["edge_margin_mm"].asDouble())
+        for (edited in listOf(CustomBed(300.0, 210.0, 220.0), CustomBed(250.0, 211.0, 220.0), CustomBed(250.0, 210.0, 250.0))) {
+            val error = assertThrows<BadRequestException>(edited.toString()) { CustomProfile.build(mapper, edited, project, null) { "o" } }
+            assertEquals(CustomProfile.BED_FROM_PROJECT, error.message)
+        }
+        // Высоты в проекте нет — берётся введённая.
+        val noHeight = mapper.readTree(CustomProfile.build(mapper, CustomBed(250.0, 210.0, 300.0), project.copy(printableHeight = null), null) { "o" }.json)
+        assertEquals(300.0, noHeight["printable_height"].asDouble())
     }
 
     @Test
