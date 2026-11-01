@@ -1,0 +1,60 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "anycubic_chiron",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Anycubic Chiron 0.4 nozzle",
+  "plate_outline": [
+    [
+      -0.9,
+      0.1
+    ],
+    [
+      -0.6,
+      400.9
+    ],
+    [
+      400.9,
+      400.9
+    ],
+    [
+      400.9,
+      -0.6
+    ],
+    [
+      0.1,
+      -0.9
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    400.0,
+    400.0
+  ],
+  "printable_height": 450.0,
+  "printer_model": "Anycubic Chiron",
+  "printer_name": "Anycubic Chiron",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Anycubic Chiron",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 225 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Anycubic"
+}

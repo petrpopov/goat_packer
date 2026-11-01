@@ -1,0 +1,159 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_cr_10_max",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality CR-10 Max 0.4 nozzle",
+  "plate_outline": [
+    [
+      -10.0,
+      2.5
+    ],
+    [
+      -10.0,
+      462.5
+    ],
+    [
+      -9.3,
+      465.6
+    ],
+    [
+      -8.1,
+      466.8
+    ],
+    [
+      -5.0,
+      467.5
+    ],
+    [
+      455.0,
+      467.5
+    ],
+    [
+      458.1,
+      466.8
+    ],
+    [
+      459.3,
+      465.6
+    ],
+    [
+      460.0,
+      462.5
+    ],
+    [
+      460.0,
+      2.5
+    ],
+    [
+      459.3,
+      -0.6
+    ],
+    [
+      458.1,
+      -1.8
+    ],
+    [
+      455.0,
+      -2.5
+    ],
+    [
+      303.1,
+      -2.5
+    ],
+    [
+      299.4,
+      -3.5
+    ],
+    [
+      297.8,
+      -4.7
+    ],
+    [
+      285.6,
+      -16.5
+    ],
+    [
+      281.9,
+      -17.5
+    ],
+    [
+      168.1,
+      -17.5
+    ],
+    [
+      164.4,
+      -16.5
+    ],
+    [
+      162.8,
+      -15.3
+    ],
+    [
+      150.6,
+      -3.5
+    ],
+    [
+      146.9,
+      -2.5
+    ],
+    [
+      -5.0,
+      -2.5
+    ],
+    [
+      -8.1,
+      -1.8
+    ],
+    [
+      -9.3,
+      -0.6
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    450.0,
+    450.0
+  ],
+  "printable_height": 470.0,
+  "printer_model": "Creality CR-10 Max",
+  "printer_name": "Creality CR-10 Max",
+  "purge_lines": [
+    [
+      2.0,
+      10.0,
+      2.0,
+      140.0,
+      0.6607917240122761
+    ],
+    [
+      2.3,
+      140.0,
+      2.3,
+      10.0,
+      0.6607917240122761
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality CR10Max",
+      "filament: Generic PLA @System",
+      "purge lines detected: 2",
+      "probe plate: 289 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

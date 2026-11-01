@@ -23,7 +23,7 @@ class ProfilesIntegrationTest(
     private val json = ObjectMapper()
 
     @Test
-    fun `отдаёт три профиля принтеров, отсортированные по имени`() {
+    fun `отдаёт ручные и каталожные профили, отсортированные по имени`() {
         val body = mockMvc.perform(get("/api/profiles"))
             .andExpect(status().isOk)
             .andReturn()
@@ -32,11 +32,20 @@ class ProfilesIntegrationTest(
 
         val profiles = json.readTree(body)
         assertTrue(profiles.isArray, "ожидался массив профилей: $body")
-        assertEquals(3, profiles.size(), "ожидалось три профиля: $body")
 
-        val ids = (0 until profiles.size()).map { profiles[it]["id"].asText() }
-        // Сортировка по name: "Bambu Lab A2L" < "Bambu Lab P1S" < "Snapmaker U1".
-        assertEquals(listOf("bambu_a2l", "bambu_p1s", "snapmaker_u1"), ids)
+        val all = (0 until profiles.size()).map { profiles[it] }
+        val ids = all.map { it["id"].asText() }
+        val names = all.map { it["name"].asText() }
+        // Три ручных профиля всегда на месте; остальные — каталог OrcaSlicer (docs/catalog).
+        assertTrue(ids.containsAll(listOf("bambu_a2l", "bambu_p1s", "snapmaker_u1")), "нет ручных профилей: $ids")
+        assertTrue(all.size > 3, "ожидались и каталожные профили: $ids")
+        assertEquals(names.sorted(), names, "профили отсортированы по имени")
+        // Автоопределение по printer_name: два профиля одного принтера сделали бы его неоднозначным.
+        assertEquals(names.size, names.distinct().size, "повторяются printer_name: $names")
+        all.forEach { p ->
+            assertTrue(p["slicerKind"].asText() in setOf("orca", "bambu"), "slicer_kind: $p")
+            assertTrue(p["bedWidthMm"].asDouble() > 0 && p["bedDepthMm"].asDouble() > 0, "размер стола: $p")
+        }
     }
 
     @Test

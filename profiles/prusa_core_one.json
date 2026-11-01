@@ -1,0 +1,132 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "prusa_core_one",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Prusa CORE One 0.4 nozzle",
+  "plate_outline": [
+    [
+      -2.0,
+      -9.5
+    ],
+    [
+      -2.0,
+      220.5
+    ],
+    [
+      3.0,
+      225.5
+    ],
+    [
+      3.0,
+      244.5
+    ],
+    [
+      33.0,
+      244.5
+    ],
+    [
+      33.0,
+      225.5
+    ],
+    [
+      43.0,
+      225.5
+    ],
+    [
+      48.0,
+      232.5
+    ],
+    [
+      60.0,
+      232.5
+    ],
+    [
+      65.0,
+      225.5
+    ],
+    [
+      185.0,
+      225.5
+    ],
+    [
+      190.0,
+      232.5
+    ],
+    [
+      202.0,
+      232.5
+    ],
+    [
+      207.0,
+      225.5
+    ],
+    [
+      247.0,
+      225.5
+    ],
+    [
+      252.0,
+      220.5
+    ],
+    [
+      252.0,
+      -9.5
+    ],
+    [
+      235.5,
+      -24.5
+    ],
+    [
+      223.5,
+      -24.5
+    ],
+    [
+      207.0,
+      -9.5
+    ],
+    [
+      43.0,
+      -9.5
+    ],
+    [
+      26.5,
+      -24.5
+    ],
+    [
+      14.5,
+      -24.5
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    250.0,
+    220.0
+  ],
+  "printable_height": 270.0,
+  "printer_model": "Prusa CORE One",
+  "printer_name": "Prusa CORE One",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm SPEED @CORE One 0.4",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 111 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Prusa"
+}

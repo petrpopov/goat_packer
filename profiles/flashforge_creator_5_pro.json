@@ -1,0 +1,156 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "flashforge_creator_5_pro",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Flashforge Creator 5 Pro 0.4 nozzle",
+  "plate_outline": [
+    [
+      -5.0,
+      -2.5
+    ],
+    [
+      -5.0,
+      261.5
+    ],
+    [
+      -4.4,
+      263.3
+    ],
+    [
+      -2.0,
+      264.5
+    ],
+    [
+      67.5,
+      264.6
+    ],
+    [
+      77.1,
+      273.6
+    ],
+    [
+      79.2,
+      274.5
+    ],
+    [
+      176.8,
+      274.5
+    ],
+    [
+      178.9,
+      273.6
+    ],
+    [
+      187.1,
+      265.4
+    ],
+    [
+      189.2,
+      264.5
+    ],
+    [
+      258.0,
+      264.5
+    ],
+    [
+      259.8,
+      263.9
+    ],
+    [
+      261.0,
+      261.5
+    ],
+    [
+      261.0,
+      -2.5
+    ],
+    [
+      260.4,
+      -4.3
+    ],
+    [
+      258.0,
+      -5.5
+    ],
+    [
+      206.6,
+      -5.6
+    ],
+    [
+      204.7,
+      -7.3
+    ],
+    [
+      200.3,
+      -17.4
+    ],
+    [
+      198.0,
+      -18.5
+    ],
+    [
+      58.0,
+      -18.5
+    ],
+    [
+      55.7,
+      -17.4
+    ],
+    [
+      51.3,
+      -7.3
+    ],
+    [
+      49.4,
+      -5.6
+    ],
+    [
+      -2.0,
+      -5.5
+    ],
+    [
+      -4.4,
+      -4.3
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    256.0,
+    256.0
+  ],
+  "printable_height": 256.0,
+  "printer_model": "Flashforge Creator 5 Pro",
+  "printer_name": "Flashforge Creator 5 Pro",
+  "purge_lines": [
+    [
+      256.0,
+      0.0,
+      216.0,
+      0.0,
+      3.0
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @FF C5",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 144 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Flashforge"
+}

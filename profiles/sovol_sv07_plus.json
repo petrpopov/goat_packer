@@ -1,0 +1,156 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "sovol_sv07_plus",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Sovol SV07 Plus 0.4 nozzle",
+  "plate_outline": [
+    [
+      -5.0,
+      5.8
+    ],
+    [
+      -5.0,
+      308.5
+    ],
+    [
+      -4.0,
+      311.5
+    ],
+    [
+      -1.0,
+      312.5
+    ],
+    [
+      44.7,
+      312.5
+    ],
+    [
+      51.0,
+      307.2
+    ],
+    [
+      52.5,
+      306.8
+    ],
+    [
+      54.0,
+      307.2
+    ],
+    [
+      60.3,
+      312.5
+    ],
+    [
+      239.7,
+      312.5
+    ],
+    [
+      246.0,
+      307.2
+    ],
+    [
+      247.5,
+      306.8
+    ],
+    [
+      249.0,
+      307.2
+    ],
+    [
+      255.3,
+      312.5
+    ],
+    [
+      301.0,
+      312.5
+    ],
+    [
+      304.0,
+      311.5
+    ],
+    [
+      305.0,
+      308.5
+    ],
+    [
+      305.0,
+      5.8
+    ],
+    [
+      304.0,
+      -0.6
+    ],
+    [
+      299.7,
+      -12.1
+    ],
+    [
+      280.3,
+      -12.1
+    ],
+    [
+      275.5,
+      1.1
+    ],
+    [
+      273.6,
+      2.5
+    ],
+    [
+      26.4,
+      2.5
+    ],
+    [
+      24.5,
+      1.1
+    ],
+    [
+      19.7,
+      -12.1
+    ],
+    [
+      1.4,
+      -12.5
+    ],
+    [
+      -0.5,
+      -11.1
+    ],
+    [
+      -4.4,
+      1.1
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    300.0,
+    300.0
+  ],
+  "printable_height": 350.0,
+  "printer_model": "Sovol SV07 Plus",
+  "printer_name": "Sovol SV07 Plus",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Sovol SV07 Plus",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 100 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Sovol"
+}

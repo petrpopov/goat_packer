@@ -1,0 +1,140 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "anycubic_kobra_s1",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Anycubic Kobra S1 0.4 nozzle",
+  "plate_outline": [
+    [
+      -7.0,
+      3.5
+    ],
+    [
+      -7.0,
+      256.5
+    ],
+    [
+      -6.6,
+      258.7
+    ],
+    [
+      -4.7,
+      261.5
+    ],
+    [
+      -0.5,
+      263.0
+    ],
+    [
+      65.5,
+      263.0
+    ],
+    [
+      69.0,
+      259.6
+    ],
+    [
+      70.4,
+      259.3
+    ],
+    [
+      74.5,
+      263.0
+    ],
+    [
+      175.5,
+      263.0
+    ],
+    [
+      179.0,
+      259.6
+    ],
+    [
+      180.4,
+      259.3
+    ],
+    [
+      184.5,
+      263.0
+    ],
+    [
+      250.5,
+      263.0
+    ],
+    [
+      253.8,
+      262.1
+    ],
+    [
+      255.5,
+      260.7
+    ],
+    [
+      257.0,
+      256.5
+    ],
+    [
+      257.0,
+      -10.5
+    ],
+    [
+      256.0,
+      -12.5
+    ],
+    [
+      142.4,
+      -13.0
+    ],
+    [
+      140.3,
+      -12.1
+    ],
+    [
+      130.5,
+      -3.1
+    ],
+    [
+      -0.5,
+      -3.0
+    ],
+    [
+      -4.7,
+      -1.5
+    ],
+    [
+      -6.6,
+      1.3
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    250.0,
+    250.0
+  ],
+  "printable_height": 250.0,
+  "printer_model": "Anycubic Kobra S1",
+  "printer_name": "Anycubic Kobra S1",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Anycubic Kobra S1 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 128 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Anycubic"
+}

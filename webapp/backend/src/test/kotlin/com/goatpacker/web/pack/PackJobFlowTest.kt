@@ -229,13 +229,13 @@ class PackJobFlowTest(
     fun `файл неизвестного принтера отклоняется с его именем в сообщении`() {
         val response = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Prusa MK4")))
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Acme Unknown 3000")))
                 .param("profileId", "bambu_p1s"),
         )
             .andExpect(status().isBadRequest)
             .andReturn()
         val message = response.response.contentAsString
-        assertTrue(message.contains("Prusa MK4"), "в сообщении должно быть имя принтера: $message")
+        assertTrue(message.contains("Acme Unknown 3000"), "в сообщении должно быть имя принтера: $message")
     }
 
     @Test

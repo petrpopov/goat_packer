@@ -1,0 +1,96 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "flashforge_adventurer_3_series",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Flashforge Adventurer 3 Series 0.4 Nozzle",
+  "plate_outline": [
+    [
+      -85.0,
+      -80.0
+    ],
+    [
+      -85.0,
+      80.0
+    ],
+    [
+      -83.5,
+      83.5
+    ],
+    [
+      -80.0,
+      85.0
+    ],
+    [
+      80.0,
+      85.0
+    ],
+    [
+      83.5,
+      83.5
+    ],
+    [
+      85.0,
+      80.0
+    ],
+    [
+      85.0,
+      -80.0
+    ],
+    [
+      83.5,
+      -83.5
+    ],
+    [
+      80.0,
+      -85.0
+    ],
+    [
+      -80.0,
+      -85.0
+    ],
+    [
+      -83.5,
+      -83.5
+    ]
+  ],
+  "printable_area": [
+    -75.0,
+    -75.0,
+    75.0,
+    75.0
+  ],
+  "printable_height": 150.0,
+  "printer_model": "Flashforge Adventurer 3 Series",
+  "printer_name": "Flashforge Adventurer 3 Series",
+  "purge_lines": [
+    [
+      -37.5,
+      -74.0,
+      37.5,
+      -74.0,
+      1.5233451877563007
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Flashforge AD3 0.4 Nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 15 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Flashforge"
+}

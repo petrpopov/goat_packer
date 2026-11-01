@@ -1,0 +1,156 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_k1_se",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality K1 SE 0.4 nozzle",
+  "plate_outline": [
+    [
+      -7.5,
+      3.3
+    ],
+    [
+      -7.5,
+      231.0
+    ],
+    [
+      -6.5,
+      234.0
+    ],
+    [
+      -3.5,
+      235.0
+    ],
+    [
+      42.2,
+      235.0
+    ],
+    [
+      48.5,
+      229.7
+    ],
+    [
+      50.0,
+      229.3
+    ],
+    [
+      51.5,
+      229.7
+    ],
+    [
+      57.8,
+      235.0
+    ],
+    [
+      162.2,
+      235.0
+    ],
+    [
+      168.5,
+      229.7
+    ],
+    [
+      170.0,
+      229.3
+    ],
+    [
+      171.5,
+      229.7
+    ],
+    [
+      177.8,
+      235.0
+    ],
+    [
+      223.5,
+      235.0
+    ],
+    [
+      226.5,
+      234.0
+    ],
+    [
+      227.5,
+      231.0
+    ],
+    [
+      227.5,
+      3.3
+    ],
+    [
+      226.5,
+      -3.1
+    ],
+    [
+      222.2,
+      -14.6
+    ],
+    [
+      202.8,
+      -14.6
+    ],
+    [
+      198.0,
+      -1.4
+    ],
+    [
+      196.1,
+      0.0
+    ],
+    [
+      23.9,
+      0.0
+    ],
+    [
+      22.0,
+      -1.4
+    ],
+    [
+      17.2,
+      -14.6
+    ],
+    [
+      -1.1,
+      -15.0
+    ],
+    [
+      -3.0,
+      -13.6
+    ],
+    [
+      -7.0,
+      -1.4
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    220.0,
+    220.0
+  ],
+  "printable_height": 250.0,
+  "printer_model": "Creality K1 SE",
+  "printer_name": "Creality K1 SE",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality K1 SE",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 100 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

@@ -1,0 +1,128 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "elegoo_neptune",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Elegoo Neptune 0.4 nozzle",
+  "plate_outline": [
+    [
+      -12.5,
+      -5.5
+    ],
+    [
+      -12.5,
+      225.5
+    ],
+    [
+      -11.9,
+      226.9
+    ],
+    [
+      -10.5,
+      227.5
+    ],
+    [
+      220.5,
+      227.5
+    ],
+    [
+      221.9,
+      226.9
+    ],
+    [
+      222.5,
+      225.5
+    ],
+    [
+      222.5,
+      -5.5
+    ],
+    [
+      221.9,
+      -6.9
+    ],
+    [
+      220.5,
+      -7.5
+    ],
+    [
+      155.8,
+      -7.7
+    ],
+    [
+      153.5,
+      -9.0
+    ],
+    [
+      145.4,
+      -16.8
+    ],
+    [
+      142.9,
+      -17.5
+    ],
+    [
+      67.1,
+      -17.5
+    ],
+    [
+      64.6,
+      -16.8
+    ],
+    [
+      56.5,
+      -9.0
+    ],
+    [
+      54.2,
+      -7.7
+    ],
+    [
+      -10.5,
+      -7.5
+    ],
+    [
+      -11.9,
+      -6.9
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    210.0,
+    210.0
+  ],
+  "printable_height": 200.0,
+  "printer_model": "Elegoo Neptune",
+  "printer_name": "Elegoo Neptune",
+  "purge_lines": [
+    [
+      55.0,
+      0.5,
+      155.0,
+      0.5,
+      1.8039614065535141
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Elegoo Neptune 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 1",
+      "probe plate: 94 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Elegoo"
+}

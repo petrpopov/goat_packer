@@ -1,0 +1,108 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_cr_6_se",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality CR-6 SE 0.4 nozzle",
+  "plate_outline": [
+    [
+      -10.0,
+      3.0
+    ],
+    [
+      -10.0,
+      242.0
+    ],
+    [
+      -8.9,
+      244.6
+    ],
+    [
+      242.0,
+      245.0
+    ],
+    [
+      244.6,
+      243.9
+    ],
+    [
+      245.0,
+      3.0
+    ],
+    [
+      243.9,
+      0.4
+    ],
+    [
+      172.1,
+      0.0
+    ],
+    [
+      168.5,
+      -1.5
+    ],
+    [
+      160.4,
+      -9.3
+    ],
+    [
+      157.9,
+      -10.0
+    ],
+    [
+      77.1,
+      -10.0
+    ],
+    [
+      74.6,
+      -9.3
+    ],
+    [
+      66.5,
+      -1.5
+    ],
+    [
+      64.2,
+      -0.2
+    ],
+    [
+      -7.0,
+      0.0
+    ],
+    [
+      -8.9,
+      0.4
+    ]
+  ],
+  "printable_area": [
+    5.0,
+    0.0,
+    230.0,
+    235.0
+  ],
+  "printable_height": 250.0,
+  "printer_model": "Creality CR-6 SE",
+  "printer_name": "Creality CR-6 SE",
+  "purge_lines": [],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality CR-6 0.4",
+      "filament: Generic PLA @System",
+      "purge lines detected: 0",
+      "probe plate: 72 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

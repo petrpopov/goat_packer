@@ -1,0 +1,181 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "sovol_zero",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Sovol Zero 0.4 nozzle",
+  "plate_outline": [
+    [
+      -4.8,
+      0.5
+    ],
+    [
+      -4.8,
+      162.7
+    ],
+    [
+      -4.2,
+      164.1
+    ],
+    [
+      -2.8,
+      164.7
+    ],
+    [
+      20.6,
+      164.7
+    ],
+    [
+      24.5,
+      161.7
+    ],
+    [
+      55.4,
+      161.7
+    ],
+    [
+      59.2,
+      164.7
+    ],
+    [
+      93.2,
+      164.7
+    ],
+    [
+      97.0,
+      161.7
+    ],
+    [
+      128.0,
+      161.7
+    ],
+    [
+      131.8,
+      164.7
+    ],
+    [
+      155.2,
+      164.7
+    ],
+    [
+      156.6,
+      164.1
+    ],
+    [
+      157.2,
+      162.7
+    ],
+    [
+      157.2,
+      0.5
+    ],
+    [
+      152.3,
+      -11.3
+    ],
+    [
+      149.6,
+      -12.3
+    ],
+    [
+      123.7,
+      -12.1
+    ],
+    [
+      121.4,
+      -10.3
+    ],
+    [
+      117.6,
+      -1.8
+    ],
+    [
+      115.1,
+      -0.3
+    ],
+    [
+      37.9,
+      -0.3
+    ],
+    [
+      34.8,
+      -1.8
+    ],
+    [
+      31.1,
+      -10.3
+    ],
+    [
+      28.8,
+      -12.1
+    ],
+    [
+      2.3,
+      -12.3
+    ],
+    [
+      -0.6,
+      -10.3
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    152.4,
+    152.4
+  ],
+  "printable_height": 152.4,
+  "printer_model": "Sovol Zero",
+  "printer_name": "Sovol Zero",
+  "purge_lines": [
+    [
+      70.6168,
+      60.0337,
+      76.2,
+      60.0337,
+      3.0
+    ],
+    [
+      76.2,
+      60.0337,
+      87.3663,
+      60.0337,
+      1.6035284304514552
+    ],
+    [
+      70.6168,
+      61.0337,
+      76.2,
+      61.0337,
+      3.0
+    ],
+    [
+      76.2,
+      61.0337,
+      87.3663,
+      61.0337,
+      1.6035284304514552
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Sovol Zero 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 4",
+      "probe plate: 47 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Sovol"
+}

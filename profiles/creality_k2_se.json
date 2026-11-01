@@ -1,0 +1,171 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_k2_se",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality K2 SE 0.4 nozzle",
+  "plate_outline": [
+    [
+      -7.5,
+      0.8
+    ],
+    [
+      -7.5,
+      228.5
+    ],
+    [
+      -6.5,
+      231.5
+    ],
+    [
+      -3.5,
+      232.5
+    ],
+    [
+      42.2,
+      232.5
+    ],
+    [
+      48.5,
+      227.2
+    ],
+    [
+      50.0,
+      226.8
+    ],
+    [
+      51.5,
+      227.2
+    ],
+    [
+      57.8,
+      232.5
+    ],
+    [
+      162.2,
+      232.5
+    ],
+    [
+      168.5,
+      227.2
+    ],
+    [
+      170.0,
+      226.8
+    ],
+    [
+      171.5,
+      227.2
+    ],
+    [
+      177.8,
+      232.5
+    ],
+    [
+      223.5,
+      232.5
+    ],
+    [
+      226.5,
+      231.5
+    ],
+    [
+      227.5,
+      228.5
+    ],
+    [
+      227.5,
+      0.8
+    ],
+    [
+      226.5,
+      -5.6
+    ],
+    [
+      222.2,
+      -17.1
+    ],
+    [
+      202.8,
+      -17.1
+    ],
+    [
+      198.0,
+      -3.9
+    ],
+    [
+      196.1,
+      -2.5
+    ],
+    [
+      23.9,
+      -2.5
+    ],
+    [
+      22.0,
+      -3.9
+    ],
+    [
+      17.2,
+      -17.1
+    ],
+    [
+      -1.1,
+      -17.5
+    ],
+    [
+      -3.0,
+      -16.1
+    ],
+    [
+      -7.0,
+      -3.9
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    220.0,
+    215.0
+  ],
+  "printable_height": 245.0,
+  "printer_model": "Creality K2 SE",
+  "printer_name": "Creality K2 SE",
+  "purge_lines": [
+    [
+      0.0,
+      150.0,
+      0.0,
+      0.0,
+      1.2026409377023426
+    ],
+    [
+      0.0,
+      0.0,
+      150.0,
+      0.0,
+      1.2026409377023426
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality K2 SE 0.4 nozzle",
+      "filament: Generic PLA @System",
+      "purge lines detected: 2",
+      "probe plate: 100 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}

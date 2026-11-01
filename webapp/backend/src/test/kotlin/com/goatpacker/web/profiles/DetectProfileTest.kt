@@ -69,7 +69,7 @@ class DetectProfileTest(
 
     @Test
     fun `неизвестный принтер и файл без printer_model дают null`() {
-        for (body in listOf(mini3mf("Prusa MK4"), mini3mf(null))) {
+        for (body in listOf(mini3mf("Acme Unknown 3000"), mini3mf(null))) {
             val node = json.readTree(detect(body)).path("profileId")
             assertTrue(node.isMissingNode || node.isNull || node.asText("").isEmpty(), "ожидался null: $node")
         }
@@ -77,8 +77,8 @@ class DetectProfileTest(
 
     @Test
     fun `неизвестный принтер всё же назван в printerModel — фронт покажет чей файл`() {
-        val response = json.readTree(detect(mini3mf("Prusa MK4")))
-        assertEquals("Prusa MK4", response["printerModel"].asText())
+        val response = json.readTree(detect(mini3mf("Acme Unknown 3000")))
+        assertEquals("Acme Unknown 3000", response["printerModel"].asText())
     }
 
     @Test

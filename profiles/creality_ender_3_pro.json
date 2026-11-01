@@ -1,0 +1,123 @@
+{
+  "blank_start_gcode_for_cli": false,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "id": "creality_ender_3_pro",
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "orca_machine": "Creality Ender-3 Pro 0.4 nozzle",
+  "plate_outline": [
+    [
+      -7.5,
+      0.7
+    ],
+    [
+      -7.5,
+      229.7
+    ],
+    [
+      -6.4,
+      232.3
+    ],
+    [
+      226.4,
+      232.3
+    ],
+    [
+      227.5,
+      229.7
+    ],
+    [
+      227.5,
+      0.7
+    ],
+    [
+      226.4,
+      -1.8
+    ],
+    [
+      164.6,
+      -2.3
+    ],
+    [
+      161.0,
+      -3.7
+    ],
+    [
+      152.9,
+      -11.6
+    ],
+    [
+      150.4,
+      -12.3
+    ],
+    [
+      69.6,
+      -12.3
+    ],
+    [
+      67.1,
+      -11.6
+    ],
+    [
+      59.0,
+      -3.7
+    ],
+    [
+      56.7,
+      -2.5
+    ],
+    [
+      -4.5,
+      -2.3
+    ],
+    [
+      -6.4,
+      -1.8
+    ]
+  ],
+  "printable_area": [
+    0.0,
+    0.0,
+    220.0,
+    220.0
+  ],
+  "printable_height": 250.0,
+  "printer_model": "Creality Ender-3 Pro",
+  "printer_name": "Creality Ender-3 Pro",
+  "purge_lines": [
+    [
+      2.0,
+      10.0,
+      2.0,
+      140.0,
+      0.6607917240122761
+    ],
+    [
+      2.3,
+      140.0,
+      2.3,
+      10.0,
+      0.6607917240122761
+    ]
+  ],
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "source": {
+    "imported": "2026-11-01",
+    "notes": [
+      "process: 0.20mm Standard @Creality Ender3 Pro 0.4",
+      "filament: Generic PLA @System",
+      "purge lines detected: 2",
+      "probe plate: 64 cubes 20x20 mm, final slice and verify_outputs OK",
+      "tower not qualified (single-colour probe)",
+      "no CLI workaround needed"
+    ],
+    "orca_tag": "v2.4.2",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  },
+  "tower_line_width_mm": 0.5,
+  "tower_marker_style": "wipe_tower",
+  "vendor": "Creality"
+}
