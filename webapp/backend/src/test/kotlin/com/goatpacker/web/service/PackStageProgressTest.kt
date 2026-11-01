@@ -108,8 +108,8 @@ class PackStageProgressTest {
 
         assertEquals("Раскладка объектов: лучший вариант — 37 объектов", event.phaseMessage)
         assertEquals("pack_footprint: 32/64 attempts, best so far: 37 objects", event.stage?.detail)
-        // 15 + 15 * 0.5 * 0.95 ≈ 22
-        assertEquals(22, event.progressPercent)
+        // 15 + 9 * 0.5 * 0.95 ≈ 19
+        assertEquals(19, event.progressPercent)
     }
 
     @Test

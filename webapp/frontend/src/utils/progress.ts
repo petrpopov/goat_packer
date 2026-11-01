@@ -6,6 +6,7 @@ import type { JobStage, PackStageId } from '../api/types';
 const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
   { id: 'probe_slice', label: 'Пробная нарезка 1 объекта', optional: false },
   { id: 'packing', label: 'Раскладка', optional: false },
+  { id: 'sample_slice', label: 'Пробная нарезка нескольких объектов', optional: true },
   { id: 'assembling', label: 'Сборка проекта', optional: false },
   { id: 'final_slice', label: 'Нарезка итоговой пластины', optional: false },
   { id: 'gcode_check', label: 'Проверка поддержек по слоям', optional: true },
@@ -64,7 +65,8 @@ export function looksLikeJson(text: string | null | undefined): boolean {
 /** Полосы процента этапов — те же, что у бэкенда (ProgressTracker.PackStage). */
 const BANDS: Record<PackStageId, [number, number]> = {
   probe_slice: [1, 15],
-  packing: [15, 30],
+  packing: [15, 24],
+  sample_slice: [24, 30],
   assembling: [30, 33],
   final_slice: [33, 78],
   gcode_check: [78, 82],

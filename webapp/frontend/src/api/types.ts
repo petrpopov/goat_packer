@@ -63,6 +63,7 @@ export type JobPhase =
 export type PackStageId =
   | 'probe_slice'
   | 'packing'
+  | 'sample_slice'
   | 'assembling'
   | 'final_slice'
   | 'gcode_check'

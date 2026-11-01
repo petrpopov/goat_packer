@@ -464,6 +464,22 @@ pub fn subset_3mf(
     if keep_count == 0 {
         return Err("keep_count must be positive".into());
     }
+    let keep: Vec<usize> = (0..keep_count).collect();
+    subset_3mf_items(source, output, &keep, blank_start_gcode)
+}
+
+/// `subset_3mf` keeping the build items at the given positions (any order, no duplicates) —
+/// the packer's sample slice cuts a few neighbouring objects out of the middle of a plate.
+pub fn subset_3mf_items(
+    source: &Path,
+    output: &Path,
+    keep_items: &[usize],
+    blank_start_gcode: bool,
+) -> SchedulerResult<Vec<String>> {
+    if keep_items.is_empty() {
+        return Err("keep_count must be positive".into());
+    }
+    let keep_count = keep_items.len();
     let mut entries = read_zip_entries(source)?;
 
     let core_index = entry_index(&entries, "3D/3dmodel.model")?;
@@ -479,7 +495,15 @@ pub fn subset_3mf(
         )
         .into());
     }
-    let kept_ids: Vec<String> = all_ids.into_iter().take(keep_count).collect();
+    if let Some(&missing) = keep_items.iter().find(|&&index| index >= all_ids.len()) {
+        return Err(format!("build item {missing} does not exist ({} items)", all_ids.len()).into());
+    }
+    let kept_ids: Vec<String> = all_ids
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| keep_items.contains(index))
+        .map(|(_, id)| id)
+        .collect();
     let kept: HashSet<&str> = kept_ids.iter().map(String::as_str).collect();
     retain_elements(build, "item", |item| {
         item.attributes
@@ -519,14 +543,14 @@ pub fn subset_3mf(
 
     if let Ok(cut_index) = entry_index(&entries, "Metadata/cut_information.xml") {
         let mut cut = Element::parse(entries[cut_index].2.as_slice())?;
-        let mut retained = 0usize;
+        let mut position = 0usize;
         cut.children.retain(|node| {
             if node
                 .as_element()
                 .is_some_and(|element| element.name == "object")
             {
-                retained += 1;
-                retained <= keep_count
+                position += 1;
+                keep_items.contains(&(position - 1))
             } else {
                 true
             }

@@ -100,3 +100,27 @@ fn read_zip_entry(path: &std::path::Path, name: &str) -> Vec<u8> {
     zip.by_name(name).unwrap().read_to_end(&mut data).unwrap();
     data
 }
+
+#[test]
+fn subset_by_items_keeps_the_chosen_build_items() {
+    let source = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packed.3mf"
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("picked.3mf");
+    let kept = goat_packer::scheduler::subset_3mf_items(source, &output, &[2, 0], false).unwrap();
+    assert_eq!(kept, vec!["2", "4"]);
+    let mut output_zip = ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+    let core = read_xml(&mut output_zip, "3D/3dmodel.model");
+    let build = core.get_child("build").unwrap();
+    let build_ids: Vec<_> = named_children(build, "item")
+        .iter()
+        .map(|node| node.attributes["objectid"].as_str())
+        .collect();
+    assert_eq!(build_ids, ["2", "4"]);
+    let model = read_xml(&mut output_zip, "Metadata/model_settings.config");
+    let plate = model.get_child("plate").unwrap();
+    assert_eq!(named_children(plate, "model_instance").len(), 2);
+    assert!(goat_packer::scheduler::subset_3mf_items(source, &output, &[99], false).is_err());
+}

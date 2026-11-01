@@ -35,6 +35,7 @@ fn footprint(body_half: f64, landing: bool) -> Footprint {
             Vec::new()
         },
         bed_loops: None,
+        layer_zones: Vec::new(),
         width: 2.0 * FULL_HALF,
         height: 2.0 * FULL_HALF,
         min_z: 0.0,

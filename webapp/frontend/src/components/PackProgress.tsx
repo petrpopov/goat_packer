@@ -13,7 +13,7 @@ interface PackProgressProps {
 
 const TICK_MS = 1000;
 /** Этапы, в которые пакер заходит не всегда: пока не наступили — «если понадобится». */
-const OPTIONAL = new Set(['gcode_check', 'repacking', 'window_slice']);
+const OPTIONAL = new Set(['sample_slice', 'gcode_check', 'repacking', 'window_slice']);
 
 /**
  * Одна шкала из сегментов этапов (ширина = полоса процента этапа) + строка статуса + этапы.

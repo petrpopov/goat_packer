@@ -67,10 +67,11 @@ describe('stageSegments', () => {
   test('weights follow the backend bands; current stage is filled by percent', () => {
     const segs = stageSegments(stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'assembling', 'final_slice'] }), 55.5);
     expect(segs.map((s) => [s.id, s.weight, s.state])).toEqual([
-      ['probe_slice', 14, 'done'], ['packing', 15, 'done'], ['assembling', 3, 'done'], ['final_slice', 45, 'current'],
+      ['probe_slice', 14, 'done'], ['packing', 9, 'done'], ['sample_slice', 6, 'skipped'], ['assembling', 3, 'done'],
+      ['final_slice', 45, 'current'],
       ['gcode_check', 4, 'pending'], ['repacking', 4, 'pending'], ['window_slice', 9, 'pending'], ['writing', 4, 'pending'],
     ]);
-    expect(segs[3].fill).toBeCloseTo(0.5);
+    expect(segs.find((s) => s.id === 'final_slice')!.fill).toBeCloseTo(0.5);
   });
   test('optional stages passed without a visit are skipped', () => {
     const segs = stageSegments(stage({ id: 'writing', visited: ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check'] }), 97);
@@ -81,7 +82,8 @@ describe('stageSegments', () => {
     const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
     const segs = stageSegments(stage({ id: 'final_slice', visited, attempt: 2 }), 88);
     expect(segs.map((s) => [s.key, s.state])).toEqual([
-      ['probe_slice', 'done'], ['packing', 'done'], ['assembling', 'done'], ['final_slice', 'done'],
+      ['probe_slice', 'done'], ['packing', 'done'], ['sample_slice', 'skipped'], ['assembling', 'done'],
+      ['final_slice', 'done'],
       ['gcode_check', 'done'], ['repacking', 'done'], ['final_slice:repeat', 'current'],
       ['window_slice', 'pending'], ['writing', 'pending'],
     ]);

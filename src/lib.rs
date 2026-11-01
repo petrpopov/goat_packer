@@ -29,6 +29,18 @@ pub struct Point {
     pub y: f64,
 }
 
+/// One height band of `Footprint::layer_zones`, loops in the footprint frame.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct LayerZone {
+    pub support_loops: Vec<Vec<Point>>,
+    pub body_loops: Vec<Vec<Point>>,
+}
+
+/// Distance a neighbour's body keeps from this object's supports within a height band: the
+/// deviation between a sample slice of a few objects and the full plate (≤ 0.5 mm measured on
+/// a 43-goat P1S plate, 2026-11-01).
+pub const LAYER_ZONE_GAP_MM: f64 = 0.5;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Footprint {
     /// XY loops (even-odd: outer rings and holes), centered on the mesh bbox. Built either
@@ -56,6 +68,13 @@ pub struct Footprint {
     /// extent, which hangs below the printed patch on models with overhangs (a lying animal's
     /// tail), silently eating the edge margin otherwise. `None` = use `loops` as before.
     pub bed_loops: Option<Vec<Vec<Point>>>,
+    /// Height bands of a sliced sample (`gcode_collisions::layer_zones_from_sample`): per band
+    /// what this object prints as support and as body. A neighbour's body must keep
+    /// `LAYER_ZONE_GAP_MM` from these supports in the same band and vice versa — the slicer's
+    /// real 3D supports (interfaces under the ears, trunks) instead of their first-layer shadow.
+    /// Empty = no such pairs (the zone rule as before).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layer_zones: Vec<LayerZone>,
     pub width: f64,
     pub height: f64,
     pub min_z: f64,
@@ -209,6 +228,7 @@ pub fn extract_footprint(path: &Path) -> io::Result<Footprint> {
         body_loops: loops.clone(),
         support_landing_loops: Vec::new(),
         bed_loops: None,
+        layer_zones: Vec::new(),
         loops,
         width: maxs[0] - mins[0],
         height: maxs[1] - mins[1],
@@ -307,6 +327,7 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
         body_loops,
         support_landing_loops: Vec::new(),
         bed_loops: None, // the caller unions the silhouette in when overhangs demand it
+        layer_zones: Vec::new(),
         loops,
         width: patch_max_x - patch_min_x,
         height: patch_max_y - patch_min_y,
@@ -1080,6 +1101,9 @@ pub struct RasterMask {
     /// footprint carries no support zone (body == full): the two-zone rule then already
     /// forbids any overlap of the clearance zones, which contain the cores.
     pub support_core: Option<PixelMask>,
+    /// `Footprint::layer_zones` as (support, body) masks, each dilated by half of
+    /// `LAYER_ZONE_GAP_MM`.
+    pub layer_zones: Vec<(PixelMask, PixelMask)>,
 }
 
 pub fn rasterize_footprint(
@@ -1230,6 +1254,25 @@ pub fn rasterize_footprint_with_support(
             PixelMask::from_spans(&core)
         });
 
+    // Layer zones keep their own pixel range: trunks and interfaces may reach past the
+    // first-layer patch the other zones are sized by.
+    let layer_radius = (LAYER_ZONE_GAP_MM * 0.5 / resolution).ceil() as i32;
+    let layer_mask = |loops: &[Vec<Point>]| -> Option<PixelMask> {
+        let rotated = rotate_loops(loops);
+        let zone_bounds = points_bounds(rotated.iter().flatten());
+        if !zone_bounds.min_x.is_finite() {
+            return None;
+        }
+        let zone = SpanRaster::scanline(&rotated, resolution, pixel_range(&zone_bounds));
+        (!zone.rows.iter().all(Vec::is_empty))
+            .then(|| PixelMask::from_spans(&zone.dilate(layer_radius)))
+    };
+    let layer_zones = footprint
+        .layer_zones
+        .iter()
+        .filter_map(|zone| Some((layer_mask(&zone.support_loops)?, layer_mask(&zone.body_loops)?)))
+        .collect();
+
     RasterMask {
         angle_deg,
         resolution,
@@ -1244,6 +1287,7 @@ pub fn rasterize_footprint_with_support(
         physical_bounds: bounds,
         body_bounds,
         support_core,
+        layer_zones,
     }
 }
 
@@ -1268,7 +1312,8 @@ fn points_bounds<'a>(points: impl Iterator<Item = &'a Point>) -> Rect {
 /// silhouette when a landing zone is narrower than the body (the landing pairs alone would
 /// let two bodies interpenetrate above the first layer). Without landing loops the body pair
 /// is implied by the first two (body ⊂ full), so it is left out and layouts stay what the
-/// two-zone rule gave. Support cores (`support_overlap_mm`) are a separate pair, see
+/// two-zone rule gave. Layer zones (`Footprint::layer_zones`) add support-vs-body pairs per
+/// height band. Support cores (`support_overlap_mm`) are a separate pair, see
 /// `support_cores_overlap`.
 pub(crate) fn zone_pairs<'a>(
     a: &'a RasterMask,
@@ -1280,6 +1325,11 @@ pub(crate) fn zone_pairs<'a>(
     ];
     if !(a.landing_is_body && b.landing_is_body) {
         pairs.push((&a.body_clearance, &b.body_clearance));
+    }
+    // Same height band: supports of one against the body of the other, both ways.
+    for ((support_a, body_a), (support_b, body_b)) in a.layer_zones.iter().zip(&b.layer_zones) {
+        pairs.push((support_a, body_b));
+        pairs.push((body_a, support_b));
     }
     pairs
 }
@@ -1517,6 +1567,12 @@ fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), 
             .chain(&footprint.body_loops)
             .chain(&footprint.support_landing_loops)
             .chain(footprint.bed_loops.iter().flatten())
+            .chain(
+                footprint
+                    .layer_zones
+                    .iter()
+                    .flat_map(|zone| zone.support_loops.iter().chain(&zone.body_loops)),
+            )
             .any(|l| {
                 l.len() < 4
                     || l.first() != l.last()
@@ -1790,6 +1846,14 @@ pub fn validate_result(
             shifted.body_loops = shift(&footprint.body_loops);
             shifted.support_landing_loops = shift(&footprint.support_landing_loops);
             shifted.bed_loops = footprint.bed_loops.as_ref().map(|l| shift(l));
+            shifted.layer_zones = footprint
+                .layer_zones
+                .iter()
+                .map(|zone| LayerZone {
+                    support_loops: shift(&zone.support_loops),
+                    body_loops: shift(&zone.body_loops),
+                })
+                .collect();
             rasterize_footprint_with_support(
                 &shifted,
                 p.angle_deg,

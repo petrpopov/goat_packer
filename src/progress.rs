@@ -10,6 +10,7 @@ use serde_json::json;
 pub enum Stage {
     ProbeSlice,
     Packing,
+    SampleSlice,
     Assembling,
     FinalSlice,
     GcodeCheck,
@@ -23,6 +24,7 @@ impl Stage {
         match self {
             Stage::ProbeSlice => "probe_slice",
             Stage::Packing => "packing",
+            Stage::SampleSlice => "sample_slice",
             Stage::Assembling => "assembling",
             Stage::FinalSlice => "final_slice",
             Stage::GcodeCheck => "gcode_check",

@@ -116,7 +116,8 @@ enum class PackStage(
     private val defaultSeconds: Double,
 ) {
     PROBE_SLICE("probe_slice", JobPhase.PROBE, 1, 15, 30.0),
-    PACKING("packing", JobPhase.PACKING, 15, 30, 60.0),
+    PACKING("packing", JobPhase.PACKING, 15, 24, 60.0),
+    SAMPLE_SLICE("sample_slice", JobPhase.SLICING, 24, 30, 30.0),
     ASSEMBLING("assembling", JobPhase.ASSEMBLING, 30, 33, 10.0),
     FINAL_SLICE("final_slice", JobPhase.SLICING, 33, 78, 300.0),
     GCODE_CHECK("gcode_check", JobPhase.SLICING, 78, 82, 30.0),
@@ -125,7 +126,7 @@ enum class PackStage(
     WRITING("writing", JobPhase.WRITING, 95, 99, 10.0);
 
     val slicing: Boolean
-        get() = this == PROBE_SLICE || this == FINAL_SLICE || this == WINDOW_SLICE
+        get() = this == PROBE_SLICE || this == SAMPLE_SLICE || this == FINAL_SLICE || this == WINDOW_SLICE
 
     /** Ожидаемая длительность при отсутствии `expected_s`: для нарезок — по формуле из дизайна. */
     fun fallbackSeconds(objects: Int?): Double =
@@ -426,6 +427,7 @@ class ProgressTracker(
         return when (stage) {
             PackStage.PROBE_SLICE -> "Пробная нарезка 1 объекта: ищу место башни очистки"
             PackStage.PACKING -> "Раскладка объектов" + bestSoFar?.let { ": лучший вариант — ${objectsText(it)}" }.orEmpty()
+            PackStage.SAMPLE_SLICE -> "Пробная нарезка$objects: снимаю реальные поддержки"
             PackStage.ASSEMBLING -> "Сборка проекта$objects"
             PackStage.FINAL_SLICE ->
                 if (PackStage.REPACKING.id in visited) "Нарезка перепакованной пластины$objects"

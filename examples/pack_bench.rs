@@ -205,6 +205,7 @@ fn rotate_input(footprint: &Footprint, degrees: f64) -> Footprint {
     };
     Footprint {
         support_landing_loops: Vec::new(),
+        layer_zones: Vec::new(),
         loops: shift(loops),
         body_loops: shift(rotate(&footprint.body_loops)),
         bed_loops: footprint.bed_loops.as_ref().map(|l| shift(rotate(l))),

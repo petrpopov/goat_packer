@@ -449,6 +449,7 @@ mod tests {
         ];
         let footprint = Footprint {
             support_landing_loops: Vec::new(),
+            layer_zones: Vec::new(),
             body_loops: vec![loops.clone()],
             bed_loops: None,
             loops: vec![loops.clone()],

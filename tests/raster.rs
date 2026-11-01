@@ -7,6 +7,7 @@ fn rectangle(width: f64, height: f64) -> Footprint {
     let y = height / 2.0;
     Footprint {
         support_landing_loops: Vec::new(),
+        layer_zones: Vec::new(),
         body_loops: Vec::new(),
         bed_loops: None,
         loops: vec![vec![

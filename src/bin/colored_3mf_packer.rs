@@ -16,7 +16,8 @@ use goat_packer::{
     },
     embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
     gcode_collisions::{
-        PlateAnalysis, SupportCollision, analyze_plate, match_placements, nudge_apart,
+        PlateAnalysis, SupportCollision, analyze_plate, layer_zones_from_sample, match_placements,
+        nudge_apart,
     },
     nozzle_clean::{NozzleCleanSpec, inject_nozzle_clean},
     plate_centre::{
@@ -62,6 +63,9 @@ struct Args {
     /// `--support-overlap-mm`: how far the supports of different objects may overlap
     /// (`PackOptions::support_overlap_mm`); `None` = unlimited, the plain two-zone rule.
     support_overlap_mm: Option<f64>,
+    /// `--sample-objects`: how many objects of the first layout are sliced as the support
+    /// sample (`Footprint::layer_zones`); 0 = no sample, the probe's zones only.
+    sample_objects: usize,
 }
 
 /// Time-model options (spec 2026-10-26-time-model-and-window-design). Without
@@ -675,6 +679,19 @@ fn run() -> AppResult<()> {
         }
         _ => plan.pack(&args, &profile)?,
     };
+    // The one-object probe comes from the source project; the slicer builds the supports of
+    // the assembled plate a little differently (up to 0.4 mm wider bases, interfaces past the
+    // ears). A few objects of the first layout, sliced as an assembled plate, print exactly
+    // what every object of the full plate will (identical within 0.1 mm, sample vs plate
+    // within 0.5 mm); the plate is packed again against those supports, height band by band.
+    if plan.lock_orientation && args.sample_objects > 0 && packed.placements.len() > 1 {
+        match sample_supports(&args, &profile, &mut plan, &footprint_stl, &packed) {
+            Ok(()) => packed = plan.pack(&args, &profile)?,
+            Err(error) => eprintln!(
+                "WARNING: sample slice failed, packing with the probe's supports only: {error}"
+            ),
+        }
+    }
     let mut tower_regrown = false;
     let mut repacked = false;
     let mut final_slice;
@@ -1462,6 +1479,69 @@ fn describe_collisions(collisions: &[SupportCollision]) {
     }
 }
 
+/// Default `--sample-objects`: the centre object and its two nearest neighbours.
+const SAMPLE_OBJECTS: usize = 3;
+
+/// Slices `args.sample_objects` objects of `packed` (the one nearest the bed centre and its
+/// nearest neighbours) as an assembled plate and moves their real supports into the plan:
+/// the learned first-layer patch and the height-band `layer_zones`.
+fn sample_supports(
+    args: &Args,
+    profile: &PrinterProfile,
+    plan: &mut PackPlan,
+    footprint_stl: &Path,
+    packed: &PackResult,
+) -> AppResult<()> {
+    let bed = profile.usable_bed()?;
+    let centre = ((bed.min_x + bed.max_x) * 0.5, (bed.min_y + bed.max_y) * 0.5);
+    let distance = |index: usize, to: (f64, f64)| {
+        let placement = &packed.placements[index];
+        (placement.x_mm - to.0).hypot(placement.y_mm - to.1)
+    };
+    let indices: Vec<usize> = (0..packed.placements.len()).collect();
+    let first = *indices
+        .iter()
+        .min_by(|&&a, &&b| distance(a, centre).total_cmp(&distance(b, centre)))
+        .expect("more than one placement");
+    let at = (packed.placements[first].x_mm, packed.placements[first].y_mm);
+    let mut sample = indices;
+    sample.sort_by(|&a, &b| distance(a, at).total_cmp(&distance(b, at)).then(a.cmp(&b)));
+    sample.truncate(args.sample_objects.min(packed.placements.len()));
+    progress::stage(
+        Stage::SampleSlice,
+        &format!("slicing a sample of {} objects of the layout...", sample.len()),
+        None,
+        Some(sample.len()),
+    );
+    plan.build(args, profile, footprint_stl, packed)?;
+    let sample_project = args.work_dir.join("sample.3mf");
+    goat_packer::scheduler::subset_3mf_items(&args.output, &sample_project, &sample, false)
+        .map_err(|error| format!("sample subset: {error}"))?;
+    let slice = slice_project(profile, &sample_project, sample.len(), &args.work_dir, "sample")?;
+    let sampled: Vec<goat_packer::PackedPlacement> =
+        sample.iter().map(|&index| packed.placements[index].clone()).collect();
+    let (zones, analysis) =
+        layer_zones_from_sample(&slice.gcode, &plan.footprint, &sampled).map_err(|error| {
+            format!("sample slice: {error}")
+        })?;
+    let mut learned = learn_support_patch(&plan.footprint, &PackResult {
+        placements: sampled,
+        ..packed.clone()
+    }, &analysis)?;
+    println!(
+        "sample slice: {} height bands of supports; first-layer patch {:.1}x{:.1} mm (probe \
+         {:.1}x{:.1} mm)",
+        zones.len(),
+        learned.width,
+        learned.height,
+        plan.footprint.width,
+        plan.footprint.height
+    );
+    learned.layer_zones = zones;
+    plan.footprint = learned;
+    Ok(())
+}
+
 /// Slices a nudged plate may take before the support check falls back to a repack: each
 /// round is a full final slice, and supports regenerate (and drift) on every one.
 const MAX_NUDGE_ROUNDS: usize = 2;
@@ -1951,6 +2031,7 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut nozzle_clean = None;
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
+    let mut sample_objects = SAMPLE_OBJECTS;
     while let Some(option) = args.next() {
         // The valueless switches; every other option consumes the next argument.
         if option == "--ams-correction" {
@@ -2002,6 +2083,7 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
             "--prep-min" => {
                 time.prep_min = parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?;
             }
+            "--sample-objects" => sample_objects = value.parse()?,
             "--support-overlap-mm" => {
                 support_overlap_mm =
                     Some(parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?);
@@ -2032,6 +2114,7 @@ fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
         nozzle_clean,
         time,
         support_overlap_mm,
+        sample_objects,
     })
 }
 
@@ -2293,6 +2376,7 @@ mod tests {
         let shifted: Vec<Point> = square.iter().map(|p| Point { x: p.x + 10.0, y: p.y }).collect();
         let footprint = Footprint {
             support_landing_loops: Vec::new(),
+            layer_zones: Vec::new(),
             body_loops: vec![shifted.clone()],
             bed_loops: None,
             loops: vec![shifted],

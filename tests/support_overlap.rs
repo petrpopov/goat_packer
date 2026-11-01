@@ -27,6 +27,7 @@ fn square(half: f64) -> Vec<Point> {
 fn skirted() -> Footprint {
     Footprint {
         support_landing_loops: Vec::new(),
+        layer_zones: Vec::new(),
         loops: vec![square(FULL_HALF)],
         body_loops: vec![square(BODY_HALF)],
         bed_loops: None,

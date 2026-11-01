@@ -12,6 +12,7 @@ fn polygon(points: &[(f64, f64)]) -> Footprint {
     let max_y = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
     Footprint {
         support_landing_loops: Vec::new(),
+        layer_zones: Vec::new(),
         loops: vec![loop_],
         body_loops: Vec::new(),
         bed_loops: None,
@@ -277,6 +278,7 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
     loop_slab.push(loop_slab[0]);
     let footprint = Footprint {
         support_landing_loops: Vec::new(),
+        layer_zones: Vec::new(),
         bed_loops: None,
         loops: vec![loop_slab.clone()],
         body_loops: vec![loop_body],

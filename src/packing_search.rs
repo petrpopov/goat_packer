@@ -111,6 +111,14 @@ impl Frame {
         footprint.body_loops = transform(&fp.body_loops);
         footprint.support_landing_loops = transform(&fp.support_landing_loops);
         footprint.bed_loops = fp.bed_loops.as_ref().map(|l| transform(l));
+        footprint.layer_zones = fp
+            .layer_zones
+            .iter()
+            .map(|zone| crate::LayerZone {
+                support_loops: transform(&zone.support_loops),
+                body_loops: transform(&zone.body_loops),
+            })
+            .collect();
         footprint.width = footprint
             .loops
             .iter()
@@ -553,6 +561,7 @@ mod tests {
         };
         Footprint {
             support_landing_loops: Vec::new(),
+            layer_zones: Vec::new(),
             loops: vec![
                 ring(&[
                     (-3., -2.),
@@ -590,6 +599,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn no_fit_matches_brute_force_layer_zone_collisions_at_every_shift() {
+        // A band whose support reaches 3 mm right of the patch (an interface under an ear)
+        // and whose body is the patch's left half: the no-fit raster must forbid exactly the
+        // shifts where that support meets the other's band body, on top of the zone pairs.
+        let mut fp = shape();
+        let rect = |x0: f64, y0: f64, x1: f64, y1: f64| {
+            vec![
+                Point { x: x0, y: y0 },
+                Point { x: x1, y: y0 },
+                Point { x: x1, y: y1 },
+                Point { x: x0, y: y1 },
+                Point { x: x0, y: y0 },
+            ]
+        };
+        fp.layer_zones = vec![crate::LayerZone {
+            support_loops: vec![rect(3.5, 0.0, 6.0, 1.0)],
+            body_loops: vec![rect(-3.0, -2.0, 0.0, 2.0)],
+        }];
+        let a = rasterize_footprint(&fp, 0., 0.5, 0.5);
+        let b = rasterize_footprint(&fp, 0., 0.5, 0.5);
+        assert_eq!(a.layer_zones.len(), 1);
+        let nfp = no_fit(&a, &b);
+        let (support, body) = (&a.layer_zones[0].0, &b.layer_zones[0].1);
+        let mut differs_from_zones = false;
+        for y in -30..=30 {
+            for x in -30..=30 {
+                let zones = masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
+                    || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y);
+                let layer = masks_overlap(support, 0, 0, body, x, y)
+                    || masks_overlap(&a.layer_zones[0].1, 0, 0, &b.layer_zones[0].0, x, y);
+                let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
+                assert_eq!(actual, zones || layer, "shift={x},{y}");
+                assert_eq!(actual, placements_collide(&a, &b, x, y));
+                differs_from_zones |= actual != zones;
+            }
+        }
+        assert!(differs_from_zones, "the layer zone changed nothing");
+        // B 8 mm to the right (16 px): its band body (x 5..8) meets A's support (x 3.5..6).
+        assert!(placements_collide(&a, &b, 16, 0));
     }
 
     #[test]

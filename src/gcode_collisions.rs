@@ -107,6 +107,18 @@ struct Parser {
     first_layer: Vec<ObjectFirstLayer>,
     collisions: BTreeMap<(usize, usize), SupportCollision>,
     labelled_lines: usize,
+    z: f64,
+    /// Every labelled line with its layer height, kept only for `layer_zones_from_sample`.
+    keep_lines: bool,
+    kept: Vec<KeptLine>,
+}
+
+/// A labelled printed line of any layer (`Parser::keep_lines`).
+struct KeptLine {
+    object: usize,
+    z: f64,
+    strip: Strip,
+    infill: bool,
 }
 
 impl Parser {
@@ -131,6 +143,14 @@ impl Parser {
         let support = self.feature.to_lowercase().contains("support");
         let width = self.width;
         self.labelled_lines += 1;
+        if self.keep_lines {
+            self.kept.push(KeptLine {
+                object,
+                z: self.z,
+                strip: Strip { from, to, width, support },
+                infill: self.feature.to_lowercase().contains("infill"),
+            });
+        }
         if self.layer == 1 {
             self.first_layer[object].strips.push(Strip {
                 from,
@@ -178,6 +198,14 @@ impl Parser {
         if line == "; CHANGE_LAYER" || line == ";LAYER_CHANGE" {
             self.finish_layer();
             self.layer += 1;
+            return;
+        }
+        if let Some(z) = line
+            .strip_prefix("; Z_HEIGHT:")
+            .or_else(|| line.strip_prefix(";Z:"))
+            .and_then(|value| value.trim().parse::<f64>().ok())
+        {
+            self.z = z;
             return;
         }
         if let Some(rest) = line.strip_prefix("; start printing object, unique label id:") {
@@ -380,8 +408,19 @@ fn layer_collisions(lines: &[Line]) -> Vec<(usize, usize, f64)> {
 /// Parses a sliced plate once: support-vs-foreign-body collisions on every layer plus every
 /// object's first-layer lines (for learning the realized support patch).
 pub fn analyze_plate(gcode: &[u8]) -> PlateAnalysis {
+    let parser = parse(gcode, false);
+    PlateAnalysis {
+        collisions: parser.collisions.into_values().collect(),
+        first_layer: parser.first_layer,
+        layers: parser.layer,
+        labelled_lines: parser.labelled_lines,
+    }
+}
+
+fn parse(gcode: &[u8], keep_lines: bool) -> Parser {
     let mut parser = Parser {
         width: 0.45,
+        keep_lines,
         ..Parser::default()
     };
     for raw in gcode.split(|&byte| byte == b'\n') {
@@ -389,12 +428,75 @@ pub fn analyze_plate(gcode: &[u8]) -> PlateAnalysis {
         parser.line(&String::from_utf8_lossy(raw));
     }
     parser.finish_layer();
-    PlateAnalysis {
-        collisions: parser.collisions.into_values().collect(),
-        first_layer: parser.first_layer,
+    parser
+}
+
+/// Height of one `Footprint::layer_zones` band. A band unions what its layers print, so a
+/// support and a body in the same band but on different layers count as meeting: coarser
+/// bands are safer and cost a little density; 2 mm keeps a 45 mm goat at ~23 bands.
+pub const LAYER_BAND_MM: f64 = 2.0;
+
+/// `Footprint::layer_zones` from a sliced sample of the plate (a few of its objects at their
+/// placements): every matched object's lines of each `LAYER_BAND_MM` band, moved into the
+/// footprint frame — supports from all of them (the sample objects print the same supports to
+/// ~0.1 mm; the union absorbs the rest), the body from the first one (bodies are identical;
+/// infill is left out, the walls around it bound the band's body ring). Also returns the
+/// sample's analysis for learning the first-layer patch.
+pub fn layer_zones_from_sample(
+    gcode: &[u8],
+    footprint: &Footprint,
+    placements: &[PackedPlacement],
+) -> Result<(Vec<crate::LayerZone>, PlateAnalysis), String> {
+    let parser = parse(gcode, true);
+    let analysis = PlateAnalysis {
+        collisions: parser.collisions.values().cloned().collect(),
+        first_layer: parser.first_layer.clone(),
         layers: parser.layer,
         labelled_lines: parser.labelled_lines,
+    };
+    let matched = match_placements(footprint, placements, &parser.first_layer)?;
+    if matched.is_empty() {
+        return Err("no sample object matches a placement".into());
     }
+    let index_of: HashMap<usize, usize> = parser
+        .labels
+        .iter()
+        .enumerate()
+        .filter_map(|(object, label)| Some((object, *matched.get(label)?)))
+        .collect();
+    let body_object = *index_of.keys().min().expect("matched is not empty");
+    let to_frame = |placement: &PackedPlacement, (x, y): (f64, f64)| {
+        let (sin, cos) = (-placement.angle_deg).to_radians().sin_cos();
+        let (dx, dy) = (x - placement.x_mm, y - placement.y_mm);
+        (dx * cos - dy * sin, dx * sin + dy * cos)
+    };
+    let mut bands: BTreeMap<usize, (Vec<Polygon>, Vec<Polygon>)> = BTreeMap::new();
+    for line in &parser.kept {
+        let Some(&index) = index_of.get(&line.object) else {
+            continue;
+        };
+        if !line.strip.support && (line.object != body_object || line.infill) {
+            continue;
+        }
+        let placement = &placements[index];
+        let (from, to) = (to_frame(placement, line.strip.from), to_frame(placement, line.strip.to));
+        let polygon = crate::strip_polygon(from.0, from.1, to.0, to.1, line.strip.width);
+        let band = bands.entry((line.z.max(0.0) / LAYER_BAND_MM) as usize).or_default();
+        if line.strip.support {
+            band.0.push(polygon);
+        } else {
+            band.1.push(polygon);
+        }
+    }
+    let zones = bands
+        .into_values()
+        .filter(|(support, body)| !support.is_empty() && !body.is_empty())
+        .map(|(support, body)| crate::LayerZone {
+            support_loops: crate::union_exterior_loops(&support),
+            body_loops: crate::union_exterior_loops(&body),
+        })
+        .collect();
+    Ok((zones, analysis))
 }
 
 /// Farthest an object's first-layer body centre may sit from its placement's expected body
@@ -671,6 +773,68 @@ mod tests {
     }
 
     #[test]
+    fn layer_zones_come_from_the_sample_in_the_footprint_frame() {
+        // Two objects at x = 0 and x = 50 (footprint frame centred on the body). Layer 1
+        // (z 0.2) bodies only; layer 2 (z 2.4, band 1) a wall and a support 4..5 mm to the right (strips carry no end caps).
+        let object = |id: u32, x: f64, support: bool| {
+            let mut text = format!(
+                "; start printing object, unique label id: {id}\n; FEATURE: Outer wall\n\
+                 ; LINE_WIDTH: 0.4\nG1 X{} Y-1\nG1 X{} Y-1 E1\nG1 X{} Y1 E1\nG1 X{} Y1 E1\n",
+                x - 1.0, x + 1.0, x + 1.0, x - 1.0
+            );
+            if support {
+                text += &format!(
+                    "; FEATURE: Support interface\nG1 X{} Y0\nG1 X{} Y0 E1\n",
+                    x + 4.0, x + 5.0
+                );
+            }
+            text + &format!("; stop printing object, unique label id: {id}\n")
+        };
+        let gcode = format!(
+            "; CHANGE_LAYER\n; Z_HEIGHT: 0.2\n{}{}; CHANGE_LAYER\n; Z_HEIGHT: 2.4\n{}{}",
+            object(7, 0.0, false),
+            object(8, 50.0, false),
+            object(7, 0.0, true),
+            object(8, 50.0, true)
+        );
+        let square = |half: f64| {
+            vec![vec![
+                crate::Point { x: -half, y: -half },
+                crate::Point { x: half, y: -half },
+                crate::Point { x: half, y: half },
+                crate::Point { x: -half, y: half },
+                crate::Point { x: -half, y: -half },
+            ]]
+        };
+        let footprint = Footprint {
+            loops: square(1.0),
+            body_loops: Vec::new(),
+            support_landing_loops: Vec::new(),
+            bed_loops: None,
+            layer_zones: Vec::new(),
+            width: 2.0,
+            height: 2.0,
+            min_z: 0.0,
+            max_z: 3.0,
+            triangle_count: 0,
+        };
+        let placements = [
+            PackedPlacement { x_mm: 0.0, y_mm: 0.0, angle_deg: 0.0 },
+            PackedPlacement { x_mm: 50.0, y_mm: 0.0, angle_deg: 0.0 },
+        ];
+        let (zones, analysis) =
+            layer_zones_from_sample(gcode.as_bytes(), &footprint, &placements).unwrap();
+        assert_eq!(analysis.layers, 2);
+        // Band 0 has no support; band 1 has both.
+        assert_eq!(zones.len(), 1);
+        let support = crate::plate_centre::loops_bounds(&zones[0].support_loops).unwrap();
+        assert!((support.min_x - 4.0).abs() < 1e-6 && (support.max_x - 5.0).abs() < 1e-6, "{support:?}");
+        let body = crate::plate_centre::loops_bounds(&zones[0].body_loops).unwrap();
+        // Three sides of the square: bottom, right, top (no closing left side).
+        assert!((body.min_x + 1.0).abs() < 1e-6 && (body.max_x - 1.2).abs() < 1e-6, "{body:?}");
+    }
+
+    #[test]
     fn touching_support_on_a_foreign_body_is_reported_with_layer_and_gap() {
         // Centre lines 0.3 apart, half widths 0.225 + 0.2: overlap by 0.125.
         let analysis = analyze_plate(bambu_plate(0.3).as_bytes());
@@ -751,6 +915,7 @@ mod tests {
             loops: vec![square(2.0)],
             body_loops: vec![square(1.5)],
             support_landing_loops: vec![square(1.0)],
+            layer_zones: Vec::new(),
             bed_loops: Some(vec![square(2.0)]),
             width: 4.0,
             height: 4.0,

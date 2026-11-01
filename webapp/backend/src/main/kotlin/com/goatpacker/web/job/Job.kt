@@ -53,7 +53,7 @@ enum class JobPhase(val json: String) {
  * этапа считается при выдаче статуса.
  */
 data class JobStage(
-    /** probe_slice|packing|assembling|final_slice|gcode_check|repacking|window_slice|writing. */
+    /** probe_slice|packing|sample_slice|assembling|final_slice|gcode_check|repacking|window_slice|writing. */
     val id: String,
     /** Начало этапа, epoch ms (часы исполнителя). */
     val startedAtMs: Long,
