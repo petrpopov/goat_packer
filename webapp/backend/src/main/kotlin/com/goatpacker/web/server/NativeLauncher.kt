@@ -66,7 +66,10 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
             runCommand(listOf("docker","start",id))
             // STL-вход едет как input.stl: input.3mf из него соберёт source_project внутри контейнера.
             val input=if(Files.isRegularFile(job.directory.resolve("input.stl"),LinkOption.NOFOLLOW_LINKS)) "input.stl" else "input.3mf"
-            for(file in listOf(input,"profile.json")) {
+            // Доводка «Нарезать стол» везёт ещё и состояние упаковки родителя.
+            val finish=com.goatpacker.web.service.PackService.FINISH_STATE
+            val inputs=listOf(input,"profile.json")+listOfNotNull(finish.takeIf { Files.isRegularFile(job.directory.resolve(it),LinkOption.NOFOLLOW_LINKS) })
+            for(file in inputs) {
                 val source=job.directory.resolve(file);check(Files.isRegularFile(source,LinkOption.NOFOLLOW_LINKS))
                 val transfer=ProcessBuilder("docker","exec","-i",id,"/bin/sh","-c","cat > /work/$file")
                     .redirectInput(source.toFile()).redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start()
@@ -86,7 +89,8 @@ class NativeLauncher(private val props:PlatformProperties,private val json:Objec
         val id=containers[job.id] ?: error("Runner not tracked")
         runCommand(listOf("docker","pause",id))
         var remaining=props.outputReservationBytes
-        for(name in listOf("packed.3mf","packed.verification.json","work/placements.json","schedule.csv","plates.3mf","report.json",
+        // packed.state.json — состояние упаковки без полной нарезки (вход будущей доводки «Нарезать стол»).
+        for(name in listOf("packed.3mf","packed.verification.json","packed.state.json","work/placements.json","schedule.csv","plates.3mf","report.json",
             // ams_calibration (--out-dir out); черновики out/slicing/ наружу не копируются.
             "out/calib_A.3mf","out/calib_B.3mf","out/instructions.md","out/calibration.json")) {
             val target=job.directory.resolve(name);Files.createDirectories(target.parent)
