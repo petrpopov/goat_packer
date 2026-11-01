@@ -1,4 +1,5 @@
 import { uploadProof } from '../utils/challenge';
+import { isStlName } from '../utils/printers';
 import { randomId } from '../utils/randomId';
 import { api, serverApi, serverMode } from './http';
 import type { DetectProfileResponse, JobStatusResponse, PrinterProfile, StartJobResponse } from './types';
@@ -24,13 +25,16 @@ export async function detectProfile(file: File, signal?: AbortSignal): Promise<D
       throw error;
     }
   }
+  // Локально STL определять нечего (принтер выбирает пользователь): без лишней отправки файла.
+  // На сервере загрузка нужна — задача ссылается на fileId.
+  if (isStlName(file.name)) return { profileId: null, printerModel: null, kind: 'stl', projectBed: null };
   const form = new FormData();
   form.append('file', file);
   const result = await api.postForm<Partial<DetectProfileResponse>>('/profiles/detect', form, signal);
   return {
     profileId: result?.profileId ?? null,
     printerModel: result?.printerModel ?? null,
-    kind: result?.kind ?? (file.name.toLowerCase().endsWith('.stl') ? 'stl' : '3mf'),
+    kind: result?.kind ?? '3mf',
     projectBed: result?.projectBed ?? null,
   };
 }

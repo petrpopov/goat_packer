@@ -554,7 +554,8 @@ td.num {
   color: var(--fg-dim);
 }
 
-.file-drop-input {
+.file-drop-input,
+.visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;

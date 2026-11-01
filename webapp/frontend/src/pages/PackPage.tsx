@@ -134,7 +134,8 @@ export default function PackPage() {
             : null;
   const profileId = choice && choice.kind !== 'custom' ? choice.id : '';
 
-  // Стол из проекта неизвестного принтера — в поля своего стола (их можно поправить).
+  // Стол из проекта неизвестного принтера — в поля своего стола: размеры только для показа (слайсер
+  // режет проект по своему столу, сервер правку отвергнет), отступ — свой.
   useEffect(() => {
     if (projectBed) setBedInput(customBedFromProject(projectBed));
   }, [projectBed]);
@@ -157,8 +158,11 @@ export default function PackPage() {
     (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
   // Новый файл без идущей задачи: раскладка прошлой задачи к нему не относится — сцена не должна
   // ставить новую модель на её места.
+  // Размеры своего стола от прошлого файла к новому не относятся: поля пустеют, стол проекта нового
+  // 3MF (если придёт) заполнит их снова.
   const handleFileChange = (next: File | null) => {
     setFile(next);
+    setBedInput(EMPTY_BED);
     if (!jobActive) setJobId(null);
   };
 
@@ -481,8 +485,12 @@ export default function PackPage() {
     const value = Number(bedInput[key]);
     return bedInput[key].trim() !== '' && value >= 50 && value <= 1000;
   });
+  // Размеры из стола проекта не правятся (высота — если она в проекте есть).
+  const fixedByProject = (key: keyof CustomBedInput) =>
+    projectBed !== null && (key === 'width' || key === 'depth' || (key === 'height' && projectBed.printableHeight != null));
   const bedField = (key: keyof CustomBedInput, label: string, min: number, max: number, hint?: string) => {
     const raw = bedInput[key];
+    const fixed = fixedByProject(key);
     const value = Number(raw);
     // Пустое поле не краснеет (его ещё не заполнили); кнопка «Упаковать» без всех размеров неактивна.
     const outOfRange = raw.trim() !== '' && !(Number.isFinite(value) && value >= min && value <= max);
@@ -493,7 +501,7 @@ export default function PackPage() {
       <Field
         label={label}
         error={invalid}
-        hint={outOfRange ? `${min}–${max} мм` : marginTooLarge ? 'отступ больше половины стола' : hint}
+        hint={outOfRange ? `${min}–${max} мм` : marginTooLarge ? 'отступ больше половины стола' : fixed ? 'из проекта' : hint}
       >
         <input
           className="input"
@@ -505,6 +513,7 @@ export default function PackPage() {
           placeholder={key === 'margin' ? '5' : undefined}
           value={raw}
           onChange={(event) => setBedInput((bed) => ({ ...bed, [key]: event.target.value }))}
+          readOnly={fixed}
           disabled={busy}
         />
       </Field>

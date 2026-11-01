@@ -39,16 +39,16 @@ describe('bedSpec', () => {
     expect(bed.labels.map((l) => l.text)).toEqual(['220 мм', '200 мм', 'отступ 5 мм']);
     expect(profile.supportsNozzleClean).toBe(false);
   });
-  test('custom bed from an unknown 3MF keeps the project origin and exclusions until resized', () => {
+  test('custom bed from an unknown 3MF is always the project bed (sizes are read-only, margin is ours)', () => {
     const projectBed = { printableArea: [-5, 0, 245, 210], exclusionRectangles: [[0, 0, 20, 30]], printableHeight: 220 };
     const fields = customBedFromProject(projectBed);
     expect(fields).toEqual({ width: '250', depth: '210', height: '220', margin: '5' });
     const kept = bedSpec(customPrinterProfile(parseCustomBed(fields)!, projectBed));
     expect(kept.area).toEqual({ x0: -5, y0: 0, x1: 245, y1: 210 });
     expect(kept.exclusions).toEqual([{ x0: 0, y0: 0, x1: 20, y1: 30 }]);
-    const resized = bedSpec(customPrinterProfile(parseCustomBed({ ...fields, width: '240' })!, projectBed));
-    expect(resized.area).toEqual({ x0: 0, y0: 0, x1: 240, y1: 210 });
-    expect(resized.exclusions).toEqual([]);
+    const margin = bedSpec(customPrinterProfile(parseCustomBed({ ...fields, margin: '8' })!, projectBed));
+    expect(margin.area).toEqual({ x0: -5, y0: 0, x1: 245, y1: 210 });
+    expect(margin.exclusions).toEqual([{ x0: 0, y0: 0, x1: 20, y1: 30 }]);
   });
   test('custom bed fields: 50–1000 mm, margin 0–30 and smaller than half the bed', () => {
     const ok = { width: '220', depth: '220', height: '250', margin: '' };

@@ -104,8 +104,14 @@ describe('HTTP contracts', () => {
       kind: '3mf',
       projectBed: null,
     });
-    // Старый ответ без kind: STL узнаётся по имени файла (принтер выбирает пользователь).
-    expect((await detectProfile(new File(['solid'], 'cube.STL'))).kind).toBe('stl');
+    // Локально STL не отправляется на /profiles/detect: определять в нём нечего.
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return Response.json({});
+    }) as typeof fetch;
+    expect(await detectProfile(new File(['solid'], 'cube.STL'))).toEqual({ profileId: null, printerModel: null, kind: 'stl', projectBed: null });
+    expect(calls).toBe(0);
   });
   test('server errors remain errors instead of missing-printer results', async () => {
     globalThis.fetch = (async () =>

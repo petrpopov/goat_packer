@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { filterPrinters, groupPrinters, vendorOf } from '../src/utils/printers';
+import { customPrinterProfile, filterPrinters, foundPrintersMessage, groupPrinters, vendorOf } from '../src/utils/printers';
 
 const p = (id: string, name: string, vendor: string) => ({ id, name, vendor });
 const list = [p('b', 'Prusa MK4S', 'Prusa'), p('a', 'Bambu Lab P1S', 'Bambu Lab'), p('c', 'Prusa CORE One', 'Prusa'), p('d', 'Ender-3 V3 SE', 'Creality')];
@@ -24,5 +24,26 @@ describe('printers', () => {
     expect(groupPrinters([{ id: 'y', name: 'Bambu Lab P1S' }, { id: 'x', name: 'Bambu Lab A2L' }]).map((g) => [g.vendor, g.items.map((i) => i.id)])).toEqual([
       ['Bambu Lab', ['x', 'y']],
     ]);
+  });
+  test('found-printers announcement uses Russian plural forms', () => {
+    expect([0, 1, 2, 5, 11, 21, 22, 112, 148].map(foundPrintersMessage)).toEqual([
+      'Найдено 0 принтеров',
+      'Найдено 1 принтер',
+      'Найдено 2 принтера',
+      'Найдено 5 принтеров',
+      'Найдено 11 принтеров',
+      'Найдено 21 принтер',
+      'Найдено 22 принтера',
+      'Найдено 112 принтеров',
+      'Найдено 148 принтеров',
+    ]);
+  });
+  test('a 3MF project bed is always the bed: origin and exclusions kept, only the margin is ours', () => {
+    const projectBed = { printableArea: [-5, 0, 245, 210], exclusionRectangles: [[0, 0, 20, 30]], printableHeight: 220 };
+    const profile = customPrinterProfile({ width: 250, depth: 210, height: 220, margin: 7 }, projectBed);
+    expect(profile.printableArea).toEqual([-5, 0, 245, 210]);
+    expect(profile.exclusionRectangles).toEqual([[0, 0, 20, 30]]);
+    expect(profile.edgeMarginMm).toBe(7);
+    expect(customPrinterProfile({ width: 300, depth: 200, height: 220, margin: 5 }).printableArea).toEqual([0, 0, 300, 200]);
   });
 });

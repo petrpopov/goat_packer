@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { PrinterProfile } from '../api/types';
-import { filterPrinters, groupPrinters } from '../utils/printers';
+import { filterPrinters, foundPrintersMessage, groupPrinters } from '../utils/printers';
 import Icon from './Icon';
 
 /** Значение «Моего принтера нет в списке»: дальше форма спрашивает размеры стола. */
@@ -166,9 +166,12 @@ export default function PrinterPicker({
         break;
       case 'Escape':
         if (!open) return;
-        // Только закрыть список: не даём Esc всплыть к модалке/странице.
+        // Только закрыть список: не даём Esc всплыть к модалке/странице. React-овский stopPropagation
+        // не останавливает нативные слушатели document (React слушает на корне, событие идёт дальше
+        // вверх), поэтому — и нативное событие. Слушатели в фазе захвата это не остановит.
         e.preventDefault();
         e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
         close();
         break;
       case 'Tab':
@@ -199,6 +202,7 @@ export default function PrinterPicker({
   };
 
   const empty = groups.length === 0 && !customOnly;
+  const found = groups.reduce((sum, g) => sum + g.items.length, 0);
 
   return (
     <div ref={rootRef} className={`printer-picker${open ? ' open' : ''}`}>
@@ -209,7 +213,8 @@ export default function PrinterPicker({
         type="text"
         role="combobox"
         aria-expanded={open}
-        aria-controls={listId}
+        // Список рендерится только открытым: ссылка на несуществующий id — ошибка ARIA.
+        aria-controls={open ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
         autoComplete="off"
@@ -226,6 +231,10 @@ export default function PrinterPicker({
         onKeyDown={onKeyDown}
         onBlur={close}
       />
+      {/* Число найденных при поиске — диктору (сам список о фильтрации не сообщает). */}
+      <div role="status" aria-live="polite" className="visually-hidden">
+        {open && query.trim() !== '' && !customOnly ? foundPrintersMessage(found) : ''}
+      </div>
       <button
         type="button"
         className="printer-picker-toggle"

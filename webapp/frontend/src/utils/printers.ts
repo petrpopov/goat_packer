@@ -91,29 +91,25 @@ export function parseCustomBed(input: CustomBedInput): CustomBed | null {
 
 /**
  * Профиль для сцены своего стола (как разовый CustomProfile бэкенда): прямоугольник от (0, 0) без
- * исключений; стол из проекта неизвестного принтера — с его началом координат и исключениями, пока
- * размеры совпадают с ним (пользователь их не правил).
+ * исключений; у 3MF неизвестного принтера — всегда стол проекта с его началом координат и
+ * исключениями (слайсер режет проект по нему, размеры в форме не правятся, только отступ).
  */
 export function customPrinterProfile(bed: CustomBed, projectBed?: ProjectBed | null): PrinterProfile {
   const area = projectBed?.printableArea;
-  const confirmed =
-    area !== undefined &&
-    area.length === 4 &&
-    Math.abs(area[2] - area[0] - bed.width) < 0.01 &&
-    Math.abs(area[3] - area[1] - bed.depth) < 0.01;
-  const printableArea = confirmed ? [...area] : [0, 0, bed.width, bed.depth];
+  const fromProject = area !== undefined && area.length === 4;
+  const printableArea = fromProject ? [...area] : [0, 0, bed.width, bed.depth];
   return {
     id: 'custom',
     name: 'Свой принтер',
     vendor: 'Custom',
     slicerKind: 'orca',
-    bedWidthMm: bed.width,
-    bedDepthMm: bed.depth,
+    bedWidthMm: printableArea[2] - printableArea[0],
+    bedDepthMm: printableArea[3] - printableArea[1],
     edgeMarginMm: bed.margin,
     supportsNozzleClean: false,
     filamentChangeSeconds: null,
     printableArea,
-    exclusionRectangles: confirmed ? projectBed!.exclusionRectangles.map((r) => [...r]) : [],
+    exclusionRectangles: fromProject ? projectBed!.exclusionRectangles.map((r) => [...r]) : [],
     plateOutline: null,
   };
 }
@@ -131,4 +127,13 @@ export function customBedFromProject(projectBed: ProjectBed): CustomBedInput {
 }
 
 /** STL — по имени файла (так же решает бэкенд). */
+/** Объявление для экранного диктора при поиске: «Найдено 1 принтер / 3 принтера / 5 принтеров». */
+export function foundPrintersMessage(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  const word =
+    tens >= 11 && tens <= 14 ? 'принтеров' : ones === 1 ? 'принтер' : ones >= 2 && ones <= 4 ? 'принтера' : 'принтеров';
+  return `Найдено ${count} ${word}`;
+}
+
 export const isStlName = (name: string) => name.trim().toLowerCase().endsWith('.stl');
