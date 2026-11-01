@@ -10,6 +10,8 @@ import AmsCalculator from '@/components/AmsCalculator';
 import JobCard from '@/components/JobCard';
 import { calibrationValues } from '@/utils/calibration';
 import StatusPill from '@/components/StatusPill';
+import Icon from '@/components/Icon';
+import { objectsText } from '@/utils/progress';
 import type { JobStatusResponse } from '@/api/types';
 
 export interface Session {
@@ -28,7 +30,8 @@ async function loadSession(): Promise<Session> {
     if (!(error instanceof ApiError) || error.status !== 401) throw error;
     user = await serverApi.post<Session>('/auth/guest');
   }
-  const jobId = /^\/jobs\/([a-z0-9-]+)$/.exec(location.pathname)?.[1];
+  // Ссылка на задачу с ключом просмотра (#access=…): ключ меняется на доступ этой сессии и убирается из адреса.
+  const jobId = /^\/(?:pack|jobs)\/([a-z0-9-]+)$/.exec(location.pathname)?.[1];
   const access = new URLSearchParams(location.hash.slice(1)).get('access');
   if (jobId && access) {
     await serverApi.post('/access', { jobId, token: access });
@@ -53,6 +56,9 @@ export function ServerGate({ children }: { children: ReactNode }) {
     );
   return <>{children}</>;
 }
+const KIND_LABEL: Record<string, string> = { pack: 'Упаковка', schedule: 'Расписание', calibration: 'Калибровка' };
+const jobHref = (job: JobStatusResponse) => (job.kind === 'pack' ? `/pack/${job.jobId}` : `/jobs/${job.jobId}`);
+
 export function HistoryPage() {
   const [page, setPage] = useState(0);
   // Выбранная задача — это URL (/jobs/:id): ссылку можно скопировать, «назад» закрывает карточку.
@@ -78,6 +84,11 @@ export function HistoryPage() {
     onError: (e) => pushToast(e.message, 'error'),
   });
   const current = useJob(selected);
+  // Старые ссылки /jobs/<id> на упаковку ведут в её рабочую область.
+  const currentKind = current.data?.kind;
+  useEffect(() => {
+    if (selected && currentKind === 'pack') navigate(`/pack/${selected}`, { replace: true });
+  }, [selected, currentKind, navigate]);
   const remove = useMutation({
     mutationFn: (id: string) => serverApi.delete(`/jobs/${id}`),
     onSuccess: () => {
@@ -86,7 +97,6 @@ export function HistoryPage() {
     },
     onError: (e) => pushToast(e.message, 'error'),
   });
-  const send = useUiStore((s) => s.sendToSchedule);
   return (
     <div className="page">
       <h1 className="page-title">Мои задачи</h1>
@@ -96,7 +106,7 @@ export function HistoryPage() {
           <table className="table">
             <thead>
               <tr>
-                <th>Файл / задача</th>
+                <th>Файл</th>
                 <th>Тип</th>
                 <th>Статус</th>
                 <th>Создана</th>
@@ -104,40 +114,54 @@ export function HistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {list.data?.items.map((j) => (
-                <tr key={j.jobId}>
-                  <td>
-                    <a
-                      className="link"
-                      href={`/jobs/${j.jobId}`}
-                      onClick={onLink}
-                    >
-                      {j.originalName ?? <span className="mono">{j.jobId.slice(0, 8)}</span>}
-                    </a>
-                  </td>
-                  <td>{j.kind}</td>
-                  <td>
-                    <StatusPill status={j.status} />
-                  </td>
-                  <td>{new Date(j.createdAt).toLocaleString()}</td>
-                  <td>
-                    <button className="btn" onClick={() => setSelected(j.jobId)}>
-                      Открыть
-                    </button>
-                    {!['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(j.status) && (
-                      <button
-                        className="btn"
-                        disabled={remove.isPending}
-                        onClick={() => {
-                          if (window.confirm('Удалить задачу и ссылки на её результаты?')) remove.mutate(j.jobId);
-                        }}
-                      >
-                        Удалить
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {list.data?.items.map((j) => {
+                const href = jobHref(j);
+                return (
+                  <tr
+                    key={j.jobId}
+                    className="row-link"
+                    // Вся строка — ссылка: упаковка открывается в своей рабочей области (/pack/<id>).
+                    onClick={(event) => {
+                      if (!(event.target as HTMLElement).closest('a, button')) navigate(href);
+                    }}
+                  >
+                    <td>
+                      <a className="link" href={href} onClick={onLink}>
+                        {j.originalName ?? <span className="mono">{j.jobId.slice(0, 8)}</span>}
+                      </a>
+                      {j.pack ? <div className="row-sub">{objectsText(j.pack.objectCount)} на столе</div> : null}
+                    </td>
+                    <td>{KIND_LABEL[j.kind] ?? j.kind}</td>
+                    <td>
+                      <StatusPill status={j.status} />
+                    </td>
+                    <td className="mono">
+                      {new Date(j.createdAt).toLocaleString('ru-RU', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </td>
+                    <td className="row-actions">
+                      {!['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(j.status) && (
+                        <button
+                          className="icon-btn"
+                          aria-label="Удалить задачу"
+                          data-tip="Удалить задачу и её файлы"
+                          data-tip-align="end"
+                          disabled={remove.isPending}
+                          onClick={() => {
+                            if (window.confirm('Удалить задачу и ссылки на её результаты?')) remove.mutate(j.jobId);
+                          }}
+                        >
+                          <Icon name="x" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -188,16 +212,6 @@ export function HistoryPage() {
         job={current.data ?? null}
         pollError={current.error}
         onDismiss={() => setSelected(null)}
-        successContent={
-          current.data?.pack ? (
-            <button
-              className="btn"
-              onClick={() => send({ packJobId: current.data!.jobId, profileId: current.data!.pack!.profileId })}
-            >
-              → В расписание
-            </button>
-          ) : null
-        }
       />
       {current.data?.status === 'SUCCEEDED' && current.data.calibration ? (
         <AmsCalculator

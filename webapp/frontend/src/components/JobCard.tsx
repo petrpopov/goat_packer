@@ -8,7 +8,6 @@ import { formatHoursMinutes, packTimeLines } from '@/utils/format';
 import { looksLikeJson } from '@/utils/progress';
 import ArtifactList from './ArtifactList';
 import MarkdownView from './MarkdownView';
-import PackProgress from './PackProgress';
 import ProgressBar from './ProgressBar';
 import StatusPill from './StatusPill';
 
@@ -116,21 +115,8 @@ export default function JobCard({ jobId, job, pollError, successContent, onDismi
       {serverMode && job.expiresAt && (
         <p className="hint">Файлы доступны до {new Date(job.expiresAt).toLocaleString()}</p>
       )}
-      {serverMode && sessionStorage.getItem(`return:${job.jobId}`) && (
-        <div className="stack-sm">
-          <span>Сохраните ссылку для возврата (даёт доступ к просмотру):</span>
-          <input className="input mono" readOnly value={sessionStorage.getItem(`return:${job.jobId}`) ?? ''} />
-        </div>
-      )}
       {active && job.canManage !== false && cancelButton}
-      {active && job.kind === 'pack' && job.stage ? (
-        <PackProgress
-          percent={job.progressPercent}
-          stage={job.stage}
-          message={job.phaseMessage}
-          receivedAtMs={job.receivedAtMs}
-        />
-      ) : active ? (
+      {active ? (
         <ProgressBar
           percent={job.progressPercent}
           message={job.phaseMessage && !looksLikeJson(job.phaseMessage) ? job.phaseMessage : undefined}

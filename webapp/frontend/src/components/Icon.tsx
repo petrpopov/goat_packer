@@ -3,9 +3,33 @@
  * скруглённые концы. Новая иконка = новый <symbol> в спрайте, не эмодзи и не текстовый глиф.
  */
 export type IconName =
-  | 'sun' | 'moon' | 'menu' | 'sidebar' | 'chevron-down' | 'upload' | 'x' | 'check' | 'alert'
-  | 'download' | 'arrow-right' | 'eye' | 'eye-off' | 'list' | 'cube' | 'calendar' | 'shield'
-  | 'logout' | 'user' | 'file' | 'gauge';
+  | 'sun'
+  | 'moon'
+  | 'menu'
+  | 'sidebar'
+  | 'chevron-down'
+  | 'upload'
+  | 'x'
+  | 'check'
+  | 'alert'
+  | 'download'
+  | 'arrow-right'
+  | 'eye'
+  | 'eye-off'
+  | 'list'
+  | 'cube'
+  | 'calendar'
+  | 'shield'
+  | 'logout'
+  | 'user'
+  | 'file'
+  | 'gauge'
+  | 'copy'
+  | 'stop'
+  | 'layers'
+  | 'refresh'
+  | 'plus'
+  | 'focus';
 
 export default function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (

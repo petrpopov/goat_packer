@@ -20,4 +20,4 @@ deploy/.env
 .v2c/
 
 # Impeccable live-server state (pid, token)
-.impeccable/live/
+**/.impeccable/live/

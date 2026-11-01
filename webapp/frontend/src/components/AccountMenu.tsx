@@ -8,7 +8,10 @@ import { pushToast } from '@/store/useToastStore';
 
 /** «petr» → «PE», «petr.popov» → «PP». */
 export function initialsOf(login: string): string {
-  const words = login.trim().split(/[\s._-]+/).filter(Boolean);
+  const words = login
+    .trim()
+    .split(/[\s._-]+/)
+    .filter(Boolean);
   return (words.length >= 2 ? words[0][0] + words[1][0] : login.slice(0, 2)).toUpperCase();
 }
 
@@ -73,7 +76,8 @@ export default function AccountMenu({ user }: { user?: Session }) {
           className={guest ? 'icon-btn' : 'avatar'}
           aria-expanded={open}
           aria-label={guest ? 'Меню' : `Аккаунт: ${user.login ?? ''}`}
-          title={guest ? 'Меню' : (user.login ?? '')}
+          data-tip={guest ? 'Меню' : (user.login ?? '')}
+          data-tip-align="end"
           onClick={() => setOpen((v) => !v)}
         >
           {guest ? <Icon name="menu" /> : initialsOf(user.login ?? '?')}

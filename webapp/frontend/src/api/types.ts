@@ -178,6 +178,23 @@ export interface PackLayout {
   epsilon_mm?: number;
 }
 
+/** Параметры упаковки задачи, как их отправили (бэкенд: PackParamsDto); у доводки — родителя. */
+export interface PackParamsView {
+  clearance: number;
+  resolution: number;
+  layout: 'search' | 'grid';
+  /** Спецификация чистки сопла пакера; '' — выключена. */
+  nozzleClean: string;
+  edgeMargin: number | null;
+  finalSlice: boolean;
+  timeWindowHours: number | null;
+  timeMarginPct: number | null;
+  amsCorrection: boolean;
+  changeSeconds: number | null;
+  supportOverlapMm: number | null;
+  customBed: { width: number; depth: number; height: number; margin: number } | null;
+}
+
 export interface JobStatusResponse {
   canManage?: boolean;
   originalName?: string;
@@ -198,6 +215,9 @@ export interface JobStatusResponse {
   finishedAt: string | null;
   artifacts: JobArtifact[];
   pack: PackJobInfo | null;
+  /** Принтер pack-задачи (как в /profiles; свой стол — id custom); null — не упаковка или профиль исчез. */
+  profile?: PrinterProfile | null;
+  params?: PackParamsView | null;
   schedule: ScheduleInfo | null;
   calibration?: CalibrationInfo | null;
   stage?: JobStage | null;

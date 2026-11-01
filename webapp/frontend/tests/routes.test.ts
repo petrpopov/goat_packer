@@ -17,6 +17,10 @@ describe('parseRoute', () => {
     expect(parseRoute('/jobs/7f3a9c-01')).toEqual({ name: 'job', id: '7f3a9c-01' });
     expect(parseRoute('/jobs/7f3a9c-01/')).toEqual({ name: 'job', id: '7f3a9c-01' });
   });
+  test('a pack job opens the packing workspace /pack/:id', () => {
+    expect(parseRoute('/pack/03bc69b1-a474')).toEqual({ name: 'pack', jobId: '03bc69b1-a474' });
+    expect(parseRoute('/pack/Bad Id')).toEqual({ name: 'pack' });
+  });
   test('login steps', () => {
     expect(parseRoute('/login')).toEqual({ name: 'login', step: 'signin' });
     expect(parseRoute('/login/register')).toEqual({ name: 'login', step: 'register' });
@@ -29,7 +33,7 @@ describe('parseRoute', () => {
 
 describe('routePath', () => {
   test('round-trips', () => {
-    for (const path of ['/pack', '/schedule', '/calibration', '/jobs', '/jobs/abc', '/admin', '/login', '/login/code']) {
+    for (const path of ['/pack', '/pack/abc', '/schedule', '/calibration', '/jobs', '/jobs/abc', '/admin', '/login', '/login/code']) {
       expect(routePath(parseRoute(path))).toBe(path);
     }
   });

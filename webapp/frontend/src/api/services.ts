@@ -1,15 +1,19 @@
 import { uploadProof } from '../utils/challenge';
 import { isStlName } from '../utils/printers';
 import { randomId } from '../utils/randomId';
-import { api, serverApi, serverMode } from './http';
-import type { DetectProfileResponse, JobStatusResponse, PrinterProfile, StartJobResponse } from './types';
+import { api, serverApi, serverMode, type UploadProgress } from './http';
+import type { DetectProfileResponse, JobArtifact, JobStatusResponse, PrinterProfile, StartJobResponse } from './types';
 
 export async function fetchProfiles(): Promise<PrinterProfile[]> {
   return serverMode ? serverApi.get<PrinterProfile[]>('/profiles') : api.get<PrinterProfile[]>('/profiles');
 }
 
 /** Автоопределение профиля принтера по printer_model внутри 3MF. */
-export async function detectProfile(file: File, signal?: AbortSignal): Promise<DetectProfileResponse> {
+export async function detectProfile(
+  file: File,
+  signal?: AbortSignal,
+  onProgress?: UploadProgress
+): Promise<DetectProfileResponse> {
   if (serverMode) {
     const intent = await serverApi.post<{ fileId: string }>(
       '/uploads',
@@ -17,7 +21,12 @@ export async function detectProfile(file: File, signal?: AbortSignal): Promise<D
       signal
     );
     try {
-      const result = await serverApi.putFile<DetectProfileResponse>(`/uploads/${intent.fileId}/content`, file, signal);
+      const result = await serverApi.putFile<DetectProfileResponse>(
+        `/uploads/${intent.fileId}/content`,
+        file,
+        signal,
+        onProgress
+      );
       uploadedFiles.set(file, intent.fileId);
       return result;
     } catch (error) {
@@ -30,7 +39,7 @@ export async function detectProfile(file: File, signal?: AbortSignal): Promise<D
   if (isStlName(file.name)) return { profileId: null, printerModel: null, kind: 'stl', projectBed: null };
   const form = new FormData();
   form.append('file', file);
-  const result = await api.postForm<Partial<DetectProfileResponse>>('/profiles/detect', form, signal);
+  const result = await api.postForm<Partial<DetectProfileResponse>>('/profiles/detect', form, signal, onProgress);
   return {
     profileId: result?.profileId ?? null,
     printerModel: result?.printerModel ?? null,
@@ -53,11 +62,7 @@ export async function finishPackJob(packJobId: string): Promise<StartJobResponse
     { kind: 'PACK', packJobId },
     `finish-${packJobId}`
   );
-  if (created.readToken)
-    sessionStorage.setItem(
-      `return:${created.jobId}`,
-      `${location.origin}/jobs/${created.jobId}#access=${created.readToken}`
-    );
+  rememberAccess(created);
   return created;
 }
 
@@ -124,10 +129,38 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
     pendingRequests.set(form, key);
   }
   const created = await serverApi.createJob<StartJobResponse & { readToken?: string }>(body, key);
-  if (created.readToken)
-    sessionStorage.setItem(
-      `return:${created.jobId}`,
-      `${location.origin}/jobs/${created.jobId}#access=${created.readToken}`
-    );
+  rememberAccess(created);
   return created;
+}
+
+/**
+ * Ключ просмотра задачи (сервер отдаёт его один раз, при создании): по ссылке с ним задачу видит
+ * и тот, у кого нет сессии владельца. Живёт до закрытия вкладки.
+ */
+function rememberAccess(created: { jobId: string; readToken?: string }): void {
+  if (created.readToken) sessionStorage.setItem(`access:${created.jobId}`, created.readToken);
+}
+
+/** Ссылка на рабочую область задачи; на сервере — с ключом просмотра, если он у этой вкладки есть. */
+export function jobLink(jobId: string): string {
+  const token = serverMode ? sessionStorage.getItem(`access:${jobId}`) : null;
+  return `${location.origin}/pack/${jobId}${token ? `#access=${token}` : ''}`;
+}
+
+/** Исходный файл задачи (тот же 3MF/STL, что получил пакер): сцена задачи, открытой по ссылке. */
+export async function downloadJobInput(jobId: string, name: string, signal?: AbortSignal): Promise<File> {
+  const id = encodeURIComponent(jobId);
+  const url = serverMode
+    ? (await serverApi.post<{ url: string }>(`/jobs/${id}/input/download`, {}, signal)).url
+    : `/api/jobs/${id}/input`;
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error('Не удалось получить файл задачи');
+  return new File([await response.blob()], name);
+}
+
+/** Скачать артефакт: локально — прямая ссылка, на сервере — подписанная ссылка хранилища. */
+export async function downloadArtifact(artifact: JobArtifact): Promise<void> {
+  if (!serverMode) return api.download(artifact.downloadUrl, artifact.name);
+  const { url } = await serverApi.post<{ url: string }>(artifact.downloadUrl.replace('/api/v2', ''));
+  location.href = url;
 }

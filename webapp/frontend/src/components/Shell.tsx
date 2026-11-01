@@ -24,6 +24,7 @@ const ADMIN_ITEM: NavItem = { path: '/admin', label: 'Администриров
 
 export default function Shell({ user, children }: { user?: Session; children: ReactNode }) {
   const route = useUiStore((s) => s.route);
+  const packJobId = useUiStore((s) => s.packJobId);
   const rail = useUiStore((s) => s.rail);
   const toggleRail = useUiStore((s) => s.toggleRail);
   const theme = useUiStore((s) => s.theme);
@@ -32,12 +33,15 @@ export default function Shell({ user, children }: { user?: Session; children: Re
 
   const navLink = (item: NavItem) => {
     const active = item.match.includes(route.name);
+    // «Упаковка» возвращает к открытой задаче, если она есть (бренд — всегда к новой упаковке).
+    const href = item.path === '/pack' && packJobId ? `/pack/${packJobId}` : item.path;
     return (
       <a
         key={item.path}
-        href={item.path}
+        href={href}
         onClick={onLink}
-        title={item.label}
+        data-tip={rail ? item.label : undefined}
+        data-tip-pos="right"
         className={`nav-item${active ? ' active' : ''}`}
         aria-current={active ? 'page' : undefined}
       >
@@ -56,7 +60,7 @@ export default function Shell({ user, children }: { user?: Session; children: Re
           onClick={toggleRail}
           aria-pressed={rail}
           aria-label={rail ? 'Развернуть меню' : 'Свернуть меню'}
-          title={rail ? 'Развернуть меню' : 'Свернуть меню'}
+          data-tip={rail ? 'Развернуть меню' : 'Свернуть меню'}
         >
           <Icon name="sidebar" />
         </button>
@@ -70,7 +74,8 @@ export default function Shell({ user, children }: { user?: Session; children: Re
           className="icon-btn"
           onClick={toggleTheme}
           aria-label="Переключить тему"
-          title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+          data-tip={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+          data-tip-align="end"
         >
           <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
         </button>
@@ -86,7 +91,11 @@ export default function Shell({ user, children }: { user?: Session; children: Re
               {navLink(ADMIN_ITEM)}
             </>
           )}
-          <div className="build-tag" title={`Версия ${__GOAT_BUILD__.version}, коммит ${__GOAT_BUILD__.commit || 'неизвестен'}`}>
+          <div
+            className="build-tag"
+            data-tip-pos="right"
+            data-tip={`Версия ${__GOAT_BUILD__.version}, коммит ${__GOAT_BUILD__.commit || 'неизвестен'}`}
+          >
             {__GOAT_BUILD__.version}
             {__GOAT_BUILD__.commit && <span> · {__GOAT_BUILD__.commit}</span>}
           </div>

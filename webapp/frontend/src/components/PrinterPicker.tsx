@@ -60,17 +60,13 @@ export default function PrinterPicker({
 
   const groups = useMemo(
     () => (customOnly ? [] : groupPrinters(filterPrinters(profiles, query))),
-    [customOnly, profiles, query],
+    [customOnly, profiles, query]
   );
   // Плоский порядок опций для стрелок: заголовки производителей в него не входят.
-  const values = useMemo(
-    () => [...groups.flatMap((g) => g.items.map((p) => p.id)), CUSTOM_PRINTER],
-    [groups],
-  );
+  const values = useMemo(() => [...groups.flatMap((g) => g.items.map((p) => p.id)), CUSTOM_PRINTER], [groups]);
   const indexOf = useMemo(() => new Map(values.map((v, i) => [v, i])), [values]);
 
-  const selectedLabel =
-    value === CUSTOM_PRINTER ? CUSTOM_LABEL : (profiles.find((p) => p.id === value)?.name ?? '');
+  const selectedLabel = value === CUSTOM_PRINTER ? CUSTOM_LABEL : (profiles.find((p) => p.id === value)?.name ?? '');
 
   const openList = () => {
     if (open) return;

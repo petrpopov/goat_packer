@@ -222,6 +222,8 @@ select.input {
 }
 
 .btn-primary:hover:not(:disabled) {
+  /* .btn:hover (специфичнее .btn-primary) иначе красит главную кнопку в фон панели. */
+  background: var(--accent-fill);
   filter: brightness(1.06);
 }
 
@@ -861,3 +863,26 @@ td.num {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* Подсказка при наведении (data-tip) — своя, не браузерный title: та же тема и шрифт, задержка,
+   у клавиатуры — по фокусу. Снизу по центру; data-tip-align="end" — к правому краю (кнопки у края
+   экрана), data-tip-pos="right" — справа (свёрнутое меню). */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  /* Пустой альтернативный текст: подсказка не входит в доступное имя кнопки (его даёт aria-label/текст). */
+  content: attr(data-tip) / '';
+  position: absolute; z-index: 100; top: calc(100% + 8px); left: 50%;
+  padding: 5px 9px; border-radius: 6px;
+  background: var(--fg); color: var(--bg);
+  font: 500 12px/1.35 var(--font-ui); letter-spacing: 0; white-space: nowrap; text-transform: none;
+  box-shadow: 0 6px 18px -6px rgb(0 0 0 / 0.45);
+  pointer-events: none; opacity: 0; transform: translate(-50%, -3px);
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+}
+[data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+[data-tip-align='end']::after { left: auto; right: 0; transform: translateY(-3px); }
+[data-tip-align='end']:hover::after, [data-tip-align='end']:focus-visible::after { transform: translateY(0); }
+[data-tip-pos='right']::after { top: 50%; left: calc(100% + 10px); transform: translate(-3px, -50%); }
+[data-tip-pos='right']:hover::after, [data-tip-pos='right']:focus-visible::after { transform: translate(0, -50%); }
+@media (prefers-reduced-motion: reduce) { [data-tip]::after { transition: none; } }

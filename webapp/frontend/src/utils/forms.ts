@@ -83,3 +83,12 @@ export function buildTimeFields(state: TimeFormState, amsAvailable: boolean): [s
 export function packTimeFields(state: TimeFormState, amsAvailable: boolean): [string, string][] {
   return buildTimeFields({ ...state, amsOn: state.windowOn && state.amsOn }, amsAvailable);
 }
+
+/** Обратное buildNozzleClean: спецификация задачи → поля формы (задача, открытая по ссылке). */
+export function parseNozzleClean(spec: string): { mode: 'off' | 'global' | 'from-z'; fromZ: string; every: string } {
+  const every = /every=([\d.]+)/.exec(spec)?.[1] ?? '';
+  if (spec.startsWith('global')) return { mode: 'global', fromZ: '', every: every || '10' };
+  const fromZ = /^from-z=([\d.]+)/.exec(spec)?.[1];
+  if (fromZ) return { mode: 'from-z', fromZ, every: every || '1' };
+  return { mode: 'off', fromZ: '', every: '' };
+}

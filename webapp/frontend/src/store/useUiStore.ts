@@ -36,12 +36,23 @@ function applyTheme(theme: Theme): void {
 /** Один раз до рендера: тема без мигания + синхронизация маршрута с кнопками «назад/вперёд». */
 export function initTheme(): void {
   applyTheme(readInitialTheme());
-  window.addEventListener('popstate', () => useUiStore.setState({ route: parseRoute(location.pathname) }));
+  window.addEventListener('popstate', () => useUiStore.setState(routeState(location.pathname)));
+}
+
+/**
+ * Маршрут и задача упаковки: страница упаковки смонтирована и на других разделах, поэтому открытая
+ * задача (/pack/<id>) переживает уход в расписание; пункт меню «Упаковка» ведёт обратно к ней.
+ */
+function routeState(path: string): Pick<UiState, 'route'> & Partial<Pick<UiState, 'packJobId'>> {
+  const route = parseRoute(path);
+  return route.name === 'pack' ? { route, packJobId: route.jobId ?? null } : { route };
 }
 
 interface UiState {
   theme: Theme;
   route: Route;
+  /** Задача, открытая в упаковке (/pack/<id>); null — черновик новой упаковки. */
+  packJobId: string | null;
   /** Сайдбар свёрнут в полосу иконок. */
   rail: boolean;
   /** Результат упаковки, переданный в расписание («В расписание»). */
@@ -57,7 +68,8 @@ interface UiState {
 
 export const useUiStore = create<UiState>((set, get) => ({
   theme: readInitialTheme(),
-  route: parseRoute(typeof location === 'undefined' ? '/' : location.pathname),
+  packJobId: null,
+  ...routeState(typeof location === 'undefined' ? '/' : location.pathname),
   rail: readStored(RAIL_KEY) === '1',
   packHandoff: null,
   calibOpen: false,
@@ -77,7 +89,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       if (options?.replace) history.replaceState(null, '', path);
       else history.pushState(null, '', path);
     }
-    set({ route: parseRoute(path) });
+    set(routeState(path));
     window.scrollTo(0, 0);
   },
   sendToSchedule: (handoff) => {

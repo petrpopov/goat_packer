@@ -37,7 +37,8 @@ export function formatDuration(seconds: number): string {
 export function remainingText(elapsedSeconds: number, expectedSeconds: number | null): string | null {
   if (expectedSeconds == null || !Number.isFinite(expectedSeconds) || expectedSeconds <= 0) return null;
   const left = expectedSeconds - elapsedSeconds;
-  if (left <= 0) return 'дольше обычного';
+  // Оценка пакера грубая: перебор до полутора оценок — ещё норма, «< 1 мин», а не тревога.
+  if (left <= 0) return elapsedSeconds < expectedSeconds * 1.5 ? 'осталось < 1 мин' : 'дольше обычного';
   if (left < 60) return 'осталось < 1 мин';
   return `осталось ≈ ${Math.ceil(left / 60)} мин`;
 }
@@ -62,31 +63,11 @@ export function looksLikeJson(text: string | null | undefined): boolean {
   return (text?.trim() ?? '').startsWith('{');
 }
 
-/** Полосы процента этапов — те же, что у бэкенда (ProgressTracker.PackStage). */
-const BANDS: Record<PackStageId, [number, number]> = {
+/** Полосы процента этапов — те же, что у бэкенда (ProgressTracker.PackStage): по ним срез в сцене. */
+const BANDS: Partial<Record<PackStageId, [number, number]>> = {
   probe_slice: [1, 15],
-  packing: [15, 24],
-  sample_slice: [24, 30],
-  assembling: [30, 33],
   final_slice: [33, 78],
-  gcode_check: [78, 82],
-  repacking: [82, 86],
-  window_slice: [86, 95],
-  writing: [95, 99],
 };
-
-export type SegmentState = 'done' | 'current' | 'pending' | 'skipped';
-export interface StageSegment {
-  /** Уникален в шкале: повторный заход в этап — отдельный сегмент со своим ключом. */
-  key: string;
-  id: PackStageId;
-  label: string;
-  /** Доля ширины полосы = ширина полосы этапа в процентах. */
-  weight: number;
-  state: SegmentState;
-  /** Заполнение текущего сегмента 0..1. */
-  fill: number;
-}
 
 /** Подписи повторного захода: после перепаковки пакер снова собирает, режет и проверяет. */
 const REPEAT_LABEL: Partial<Record<PackStageId, string>> = {
@@ -95,55 +76,58 @@ const REPEAT_LABEL: Partial<Record<PackStageId, string>> = {
   gcode_check: 'Повторная проверка поддержек',
 };
 
-/**
- * Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, и этапы до первого
- * захода (доводка начинает с нарезки) — «skipped».
- * Повторный заход (после перепаковки пакер снова идёт через сборку, нарезку и проверку) —
- * отдельный текущий сегмент сразу за самым дальним пройденным этапом, а первый заход — «done»:
- * подсветка стоит там же, где заполнение шкалы (процент бэкенда назад не идёт).
- */
-export function stageSegments(stage: JobStage, percent: number): StageSegment[] {
-  const visited = new Set(stage.visited);
-  const currentIndex = ORDER.findIndex((step) => step.id === stage.id);
-  const furthest = ORDER.reduce(
-    (max, step, index) => (step.id !== stage.id && visited.has(step.id) ? Math.max(max, index) : max),
-    -1
-  );
-  const repeat = currentIndex >= 0 && furthest > currentIndex;
-  const reached = repeat ? furthest : currentIndex;
-  // Доводка «Нарезать стол» начинает с нарезки: этапы до первого пройденного она не делала.
-  const first = ORDER.findIndex((step) => step.id === stage.id || visited.has(step.id));
-  const segments: StageSegment[] = ORDER.map((step, index) => {
-    const [start, end] = BANDS[step.id];
-    let state: SegmentState;
-    if (step.id === stage.id) state = repeat ? 'done' : 'current';
-    else if (visited.has(step.id)) state = 'done';
-    else if (index < first) state = 'skipped';
-    else if (index < reached) state = step.optional ? 'skipped' : 'done';
-    else state = 'pending';
-    const fill = state === 'current' ? Math.min(1, Math.max(0, (percent - start) / (end - start))) : state === 'done' ? 1 : 0;
-    return { key: step.id, id: step.id, label: step.label, weight: end - start, state, fill };
-  });
-  if (repeat) {
-    const step = ORDER[currentIndex];
-    // Как в ProgressTracker.enter: повторный этап занимает половину пути от пройденного до 99.
-    const start = BANDS[ORDER[furthest].id][1];
-    const end = start + (99 - start) / 2;
-    segments.splice(furthest + 1, 0, {
-      key: `${step.id}:repeat`,
-      id: step.id,
-      label: REPEAT_LABEL[step.id] ?? step.label,
-      weight: end - start,
-      state: 'current',
-      fill: Math.min(1, Math.max(0, (percent - start) / (end - start))),
-    });
-  }
-  return segments;
-}
-
 /** Высота плоскости среза в сцене как доля высоты модели (1 — модель целиком). */
 export function sceneClip(stageId: string, percent: number): number {
   if (stageId !== 'probe_slice' && stageId !== 'final_slice') return 1;
-  const [start, end] = BANDS[stageId];
+  const [start, end] = BANDS[stageId]!;
   return Math.min(1, Math.max(0, (percent - start) / (end - start)));
+}
+
+/** Строка статуса: подпись текущего этапа и «этап N из M» (M растёт, если понадобились необязательные). */
+export interface StripStage {
+  label: string;
+  step: number;
+  steps: number;
+}
+
+/** Пункт списка этапов в панели «этапы»: пройденные, текущий и ещё обязательные. */
+export interface StageItem {
+  key: string;
+  label: string;
+  state: 'done' | 'current' | 'pending';
+}
+
+function stagePlan(stage: JobStage) {
+  const visited = stage.visited.length ? stage.visited : [stage.id];
+  const currentIndex = ORDER.findIndex((step) => step.id === stage.id);
+  const furthest = ORDER.reduce(
+    (max, step, index) => (step.id !== stage.id && visited.includes(step.id) ? Math.max(max, index) : max),
+    -1
+  );
+  // Повторный заход: после перепаковки пакер снова собирает, режет и проверяет.
+  const repeat = (currentIndex >= 0 && furthest > currentIndex) || stage.attempt > 1;
+  const from = Math.max(currentIndex, furthest);
+  const remaining = ORDER.filter((step, index) => index > from && !step.optional && !visited.includes(step.id));
+  const label =
+    (repeat ? REPEAT_LABEL[stage.id as PackStageId] : undefined) ??
+    ORDER.find((step) => step.id === stage.id)?.label ??
+    'Упаковка';
+  return { visited, repeat, remaining, label };
+}
+
+export function stripStage(stage: JobStage): StripStage {
+  const { visited, repeat, remaining, label } = stagePlan(stage);
+  const step = visited.length + (repeat ? Math.max(1, stage.attempt - 1) : 0);
+  return { label, step, steps: step + remaining.length };
+}
+
+export function stageItems(stage: JobStage): StageItem[] {
+  const { visited, repeat, remaining, label } = stagePlan(stage);
+  const labelOf = (id: string) => ORDER.find((step) => step.id === id)?.label ?? id;
+  const items: StageItem[] = visited
+    .filter((id) => repeat || id !== stage.id)
+    .map((id) => ({ key: id, label: labelOf(id), state: 'done' }));
+  items.push({ key: `${stage.id}:current`, label, state: 'current' });
+  for (const step of remaining) items.push({ key: step.id, label: step.label, state: 'pending' });
+  return items;
 }

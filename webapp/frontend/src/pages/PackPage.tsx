@@ -1,21 +1,26 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
-import { fetchProfiles, finishPackJob, startPackJob } from '@/api/services';
+import { deleteJob, downloadJobInput, fetchProfiles, finishPackJob, jobLink, startPackJob } from '@/api/services';
+import type { JobStatusResponse } from '@/api/types';
 import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import FileDrop from '@/components/FileDrop';
 import Field from '@/components/Field';
 import Icon from '@/components/Icon';
-import JobCard from '@/components/JobCard';
+import JobFiles, { startDownload, visibleArtifacts } from '@/components/JobFiles';
+import ScenePopover from '@/components/ScenePopover';
+import SplitButton from '@/components/SplitButton';
+import StatusStrip, { type StripLine } from '@/components/StatusStrip';
 import PrinterPicker, { CUSTOM_PRINTER } from '@/components/PrinterPicker';
 import CalibrationPage from '@/pages/CalibrationPage';
 import { sceneLayout } from '@/scene/layout';
 import type { ModelMesh } from '@/scene/model3d';
 import { parseModelInWorker, PREVIEW_MAX_BYTES } from '@/scene/parseModelAsync';
-import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields } from '@/utils/forms';
-import { objectsText, sceneClip } from '@/utils/progress';
+import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields, parseNozzleClean } from '@/utils/forms';
+import { formatBytes, formatHoursMinutes } from '@/utils/format';
+import { objectsText, sceneClip, stageElapsed, stageItems, stageTimeLine, stripStage } from '@/utils/progress';
 import {
   customBedFromProject,
   customPrinterProfile,
@@ -43,8 +48,28 @@ const EMPTY_BED: CustomBedInput = { width: '', depth: '', height: '', margin: '5
 // Одна повторная попытка: сетевой сбой при загрузке чанка иначе сразу уводит в заглушку.
 const BedScene = lazy(() => import('@/scene/BedScene').catch(() => import('@/scene/BedScene')));
 
+const ACTIVE = ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'];
+
+/** Разделитель «заголовок / сырые детали» ошибки (CliErrorTranslator бэкенда). */
+const DETAILS_SEPARATOR = '\n— детали —\n';
+
+/** Секундомер этапа между опросами: тикает раз в секунду, только пока идёт задача. */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+const Num = ({ children }: { children: ReactNode }) => <span className="num">{children}</span>;
+
 export default function PackPage() {
-  const sendToSchedule = useUiStore((state) => state.sendToSchedule);
+  const navigate = useUiStore((state) => state.navigate);
+  // Открытая задача — адрес /pack/<id>: при запуске, по ссылке и из списка задач.
+  const jobId = useUiStore((state) => state.packJobId);
   const calibOpen = useUiStore((state) => state.calibOpen);
   const setCalibOpen = useUiStore((state) => state.setCalibOpen);
 
@@ -63,41 +88,16 @@ export default function PackPage() {
   const [windowHours, setWindowHours] = useState('12');
   const [marginPct, setMarginPct] = useState('10');
   const [supportOverlap, setSupportOverlap] = useState('');
-  const [jobId, setJobId] = useState<string | null>(null);
   const [model, setModel] = useState<ModelMesh | null>(null);
+  /** Разбор модели в воркере идёт — на столе «Читаю модель…». */
+  const [parsing, setParsing] = useState(false);
+  /** Задачи, запущенные с этой вкладки: их модель — уже разобранный файл формы, качать вход не нужно. */
+  const [startedHere, setStartedHere] = useState<ReadonlySet<string>>(() => new Set());
+  /** Панель поверх сцены. */
+  const [pop, setPop] = useState<'stages' | 'files' | 'error' | null>(null);
   /** Выбор в PrinterPicker (id или CUSTOM_PRINTER); переживает смену файла, определение по 3MF его перекрывает. */
   const [picked, setPicked] = useState<string | null>(null);
   const [bedInput, setBedInput] = useState<CustomBedInput>(EMPTY_BED);
-
-  // Слишком большой файл — без предпросмотра (без тоста: упаковать его всё равно можно).
-  const modelTooLarge = file !== null && file.size > PREVIEW_MAX_BYTES;
-
-  // Предпросмотр модели в сцене разбирается в браузере из того же файла, что уйдёт на сервер —
-  // в воркере, чтобы разбор крупного 3MF не замораживал страницу.
-  useEffect(() => {
-    let cancelled = false;
-    let cancelParse: (() => void) | null = null;
-    setModel(null);
-    if (!file || file.size > PREVIEW_MAX_BYTES) return;
-    file
-      .arrayBuffer()
-      .then((buffer) => {
-        if (cancelled) return null;
-        const parse = parseModelInWorker(file.name, buffer);
-        cancelParse = parse.cancel;
-        return parse.promise;
-      })
-      .then((mesh) => {
-        if (!cancelled && mesh) setModel(mesh);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) pushToast(error instanceof Error ? error.message : 'Не удалось прочитать модель', 'error');
-      });
-    return () => {
-      cancelled = true;
-      cancelParse?.();
-    };
-  }, [file]);
 
   // Калибровка нужна только для коррекции внутри окна: без окна панель закрывается.
   useEffect(() => {
@@ -153,19 +153,92 @@ export default function PackPage() {
   );
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? null;
-  const jobGone = jobQuery.error instanceof ApiError && jobQuery.error.status === 404;
-  const jobActive =
-    Boolean(jobId) &&
-    !jobGone &&
-    (!job || ['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT'].includes(job.status));
-  // Новый файл без идущей задачи: раскладка прошлой задачи к нему не относится — сцена не должна
-  // ставить новую модель на её места.
-  // Размеры своего стола от прошлого файла к новому не относятся: поля пустеют, стол проекта нового
-  // 3MF (если придёт) заполнит их снова.
+  const jobGone = jobQuery.error instanceof ApiError && [404, 410].includes(jobQuery.error.status);
+  const jobActive = Boolean(jobId) && !jobGone && (!job || ACTIVE.includes(job.status));
+  /** Открыта задача (её параметры — только для чтения, «Упаковать заново» возвращает к черновику). */
+  const viewing = jobId !== null;
+  /** Задача открыта по ссылке или из списка: модель и параметры — с сервера, не из формы. */
+  const external = viewing && !startedHere.has(jobId);
+  const jobInput = useQuery({
+    queryKey: ['job-input', jobId],
+    enabled: external && job?.kind === 'pack' && Boolean(job.originalName),
+    queryFn: ({ signal }) => downloadJobInput(jobId!, job!.originalName!, signal),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const jobFile = external ? (jobInput.data ?? null) : null;
+  /** Файл, чья модель на сцене и чьё имя в поле: черновика или открытой задачи. */
+  const shownFile = external ? jobFile : file;
+
+  // Предпросмотр модели в сцене разбирается в браузере из того же файла, что уйдёт на сервер —
+  // в воркере, чтобы разбор крупного 3MF не замораживал страницу.
+  useEffect(() => {
+    let cancelled = false;
+    let cancelParse: (() => void) | null = null;
+    setModel(null);
+    setParsing(false);
+    if (!shownFile || shownFile.size > PREVIEW_MAX_BYTES) return;
+    setParsing(true);
+    shownFile
+      .arrayBuffer()
+      .then((buffer) => {
+        if (cancelled) return null;
+        const parse = parseModelInWorker(shownFile.name, buffer);
+        cancelParse = parse.cancel;
+        return parse.promise;
+      })
+      .then((mesh) => {
+        if (!cancelled && mesh) setModel(mesh);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) pushToast(error instanceof Error ? error.message : 'Не удалось прочитать модель', 'error');
+      })
+      .finally(() => {
+        if (!cancelled) setParsing(false);
+      });
+    return () => {
+      cancelled = true;
+      cancelParse?.();
+    };
+  }, [shownFile]);
+
+  // Задача по ссылке: её параметры — в поля формы (только для чтения; «Упаковать заново» их берёт).
+  const appliedFor = useRef<string | null>(null);
+  const params = external ? job?.params : null;
+  useEffect(() => {
+    if (!params || appliedFor.current === jobId) return;
+    appliedFor.current = jobId;
+    setClearance(String(params.clearance));
+    setResolution(String(params.resolution));
+    setLayout(params.layout === 'grid' ? 'grid' : 'search');
+    const clean = parseNozzleClean(params.nozzleClean);
+    setCleanMode(clean.mode);
+    if (clean.mode === 'global') setGlobalEvery(clean.every);
+    if (clean.mode === 'from-z') {
+      setFromZ(clean.fromZ);
+      setFromZEvery(clean.every);
+    }
+    setEdgeMargin(params.edgeMargin == null ? '' : String(params.edgeMargin));
+    setSliceNow(params.finalSlice);
+    setWindowOn(params.timeWindowHours != null);
+    if (params.timeWindowHours != null) setWindowHours(String(params.timeWindowHours));
+    if (params.timeMarginPct != null) setMarginPct(String(params.timeMarginPct));
+    setSupportOverlap(params.supportOverlapMm == null ? '' : String(params.supportOverlapMm));
+    if (params.customBed)
+      setBedInput({
+        width: String(params.customBed.width),
+        depth: String(params.customBed.depth),
+        height: String(params.customBed.height),
+        margin: String(params.customBed.margin),
+      });
+  }, [params, jobId]);
+
+  /** Новый файл — новая упаковка: открытая задача к нему не относится (идущая продолжает работать). */
   const handleFileChange = (next: File | null) => {
     setFile(next);
+    // Размеры своего стола от прошлого файла к новому не относятся: стол проекта нового 3MF заполнит их снова.
     setBedInput(EMPTY_BED);
-    if (!jobActive) setJobId(null);
+    if (viewing) navigate('/pack');
   };
 
   const selectedProfile =
@@ -209,8 +282,9 @@ export default function PackPage() {
   const startMutation = useMutation({
     mutationFn: startPackJob,
     onSuccess: (response) => {
-      setJobId(response.jobId);
-      pushToast('Задача упаковки запущена', 'success');
+      // Строка статуса сама показывает запуск — без тоста; у задачи сразу свой адрес.
+      setStartedHere((ids) => new Set(ids).add(response.jobId));
+      navigate(`/pack/${response.jobId}`);
     },
     onError: (error) => {
       pushToast(error instanceof ApiError ? error.message : 'Не удалось выполнить запрос', 'error');
@@ -253,7 +327,7 @@ export default function PackPage() {
     selectedProfile !== null &&
     numbersValid &&
     detection === 'ok' &&
-    !jobActive &&
+    !viewing &&
     !startMutation.isPending &&
     !nozzleCleanInvalid &&
     !timeInvalid &&
@@ -295,49 +369,28 @@ export default function PackPage() {
   const finishMutation = useMutation({
     mutationFn: finishPackJob,
     onSuccess: (response) => {
-      setJobId(response.jobId);
-      pushToast('Нарезка стола запущена', 'success');
+      // Доводка режет тот же вход: его модель уже на сцене, если родитель запущен отсюда.
+      if (jobId && startedHere.has(jobId)) setStartedHere((ids) => new Set(ids).add(response.jobId));
+      navigate(`/pack/${response.jobId}`);
     },
     onError: (error) => {
       pushToast(error instanceof ApiError ? error.message : 'Не удалось запустить нарезку', 'error');
     },
   });
-
-  const successContent =
-    job?.status === 'SUCCEEDED' && job.pack ? (
-      <div className="form-actions">
-        <p className="result-title">Упаковано объектов: {job.pack.objectCount}</p>
-        {job.pack.finalSliced === false ? (
-          <>
-            <p className="field-hint">
-              Раскладка проверена по пробной нарезке нескольких объектов. Полная нарезка стола займёт несколько минут:
-              она проверит поддержки на всём столе и посчитает время печати.
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={finishMutation.isPending}
-              onClick={() => finishMutation.mutate(job.jobId)}
-            >
-              {finishMutation.isPending ? <span className="spinner" aria-hidden="true" /> : null}
-              Нарезать стол
-            </button>
-          </>
-        ) : null}
-        {/* Расписание своего стола бэкенд не принимает: у разового профиля нет файла в каталоге. */}
-        {job.pack.profileId === 'custom' ? null : (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => sendToSchedule({ packJobId: job.jobId, profileId: job.pack?.profileId ?? profileId })}
-          >
-            В расписание <Icon name="arrow-right" />
-          </button>
-        )}
-      </div>
-    ) : null;
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => deleteJob(id),
+    onSuccess: () => navigate('/pack'),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 404) navigate('/pack');
+      else pushToast(error.message, 'error');
+    },
+  });
 
   const busy = jobActive || startMutation.isPending;
+  /** Форма только для чтения: открыта задача, идёт отправка или файл ещё загружается. */
+  const formLocked = viewing || startMutation.isPending || detection === 'detecting';
+  /** Принтер сцены: у открытой по ссылке задачи — её собственный (свой стол — тоже). */
+  const viewProfile = external ? (job?.profile ?? null) : selectedProfile;
   const running = job?.status === 'RUNNING' || job?.status === 'FINALIZING';
   // Ссылка на layout стабильна между опросами (structural sharing react-query) — сцена не перестраивается зря.
   const jobLayout = job?.layout;
@@ -519,7 +572,8 @@ export default function PackPage() {
   });
   // Размеры из стола проекта не правятся (высота — если она в проекте есть).
   const fixedByProject = (key: keyof CustomBedInput) =>
-    projectBed !== null && (key === 'width' || key === 'depth' || (key === 'height' && projectBed.printableHeight != null));
+    projectBed !== null &&
+    (key === 'width' || key === 'depth' || (key === 'height' && projectBed.printableHeight != null));
   const bedField = (key: keyof CustomBedInput, label: string, min: number, max: number, hint?: string) => {
     const raw = bedInput[key];
     const fixed = fixedByProject(key);
@@ -533,7 +587,15 @@ export default function PackPage() {
       <Field
         label={label}
         error={invalid}
-        hint={outOfRange ? `${min}–${max} мм` : marginTooLarge ? 'отступ больше половины стола' : fixed ? 'из проекта' : hint}
+        hint={
+          outOfRange
+            ? `${min}–${max} мм`
+            : marginTooLarge
+              ? 'отступ больше половины стола'
+              : fixed
+                ? 'из проекта'
+                : hint
+        }
       >
         <input
           className="input"
@@ -562,169 +624,517 @@ export default function PackPage() {
     </div>
   ) : null;
 
+  // ───── Строка статуса: что происходит и одна главная кнопка ─────
+  const now = useNow(running);
+  const copyLink = useCallback(() => {
+    if (!jobId) return;
+    navigator.clipboard
+      .writeText(jobLink(jobId))
+      .then(() => pushToast('Ссылка скопирована', 'success'))
+      .catch(() => pushToast('Не удалось скопировать ссылку', 'error'));
+  }, [jobId]);
+  const closePop = useCallback(() => setPop(null), []);
+  const togglePop = (kind: 'stages' | 'files' | 'error') => setPop((open) => (open === kind ? null : kind));
+  const popLink = (kind: 'stages' | 'files' | 'error', label: string) => (
+    <button type="button" className="linkish" aria-expanded={pop === kind} onClick={() => togglePop(kind)}>
+      {label}
+    </button>
+  );
+  const newPack = () => {
+    setFile(null);
+    setBedInput(EMPTY_BED);
+    navigate('/pack');
+  };
+  /** «Упаковать заново»: черновик с теми же файлом и параметрами; у задачи по ссылке файл — её вход. */
+  const repack = () => {
+    if (external && jobFile) setFile(jobFile);
+    navigate('/pack');
+  };
+  const copyButton = jobId ? (
+    <button
+      type="button"
+      className="icon-btn bordered"
+      aria-label="Скопировать ссылку на задачу"
+      data-tip="Скопировать ссылку на задачу"
+      data-tip-align="end"
+      onClick={copyLink}
+    >
+      <Icon name="copy" />
+    </button>
+  ) : null;
+  const packed3mf = job ? visibleArtifacts(job.artifacts).find((a) => a.name.endsWith('.3mf')) : undefined;
+  const moreItems = [
+    { label: 'Файлы задачи', icon: 'file' as const, onSelect: () => setPop('files') },
+    'separator' as const,
+    { label: 'Упаковать заново', icon: 'refresh' as const, onSelect: repack, disabled: external && !jobFile },
+    { label: 'Новая упаковка', icon: 'plus' as const, onSelect: newPack },
+  ];
+  const uploadText = detectMutation.upload ? (
+    <>
+      Загрузка файла ·{' '}
+      <Num>{Math.round((detectMutation.upload.sent / Math.max(1, detectMutation.upload.total)) * 100)}</Num> %
+    </>
+  ) : null;
+
+  let title: ReactNode;
+  let detail: ReactNode;
+  let line: StripLine = { kind: 'off' };
+  let lineLabel: string | undefined;
+  let actions: ReactNode;
+  const submitButton = (label: string, pending = false) => (
+    <button
+      type="submit"
+      form="pack-form"
+      className="btn btn-primary btn-lg btn-main"
+      disabled={!canSubmit}
+      data-tip={canSubmit ? 'Разложить объекты на столе' : undefined}
+      data-tip-align="end"
+    >
+      {pending ? <span className="spinner" aria-hidden="true" /> : null}
+      {label}
+    </button>
+  );
+
+  if (viewing && jobGone) {
+    title = 'Задача недоступна';
+    detail = 'Удалена или истёк срок хранения файлов';
+    actions = (
+      <button
+        type="button"
+        className="btn btn-primary btn-lg btn-main"
+        onClick={newPack}
+        data-tip="Начать с чистой формы"
+        data-tip-align="end"
+      >
+        <Icon name="plus" />
+        Новая упаковка
+      </button>
+    );
+  } else if (viewing) {
+    const status = job?.status;
+    const cancel = (
+      <button
+        type="button"
+        className="btn btn-lg btn-main btn-cancel"
+        disabled={cancelMutation.isPending || job?.canManage === false}
+        onClick={() => jobId && cancelMutation.mutate(jobId)}
+        data-tip="Остановить и удалить задачу"
+        data-tip-align="end"
+      >
+        <Icon name="stop" />
+        Отменить
+      </button>
+    );
+    if (!job) {
+      title = jobQuery.isError ? 'Нет связи с сервером' : 'Получаю статус задачи…';
+      detail = jobQuery.isError && jobQuery.error instanceof Error ? jobQuery.error.message : '';
+      line = { kind: 'waiting' };
+      actions = copyButton;
+    } else if (status === 'QUEUED' || status === 'RETRY_WAIT' || status === 'LOST') {
+      title = status === 'QUEUED' ? 'В очереди' : 'Повтор после сбоя исполнителя';
+      detail =
+        job.queuePosition != null ? (
+          <>
+            место <Num>{job.queuePosition}</Num>
+            {job.estimatedWaitFromSeconds != null && job.estimatedWaitToSeconds != null ? (
+              <>
+                {' '}
+                · начнётся через ≈
+                <Num>
+                  {Math.floor(job.estimatedWaitFromSeconds / 60)}–{Math.ceil(job.estimatedWaitToSeconds / 60)}
+                </Num>{' '}
+                мин
+              </>
+            ) : null}
+          </>
+        ) : (
+          'ждёт свободного исполнителя'
+        );
+      line = { kind: 'waiting' };
+      actions = (
+        <>
+          {cancel}
+          {copyButton}
+        </>
+      );
+    } else if (status === 'RUNNING' || status === 'FINALIZING') {
+      const stage = job.stage;
+      if (stage) {
+        const strip = stripStage(stage);
+        const elapsed = stageElapsed(stage, job.receivedAtMs, Math.max(now, job.receivedAtMs ?? 0));
+        title = strip.label;
+        detail = (
+          <>
+            этап <Num>{strip.step}</Num> из <Num>{strip.steps}</Num> · {stageTimeLine(elapsed, stage.expectedSeconds)} ·{' '}
+            {popLink('stages', 'этапы')}
+          </>
+        );
+        lineLabel = `${strip.label}, этап ${strip.step} из ${strip.steps}`;
+      } else {
+        title = 'Запуск упаковки…';
+        detail = 'исполнитель готовит задачу';
+      }
+      line = { kind: 'progress', percent: job.progressPercent };
+      actions = (
+        <>
+          {cancel}
+          {copyButton}
+        </>
+      );
+    } else if (status === 'SUCCEEDED' && job.pack) {
+      const info = job.pack;
+      title = `${objectsText(info.objectCount)} на столе`;
+      line = { kind: 'ok' };
+      const parts: ReactNode[] = [];
+      // Коротко: строка не переносится, а ссылка «файлы» в конце не должна уйти под многоточие.
+      if (info.finalSliced === false) parts.push('стол не нарезан целиком');
+      if (info.time) {
+        parts.push(<>печать ≈{formatHoursMinutes(info.time.correctedSeconds)}</>);
+        if (info.time.windowHours != null)
+          parts.push(
+            <>
+              окно <Num>{info.time.windowHours}</Num> ч: <Num>{info.time.chosenCount}</Num> из{' '}
+              <Num>{info.time.fullCount}</Num>
+            </>
+          );
+      }
+      if (info.supportsDetected) parts.push('с поддержками, без поворотов');
+      parts.push(popLink('files', 'файлы'));
+      detail = parts.map((part, index) => (
+        <span key={index}>
+          {index ? ' · ' : ''}
+          {part}
+        </span>
+      ));
+      const download = packed3mf ? () => startDownload(packed3mf) : undefined;
+      actions =
+        info.finalSliced === false ? (
+          <>
+            <SplitButton
+              main={
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg btn-main"
+                  disabled={finishMutation.isPending || job.canManage === false}
+                  onClick={() => finishMutation.mutate(job.jobId)}
+                  data-tip="Проверить поддержки на всём столе и посчитать время печати"
+                  data-tip-align="end"
+                >
+                  {finishMutation.isPending ? <span className="spinner" aria-hidden="true" /> : <Icon name="layers" />}
+                  Нарезать стол
+                </button>
+              }
+              items={[
+                {
+                  label: 'Скачать 3MF',
+                  icon: 'download',
+                  note: packed3mf ? formatBytes(packed3mf.sizeBytes) : undefined,
+                  onSelect: () => download?.(),
+                  disabled: !download,
+                },
+                ...moreItems,
+              ]}
+            />
+            {copyButton}
+          </>
+        ) : (
+          <>
+            <SplitButton
+              main={
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg btn-main"
+                  disabled={!download}
+                  onClick={() => download?.()}
+                  data-tip={packed3mf ? `${packed3mf.name} · ${formatBytes(packed3mf.sizeBytes)}` : undefined}
+                  data-tip-align="end"
+                >
+                  <Icon name="download" />
+                  Скачать 3MF
+                </button>
+              }
+              items={moreItems}
+            />
+            {copyButton}
+          </>
+        );
+    } else {
+      // FAILED / CANCELLED / EXPIRED
+      const failed = status === 'FAILED';
+      title = failed ? 'Упаковка не удалась' : status === 'CANCELLED' ? 'Задача отменена' : 'Срок хранения истёк';
+      const headline = job.error ? job.error.split(DETAILS_SEPARATOR)[0] : failed ? 'Задача завершилась с ошибкой' : '';
+      detail = (
+        <>
+          {headline ? <span className="err">{headline}</span> : null}
+          {failed ? <> · {popLink('error', 'подробности')}</> : null}
+        </>
+      );
+      line = { kind: failed ? 'fail' : 'off' };
+      actions = (
+        <>
+          <button
+            type="button"
+            className="btn btn-primary btn-lg btn-main"
+            onClick={repack}
+            disabled={external && !jobFile}
+            data-tip="Те же файл и параметры — можно поправить перед запуском"
+            data-tip-align="end"
+          >
+            <Icon name="refresh" />
+            Упаковать заново
+          </button>
+          {copyButton}
+        </>
+      );
+    }
+  } else {
+    // Черновик: файл, его загрузка и определение принтера, готовность.
+    title = file ? file.name : 'Модель не выбрана';
+    if (!file) detail = 'Загрузите слева проект .3mf или модель .stl';
+    else if (uploadText) detail = uploadText;
+    else if (detection === 'detecting') detail = 'Определяю принтер…';
+    else if (parsing) detail = 'Читаю модель…';
+    else if (selectedProfile)
+      detail = `${selectedProfile.name} · рабочая область ${selectedProfile.bedWidthMm} × ${selectedProfile.bedDepthMm} мм`;
+    else detail = detectionError ?? 'Выберите принтер слева';
+    const loading = file !== null && (detection === 'detecting' || parsing);
+    actions = loading ? (
+      <button type="button" className="btn btn-primary btn-lg btn-main" disabled>
+        <span className="spinner" aria-hidden="true" />
+        Загрузка…
+      </button>
+    ) : (
+      submitButton('Упаковать', startMutation.isPending)
+    );
+  }
+
+  /** Текст поверх сцены, пока её нечем заполнить. */
+  const sceneBusy =
+    external && jobInput.isPending && job?.kind === 'pack'
+      ? 'Загружаю файл задачи…'
+      : parsing
+        ? 'Читаю модель…'
+        : !viewing && file && detection === 'detecting' && !viewProfile
+          ? 'Определяю принтер…'
+          : null;
+  const errorText = job?.status === 'FAILED' && job.error ? job.error : null;
+
   return (
     <div className={`work${calibOpen ? ' with-side' : ''}`}>
       <form id="pack-form" className="form-col" onSubmit={handleSubmit}>
-        <FileDrop file={file} onFileChange={handleFileChange} disabled={busy} allowStl />
-        {detectionError ? <div className="error-block">{detectionError}</div> : null}
-        {/* 3MF известного принтера — выбор заблокирован (сервер примет только его), неизвестного — только
-            свой стол; STL и «до файла» — любой принтер каталога. Не Field: label-обёртка уводила бы клик по опции в поле. */}
-        <div className="field">
-          <label className="field-label" htmlFor="pack-printer">
-            Принтер
-          </label>
-          <PrinterPicker
-            id="pack-printer"
-            profiles={profiles}
-            value={choice?.kind === 'custom' ? CUSTOM_PRINTER : (choice?.id ?? null)}
-            onChange={setPicked}
-            locked={choice?.kind === 'detected'}
-            customOnly={unknown3mf}
-            disabled={busy || (file !== null && !stl && detection === 'detecting')}
-            placeholder={profilesQuery.isPending ? 'Загрузка…' : 'Выберите принтер'}
-          />
-          {pickerHint ? <span className="field-hint">{pickerHint}</span> : null}
-        </div>
-        {customBedFields}
-        <Field
-          label="Раскладка"
-          hint={layout === 'grid' ? 'быстро и равномерно, без поворотов' : 'подбор с поворотами и нависаниями'}
-        >
-          <div className="seg" role="group" aria-label="Раскладка">
-            <button
-              type="button"
-              aria-pressed={layout === 'search'}
-              onClick={() => setLayout('search')}
-              disabled={busy}
-            >
-              Плотная
-            </button>
-            <button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')} disabled={busy}>
-              Сетка
-            </button>
-          </div>
-        </Field>
-        {nozzleCleanFields}
-        <div className="form-group">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={sliceNow || windowOn}
-              onChange={(event) => setSliceNow(event.target.checked)}
-              disabled={busy || windowOn}
-            />
-            <span className="check-text">
-              Сразу нарезать весь стол
-              <small className="field-hint">
-                {windowOn
-                  ? 'окно печати меряется нарезками — стол режется всегда'
-                  : 'дольше на несколько минут; без галочки — кнопкой после упаковки'}
-              </small>
-            </span>
-          </label>
-        </div>
-        <div className="form-group">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={windowOn}
-              onChange={(event) => setWindowOn(event.target.checked)}
-              disabled={busy}
-            />
-            <span className="check-text">
-              Уложиться в окно печати
-              <small className="field-hint">без окна стол заполняется максимально</small>
-            </span>
-          </label>
-          {windowOn && (
-            <div className="nested">
-              {windowFields}
-              <AmsCorrectionFields
-                available={ams.available}
-                on={ams.on}
-                onToggle={ams.setOn}
-                seconds={ams.seconds}
-                onSecondsChange={ams.setSeconds}
-                invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
-                disabled={busy}
-                onCalibrate={() => setCalibOpen(!calibOpen)}
+        <FileDrop
+          file={shownFile}
+          onFileChange={handleFileChange}
+          disabled={jobActive || startMutation.isPending}
+          allowStl
+        />
+        {!viewing && detectMutation.upload ? (
+          <div className="file-progress">
+            <div className="track">
+              <i
+                style={{
+                  ['--p' as string]: `${(detectMutation.upload.sent / Math.max(1, detectMutation.upload.total)) * 100}%`,
+                }}
               />
             </div>
-          )}
-        </div>
-        <details className="params form-group">
-          <summary className="params-summary">Дополнительно</summary>
-          {supportOverlapField}
-          {paramsFields}
-        </details>
+            <span>
+              Загрузка <Num>{formatBytes(detectMutation.upload.sent)}</Num> из{' '}
+              <Num>{formatBytes(detectMutation.upload.total)}</Num>
+            </span>
+          </div>
+        ) : !viewing && file && (detection === 'detecting' || parsing) ? (
+          <div className="file-progress">
+            <div className="track waiting">
+              <i />
+            </div>
+            <span>{detection === 'detecting' ? 'Определяю принтер…' : 'Читаю модель…'}</span>
+          </div>
+        ) : null}
+        {!viewing && detectionError ? <div className="error-block">{detectionError}</div> : null}
+        <fieldset className="form-lock" disabled={formLocked}>
+          {/* 3MF известного принтера — выбор заблокирован (сервер примет только его), неизвестного — только
+            свой стол; STL и «до файла» — любой принтер каталога. Не Field: label-обёртка уводила бы клик по опции в поле. */}
+          <div className="field">
+            <label className="field-label" htmlFor="pack-printer">
+              Принтер
+            </label>
+            {external ? (
+              <output id="pack-printer" className="input">
+                {job?.profile?.name ?? 'Принтер задачи'}
+              </output>
+            ) : (
+              <PrinterPicker
+                id="pack-printer"
+                profiles={profiles}
+                value={choice?.kind === 'custom' ? CUSTOM_PRINTER : (choice?.id ?? null)}
+                onChange={setPicked}
+                locked={choice?.kind === 'detected'}
+                customOnly={unknown3mf}
+                disabled={busy || (file !== null && !stl && detection === 'detecting')}
+                placeholder={profilesQuery.isPending ? 'Загрузка…' : 'Выберите принтер'}
+              />
+            )}
+            {pickerHint && !viewing ? <span className="field-hint">{pickerHint}</span> : null}
+          </div>
+          {customBedFields}
+          <Field
+            label="Раскладка"
+            hint={layout === 'grid' ? 'быстро и равномерно, без поворотов' : 'подбор с поворотами и нависаниями'}
+          >
+            <div className="seg" role="group" aria-label="Раскладка">
+              <button
+                type="button"
+                aria-pressed={layout === 'search'}
+                onClick={() => setLayout('search')}
+                disabled={busy}
+              >
+                Плотная
+              </button>
+              <button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')} disabled={busy}>
+                Сетка
+              </button>
+            </div>
+          </Field>
+          {nozzleCleanFields}
+          <div className="form-group">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={sliceNow || windowOn}
+                onChange={(event) => setSliceNow(event.target.checked)}
+                disabled={busy || windowOn}
+              />
+              <span className="check-text">
+                Сразу нарезать весь стол
+                <small className="field-hint">
+                  {windowOn
+                    ? 'окно печати меряется нарезками — стол режется всегда'
+                    : 'дольше на несколько минут; без галочки — кнопкой после упаковки'}
+                </small>
+              </span>
+            </label>
+          </div>
+          <div className="form-group">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={windowOn}
+                onChange={(event) => setWindowOn(event.target.checked)}
+                disabled={busy}
+              />
+              <span className="check-text">
+                Уложиться в окно печати
+                <small className="field-hint">без окна стол заполняется максимально</small>
+              </span>
+            </label>
+            {windowOn && (
+              <div className="nested">
+                {windowFields}
+                <AmsCorrectionFields
+                  available={ams.available}
+                  on={ams.on}
+                  onToggle={ams.setOn}
+                  seconds={ams.seconds}
+                  onSecondsChange={ams.setSeconds}
+                  invalid={ams.seconds.trim() !== '' && !numberInRange(ams.seconds, 0, 600)}
+                  disabled={busy}
+                  onCalibrate={() => setCalibOpen(!calibOpen)}
+                />
+              </div>
+            )}
+          </div>
+          <details className="params form-group">
+            <summary className="params-summary">Дополнительно</summary>
+            {supportOverlapField}
+            {paramsFields}
+          </details>
+        </fieldset>
+        {viewing ? <p className="field-hint">Параметры этой задачи. Чтобы изменить — «Упаковать заново».</p> : null}
       </form>
 
       <section className="main-col">
-        <div className="action-bar">
-          <div className="title">
-            <h1>{file ? file.name : 'Модель не выбрана'}</h1>
-            <p>
-              {selectedProfile
-                ? `${selectedProfile.name} · рабочая область ${selectedProfile.bedWidthMm} × ${selectedProfile.bedDepthMm} мм`
-                : 'Загрузите слева проект .3mf или модель .stl и выберите принтер'}
-            </p>
-          </div>
-          {job?.status === 'SUCCEEDED' ? (
-            <button type="submit" form="pack-form" className="btn" disabled={!canSubmit}>
-              Упаковать заново
-            </button>
-          ) : (
-            <button type="submit" form="pack-form" className="btn btn-primary btn-lg" disabled={!canSubmit}>
-              {startMutation.isPending ? <span className="spinner" aria-hidden="true" /> : null}
-              Упаковать
-            </button>
-          )}
-        </div>
-        <JobCard
-          jobId={jobId}
-          onDismiss={() => setJobId(null)}
-          job={job}
-          pollError={jobQuery.isError ? jobQuery.error : undefined}
-          successContent={successContent}
-        />
-        {selectedProfile && (
-          <ErrorBoundary
-            fallback={
-              <div className="scene scene-fallback">
-                Не удалось показать стол: браузер без WebGL или устаревшая версия страницы — обновите страницу
-              </div>
-            }
-          >
-            <Suspense fallback={<div className="scene" />}>
-              <BedScene
-                profile={selectedProfile}
-                model={model}
-                mode={sceneMode}
-                clip={running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1}
-                caption={
-                  modelTooLarge
-                    ? 'Модель слишком большая для предпросмотра'
-                    : sceneMode === 'done'
-                      ? 'перетащите, чтобы повернуть'
+        <StatusStrip title={title} detail={detail} line={line} lineLabel={lineLabel} actions={actions} />
+        <div className="scene-wrap">
+          {viewProfile ? (
+            <ErrorBoundary
+              fallback={
+                <div className="scene scene-fallback">
+                  Не удалось показать стол: браузер без WebGL или устаревшая версия страницы — обновите страницу
+                </div>
+              }
+            >
+              <Suspense fallback={<div className="scene" />}>
+                <BedScene
+                  profile={viewProfile}
+                  model={model}
+                  mode={sceneMode}
+                  clip={running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1}
+                  caption={
+                    // Слишком большой файл — без предпросмотра (без тоста: упаковать его всё равно можно).
+                    shownFile && shownFile.size > PREVIEW_MAX_BYTES
+                      ? 'Модель слишком большая для предпросмотра'
                       : model
-                        ? 'модель и её проекция на стол'
+                        ? 'колесо — масштаб, перетаскивание — поворот, правая кнопка — сдвиг'
                         : ''
-                }
-                placements={placed.placements}
-                footprintLoops={placed.footprintLoops}
-                tower={placed.tower}
-                usableOverride={placed.bed}
-                readout={
-                  placed.placements.length
-                    ? `${objectsText(placed.placements.length)} на столе`
-                    : model
-                      ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм`
-                      : ''
-                }
-              />
-            </Suspense>
-          </ErrorBoundary>
-        )}
+                  }
+                  placements={placed.placements}
+                  footprintLoops={placed.footprintLoops}
+                  tower={placed.tower}
+                  usableOverride={placed.bed}
+                  readout={
+                    placed.placements.length
+                      ? `${objectsText(placed.placements.length)} на столе`
+                      : model
+                        ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм`
+                        : ''
+                  }
+                />
+              </Suspense>
+            </ErrorBoundary>
+          ) : (
+            <div className="scene scene-empty">
+              {sceneBusy ? null : 'Здесь появится стол выбранного принтера и модель'}
+            </div>
+          )}
+          {sceneBusy ? (
+            <div className="scene-busy" aria-live="polite">
+              <span>
+                <span className="spinner" aria-hidden="true" />
+                {sceneBusy}
+              </span>
+            </div>
+          ) : null}
+          {pop === 'stages' && running && job?.stage ? (
+            <ScenePopover title="Этапы" onClose={closePop}>
+              <ol className="stage-list">
+                {stageItems(job.stage).map((item) => (
+                  <li key={item.key} className={item.state}>
+                    <i aria-hidden="true" />
+                    {item.label}
+                    {item.state === 'current' ? (
+                      <span className="t">
+                        {stageTimeLine(
+                          stageElapsed(job.stage!, job.receivedAtMs, Math.max(now, job.receivedAtMs ?? 0)),
+                          null
+                        )}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            </ScenePopover>
+          ) : null}
+          {pop === 'files' && job && !ACTIVE.includes(job.status) ? (
+            <ScenePopover title="Файлы задачи" onClose={closePop}>
+              <JobFiles artifacts={job.artifacts} expiresAt={job.expiresAt} />
+            </ScenePopover>
+          ) : null}
+          {pop === 'error' && errorText ? (
+            <ScenePopover title="Что пошло не так" onClose={closePop}>
+              <JobErrorDetails error={errorText} job={job} />
+            </ScenePopover>
+          ) : null}
+        </div>
       </section>
 
       {/* Скрыта, а не размонтирована: jobId калибровки живёт в её состоянии и терялся при закрытии. */}
@@ -732,5 +1142,19 @@ export default function PackPage() {
         <CalibrationPage embedded onClose={() => setCalibOpen(false)} />
       </aside>
     </div>
+  );
+}
+
+/** Ошибка задачи: заголовок и сырой хвост журнала (бэкенд склеивает их через DETAILS_SEPARATOR) + файлы. */
+function JobErrorDetails({ error, job }: { error: string; job: JobStatusResponse | null }) {
+  const at = error.indexOf(DETAILS_SEPARATOR);
+  const headline = at >= 0 ? error.slice(0, at) : error;
+  const details = at >= 0 ? error.slice(at + DETAILS_SEPARATOR.length) : null;
+  return (
+    <>
+      <div className="error-block">{headline}</div>
+      {details ? <pre className="error-details">{details}</pre> : null}
+      {job ? <JobFiles artifacts={job.artifacts} expiresAt={job.expiresAt} /> : null}
+    </>
   );
 }

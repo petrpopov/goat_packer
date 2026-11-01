@@ -2,7 +2,8 @@
 export type LoginStep = 'signin' | 'register' | 'forgot' | 'sent' | 'code';
 
 export type Route =
-  | { name: 'pack' }
+  /** Рабочая область упаковки; jobId — открыта задача (/pack/<id>). */
+  | { name: 'pack'; jobId?: string }
   | { name: 'schedule' }
   | { name: 'calibration' }
   | { name: 'jobs' }
@@ -26,6 +27,8 @@ export function parseRoute(pathname: string): Route {
       return tail && JOB_ID.test(tail) ? { name: 'job', id: tail } : { name: 'jobs' };
     case 'login':
       return { name: 'login', step: LOGIN_STEPS.find((step) => step === tail) ?? 'signin' };
+    case 'pack':
+      return tail && JOB_ID.test(tail) ? { name: 'pack', jobId: tail } : { name: 'pack' };
     default:
       return { name: 'pack' };
   }
@@ -35,6 +38,8 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case 'job':
       return `/jobs/${route.id}`;
+    case 'pack':
+      return route.jobId ? `/pack/${route.jobId}` : '/pack';
     case 'login':
       return route.step === 'signin' ? '/login' : `/login/${route.step}`;
     default:

@@ -93,7 +93,7 @@ export default function CalibrationPage({ embedded = false, onClose }: { embedde
       {embedded ? (
         <div className="side-head">
           <h2>Калибровка смены прутка</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть" title="Закрыть">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть" data-tip="Закрыть" data-tip-align="end">
             <Icon name="x" />
           </button>
         </div>
