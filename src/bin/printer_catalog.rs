@@ -686,14 +686,26 @@ fn run_logged(command: &mut std::process::Command, log: &Path, what: &str) -> Ap
 /// The most useful single line of a failed tool's output: the last `error`-looking line, else
 /// the last non-empty one.
 fn failure_line(bytes: &[u8]) -> Option<String> {
+    // Headless X noise the runner prints on every slicer call (and after the real error).
+    const NOISE: [&str; 4] = ["xkbcomp", "XDG_RUNTIME_DIR", "_XSERVTrans", "keysym"];
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    let pick = lines
-        .iter()
-        .rev()
-        .find(|l| l.to_ascii_lowercase().contains("error"))
-        .or(lines.last())?;
-    Some(pick.chars().take(300).collect())
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !NOISE.iter().any(|n| l.contains(n)))
+        .collect();
+    let last = |pred: &dyn Fn(&str) -> bool| lines.iter().rposition(|l| pred(l));
+    let lower = |l: &str| l.to_ascii_lowercase();
+    let index = last(&|l| l.starts_with("slicer report:"))
+        .or_else(|| last(&|l| lower(l).starts_with("error")))
+        // Orca CLI: "run found error, return -51, exit..." then the message on the next line.
+        .map(|i| if lines[i].starts_with("run found error") && i + 1 < lines.len() { i + 1 } else { i })
+        .or_else(|| {
+            last(&|l| lower(l).contains("error"))
+                .map(|i| if lines[i].starts_with("run found error") && i + 1 < lines.len() { i + 1 } else { i })
+        })
+        .or(lines.len().checked_sub(1))?;
+    Some(lines[index].chars().take(300).collect())
 }
 
 /// Orca/Bambu write `result.json` with `return_code` (0 = OK) and `error_string`; a slicer can
@@ -971,6 +983,11 @@ mod tests {
         assert_eq!(failure_line(out).unwrap(), "error: printer_model 'X' implies slicer 'bambu'");
         assert_eq!(failure_line(b"a\n\nlast\n").unwrap(), "last");
         assert_eq!(failure_line(b""), None);
+        // Runner noise after the real error is skipped; the packer's slicer report wins.
+        let packer = b"error: Qidi Q2 slicing failed (exit status: 192)\nslicer report: Object conflicts were detected.\nErrors from xkbcomp are not fatal to the X server\n";
+        assert_eq!(failure_line(packer).unwrap(), "slicer report: Object conflicts were detected.");
+        let orca = b"run found error, return -51, exit...\nRelative extruder addressing requires resetting\nErrors from xkbcomp are not fatal to the X server\n";
+        assert_eq!(failure_line(orca).unwrap(), "Relative extruder addressing requires resetting");
     }
 
     #[test]
