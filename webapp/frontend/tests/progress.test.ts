@@ -77,13 +77,33 @@ describe('stageSegments', () => {
     expect(segs.find((s) => s.id === 'repacking')!.state).toBe('skipped');
     expect(segs.find((s) => s.id === 'gcode_check')!.state).toBe('done');
   });
-  test('visited stages after the current one stay done (re-slice after repack)', () => {
+  test('re-slice after a repack is its own current segment after the repack', () => {
     const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
-    const segs = stageSegments(stage({ id: 'final_slice', visited, attempt: 2 }), 40);
-    expect(segs.find((s) => s.id === 'final_slice')!.state).toBe('current');
-    expect(segs.find((s) => s.id === 'gcode_check')!.state).toBe('done');
-    expect(segs.find((s) => s.id === 'repacking')!.state).toBe('done');
-    expect(segs.find((s) => s.id === 'window_slice')!.state).toBe('pending');
+    const segs = stageSegments(stage({ id: 'final_slice', visited, attempt: 2 }), 88);
+    expect(segs.map((s) => [s.key, s.state])).toEqual([
+      ['probe_slice', 'done'], ['packing', 'done'], ['assembling', 'done'], ['final_slice', 'done'],
+      ['gcode_check', 'done'], ['repacking', 'done'], ['final_slice:repeat', 'current'],
+      ['window_slice', 'pending'], ['writing', 'pending'],
+    ]);
+    const repeat = segs.find((s) => s.state === 'current')!;
+    expect(repeat.label).toBe('Повторная нарезка');
+    // Полоса повтора: от конца перепаковки (86) до середины пути к 99 (92.5).
+    expect(repeat.weight).toBeCloseTo(6.5);
+    expect(repeat.fill).toBeCloseTo(2 / 6.5);
+  });
+  test('the check after the re-slice repeats too, the window stays ahead', () => {
+    const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
+    const segs = stageSegments(stage({ id: 'gcode_check', visited, attempt: 2 }), 90);
+    expect(segs.filter((s) => s.state === 'current').map((s) => [s.key, s.label])).toEqual([
+      ['gcode_check:repeat', 'Повторная проверка поддержек'],
+    ]);
+    expect(segs.find((s) => s.key === 'gcode_check')!.state).toBe('done');
+  });
+  test('a second repack is not a repeat: it is already the furthest stage', () => {
+    const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
+    const segs = stageSegments(stage({ id: 'repacking', visited, attempt: 2 }), 90);
+    expect(segs.map((s) => s.key)).not.toContain('repacking:repeat');
+    expect(segs.find((s) => s.id === 'repacking')!.state).toBe('current');
   });
 });
 

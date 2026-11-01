@@ -50,7 +50,7 @@ export default function PackProgress({ percent, stage, message, receivedAtMs }: 
       >
         {segments.map((s) => (
           <span
-            key={s.id}
+            key={s.key}
             className={s.state}
             style={{ flex: s.weight, ['--fill' as string]: `${Math.round(s.fill * 100)}%` }}
           />
@@ -61,7 +61,7 @@ export default function PackProgress({ percent, stage, message, receivedAtMs }: 
         {segments.map((s) => {
           const optional = OPTIONAL.has(s.id) && s.state === 'pending';
           return (
-            <li key={s.id} className={optional ? 'optional' : s.state}>
+            <li key={s.key} className={optional ? 'optional' : s.state}>
               <i aria-hidden="true" />
               {s.label}
               {s.state === 'skipped' ? ' · не понадобилась' : optional ? ' · если понадобится' : ''}

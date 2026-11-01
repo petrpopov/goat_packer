@@ -75,6 +75,8 @@ const BANDS: Record<PackStageId, [number, number]> = {
 
 export type SegmentState = 'done' | 'current' | 'pending' | 'skipped';
 export interface StageSegment {
+  /** Уникален в шкале: повторный заход в этап — отдельный сегмент со своим ключом. */
+  key: string;
   id: PackStageId;
   label: string;
   /** Доля ширины полосы = ширина полосы этапа в процентах. */
@@ -84,24 +86,53 @@ export interface StageSegment {
   fill: number;
 }
 
+/** Подписи повторного захода: после перепаковки пакер снова собирает, режет и проверяет. */
+const REPEAT_LABEL: Partial<Record<PackStageId, string>> = {
+  assembling: 'Повторная сборка',
+  final_slice: 'Повторная нарезка',
+  gcode_check: 'Повторная проверка поддержек',
+};
+
 /**
  * Сегменты шкалы: все этапы по порядку; необязательные, пройденные без захода, — «skipped».
- * Посещённый этап — «done», даже если стоит после текущего: повторная нарезка после перепаковки
- * снова идёт через final_slice, а проверка и перепаковка уже пройдены.
+ * Повторный заход (после перепаковки пакер снова идёт через сборку, нарезку и проверку) —
+ * отдельный текущий сегмент сразу за самым дальним пройденным этапом, а первый заход — «done»:
+ * подсветка стоит там же, где заполнение шкалы (процент бэкенда назад не идёт).
  */
 export function stageSegments(stage: JobStage, percent: number): StageSegment[] {
   const visited = new Set(stage.visited);
   const currentIndex = ORDER.findIndex((step) => step.id === stage.id);
-  return ORDER.map((step, index) => {
+  const furthest = ORDER.reduce(
+    (max, step, index) => (step.id !== stage.id && visited.has(step.id) ? Math.max(max, index) : max),
+    -1
+  );
+  const repeat = currentIndex >= 0 && furthest > currentIndex;
+  const reached = repeat ? furthest : currentIndex;
+  const segments: StageSegment[] = ORDER.map((step, index) => {
     const [start, end] = BANDS[step.id];
     let state: SegmentState;
-    if (step.id === stage.id) state = 'current';
+    if (step.id === stage.id) state = repeat ? 'done' : 'current';
     else if (visited.has(step.id)) state = 'done';
-    else if (index < currentIndex) state = step.optional && !visited.has(step.id) ? 'skipped' : 'done';
+    else if (index < reached) state = step.optional ? 'skipped' : 'done';
     else state = 'pending';
     const fill = state === 'current' ? Math.min(1, Math.max(0, (percent - start) / (end - start))) : state === 'done' ? 1 : 0;
-    return { id: step.id, label: step.label, weight: end - start, state, fill };
+    return { key: step.id, id: step.id, label: step.label, weight: end - start, state, fill };
   });
+  if (repeat) {
+    const step = ORDER[currentIndex];
+    // Как в ProgressTracker.enter: повторный этап занимает половину пути от пройденного до 99.
+    const start = BANDS[ORDER[furthest].id][1];
+    const end = start + (99 - start) / 2;
+    segments.splice(furthest + 1, 0, {
+      key: `${step.id}:repeat`,
+      id: step.id,
+      label: REPEAT_LABEL[step.id] ?? step.label,
+      weight: end - start,
+      state: 'current',
+      fill: Math.min(1, Math.max(0, (percent - start) / (end - start))),
+    });
+  }
+  return segments;
 }
 
 /** Высота плоскости среза в сцене как доля высоты модели (1 — модель целиком). */
