@@ -14,6 +14,8 @@ profile=""
 source_file=""
 window_hours=""
 support_overlap=""
+final_slice=true
+finish_state=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,6 +24,8 @@ while [[ $# -gt 0 ]]; do
     --output) output="$2"; shift 2;;
     --time-window-hours) window_hours="$2"; shift 2;;
     --support-overlap-mm) support_overlap="$2"; shift 2;;
+    --no-final-slice) final_slice=false; shift;;
+    --finish-state) finish_state="$2"; shift 2;;
     *) shift;;
   esac
 done
@@ -55,6 +59,14 @@ fi
 supports_block=""
 if [[ -n "$support_overlap" ]]; then
   supports_block=', "supports_detected": true, "support_overlap_mm": '"$support_overlap"
+fi
+# --finish-state: состояние родителя обязано лежать рядом (его кладёт бэкенд).
+if [[ -n "$finish_state" && ! -f "$finish_state" ]]; then echo "error: no state $finish_state" >&2; exit 1; fi
+# --no-final-slice: стол без полной нарезки — состояние рядом с --output, времени нет.
+if [[ "$final_slice" == "false" ]]; then
+  printf '{"fake": "state"}\n' > "${output%.3mf}.state.json"
+  time_block=null
+  supports_block="$supports_block"', "final_sliced": false'
 fi
 printf '{"object_count": %s, "output_3mf": "%s", "profile": "%s", "time": %s%s}\n' "$count" "$output" "$profile" "$time_block" "$supports_block" > "$verification"
 

@@ -118,6 +118,8 @@ export interface PackJobInfo {
   supportsDetected?: boolean | null;
   /** Допустимое перекрытие поддержек, мм; null — без ограничений. */
   supportOverlapMm?: number | null;
+  /** false — стол упакован по пробной нарезке, полная нарезка ещё не запускалась; нет поля — нарезан. */
+  finalSliced?: boolean;
 }
 
 /** Итог задачи калибровки AMS: значения calibration.json и текст instructions.md. */

@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
-import { fetchProfiles, startPackJob } from '@/api/services';
+import { fetchProfiles, finishPackJob, startPackJob } from '@/api/services';
 import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import FileDrop from '@/components/FileDrop';
@@ -58,6 +58,8 @@ export default function PackPage() {
   const [fromZ, setFromZ] = useState('');
   const [fromZEvery, setFromZEvery] = useState('1');
   const [windowOn, setWindowOn] = useState(false);
+  /** Сразу нарезать весь стол; иначе — по кнопке «Нарезать стол» после упаковки (минуты ожидания). */
+  const [sliceNow, setSliceNow] = useState(false);
   const [windowHours, setWindowHours] = useState('12');
   const [marginPct, setMarginPct] = useState('10');
   const [supportOverlap, setSupportOverlap] = useState('');
@@ -284,14 +286,44 @@ export default function PackPage() {
     for (const [name, value] of timeFields) form.append(name, value);
     // Пустое перекрытие = без ограничений: поле не шлётся, флаг CLI не передаётся.
     for (const [name, value] of supportFields) form.append(name, value);
+    // Окно печати меряется нарезками — с ним стол режется всегда.
+    form.append('finalSlice', String(sliceNow || windowOn));
 
     startMutation.mutate(form);
   };
+
+  const finishMutation = useMutation({
+    mutationFn: finishPackJob,
+    onSuccess: (response) => {
+      setJobId(response.jobId);
+      pushToast('Нарезка стола запущена', 'success');
+    },
+    onError: (error) => {
+      pushToast(error instanceof ApiError ? error.message : 'Не удалось запустить нарезку', 'error');
+    },
+  });
 
   const successContent =
     job?.status === 'SUCCEEDED' && job.pack ? (
       <div className="form-actions">
         <p className="result-title">Упаковано объектов: {job.pack.objectCount}</p>
+        {job.pack.finalSliced === false ? (
+          <>
+            <p className="field-hint">
+              Раскладка проверена по пробной нарезке нескольких объектов. Полная нарезка стола займёт несколько минут:
+              она проверит поддержки на всём столе и посчитает время печати.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={finishMutation.isPending}
+              onClick={() => finishMutation.mutate(job.jobId)}
+            >
+              {finishMutation.isPending ? <span className="spinner" aria-hidden="true" /> : null}
+              Нарезать стол
+            </button>
+          </>
+        ) : null}
         {/* Расписание своего стола бэкенд не принимает: у разового профиля нет файла в каталоге. */}
         {job.pack.profileId === 'custom' ? null : (
           <button
@@ -573,6 +605,24 @@ export default function PackPage() {
           </div>
         </Field>
         {nozzleCleanFields}
+        <div className="form-group">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={sliceNow || windowOn}
+              onChange={(event) => setSliceNow(event.target.checked)}
+              disabled={busy || windowOn}
+            />
+            <span className="check-text">
+              Сразу нарезать весь стол
+              <small className="field-hint">
+                {windowOn
+                  ? 'окно печати меряется нарезками — стол режется всегда'
+                  : 'дольше на несколько минут; без галочки — кнопкой после упаковки'}
+              </small>
+            </span>
+          </label>
+        </div>
         <div className="form-group">
           <label className="check">
             <input

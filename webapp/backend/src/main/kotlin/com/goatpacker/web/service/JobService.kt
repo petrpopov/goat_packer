@@ -99,6 +99,7 @@ class JobService(
                     },
                     supportsDetected = it.supportsDetected,
                     supportOverlapMm = it.supportOverlapMm,
+                    finalSliced = it.finalSliced,
                 )
             },
             schedule = job.scheduleResult?.let {

@@ -11,6 +11,9 @@ object JobArtifacts {
 
     const val LOG_FILE = "log.txt"
 
+    /** Публичное имя состояния упаковки (`packed.state.json` пакера). */
+    const val PACK_STATE = "pack_state.json"
+
     /** Спецификация артефакта: публичное имя + способ найти файл в каталоге джоба. */
     data class ArtifactSpec(val name: String, val resolve: (Path) -> Path?)
 
@@ -26,6 +29,8 @@ object JobArtifacts {
             // наружу он идёт под каноничным именем verification.json.
             ArtifactSpec("verification.json") { dir -> firstExisting(dir, "verification.json", "packed.verification.json") },
             ArtifactSpec("placements.json") { dir -> firstExisting(dir, "work/placements.json", "placements.json") },
+            // Состояние упаковки без полной нарезки (--no-final-slice): вход доводки «Нарезать стол».
+            ArtifactSpec(PACK_STATE) { dir -> firstExisting(dir, "packed.state.json") },
             ArtifactSpec(LOG_FILE) { dir -> firstExisting(dir, LOG_FILE) },
         )
 

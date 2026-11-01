@@ -7,7 +7,11 @@ interface ArtifactListProps {
   artifacts: JobArtifact[];
 }
 
-export default function ArtifactList({ artifacts }: ArtifactListProps) {
+/** Служебные файлы: состояние упаковки нужно только кнопке «Нарезать стол», не пользователю. */
+const HIDDEN = new Set(['pack_state.json']);
+
+export default function ArtifactList({ artifacts: all }: ArtifactListProps) {
+  const artifacts = all.filter((artifact) => !HIDDEN.has(artifact.name));
   if (artifacts.length === 0) return null;
 
   return (

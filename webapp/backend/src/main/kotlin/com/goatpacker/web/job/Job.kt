@@ -95,6 +95,8 @@ data class PackJobResult(
     val supportsDetected: Boolean? = null,
     /** `support_overlap_mm` отчёта: допустимое перекрытие поддержек, мм; null — без ограничений. */
     val supportOverlapMm: Double? = null,
+    /** `final_sliced` отчёта: false — полная нарезка стола ещё не запускалась («Нарезать стол»). */
+    val finalSliced: Boolean = true,
 )
 
 /**
@@ -188,6 +190,10 @@ class Job(
 
     @Volatile
     var packResult: PackJobResult? = null
+
+    /** Параметры pack-джоба (локальный режим): доводка «Нарезать стол» повторяет их. */
+    @Volatile
+    var packParams: PackParams? = null
 
     @Volatile
     var scheduleResult: ScheduleJobResult? = null

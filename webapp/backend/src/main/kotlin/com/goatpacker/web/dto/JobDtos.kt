@@ -54,6 +54,8 @@ data class PackInfoDto(
     val supportsDetected: Boolean? = null,
     /** Допустимое перекрытие поддержек, мм; null — без ограничений. */
     val supportOverlapMm: Double? = null,
+    /** false — стол упакован по пробной нарезке, полная нарезка ещё не запускалась. */
+    val finalSliced: Boolean = true,
 )
 
 /** Итог calibration-джоба: значения calibration.json и текст instructions.md. */

@@ -47,6 +47,13 @@ data class PackParams(
      * процессе/контейнере ([ShellChain]); null — вход уже 3MF.
      */
     val sourceCommand: List<String>? = null,
+    /**
+     * false → --no-final-slice: стол упакован по пробной нарезке нескольких объектов, полную
+     * нарезку пользователь запускает позже кнопкой («Нарезать стол»).
+     */
+    val finalSlice: Boolean = true,
+    /** --finish-state: доводка упакованного стола (полная нарезка и проверки) по его состоянию. */
+    val finishState: Path? = null,
 )
 
 /** Параметры calibration-джоба — CLI-аргументы ams_calibration. */
@@ -175,6 +182,11 @@ class JobRunner(
             // Пусто = без ограничений (поведение до флага), поэтому передаём только заданное.
             params.supportOverlapMm?.let {
                 add("--support-overlap-mm")
+                add(it.toString())
+            }
+            if (!params.finalSlice) add("--no-final-slice")
+            params.finishState?.let {
+                add("--finish-state")
                 add(it.toString())
             }
         }
@@ -340,6 +352,8 @@ class JobRunner(
             time = report?.get("time")?.let(::parsePackTime),
             supportsDetected = report?.get("supports_detected")?.takeIf { it.isBoolean }?.asBoolean(),
             supportOverlapMm = report?.get("support_overlap_mm")?.takeIf { it.isNumber }?.asDouble(),
+            // Старый пакер поля не пишет — он всегда резал стол целиком.
+            finalSliced = report?.get("final_sliced")?.takeIf { it.isBoolean }?.asBoolean() ?: true,
         )
         succeed(job, JobPhase.CLEANUP)
     }

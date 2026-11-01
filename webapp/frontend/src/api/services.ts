@@ -43,6 +43,24 @@ export async function startPackJob(form: FormData): Promise<StartJobResponse> {
   return serverMode ? submitServer('PACK', form) : api.postForm<StartJobResponse>('/pack/jobs', form);
 }
 
+/**
+ * «Нарезать стол»: полная нарезка и проверка упаковки, собранной без неё (новая задача с тем же
+ * входом, профилем и параметрами плюс состоянием упаковки).
+ */
+export async function finishPackJob(packJobId: string): Promise<StartJobResponse> {
+  if (!serverMode) return api.postForm<StartJobResponse>(`/pack/jobs/${encodeURIComponent(packJobId)}/finish`, new FormData());
+  const created = await serverApi.createJob<StartJobResponse & { readToken?: string }>(
+    { kind: 'PACK', packJobId },
+    `finish-${packJobId}`
+  );
+  if (created.readToken)
+    sessionStorage.setItem(
+      `return:${created.jobId}`,
+      `${location.origin}/jobs/${created.jobId}#access=${created.readToken}`
+    );
+  return created;
+}
+
 export async function startScheduleJob(form: FormData): Promise<StartJobResponse> {
   return serverMode ? submitServer('SCHEDULE', form) : api.postForm<StartJobResponse>('/schedule/jobs', form);
 }
@@ -94,7 +112,7 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
       'supportOverlapMm',
     ].includes(name)
       ? Number(value)
-      : name === 'amsCorrection'
+      : name === 'amsCorrection' || name === 'finalSlice'
         ? value === 'true'
         : value;
   }

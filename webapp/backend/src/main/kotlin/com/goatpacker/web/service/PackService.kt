@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.nio.file.Files
+import java.nio.file.Path
 import java.time.OffsetDateTime
 import java.util.UUID
 import java.util.concurrent.RejectedExecutionException
@@ -33,6 +34,9 @@ class PackService(
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(PackService::class.java)
+
+        /** Вход доводки — состояние родителя под своим именем: не артефакт pack_state.json самой доводки. */
+        const val FINISH_STATE = "finish.state.json"
 
         /** "", "off", "global", "global,every=N", "from-z=H", "from-z=H,every=N" (H в мм, N ≥ 1). */
         private val NOZZLE_CLEAN_SPEC = Regex(
@@ -120,6 +124,7 @@ class PackService(
             timeMarginPct = form.timeMarginPct,
             supportOverlapMm = form.supportOverlapMm,
             sourceCommand = sourceCommand,
+            finalSlice = form.finalSlice ?: true,
         )
 
         val job = Job(
@@ -132,6 +137,7 @@ class PackService(
         try {
             file.transferTo(job.directory.resolve(StlInputs.inputName(fileName)).toFile())
             if (profile.file != catalog?.file) Files.writeString(params.profilePath, profileJson)
+            job.packParams = params
             store.put(job)
             jobRunner.runPack(job, params)
         } catch (ex: RejectedExecutionException) {
@@ -148,6 +154,61 @@ class PackService(
 
         log.info("Создана pack-джоба {} (профиль {}, файл {} байт)", job.id, profile.dto.id, file.size)
         return JobCreatedDto(job.id)
+    }
+
+    /**
+     * «Нарезать стол»: новая pack-джоба доводит стол упаковки [packJobId], собранный без полной
+     * нарезки, — тот же вход, профиль и параметры плюс --finish-state по её состоянию.
+     */
+    fun finish(packJobId: String): JobCreatedDto {
+        val parent = store.get(packJobId) ?: throw BadRequestException("Упаковка «$packJobId» не найдена")
+        val params = parent.packParams
+        val state = parent.directory.resolve("packed.state.json")
+        if (parent.kind != JobKind.PACK || parent.current.status != com.goatpacker.web.job.JobStatus.SUCCEEDED ||
+            params == null || parent.packResult?.finalSliced != false || !Files.isRegularFile(state)
+        ) {
+            throw BadRequestException("Нарезать можно только успешную упаковку без полной нарезки")
+        }
+        val jobId = UUID.randomUUID().toString()
+        val directory = properties.jobsRootPath.resolve(jobId)
+        val job = Job(id = jobId, kind = JobKind.PACK, directory = directory, createdAt = OffsetDateTime.now())
+        Files.createDirectories(directory)
+        try {
+            for (name in listOf(StlInputs.INPUT_3MF, StlInputs.INPUT_STL, "profile.json")) {
+                val source = parent.directory.resolve(name)
+                if (Files.isRegularFile(source)) Files.copy(source, directory.resolve(name))
+            }
+            Files.copy(state, directory.resolve(FINISH_STATE))
+            // Профиль внутри каталога родителя (разовый стол, локальная копия) переезжает вместе с ним.
+            val profilePath = if (params.profilePath.startsWith(parent.directory)) {
+                directory.resolve(params.profilePath.fileName)
+            } else {
+                params.profilePath
+            }
+            // STL-вход: проект уже собран родителем (input.3mf) — конвертация не повторяется.
+            val sourceCommand = if (Files.isRegularFile(directory.resolve(StlInputs.INPUT_3MF))) null else params.sourceCommand
+            val finishParams = params.copy(
+                profilePath = profilePath,
+                sourceCommand = sourceCommand,
+                finalSlice = true,
+                finishState = Path.of(FINISH_STATE),
+            )
+            job.packParams = finishParams
+            store.put(job)
+            jobRunner.runPack(job, finishParams)
+        } catch (ex: RejectedExecutionException) {
+            store.remove(job.id)
+            job.cancel()
+            directory.toFile().deleteRecursively()
+            throw BadRequestException("Очередь задач переполнена — попробуйте повторить позже")
+        } catch (ex: Exception) {
+            store.remove(job.id)
+            job.cancel()
+            directory.toFile().deleteRecursively()
+            throw ex
+        }
+        log.info("Создана доводка {} упаковки {}", jobId, packJobId)
+        return JobCreatedDto(jobId)
     }
 
     /** Свой стол из полей custom*: все три размера или ни одного (отступ без размеров — ошибка формы). */

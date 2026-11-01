@@ -23,6 +23,7 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
     private val nodes:WorkerRepository,private val store:ObjectStore,private val runner:JobRunner,
     private val launcher:NativeLauncher,private val app:AppProperties,private val props:PlatformProperties,private val mapper:ObjectMapper) {
     private val log=LoggerFactory.getLogger(javaClass)
+    private companion object { const val FINISH_STATE=com.goatpacker.web.service.PackService.FINISH_STATE }
     private val bootId=newId()
     private val capacity=minOf(floor(props.executionCpuBudget/props.workerCpus).toInt(),(props.executionMemoryMib/props.workerMemoryMib).toInt(),64).coerceAtLeast(0)
     private val pool=Executors.newFixedThreadPool(capacity.coerceAtLeast(1))
@@ -115,6 +116,9 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
                 profile.put("slicer_path",if(kind=="bambu") "/opt/slicers/bambu/AppRun" else "/opt/slicers/orca/AppRun")
             } else com.goatpacker.web.service.LocalSlicer.localize(app,profile) // локальный раннер: слайсер из настроек, не путь образа
             Files.writeString(job.directory.resolve("profile.json"),mapper.writeValueAsString(profile))
+            val r=mapper.readValue<JobRequest>(record.paramsJson)
+            // Доводка «Нарезать стол»: состояние упаковки родителя рядом со входом.
+            r.finishStateBlobId?.let { id -> store.get(blobs.findById(id).orElseThrow().objectKey,job.directory.resolve(FINISH_STATE)) }
             var last=0L
             var lastStage:Pair<String,Int>?=null
             var lastLayout:String?=null
@@ -130,7 +134,6 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
                 if(written && newLayout!=null) lastLayout=newLayout
             }}
             if(!queue.pulse(record.id,record.fence)) {job.cancel();return}
-            val r=mapper.readValue<JobRequest>(record.paramsJson)
             log.info("event=job_started jobId={} fence={} kind={} image={} cpu={} memoryMiB={}",record.id,record.fence,record.kind,job.runtimeImage,props.workerCpus,props.workerMemoryMib)
             // Экспорт STL — слайсером образа задачи и его же пресетами (в runner-bambu это Bambu Studio с BBL-деревом).
             val sourceCommand=if(!stl) null else if(props.runnerMode=="docker")
@@ -138,7 +141,8 @@ class QueueWorker(private val queue:DurableQueue,private val jobs:QueueJobReposi
                 else StlInputs.localTools(app,profile).let { (presets,slicer) -> StlInputs.command(app.sourceProjectBinPath.toString(),presets,slicer,profile) }
             if(record.kind=="PACK") runner.runPackBlocking(job,PackParams(record.profileId,Path.of("profile.json"),r.clearance,r.resolution,r.attempts,2400,20270831,r.edgeMargin,r.layout,r.nozzleClean,
                 timeWindowHours=r.timeWindowHours,amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds,timeMarginPct=r.timeMarginPct,
-                supportOverlapMm=r.supportOverlapMm,sourceCommand=sourceCommand))
+                supportOverlapMm=r.supportOverlapMm,sourceCommand=sourceCommand,
+                finalSlice=r.finalSlice,finishState=r.finishStateBlobId?.let { Path.of(FINISH_STATE) }))
             else if(record.kind=="CALIBRATION") runner.runCalibrationBlocking(job,CalibrationParams(record.profileId,Path.of("profile.json"),r.variant))
             else runner.runScheduleBlocking(job,ScheduleParams(record.profileId,Path.of("profile.json"),ScheduleSource.Uploaded,r.dayStart,r.nightStart,r.horizonEnd,r.turnaroundMin,r.prepMin,r.benchMode,
                 amsCorrection=r.amsCorrection,changeSeconds=r.changeSeconds))

@@ -21,4 +21,9 @@ class PackController(
     @PostMapping("/jobs", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun createJob(@Valid @ModelAttribute form: PackJobForm): ResponseEntity<JobCreatedDto> =
         ResponseEntity.status(HttpStatus.ACCEPTED).body(packService.create(form))
+
+    /** «Нарезать стол»: полная нарезка упаковки, собранной без неё. */
+    @PostMapping("/jobs/{id}/finish")
+    fun finishJob(@org.springframework.web.bind.annotation.PathVariable id: String): ResponseEntity<JobCreatedDto> =
+        ResponseEntity.status(HttpStatus.ACCEPTED).body(packService.finish(id))
 }

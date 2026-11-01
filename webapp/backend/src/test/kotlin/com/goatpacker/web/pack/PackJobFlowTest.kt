@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 /** Полный жизненный цикл pack-джоба на фейковом пакере: 202 → поллинг → артефакты → DELETE. */
@@ -226,6 +227,35 @@ class PackJobFlowTest(
             assertTrue(body["pack"]["supportsDetected"].asBoolean(), body["pack"].toString())
             assertEquals(overlap.toDouble(), body["pack"]["supportOverlapMm"].asDouble(), 1e-9)
         }
+    }
+
+    @Test
+    fun `упаковка без полной нарезки и доводка «Нарезать стол»`() {
+        val create = mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
+                .param("profileId", "bambu_a2l")
+                .param("finalSlice", "false"),
+        )
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val packId = json.readTree(create.response.contentAsString)["jobId"].asText()
+        val packed = mockMvc.awaitJobCompletion(packId)
+        assertTrue("--no-final-slice" in packerArgs(packId))
+        assertEquals(false, packed["pack"]["finalSliced"].asBoolean())
+        assertTrue(packed["artifacts"].any { it["name"].asText() == "pack_state.json" }, packed["artifacts"].toString())
+
+        val finish = mockMvc.perform(post("/api/pack/jobs/$packId/finish"))
+            .andExpect(status().isAccepted)
+            .andReturn()
+        val finishId = json.readTree(finish.response.contentAsString)["jobId"].asText()
+        val finished = mockMvc.awaitJobCompletion(finishId)
+        val args = packerArgs(finishId)
+        assertEquals("finish.state.json", args[args.indexOf("--finish-state") + 1])
+        assertTrue("--no-final-slice" !in args, args.toString())
+        assertEquals(true, finished["pack"]["finalSliced"].asBoolean())
+        // Доводку саму доводить нельзя: стол уже нарезан.
+        mockMvc.perform(post("/api/pack/jobs/$finishId/finish")).andExpect(status().isBadRequest)
     }
 
     @Test

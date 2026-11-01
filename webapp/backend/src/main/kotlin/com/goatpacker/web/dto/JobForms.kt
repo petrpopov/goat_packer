@@ -61,6 +61,8 @@ data class PackJobForm(
     @field:DecimalMin(value = "0", message = "supportOverlapMm должен быть в диапазоне 0..20 мм")
     @field:DecimalMax(value = "20", message = "supportOverlapMm должен быть в диапазоне 0..20 мм")
     val supportOverlapMm: Double? = null,
+    /** Сразу нарезать весь стол; false/пусто в веб-форме — только по кнопке после упаковки. Пусто = true (API до флага). */
+    val finalSlice: Boolean? = null,
 )
 
 /** Форма calibration-джоба (multipart/form-data): свой проект 3MF как шаблон теста смены AMS. */

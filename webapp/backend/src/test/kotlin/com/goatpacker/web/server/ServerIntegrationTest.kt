@@ -270,6 +270,35 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
         } finally {worker.stop()}
     }
 
+    @Test fun `pack without the final slice keeps its state and the finish job slices it`() {
+        val client=Client();client.guest()
+        val file=client.upload()
+        // Блоб состояния ставит только сервер.
+        client.job(file,extra=mapOf("finishStateBlobId" to "x"),expected=400)
+        val pack=client.job(file,extra=mapOf("finalSlice" to false))["jobId"].asText()
+        val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
+        fun await(id:String):com.fasterxml.jackson.databind.JsonNode {
+            worker.dispatch()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+            while(jobs.findById(id).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+            return client.call("GET","/api/v2/jobs/$id?debug=true")
+        }
+        try {
+            val packed=await(pack)
+            assertEquals("SUCCEEDED",packed["status"].asText(),packed.toString())
+            assertEquals(false,packed["pack"]["finalSliced"].asBoolean(),packed.toString())
+            assertTrue(packed["artifacts"].any { it["name"].asText()=="pack_state.json" },packed.toString())
+            // Доводка: тот же вход и профиль родителя; фейковый пакер падает, если состояния нет рядом.
+            val finish=client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to pack),headers=mapOf("Idempotency-Key" to newId()))["jobId"].asText()
+            val finished=await(finish)
+            assertEquals("SUCCEEDED",finished["status"].asText(),finished.toString())
+            assertEquals(true,finished["pack"]["finalSliced"].asBoolean(),finished.toString())
+            assertTrue(finished["artifacts"].none { it["name"].asText()=="pack_state.json" },finished.toString())
+            // Нарезанный стол доводить нечего.
+            client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to finish),400,headers=mapOf("Idempotency-Key" to newId()))
+        } finally {worker.stop()}
+    }
+
     @Test fun `calibration job runs on the worker and publishes test files and values`() {
         val client=Client();client.guest()
         val file=client.upload()
