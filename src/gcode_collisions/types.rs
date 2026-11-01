@@ -1,0 +1,78 @@
+//! What the G-code check reports.
+
+use serde::Serialize;
+
+use crate::geometry::Rect;
+
+/// One printed line on the first layer, in bed coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Strip {
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+    pub width: f64,
+    pub support: bool,
+}
+
+/// What one object laid down on the first layer.
+#[derive(Clone, Debug, Default)]
+pub struct ObjectFirstLayer {
+    pub label: String,
+    pub strips: Vec<Strip>,
+}
+
+impl ObjectFirstLayer {
+    /// Bbox centre of the object's non-support first-layer lines (its landing zone): matches
+    /// the object to its placement.
+    pub fn body_center(&self) -> Option<(f64, f64)> {
+        let mut bounds: Option<(f64, f64, f64, f64)> = None;
+        for strip in self.strips.iter().filter(|strip| !strip.support) {
+            for (x, y) in [strip.from, strip.to] {
+                let b = bounds.get_or_insert((x, y, x, y));
+                *b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
+            }
+        }
+        bounds.map(|(x0, y0, x1, y1)| ((x0 + x1) * 0.5, (y0 + y1) * 0.5))
+    }
+}
+
+/// Support of `support_object` touching the body of `body_object`, aggregated over layers.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SupportCollision {
+    pub support_object: String,
+    pub body_object: String,
+    /// 1-based layer numbers (layer 1 = first layer).
+    pub first_layer: usize,
+    pub last_layer: usize,
+    pub layers: usize,
+    /// Smallest edge-to-edge gap seen (negative = overlap depth), mm.
+    pub min_gap_mm: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PlateAnalysis {
+    pub collisions: Vec<SupportCollision>,
+    pub first_layer: Vec<ObjectFirstLayer>,
+    /// Layers seen; 0 means the parser found no layer markers (not a slicer G-code).
+    pub layers: usize,
+    /// Printed lines attributed to an object; 0 means no object labels were found, so the
+    /// check proved nothing.
+    pub labelled_lines: usize,
+    /// Every object's printed extent over all layers: line centres, arcs sampled along the
+    /// sweep — what BambuStudio's G-code viewer measures (`all_paths_inside`: the paths' bbox,
+    /// arc interpolation points included, line widths not).
+    pub extents: Vec<(String, Rect)>,
+}
+
+impl PlateAnalysis {
+    /// Objects whose printed lines leave `area` (the printable area), with their extent. The
+    /// slicer GUI refuses to export such a plate ("G-code path goes beyond plate
+    /// boundaries"); its CLI writes it without a word.
+    pub fn off_plate(&self, area: Rect) -> Vec<(String, Rect)> {
+        const EPSILON_MM: f64 = 1e-3;
+        self.extents
+            .iter()
+            .filter(|(_, extent)| extent.sticks_out_of(area, EPSILON_MM))
+            .cloned()
+            .collect()
+    }
+}
