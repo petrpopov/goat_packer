@@ -16,6 +16,7 @@ interface NavItem {
 }
 
 const WORK_ITEMS: NavItem[] = [
+  // Открытая задача (/pack/<id>) — пункт «Мои задачи»: «Упаковка» всегда начинает новую.
   { path: '/pack', label: 'Упаковка', icon: 'cube', match: ['pack'] },
   { path: '/schedule', label: 'Расписание', icon: 'calendar', match: ['schedule'] },
 ];
@@ -24,7 +25,7 @@ const ADMIN_ITEM: NavItem = { path: '/admin', label: 'Администриров
 
 export default function Shell({ user, children }: { user?: Session; children: ReactNode }) {
   const route = useUiStore((s) => s.route);
-  const packJobId = useUiStore((s) => s.packJobId);
+  const newDraft = useUiStore((s) => s.newDraft);
   const rail = useUiStore((s) => s.rail);
   const toggleRail = useUiStore((s) => s.toggleRail);
   const theme = useUiStore((s) => s.theme);
@@ -32,14 +33,24 @@ export default function Shell({ user, children }: { user?: Session; children: Re
   const onLink = useLinkHandler();
 
   const navLink = (item: NavItem) => {
-    const active = item.match.includes(route.name);
-    // «Упаковка» возвращает к открытой задаче, если она есть (бренд — всегда к новой упаковке).
-    const href = item.path === '/pack' && packJobId ? `/pack/${packJobId}` : item.path;
+    const openJob = route.name === 'pack' && Boolean(route.jobId);
+    const active =
+      item.path === '/pack'
+        ? route.name === 'pack' && !openJob
+        : item.match.includes(route.name) || (item.path === '/jobs' && openJob);
     return (
       <a
         key={item.path}
-        href={href}
-        onClick={onLink}
+        href={item.path}
+        onClick={
+          item.path === '/pack'
+            ? (event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+                event.preventDefault();
+                newDraft();
+              }
+            : onLink
+        }
         data-tip={rail ? item.label : undefined}
         data-tip-pos="right"
         className={`nav-item${active ? ' active' : ''}`}
@@ -64,7 +75,15 @@ export default function Shell({ user, children }: { user?: Session; children: Re
         >
           <Icon name="sidebar" />
         </button>
-        <a className="brand" href="/pack" onClick={onLink}>
+        <a
+          className="brand"
+          href="/pack"
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+            event.preventDefault();
+            newDraft();
+          }}
+        >
           <BrandMark />
           Goat Packer
         </a>

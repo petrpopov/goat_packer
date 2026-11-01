@@ -29,6 +29,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 @AutoConfigureMockMvc
 class PackJobFlowTest(
     @Autowired private val mockMvc: MockMvc,
+    @Autowired private val store: com.goatpacker.web.job.JobStore,
 ) {
     companion object {
         private val tmpRoot: Path = Files.createTempDirectory("goat-pack-flow")
@@ -277,17 +278,38 @@ class PackJobFlowTest(
         assertEquals(false, packed["pack"]["finalSliced"].asBoolean())
         assertTrue(packed["artifacts"].any { it["name"].asText() == "pack_state.json" }, packed["artifacts"].toString())
 
+        // Проверка нарезкой остаётся внутри упаковки: id тот же, внутренняя задача наружу не светится.
         val finish = mockMvc.perform(post("/api/pack/jobs/$packId/finish"))
             .andExpect(status().isAccepted)
             .andReturn()
-        val finishId = json.readTree(finish.response.contentAsString)["jobId"].asText()
-        val finished = mockMvc.awaitJobCompletion(finishId)
-        val args = packerArgs(finishId)
+        assertEquals(packId, json.readTree(finish.response.contentAsString)["jobId"].asText())
+        val checkId = store.get(packId)!!.checkJobId!!
+        assertTrue(checkId != packId)
+        val deadline = System.currentTimeMillis() + 30_000
+        var withCheck = json.readTree(mockMvc.perform(get("/api/jobs/$packId")).andReturn().response.contentAsString)
+        while (withCheck["check"].isNull || withCheck["check"]["status"].asText() !in setOf("SUCCEEDED", "FAILED")) {
+            assertTrue(System.currentTimeMillis() < deadline, withCheck.toString())
+            Thread.sleep(50)
+            withCheck = json.readTree(mockMvc.perform(get("/api/jobs/$packId")).andReturn().response.contentAsString)
+        }
+        val check = withCheck["check"]
+        assertEquals("SUCCEEDED", check["status"].asText(), withCheck.toString())
+        assertEquals(true, check["pack"]["finalSliced"].asBoolean())
+        assertTrue(!withCheck.toString().contains(checkId), "id внутренней задачи не должен попадать в ответ")
+        assertTrue(check["artifacts"].all { it["downloadUrl"].asText().startsWith("/api/jobs/$packId/check/artifacts/") }, check.toString())
+        val args = packerArgs(checkId)
         assertEquals("finish.state.json", args[args.indexOf("--finish-state") + 1])
         assertTrue("--no-final-slice" !in args, args.toString())
-        assertEquals(true, finished["pack"]["finalSliced"].asBoolean())
-        // Доводку саму доводить нельзя: стол уже нарезан.
-        mockMvc.perform(post("/api/pack/jobs/$finishId/finish")).andExpect(status().isBadRequest)
+        // Артефакт проверки скачивается по id упаковки; внутренняя задача по своему id не видна.
+        mockMvc.perform(get(check["artifacts"][0]["downloadUrl"].asText())).andExpect(status().isOk)
+        mockMvc.perform(get("/api/jobs/$checkId")).andExpect(status().isNotFound)
+        // Стол уже проверен: повторно нельзя; отмены у завершённой проверки нет — она остаётся.
+        mockMvc.perform(post("/api/pack/jobs/$packId/finish")).andExpect(status().isBadRequest)
+        mockMvc.perform(post("/api/pack/jobs/$packId/check/cancel")).andExpect(status().isNoContent)
+        assertEquals("SUCCEEDED", json.readTree(mockMvc.perform(get("/api/jobs/$packId")).andReturn().response.contentAsString)["check"]["status"].asText())
+        // Удаление упаковки уносит и проверку.
+        mockMvc.perform(delete("/api/jobs/$packId")).andExpect(status().isNoContent)
+        assertEquals(null, store.get(checkId))
     }
 
     @Test

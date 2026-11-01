@@ -2,6 +2,7 @@ package com.goatpacker.web.service
 
 import com.goatpacker.web.dto.ArtifactDto
 import com.goatpacker.web.dto.CalibrationInfoDto
+import com.goatpacker.web.dto.CheckStatusDto
 import com.goatpacker.web.dto.JobStatusDto
 import com.goatpacker.web.dto.PackInfoDto
 import com.goatpacker.web.dto.PackTimeDto
@@ -46,11 +47,10 @@ class JobService(
         )
     }
 
-    fun status(id: String): JobStatusDto {
-        val job = requireJob(id)
+    /** Артефакты в статусе; [owner] — id в ссылке, [prefix] — путь скачивания (у проверки: `check/artifacts`, id ребёнка не раскрывается). */
+    private fun artifactDtos(job: Job, owner: String, prefix: String): List<ArtifactDto> {
         val snap = job.current
-
-        val artifacts = when (snap.status) {
+        return when (snap.status) {
             JobStatus.SUCCEEDED -> JobArtifacts.listExisting(job.kind, job.directory)
             JobStatus.FAILED -> JobArtifacts.resolve(job.kind, job.directory, JobArtifacts.LOG_FILE)
                 ?.let { listOf(JobArtifacts.LOG_FILE to it) }
@@ -65,9 +65,57 @@ class JobService(
                 } catch (_: Exception) {
                     0
                 },
-                downloadUrl = "/api/jobs/${job.id}/artifacts/$name",
+                downloadUrl = "/api/jobs/$owner/$prefix/$name",
             )
         }
+    }
+
+    private fun packInfo(job: Job): PackInfoDto? = job.packResult?.let {
+        PackInfoDto(
+            objectCount = it.objectCount,
+            profileId = it.profileId,
+            clearanceMm = it.clearanceMm,
+            time = it.time?.let { t ->
+                PackTimeDto(
+                    windowHours = t.windowHours,
+                    marginPct = t.marginPct,
+                    realChangeSeconds = t.realChangeSeconds,
+                    chosenCount = t.chosenCount,
+                    fullCount = t.fullCount,
+                    correctedSeconds = t.correctedSeconds,
+                )
+            },
+            supportsDetected = it.supportsDetected,
+            supportOverlapMm = it.supportOverlapMm,
+            finalSliced = it.finalSliced,
+        )
+    }
+
+    /** Проверка нарезкой упаковки (внутренняя задача); её id наружу не уходит. */
+    private fun checkOf(parent: Job): Job? = parent.checkJobId?.let { store.get(it) }?.takeIf { it.parentJobId == parent.id }
+
+    private fun checkDto(parent: Job): CheckStatusDto? = checkOf(parent)?.let { child ->
+        val snap = child.current
+        CheckStatusDto(
+            status = snap.status.name,
+            queuePosition = null,
+            progressPercent = snap.progressPercent,
+            phaseMessage = snap.phaseMessage,
+            error = snap.error,
+            // Своего времени старта у локальной задачи нет: она стартует сразу, как свободен единственный поток.
+            startedAt = child.createdAt.takeIf { snap.status != JobStatus.QUEUED },
+            finishedAt = snap.finishedAt,
+            stage = snap.stage?.let { com.goatpacker.web.dto.JobStageDto.of(it) },
+            pack = packInfo(child),
+            artifacts = artifactDtos(child, parent.id, "check/artifacts"),
+        )
+    }
+
+    fun status(id: String): JobStatusDto {
+        val job = requireJob(id)
+        val snap = job.current
+        val artifacts = artifactDtos(job, job.id, "artifacts")
+        val check = if (job.kind == JobKind.PACK) checkDto(job) else null
 
         return JobStatusDto(
             jobId = job.id,
@@ -76,9 +124,11 @@ class JobService(
             phase = snap.phase.jsonValue(),
             progressPercent = snap.progressPercent,
             phaseMessage = snap.phaseMessage,
-            stage = snap.stage?.takeIf { snap.status == JobStatus.RUNNING }?.let { com.goatpacker.web.dto.JobStageDto.of(it) },
+            // Упаковке этап отдаётся в любом статусе: фронт показывает пройденные этапы с длительностями и после завершения.
+            stage = snap.stage?.takeIf { job.kind == JobKind.PACK || snap.status == JobStatus.RUNNING }?.let { com.goatpacker.web.dto.JobStageDto.of(it) },
             // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
-            layout = snap.layout?.let { runCatching { layoutMapper.readTree(it) }.getOrNull() },
+            // Раскладка проверки (полная нарезка могла сдвинуть объекты) важнее раскладки упаковки, как только она есть.
+            layout = (checkOf(job)?.current?.layout ?: snap.layout)?.let { runCatching { layoutMapper.readTree(it) }.getOrNull() },
             error = snap.error,
             originalName = job.originalName.takeIf { job.kind == JobKind.PACK },
             profile = job.profileDto.takeIf { job.kind == JobKind.PACK },
@@ -86,26 +136,8 @@ class JobService(
             createdAt = job.createdAt,
             finishedAt = snap.finishedAt,
             artifacts = artifacts,
-            pack = job.packResult?.let {
-                PackInfoDto(
-                    objectCount = it.objectCount,
-                    profileId = it.profileId,
-                    clearanceMm = it.clearanceMm,
-                    time = it.time?.let { t ->
-                        PackTimeDto(
-                            windowHours = t.windowHours,
-                            marginPct = t.marginPct,
-                            realChangeSeconds = t.realChangeSeconds,
-                            chosenCount = t.chosenCount,
-                            fullCount = t.fullCount,
-                            correctedSeconds = t.correctedSeconds,
-                        )
-                    },
-                    supportsDetected = it.supportsDetected,
-                    supportOverlapMm = it.supportOverlapMm,
-                    finalSliced = it.finalSliced,
-                )
-            },
+            check = check,
+            pack = packInfo(job),
             schedule = job.scheduleResult?.let {
                 ScheduleInfoDto(
                     printer = it.printer,
@@ -145,8 +177,13 @@ class JobService(
         )
     }
 
-    fun artifact(id: String, name: String): ResponseEntity<FileSystemResource> {
-        val job = requireJob(id)
+    fun artifact(id: String, name: String): ResponseEntity<FileSystemResource> = artifactOf(requireJob(id), id, name)
+
+    /** Артефакт проверки нарезкой — по id упаковки. */
+    fun checkArtifact(id: String, name: String): ResponseEntity<FileSystemResource> =
+        artifactOf(checkOf(requireJob(id)) ?: throw ResourceNotFoundException("Проверка нарезкой у джобы $id не найдена"), id, name)
+
+    private fun artifactOf(job: Job, id: String, name: String): ResponseEntity<FileSystemResource> {
         if (name != JobArtifacts.LOG_FILE && job.current.status != JobStatus.SUCCEEDED) {
             throw ResourceNotFoundException("Артефакт ещё не готов")
         }
@@ -178,8 +215,13 @@ class JobService(
     }
 
     fun delete(id: String): ResponseEntity<Void> {
-        val job = store.remove(id)
+        val job = store.get(id)?.takeIf { it.parentJobId == null }?.also { store.remove(id) }
             ?: throw ResourceNotFoundException("Джоба $id не найдена")
+        // Проверка нарезкой живёт и умирает с упаковкой.
+        job.checkJobId?.let { store.remove(it) }?.let { child ->
+            child.cancel()?.takeIf { it.isAlive }?.let { process -> JobProcessKiller.kill(process) }
+            child.directory.toFile().deleteRecursively()
+        }
 
         job.cancel()?.takeIf { it.isAlive }?.let { process ->
             log.info("Джоба {} ещё выполняется — убиваю процесс", id)
@@ -198,5 +240,5 @@ class JobService(
     }
 
     private fun requireJob(id: String): Job =
-        store.get(id) ?: throw ResourceNotFoundException("Джоба $id не найдена")
+        store.get(id)?.takeIf { it.parentJobId == null } ?: throw ResourceNotFoundException("Джоба $id не найдена")
 }

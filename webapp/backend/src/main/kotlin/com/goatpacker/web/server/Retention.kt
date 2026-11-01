@@ -16,11 +16,13 @@ class RetentionTransactions(private val jdbc:JdbcTemplate,private val config:Pla
         order by g.object_key for update skip locked limit 100) returning object_key""",{r,_->r.getString(1)})
     @Transactional fun expire() {
         config.locked()
-        val expired=jdbc.query("select id from queue_jobs where expires_at<now() and status not in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT') limit 100",{r,_->r.getString(1)})
+        val expired=jdbc.query("""select id from queue_jobs where parent_job_id is null and expires_at<now() and status not in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')
+            and not exists(select 1 from queue_jobs c where c.parent_job_id=queue_jobs.id and c.status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')) limit 100""",{r,_->r.getString(1)})
+        // Дети (проверки нарезкой) живут и умирают с родителем: свой срок у них не считается.
         for(id in expired) {
             jdbc.update("""insert into object_gc(object_key,size_bytes,not_before)
-                select a.object_key,a.size_bytes,now() from artifacts a where job_id=? and not exists(select 1 from blobs b where b.object_key=a.object_key)
-                on conflict do nothing""",id)
+                select a.object_key,a.size_bytes,now() from artifacts a where (a.job_id=? or a.job_id in (select c.id from queue_jobs c where c.parent_job_id=?))
+                and not exists(select 1 from blobs b where b.object_key=a.object_key) on conflict do nothing""",id,id)
             jdbc.update("delete from queue_jobs where id=?",id)
         }
         jdbc.update("""insert into object_gc(object_key,size_bytes,not_before) select 'inputs/'||id,expected_bytes,now() from uploads

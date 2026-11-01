@@ -41,7 +41,8 @@ export function initTheme(): void {
 
 /**
  * Маршрут и задача упаковки: страница упаковки смонтирована и на других разделах, поэтому открытая
- * задача (/pack/<id>) переживает уход в расписание; пункт меню «Упаковка» ведёт обратно к ней.
+ * задача (/pack/<id>) переживает уход в расписание. Пункт меню «Упаковка» — всегда чистый черновик
+ * (newDraft); к задаче возвращают «Мои задачи» и её адрес.
  */
 function routeState(path: string): Pick<UiState, 'route'> & Partial<Pick<UiState, 'packJobId'>> {
   const route = parseRoute(path);
@@ -59,9 +60,13 @@ interface UiState {
   packHandoff: PackHandoff | null;
   /** Открыта боковая панель калибровки смены прутка в упаковке. */
   calibOpen: boolean;
+  /** Растёт при каждом newDraft: страница упаковки сбрасывает файл и стол черновика. */
+  draftNonce: number;
   toggleTheme: () => void;
   toggleRail: () => void;
   navigate: (path: string, options?: { replace?: boolean }) => void;
+  /** Чистый черновик упаковки (/pack без файла). */
+  newDraft: () => void;
   sendToSchedule: (handoff: PackHandoff) => void;
   setCalibOpen: (open: boolean) => void;
 }
@@ -73,6 +78,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   rail: readStored(RAIL_KEY) === '1',
   packHandoff: null,
   calibOpen: false,
+  draftNonce: 0,
   toggleTheme: () => {
     const next: Theme = get().theme === 'dark' ? 'light' : 'dark';
     applyTheme(next);
@@ -91,6 +97,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     }
     set(routeState(path));
     window.scrollTo(0, 0);
+  },
+  newDraft: () => {
+    get().navigate('/pack');
+    set((state) => ({ draftNonce: state.draftNonce + 1 }));
   },
   sendToSchedule: (handoff) => {
     set({ packHandoff: handoff });

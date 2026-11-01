@@ -29,6 +29,7 @@ export type IconName =
   | 'layers'
   | 'refresh'
   | 'plus'
+  | 'info'
   | 'focus';
 
 export default function Icon({ name, size = 16 }: { name: IconName; size?: number }) {

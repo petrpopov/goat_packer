@@ -2,8 +2,16 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { FormEvent, ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
-import { deleteJob, downloadJobInput, fetchProfiles, finishPackJob, jobLink, startPackJob } from '@/api/services';
-import type { JobStatusResponse } from '@/api/types';
+import {
+  cancelPackCheck,
+  checkPackJob,
+  deleteJob,
+  downloadJobInput,
+  fetchProfiles,
+  jobLink,
+  startPackJob,
+} from '@/api/services';
+import type { JobArtifact, JobStage, PackJobInfo } from '@/api/types';
 import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import FileDrop from '@/components/FileDrop';
@@ -11,7 +19,6 @@ import Field from '@/components/Field';
 import Icon from '@/components/Icon';
 import JobFiles, { startDownload, visibleArtifacts } from '@/components/JobFiles';
 import ScenePopover from '@/components/ScenePopover';
-import SplitButton from '@/components/SplitButton';
 import StatusStrip, { type StripLine } from '@/components/StatusStrip';
 import PrinterPicker, { CUSTOM_PRINTER } from '@/components/PrinterPicker';
 import CalibrationPage from '@/pages/CalibrationPage';
@@ -20,7 +27,15 @@ import type { ModelMesh } from '@/scene/model3d';
 import { parseModelInWorker, PREVIEW_MAX_BYTES } from '@/scene/parseModelAsync';
 import { buildNozzleClean, buildSupportOverlap, numberInRange, packTimeFields, parseNozzleClean } from '@/utils/forms';
 import { formatBytes, formatHoursMinutes } from '@/utils/format';
-import { objectsText, sceneClip, stageElapsed, stageItems, stageTimeLine, stripStage } from '@/utils/progress';
+import {
+  formatDuration,
+  objectsText,
+  remainingText,
+  sceneClip,
+  stageElapsed,
+  stageRows,
+  stripStage,
+} from '@/utils/progress';
 import {
   customBedFromProject,
   customPrinterProfile,
@@ -93,8 +108,8 @@ export default function PackPage() {
   const [parsing, setParsing] = useState(false);
   /** Задачи, запущенные с этой вкладки: их модель — уже разобранный файл формы, качать вход не нужно. */
   const [startedHere, setStartedHere] = useState<ReadonlySet<string>>(() => new Set());
-  /** Панель поверх сцены. */
-  const [pop, setPop] = useState<'stages' | 'files' | 'error' | null>(null);
+  /** Панель «Инфо» поверх сцены: этапы задачи и проверки, ошибка, файлы. */
+  const [infoOpen, setInfoOpen] = useState(false);
   /** Выбор в PrinterPicker (id или CUSTOM_PRINTER); переживает смену файла, определение по 3MF его перекрывает. */
   const [picked, setPicked] = useState<string | null>(null);
   const [bedInput, setBedInput] = useState<CustomBedInput>(EMPTY_BED);
@@ -366,16 +381,19 @@ export default function PackPage() {
     startMutation.mutate(form);
   };
 
-  const finishMutation = useMutation({
-    mutationFn: finishPackJob,
-    onSuccess: (response) => {
-      // Доводка режет тот же вход: его модель уже на сцене, если родитель запущен отсюда.
-      if (jobId && startedHere.has(jobId)) setStartedHere((ids) => new Set(ids).add(response.jobId));
-      navigate(`/pack/${response.jobId}`);
-    },
+  // Проверка нарезкой идёт внутри той же задачи: адрес не меняется, опрос подхватывает её ход.
+  const checkMutation = useMutation({
+    mutationFn: checkPackJob,
+    onSuccess: () => void jobQuery.refetch(),
     onError: (error) => {
-      pushToast(error instanceof ApiError ? error.message : 'Не удалось запустить нарезку', 'error');
+      pushToast(error instanceof ApiError ? error.message : 'Не удалось запустить проверку', 'error');
     },
+  });
+  const cancelCheckMutation = useMutation({
+    mutationFn: cancelPackCheck,
+    onSuccess: () => void jobQuery.refetch(),
+    onError: (error) =>
+      pushToast(error instanceof ApiError ? error.message : 'Не удалось остановить проверку', 'error'),
   });
   const cancelMutation = useMutation({
     mutationFn: (id: string) => deleteJob(id),
@@ -395,7 +413,11 @@ export default function PackPage() {
   // Ссылка на layout стабильна между опросами (structural sharing react-query) — сцена не перестраивается зря.
   const jobLayout = job?.layout;
   const placed = useMemo(() => sceneLayout(jobLayout), [jobLayout]);
-  const sceneMode = running ? 'running' : job?.status === 'SUCCEEDED' ? 'done' : 'idle';
+  // Проверка нарезкой идёт внутри готовой задачи: стол на это время — в режиме нарезки (срез слоя).
+  const checkSlicing = job?.check?.status === 'RUNNING' || job?.check?.status === 'FINALIZING';
+  const sceneMode = running || checkSlicing ? 'running' : job?.status === 'SUCCEEDED' ? 'done' : 'idle';
+  /** Идёт перебор раскладок, позиций ещё нет: на столе мелькают проекции модели. */
+  const searching = running && job?.stage?.id === 'packing' && placed.placements.length === 0;
 
   const nozzleCleanFields = (
     <>
@@ -522,7 +544,10 @@ export default function PackPage() {
   );
   const paramsFields = (
     <>
-      <Field label="Зазор, мм">
+      <Field
+        label="Зазор, мм"
+        hint="наименьшее расстояние между соседями вместе с их поддержками и каймой; меньше — плотнее, но поддержки могут слипнуться"
+      >
         <input
           className="input"
           type="number"
@@ -533,7 +558,10 @@ export default function PackPage() {
           disabled={jobActive || startMutation.isPending}
         />
       </Field>
-      <Field label="Растр, мм">
+      <Field
+        label="Растр, мм"
+        hint="шаг сетки поиска раскладки; меньше — точнее и дольше, на плотность обычно не влияет"
+      >
         <input
           className="input"
           type="number"
@@ -624,8 +652,13 @@ export default function PackPage() {
     </div>
   ) : null;
 
-  // ───── Строка статуса: что происходит и одна главная кнопка ─────
-  const now = useNow(running);
+  // ───── Строка статуса: имя файла и номер задачи (не меняются), что происходит, действия ─────
+  const check = job?.check ?? null;
+  const checkActive = check !== null && ACTIVE.includes(check.status);
+  const checkRunning = check?.status === 'RUNNING' || check?.status === 'FINALIZING';
+  const checkDone = check?.status === 'SUCCEEDED';
+  const now = useNow(running || checkRunning);
+  const nowAfter = (receivedAtMs: number | undefined) => Math.max(now, receivedAtMs ?? 0);
   const copyLink = useCallback(() => {
     if (!jobId) return;
     navigator.clipboard
@@ -633,27 +666,25 @@ export default function PackPage() {
       .then(() => pushToast('Ссылка скопирована', 'success'))
       .catch(() => pushToast('Не удалось скопировать ссылку', 'error'));
   }, [jobId]);
-  const closePop = useCallback(() => setPop(null), []);
-  const togglePop = (kind: 'stages' | 'files' | 'error') => setPop((open) => (open === kind ? null : kind));
-  const popLink = (kind: 'stages' | 'files' | 'error', label: string) => (
-    <button type="button" className="linkish" aria-expanded={pop === kind} onClick={() => togglePop(kind)}>
-      {label}
-    </button>
-  );
-  const newPack = () => {
+  const closeInfo = useCallback(() => setInfoOpen(false), []);
+  const newDraft = useUiStore((state) => state.newDraft);
+  const draftNonce = useUiStore((state) => state.draftNonce);
+  // «Упаковка» в меню и «Новая упаковка» — чистый черновик: файл и стол прошлой упаковки не переносятся.
+  useEffect(() => {
+    if (draftNonce === 0) return;
     setFile(null);
     setBedInput(EMPTY_BED);
-    navigate('/pack');
-  };
+  }, [draftNonce]);
   /** «Упаковать заново»: черновик с теми же файлом и параметрами; у задачи по ссылке файл — её вход. */
   const repack = () => {
     if (external && jobFile) setFile(jobFile);
     navigate('/pack');
   };
+  // Тихая иконка слева от кнопок: ссылкой делятся реже, чем скачивают.
   const copyButton = jobId ? (
     <button
       type="button"
-      className="icon-btn bordered"
+      className="icon-btn copy-quiet"
       aria-label="Скопировать ссылку на задачу"
       data-tip="Скопировать ссылку на задачу"
       data-tip-align="end"
@@ -662,19 +693,46 @@ export default function PackPage() {
       <Icon name="copy" />
     </button>
   ) : null;
-  const packed3mf = job ? visibleArtifacts(job.artifacts).find((a) => a.name.endsWith('.3mf')) : undefined;
-  const moreItems = [
-    { label: 'Файлы задачи', icon: 'file' as const, onSelect: () => setPop('files') },
-    'separator' as const,
-    { label: 'Упаковать заново', icon: 'refresh' as const, onSelect: repack, disabled: external && !jobFile },
-    { label: 'Новая упаковка', icon: 'plus' as const, onSelect: newPack },
-  ];
+  /** Итог для скачивания: после проверки нарезкой — её стол (она могла сдвинуть объекты). */
+  const result: PackJobInfo | null = checkDone && check?.pack ? check.pack : (job?.pack ?? null);
+  const deliverables: JobArtifact[] = checkDone && check ? check.artifacts : (job?.artifacts ?? []);
+  const packed3mf = visibleArtifacts(deliverables).find((a) => a.name.endsWith('.3mf'));
   const uploadText = detectMutation.upload ? (
     <>
       Загрузка файла ·{' '}
       <Num>{Math.round((detectMutation.upload.sent / Math.max(1, detectMutation.upload.total)) * 100)}</Num> %
     </>
   ) : null;
+  /** Время до конца этапа или сколько он уже идёт (если у пакера нет оценки). */
+  const stageClock = (stage: JobStage, receivedAtMs: number | undefined) => {
+    const elapsed = stageElapsed(stage, receivedAtMs, nowAfter(receivedAtMs));
+    return remainingText(elapsed, stage.expectedSeconds) ?? `идёт ${formatDuration(elapsed)}`;
+  };
+  const queueText = (position: number | null | undefined) =>
+    position != null ? (
+      <>
+        место <Num>{position}</Num>
+        {job?.estimatedWaitFromSeconds != null && job.estimatedWaitToSeconds != null && job.status === 'QUEUED' ? (
+          <>
+            {' '}
+            · начнётся через ≈
+            <Num>
+              {Math.floor(job.estimatedWaitFromSeconds / 60)}–{Math.ceil(job.estimatedWaitToSeconds / 60)}
+            </Num>{' '}
+            мин
+          </>
+        ) : null}
+      </>
+    ) : (
+      'ждёт свободного исполнителя'
+    );
+  const joinParts = (parts: ReactNode[]) =>
+    parts.map((part, index) => (
+      <span key={index}>
+        {index ? ' · ' : ''}
+        {part}
+      </span>
+    ));
 
   let title: ReactNode;
   let detail: ReactNode;
@@ -694,15 +752,22 @@ export default function PackPage() {
       {label}
     </button>
   );
+  const jobName = job?.originalName ?? shownFile?.name ?? '';
+  const jobTitle = jobId ? (
+    <>
+      <span className="fname">{jobName || 'Задача'}</span>
+      <span className="job-id">#{jobId.slice(0, 8)}</span>
+    </>
+  ) : null;
 
   if (viewing && jobGone) {
-    title = 'Задача недоступна';
-    detail = 'Удалена или истёк срок хранения файлов';
+    title = jobTitle;
+    detail = 'Задача недоступна: удалена или истёк срок хранения файлов';
     actions = (
       <button
         type="button"
         className="btn btn-primary btn-lg btn-main"
-        onClick={newPack}
+        onClick={newDraft}
         data-tip="Начать с чистой формы"
         data-tip-align="end"
       >
@@ -712,6 +777,7 @@ export default function PackPage() {
     );
   } else if (viewing) {
     const status = job?.status;
+    title = jobTitle;
     const cancel = (
       <button
         type="button"
@@ -726,152 +792,148 @@ export default function PackPage() {
       </button>
     );
     if (!job) {
-      title = jobQuery.isError ? 'Нет связи с сервером' : 'Получаю статус задачи…';
-      detail = jobQuery.isError && jobQuery.error instanceof Error ? jobQuery.error.message : '';
+      detail = jobQuery.isError && jobQuery.error instanceof Error ? jobQuery.error.message : 'Получаю статус задачи…';
       line = { kind: 'waiting' };
       actions = copyButton;
     } else if (status === 'QUEUED' || status === 'RETRY_WAIT' || status === 'LOST') {
-      title = status === 'QUEUED' ? 'В очереди' : 'Повтор после сбоя исполнителя';
-      detail =
-        job.queuePosition != null ? (
-          <>
-            место <Num>{job.queuePosition}</Num>
-            {job.estimatedWaitFromSeconds != null && job.estimatedWaitToSeconds != null ? (
-              <>
-                {' '}
-                · начнётся через ≈
-                <Num>
-                  {Math.floor(job.estimatedWaitFromSeconds / 60)}–{Math.ceil(job.estimatedWaitToSeconds / 60)}
-                </Num>{' '}
-                мин
-              </>
-            ) : null}
-          </>
-        ) : (
-          'ждёт свободного исполнителя'
-        );
+      // Повтор — с причиной от сервера («Сервер перезапускался — задача запущена заново»).
+      detail = joinParts([
+        status === 'QUEUED' ? 'В очереди' : (job.phaseMessage ?? 'Задача запущена заново'),
+        queueText(job.queuePosition),
+      ]);
       line = { kind: 'waiting' };
       actions = (
         <>
-          {cancel}
           {copyButton}
+          {cancel}
         </>
       );
     } else if (status === 'RUNNING' || status === 'FINALIZING') {
       const stage = job.stage;
       if (stage) {
         const strip = stripStage(stage);
-        const elapsed = stageElapsed(stage, job.receivedAtMs, Math.max(now, job.receivedAtMs ?? 0));
-        title = strip.label;
-        detail = (
+        detail = joinParts([
           <>
-            этап <Num>{strip.step}</Num> из <Num>{strip.steps}</Num> · {stageTimeLine(elapsed, stage.expectedSeconds)} ·{' '}
-            {popLink('stages', 'этапы')}
-          </>
-        );
+            Упаковка · этап <Num>{strip.step}</Num> из <Num>{strip.steps}</Num>
+          </>,
+          strip.label.charAt(0).toLowerCase() + strip.label.slice(1),
+          stageClock(stage, job.receivedAtMs),
+        ]);
         lineLabel = `${strip.label}, этап ${strip.step} из ${strip.steps}`;
       } else {
-        title = 'Запуск упаковки…';
-        detail = 'исполнитель готовит задачу';
+        detail = 'Запуск упаковки…';
       }
       line = { kind: 'progress', percent: job.progressPercent };
       actions = (
         <>
-          {cancel}
           {copyButton}
+          {cancel}
         </>
       );
-    } else if (status === 'SUCCEEDED' && job.pack) {
-      const info = job.pack;
-      title = `${objectsText(info.objectCount)} на столе`;
-      line = { kind: 'ok' };
-      const parts: ReactNode[] = [];
-      // Коротко: строка не переносится, а ссылка «файлы» в конце не должна уйти под многоточие.
-      if (info.finalSliced === false) parts.push('стол не нарезан целиком');
-      if (info.time) {
-        parts.push(<>печать ≈{formatHoursMinutes(info.time.correctedSeconds)}</>);
-        if (info.time.windowHours != null)
-          parts.push(
-            <>
-              окно <Num>{info.time.windowHours}</Num> ч: <Num>{info.time.chosenCount}</Num> из{' '}
-              <Num>{info.time.fullCount}</Num>
-            </>
-          );
-      }
-      if (info.supportsDetected) parts.push('с поддержками, без поворотов');
-      parts.push(popLink('files', 'файлы'));
-      detail = parts.map((part, index) => (
-        <span key={index}>
-          {index ? ' · ' : ''}
-          {part}
-        </span>
-      ));
-      const download = packed3mf ? () => startDownload(packed3mf) : undefined;
-      actions =
-        info.finalSliced === false ? (
-          <>
-            <SplitButton
-              main={
-                <button
-                  type="button"
-                  className="btn btn-primary btn-lg btn-main"
-                  disabled={finishMutation.isPending || job.canManage === false}
-                  onClick={() => finishMutation.mutate(job.jobId)}
-                  data-tip="Проверить поддержки на всём столе и посчитать время печати"
-                  data-tip-align="end"
-                >
-                  {finishMutation.isPending ? <span className="spinner" aria-hidden="true" /> : <Icon name="layers" />}
-                  Нарезать стол
-                </button>
-              }
-              items={[
-                {
-                  label: 'Скачать 3MF',
-                  icon: 'download',
-                  note: packed3mf ? formatBytes(packed3mf.sizeBytes) : undefined,
-                  onSelect: () => download?.(),
-                  disabled: !download,
-                },
-                ...moreItems,
-              ]}
-            />
-            {copyButton}
-          </>
+    } else if (status === 'SUCCEEDED' && result) {
+      // Текст только дополняется: «Готово: N» → «проверяю нарезкой» → «проверено нарезкой · печать ≈…».
+      const sliced = checkDone || result.finalSliced !== false;
+      const parts: ReactNode[] = [
+        sliced || checkActive ? (
+          <>Готово: {objectsText(result.objectCount)}</>
         ) : (
-          <>
-            <SplitButton
-              main={
-                <button
-                  type="button"
-                  className="btn btn-primary btn-lg btn-main"
-                  disabled={!download}
-                  onClick={() => download?.()}
-                  data-tip={packed3mf ? `${packed3mf.name} · ${formatBytes(packed3mf.sizeBytes)}` : undefined}
-                  data-tip-align="end"
-                >
-                  <Icon name="download" />
-                  Скачать 3MF
-                </button>
-              }
-              items={moreItems}
-            />
-            {copyButton}
-          </>
+          <>Готово: {objectsText(result.objectCount)} на столе</>
+        ),
+      ];
+      if (checkActive && check) {
+        parts.push(
+          checkRunning && check.stage ? (
+            <>проверяю нарезкой · {stageClock(check.stage, job.receivedAtMs)}</>
+          ) : (
+            <>проверка нарезкой в очереди · {queueText(check.queuePosition)}</>
+          )
         );
+      } else if (sliced) {
+        parts.push(<span className="ok">проверено нарезкой</span>);
+        if (result.time) {
+          parts.push(<>печать ≈{formatHoursMinutes(result.time.correctedSeconds)}</>);
+          if (result.time.windowHours != null)
+            parts.push(
+              <>
+                окно <Num>{result.time.windowHours}</Num> ч: <Num>{result.time.chosenCount}</Num> из{' '}
+                <Num>{result.time.fullCount}</Num>
+              </>
+            );
+        }
+      } else if (check?.status === 'FAILED') {
+        parts.push(<span className="err">проверка нарезкой не удалась</span>);
+      } else {
+        parts.push('нарезкой не проверено');
+      }
+      detail = joinParts(parts);
+      line =
+        checkRunning && check
+          ? { kind: 'progress', percent: check.progressPercent }
+          : checkActive
+            ? { kind: 'waiting' }
+            : { kind: 'ok' };
+      const download = packed3mf ? () => startDownload(packed3mf) : undefined;
+      actions = (
+        <>
+          {copyButton}
+          {checkActive ? (
+            <button
+              type="button"
+              className="btn btn-lg btn-cancel"
+              disabled={cancelCheckMutation.isPending || job.canManage === false}
+              onClick={() => cancelCheckMutation.mutate(job.jobId)}
+              data-tip="Остановить проверку нарезкой; упакованный стол останется"
+              data-tip-align="end"
+            >
+              <Icon name="stop" />
+              Остановить
+            </button>
+          ) : !sliced ? (
+            <button
+              type="button"
+              className="btn btn-lg"
+              disabled={checkMutation.isPending || job.canManage === false}
+              onClick={() => checkMutation.mutate(job.jobId)}
+              data-tip="Нарежет весь стол как слайсер: поддержки соседей, края стола, башня, точное время печати. Несколько минут"
+              data-tip-align="end"
+            >
+              {checkMutation.isPending ? <span className="spinner" aria-hidden="true" /> : <Icon name="layers" />}
+              Проверить нарезкой
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-primary btn-lg btn-main"
+            disabled={!download}
+            onClick={() => download?.()}
+            data-tip={packed3mf ? `${packed3mf.name} · ${formatBytes(packed3mf.sizeBytes)}` : undefined}
+            data-tip-align="end"
+          >
+            <Icon name="download" />
+            Скачать 3MF
+          </button>
+        </>
+      );
     } else {
       // FAILED / CANCELLED / EXPIRED
       const failed = status === 'FAILED';
-      title = failed ? 'Упаковка не удалась' : status === 'CANCELLED' ? 'Задача отменена' : 'Срок хранения истёк';
-      const headline = job.error ? job.error.split(DETAILS_SEPARATOR)[0] : failed ? 'Задача завершилась с ошибкой' : '';
-      detail = (
+      const headline = job.error ? job.error.split(DETAILS_SEPARATOR)[0] : failed ? 'задача завершилась с ошибкой' : '';
+      detail = failed ? (
         <>
-          {headline ? <span className="err">{headline}</span> : null}
-          {failed ? <> · {popLink('error', 'подробности')}</> : null}
+          <span className="err">Не удалось: {headline}</span> ·{' '}
+          <button type="button" className="linkish" aria-expanded={infoOpen} onClick={() => setInfoOpen(true)}>
+            подробности
+          </button>
         </>
+      ) : status === 'CANCELLED' ? (
+        'Задача отменена'
+      ) : (
+        'Срок хранения истёк'
       );
       line = { kind: failed ? 'fail' : 'off' };
       actions = (
         <>
+          {copyButton}
           <button
             type="button"
             className="btn btn-primary btn-lg btn-main"
@@ -883,13 +945,12 @@ export default function PackPage() {
             <Icon name="refresh" />
             Упаковать заново
           </button>
-          {copyButton}
         </>
       );
     }
   } else {
     // Черновик: файл, его загрузка и определение принтера, готовность.
-    title = file ? file.name : 'Модель не выбрана';
+    title = file ? <span className="fname">{file.name}</span> : 'Модель не выбрана';
     if (!file) detail = 'Загрузите слева проект .3mf или модель .stl';
     else if (uploadText) detail = uploadText;
     else if (detection === 'detecting') detail = 'Определяю принтер…';
@@ -907,6 +968,21 @@ export default function PackPage() {
       submitButton('Упаковать', startMutation.isPending)
     );
   }
+  // «Инфо» слева: у задачи — всегда на месте (и после завершения), у черновика — пустое место той же ширины.
+  const lead = viewing ? (
+    <button
+      type="button"
+      className="info-btn"
+      aria-expanded={infoOpen}
+      onClick={() => setInfoOpen((open) => !open)}
+      data-tip="Этапы, время и файлы задачи"
+    >
+      <Icon name="info" />
+      Инфо
+    </button>
+  ) : (
+    <span className="info-slot" aria-hidden="true" />
+  );
 
   /** Текст поверх сцены, пока её нечем заполнить. */
   /** Файл задачи не скачался (истёк срок хранения, нет сети): сцена без модели — сказать прямо. */
@@ -1008,11 +1084,11 @@ export default function PackPage() {
                 disabled={busy || windowOn}
               />
               <span className="check-text">
-                Сразу нарезать весь стол
+                Сразу проверить нарезкой
                 <small className="field-hint">
                   {windowOn
                     ? 'окно печати меряется нарезками — стол режется всегда'
-                    : 'дольше на несколько минут; без галочки — кнопкой после упаковки'}
+                    : 'дольше на несколько минут; можно и потом — кнопкой «Проверить нарезкой»'}
                 </small>
               </span>
             </label>
@@ -1052,11 +1128,20 @@ export default function PackPage() {
             {paramsFields}
           </details>
         </fieldset>
-        {viewing ? <p className="field-hint">Параметры этой задачи. Чтобы изменить — «Упаковать заново».</p> : null}
+        {viewing && job && !ACTIVE.includes(job.status) ? (
+          // Параметры задачи слева только для чтения; поменять их — здесь же, новой упаковкой.
+          <div className="repack">
+            <button type="button" className="btn btn-block" onClick={repack} disabled={external && !jobFile}>
+              <Icon name="refresh" />
+              Упаковать заново
+            </button>
+            <span className="field-hint">Тот же файл, параметры снова можно менять. Получится новая задача.</span>
+          </div>
+        ) : null}
       </form>
 
       <section className="main-col">
-        <StatusStrip title={title} detail={detail} line={line} lineLabel={lineLabel} actions={actions} />
+        <StatusStrip title={title} detail={detail} line={line} lineLabel={lineLabel} actions={actions} lead={lead} />
         <div className="scene-wrap">
           {viewProfile ? (
             <ErrorBoundary
@@ -1071,26 +1156,29 @@ export default function PackPage() {
                   profile={viewProfile}
                   model={model}
                   mode={sceneMode}
-                  clip={running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1}
+                  clip={
+                    running && job?.stage
+                      ? sceneClip(job.stage.id, job.progressPercent)
+                      : checkRunning && check?.stage
+                        ? sceneClip(check.stage.id, check.progressPercent)
+                        : 1
+                  }
+                  searching={searching}
                   caption={
                     // Слишком большой файл — без предпросмотра (без тоста: упаковать его всё равно можно).
                     shownFile && shownFile.size > PREVIEW_MAX_BYTES
                       ? 'Модель слишком большая для предпросмотра'
-                      : model
-                        ? 'колесо — масштаб, перетаскивание — поворот, правая кнопка — сдвиг'
-                        : ''
+                      : searching
+                        ? 'идёт поиск раскладки'
+                        : model
+                          ? 'колесо — масштаб, перетаскивание — поворот, правая кнопка — сдвиг'
+                          : ''
                   }
                   placements={placed.placements}
                   footprintLoops={placed.footprintLoops}
                   tower={placed.tower}
                   usableOverride={placed.bed}
-                  readout={
-                    placed.placements.length
-                      ? `${objectsText(placed.placements.length)} на столе`
-                      : model
-                        ? `${model.size.map((v) => Math.round(v)).join(' × ')} мм`
-                        : ''
-                  }
+                  readout={model ? `Модель: ${model.size.map((v) => Math.round(v)).join(' × ')} мм` : ''}
                 />
               </Suspense>
             </ErrorBoundary>
@@ -1107,34 +1195,66 @@ export default function PackPage() {
               </span>
             </div>
           ) : null}
-          {pop === 'stages' && running && job?.stage ? (
-            <ScenePopover title="Этапы" onClose={closePop}>
-              <ol className="stage-list">
-                {stageItems(job.stage).map((item) => (
-                  <li key={item.key} className={item.state}>
-                    <i aria-hidden="true" />
-                    {item.label}
-                    {item.state === 'current' ? (
-                      <span className="t">
-                        {stageTimeLine(
-                          stageElapsed(job.stage!, job.receivedAtMs, Math.max(now, job.receivedAtMs ?? 0)),
-                          null
-                        )}
-                      </span>
-                    ) : null}
-                  </li>
-                ))}
-              </ol>
-            </ScenePopover>
-          ) : null}
-          {pop === 'files' && job && !ACTIVE.includes(job.status) ? (
-            <ScenePopover title="Файлы задачи" onClose={closePop}>
-              <JobFiles artifacts={job.artifacts} expiresAt={job.expiresAt} />
-            </ScenePopover>
-          ) : null}
-          {pop === 'error' && errorText ? (
-            <ScenePopover title="Что пошло не так" onClose={closePop}>
-              <JobErrorDetails error={errorText} job={job} />
+          {infoOpen && viewing && job ? (
+            <ScenePopover title={`Задача #${jobId!.slice(0, 8)}`} onClose={closeInfo}>
+              {job.status === 'RETRY_WAIT' || job.status === 'LOST' ? (
+                <p className="hint info-note">
+                  {job.phaseMessage ?? 'Задача запущена заново'}: этапы начнутся сначала.
+                </p>
+              ) : null}
+              {job.stage ? (
+                <StageList
+                  stage={job.stage}
+                  running={running}
+                  failed={job.status === 'FAILED'}
+                  elapsedNow={stageElapsed(job.stage, job.receivedAtMs, nowAfter(job.receivedAtMs))}
+                  finishedAt={job.finishedAt}
+                />
+              ) : (
+                <p className="hint">
+                  {ACTIVE.includes(job.status) ? 'Этапы появятся, когда задача начнётся.' : 'Этапов нет.'}
+                </p>
+              )}
+              {errorText ? <JobErrorDetails error={errorText} /> : null}
+              {check ? (
+                <>
+                  <div className="group-title">Проверка нарезкой</div>
+                  {check.stage ? (
+                    <StageList
+                      stage={check.stage}
+                      running={checkRunning}
+                      failed={check.status === 'FAILED'}
+                      elapsedNow={stageElapsed(check.stage, job.receivedAtMs, nowAfter(job.receivedAtMs))}
+                      finishedAt={check.finishedAt}
+                    />
+                  ) : (
+                    <p className="hint">
+                      {checkActive ? 'В очереди.' : check.status === 'CANCELLED' ? 'Остановлена.' : 'Этапов нет.'}
+                    </p>
+                  )}
+                  {check.status === 'FAILED' && check.error ? <JobErrorDetails error={check.error} /> : null}
+                </>
+              ) : null}
+              {!ACTIVE.includes(job.status) ? (
+                <>
+                  <div className="group-title">Файлы</div>
+                  <JobFiles
+                    artifacts={
+                      checkDone && check
+                        ? [...job.artifacts.filter((a) => a.name === 'log.txt'), ...check.artifacts]
+                        : job.artifacts
+                    }
+                    labelOf={(artifact) =>
+                      checkDone && artifact.name === 'log.txt'
+                        ? job.artifacts.includes(artifact)
+                          ? 'Журнал упаковки'
+                          : 'Журнал проверки нарезкой'
+                        : undefined
+                    }
+                    expiresAt={job.expiresAt}
+                  />
+                </>
+              ) : null}
             </ScenePopover>
           ) : null}
         </div>
@@ -1148,8 +1268,8 @@ export default function PackPage() {
   );
 }
 
-/** Ошибка задачи: заголовок и сырой хвост журнала (бэкенд склеивает их через DETAILS_SEPARATOR) + файлы. */
-function JobErrorDetails({ error, job }: { error: string; job: JobStatusResponse | null }) {
+/** Ошибка задачи или проверки: заголовок и сырой хвост журнала (бэкенд склеивает их через DETAILS_SEPARATOR). */
+function JobErrorDetails({ error }: { error: string }) {
   const at = error.indexOf(DETAILS_SEPARATOR);
   const headline = at >= 0 ? error.slice(0, at) : error;
   const details = at >= 0 ? error.slice(at + DETAILS_SEPARATOR.length) : null;
@@ -1157,7 +1277,45 @@ function JobErrorDetails({ error, job }: { error: string; job: JobStatusResponse
     <>
       <div className="error-block">{headline}</div>
       {details ? <pre className="error-details">{details}</pre> : null}
-      {job ? <JobFiles artifacts={job.artifacts} expiresAt={job.expiresAt} /> : null}
     </>
+  );
+}
+
+/** Этапы с длительностями: пройденные, идущий (со спиннером) и ещё предстоящие. */
+function StageList({
+  stage,
+  running,
+  failed,
+  elapsedNow,
+  finishedAt,
+}: {
+  stage: JobStage;
+  running: boolean;
+  failed: boolean;
+  elapsedNow: number;
+  finishedAt: string | null;
+}) {
+  const rows = stageRows(stage, {
+    running,
+    failed,
+    elapsedNow,
+    finishedAtMs: finishedAt ? Date.parse(finishedAt) : null,
+  });
+  return (
+    <ol className="stage-list">
+      {rows.map((row) => (
+        <li key={row.key} className={row.state}>
+          {row.state === 'current' ? <span className="spin" aria-hidden="true" /> : <i aria-hidden="true" />}
+          {row.label}
+          <span className="t">
+            {row.seconds == null
+              ? ''
+              : row.state === 'current'
+                ? `идёт ${formatDuration(row.seconds)}`
+                : formatDuration(row.seconds)}
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }

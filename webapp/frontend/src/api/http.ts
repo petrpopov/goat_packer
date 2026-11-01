@@ -134,6 +134,9 @@ export const serverApi = {
     request<T>(`/v2${path}`, { method: 'POST', body: JSON.stringify(data), signal }),
   putFile: <T>(path: string, file: File, signal?: AbortSignal, onProgress?: UploadProgress) =>
     sendWithProgress<T>('PUT', `/v2${path}`, file, onProgress, signal, 'application/octet-stream'),
+  /** POST с ключом идемпотентности (повтор того же запроса не создаёт второй задачи). */
+  postWithKey: <T>(path: string, key: string, data: unknown = {}) =>
+    request<T>(`/v2${path}`, { method: 'POST', body: JSON.stringify(data), headers: { 'Idempotency-Key': key } }),
   createJob: <T>(data: unknown, key: string) =>
     request<T>('/v2/jobs', { method: 'POST', body: JSON.stringify(data), headers: { 'Idempotency-Key': key } }),
   delete: (path: string) => request<void>(`/v2${path}`, { method: 'DELETE' }),

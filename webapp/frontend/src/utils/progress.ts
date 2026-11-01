@@ -20,7 +20,13 @@ export function objectsText(count: number): string {
   const mod100 = count % 100;
   const mod10 = count % 10;
   const word =
-    mod100 >= 11 && mod100 <= 14 ? 'объектов' : mod10 === 1 ? 'объект' : mod10 >= 2 && mod10 <= 4 ? 'объекта' : 'объектов';
+    mod100 >= 11 && mod100 <= 14
+      ? 'объектов'
+      : mod10 === 1
+        ? 'объект'
+        : mod10 >= 2 && mod10 <= 4
+          ? 'объекта'
+          : 'объектов';
   return `${count} ${word}`;
 }
 
@@ -130,4 +136,56 @@ export function stageItems(stage: JobStage): StageItem[] {
   items.push({ key: `${stage.id}:current`, label, state: 'current' });
   for (const step of remaining) items.push({ key: step.id, label: step.label, state: 'pending' });
   return items;
+}
+
+/** Строка панели «Инфо»: этап, его состояние и длительность, с (null — неизвестна). */
+export interface StageRow {
+  key: string;
+  label: string;
+  state: 'done' | 'current' | 'pending' | 'failed';
+  seconds: number | null;
+}
+
+/**
+ * Этапы с длительностями из истории заходов (бэкенд хранит её и после завершения задачи). running —
+ * последний открытый заход идёт сейчас (его время — elapsedNow); у завершённой задачи открытый заход
+ * закрывается её finishedAtMs, failed — на нём задача упала. Без истории (старые задачи) — прежний
+ * список без времени.
+ */
+export function stageRows(
+  stage: JobStage,
+  {
+    running,
+    failed,
+    elapsedNow,
+    finishedAtMs,
+  }: { running: boolean; failed: boolean; elapsedNow: number; finishedAtMs: number | null }
+): StageRow[] {
+  const history = stage.history ?? [];
+  if (!history.length) return stageItems(stage).map((item) => ({ ...item, seconds: null }));
+  const labelOf = (id: string) => ORDER.find((step) => step.id === id)?.label ?? id;
+  const seen = new Set<string>();
+  const rows: StageRow[] = history.map((span, index) => {
+    const repeat = span.attempt > 1 || seen.has(span.id);
+    seen.add(span.id);
+    const last = index === history.length - 1;
+    const open = span.endedAtMs == null;
+    const seconds = !open
+      ? (span.endedAtMs! - span.startedAtMs) / 1000
+      : running && last
+        ? elapsedNow
+        : finishedAtMs != null
+          ? (finishedAtMs - span.startedAtMs) / 1000
+          : null;
+    return {
+      key: `${span.id}:${index}`,
+      label: (repeat ? REPEAT_LABEL[span.id as PackStageId] : undefined) ?? labelOf(span.id),
+      state: running && last ? 'current' : failed && last ? 'failed' : 'done',
+      seconds: seconds == null ? null : Math.max(0, seconds),
+    };
+  });
+  if (running)
+    for (const step of stagePlan(stage).remaining)
+      rows.push({ key: step.id, label: step.label, state: 'pending', seconds: null });
+  return rows;
 }

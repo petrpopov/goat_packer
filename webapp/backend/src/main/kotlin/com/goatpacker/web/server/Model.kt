@@ -53,7 +53,9 @@ class QueueJobEntity(
     var workerId: String? = null, var fence: Long = 0, var leaseUntil: Instant? = null, var deadlineAt: Instant? = null,
     var cancelRequested: Boolean = false, var reservedBytes: Long = 0,
     var attemptCount: Int = 0, var availableAt: Instant = Instant.now(), var computeReservedSeconds: Long = 0,
-    var budgetDay: java.time.LocalDate? = null, var runnerImage: String? = null, @Version var version: Long = 0,
+    var budgetDay: java.time.LocalDate? = null, var runnerImage: String? = null,
+    // Проверка нарезкой (V6): у дочерней строки — родитель (в списке она скрыта), у родителя — последняя проверка.
+    var parentJobId: String? = null, var checkJobId: String? = null, @Version var version: Long = 0,
 )
 @Entity @Table(name="artifacts")
 class ArtifactEntity(
@@ -90,6 +92,8 @@ class AuditEntity(@Id var id: String = newId(), var actorId: String? = null, var
 @Profile("server") interface QueueJobRepository: JpaRepository<QueueJobEntity,String> {
     fun findByOwnerIdAndRequestKey(ownerId:String,requestKey:String): QueueJobEntity?
     fun findAllByOwnerId(ownerId:String, pageable:Pageable): Page<QueueJobEntity>
+    fun findAllByParentJobId(parentJobId:String): List<QueueJobEntity>
+    fun findAllByOwnerIdAndParentJobIdIsNull(ownerId:String, pageable:Pageable): Page<QueueJobEntity>
     fun findAllByStatusOrderByCreatedAtAscIdAsc(status:String): List<QueueJobEntity>
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select j from QueueJobEntity j where j.id=:id") fun locked(@Param("id") id:String):QueueJobEntity?
 }

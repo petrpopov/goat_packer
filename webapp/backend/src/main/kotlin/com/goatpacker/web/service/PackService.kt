@@ -164,7 +164,15 @@ class PackService(
      * нарезки, — тот же вход, профиль и параметры плюс --finish-state по её состоянию.
      */
     fun finish(packJobId: String): JobCreatedDto {
-        val parent = store.get(packJobId) ?: throw BadRequestException("Упаковка «$packJobId» не найдена")
+        val parent = store.get(packJobId)?.takeIf { it.parentJobId == null } ?: throw BadRequestException("Упаковка «$packJobId» не найдена")
+        // Проверка живёт внутри упаковки: идущую или успешную второй раз не запускаем, упавшую/пропавшую — можно.
+        parent.checkJobId?.let { store.get(it) }?.let { previous ->
+            when (previous.current.status) {
+                com.goatpacker.web.job.JobStatus.SUCCEEDED -> throw BadRequestException("Стол уже проверен нарезкой")
+                com.goatpacker.web.job.JobStatus.FAILED -> Unit
+                else -> throw BadRequestException("Проверка нарезкой уже идёт")
+            }
+        }
         val params = parent.packParams
         val state = parent.directory.resolve("packed.state.json")
         if (parent.kind != JobKind.PACK || parent.current.status != com.goatpacker.web.job.JobStatus.SUCCEEDED ||
@@ -175,6 +183,7 @@ class PackService(
         val jobId = UUID.randomUUID().toString()
         val directory = properties.jobsRootPath.resolve(jobId)
         val job = Job(id = jobId, kind = JobKind.PACK, directory = directory, createdAt = OffsetDateTime.now())
+        job.parentJobId = parent.id
         Files.createDirectories(directory)
         try {
             for (name in listOf(StlInputs.INPUT_3MF, StlInputs.INPUT_STL, "profile.json")) {
@@ -201,6 +210,9 @@ class PackService(
             job.profileDto = parent.profileDto
             store.put(job)
             jobRunner.runPack(job, finishParams)
+            // Ссылка ставится после успешной постановки; прежняя (упавшая) проверка убирается вместе с каталогом.
+            parent.checkJobId?.let { store.remove(it) }?.directory?.toFile()?.deleteRecursively()
+            parent.checkJobId = job.id
         } catch (ex: RejectedExecutionException) {
             store.remove(job.id)
             job.cancel()
@@ -212,8 +224,19 @@ class PackService(
             directory.toFile().deleteRecursively()
             throw ex
         }
-        log.info("Создана доводка {} упаковки {}", jobId, packJobId)
-        return JobCreatedDto(jobId)
+        log.info("Создана проверка нарезкой {} упаковки {}", jobId, packJobId)
+        return JobCreatedDto(parent.id)
+    }
+
+    /** Отмена идущей проверки: процесс убивается, каталог и запись удаляются — у упаковки проверки снова нет. */
+    fun cancelCheck(packJobId: String) {
+        val parent = store.get(packJobId)?.takeIf { it.parentJobId == null } ?: throw BadRequestException("Упаковка «$packJobId» не найдена")
+        val child = parent.checkJobId?.let { store.get(it) } ?: return
+        if (child.current.status != com.goatpacker.web.job.JobStatus.QUEUED && child.current.status != com.goatpacker.web.job.JobStatus.RUNNING) return
+        store.remove(child.id)
+        child.cancel()?.takeIf { it.isAlive }?.let { com.goatpacker.web.job.JobProcessKiller.kill(it) }
+        child.directory.toFile().deleteRecursively()
+        parent.checkJobId = null
     }
 
     /** Свой стол из полей custom*: все три размера или ни одного (отступ без размеров — ошибка формы). */

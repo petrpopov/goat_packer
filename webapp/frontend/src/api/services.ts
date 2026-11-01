@@ -53,17 +53,21 @@ export async function startPackJob(form: FormData): Promise<StartJobResponse> {
 }
 
 /**
- * «Нарезать стол»: полная нарезка и проверка упаковки, собранной без неё (новая задача с тем же
- * входом, профилем и параметрами плюс состоянием упаковки).
+ * «Проверить нарезкой»: полная нарезка стола, упакованного без неё, — внутри той же задачи (тот же
+ * адрес и строка в «Моих задачах»; ответ — её же id). Ход и итог — в поле check статуса задачи.
  */
-export async function finishPackJob(packJobId: string): Promise<StartJobResponse> {
-  if (!serverMode) return api.postForm<StartJobResponse>(`/pack/jobs/${encodeURIComponent(packJobId)}/finish`, new FormData());
-  const created = await serverApi.createJob<StartJobResponse & { readToken?: string }>(
-    { kind: 'PACK', packJobId },
-    `finish-${packJobId}`
-  );
-  rememberAccess(created);
-  return created;
+export async function checkPackJob(jobId: string): Promise<StartJobResponse> {
+  const id = encodeURIComponent(jobId);
+  return serverMode
+    ? serverApi.postWithKey<StartJobResponse>(`/jobs/${id}/check`, randomId())
+    : api.postForm<StartJobResponse>(`/pack/jobs/${id}/finish`, new FormData());
+}
+
+/** Остановить проверку нарезкой; упакованный стол задачи остаётся. */
+export async function cancelPackCheck(jobId: string): Promise<void> {
+  const id = encodeURIComponent(jobId);
+  if (serverMode) await serverApi.post(`/jobs/${id}/check/cancel`);
+  else await api.postForm(`/pack/jobs/${id}/check/cancel`, new FormData());
 }
 
 export async function startScheduleJob(form: FormData): Promise<StartJobResponse> {

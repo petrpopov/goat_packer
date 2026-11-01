@@ -8,6 +8,7 @@ import {
   sceneClip,
   stageElapsed,
   stageItems,
+  stageRows,
   stripStage,
   stageTimeLine,
 } from '../src/utils/progress';
@@ -80,7 +81,9 @@ describe('sceneClip', () => {
 
 describe('stripStage', () => {
   test('first pass: step = visited, steps = visited + required ahead', () => {
-    const s = stripStage(stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'sample_slice', 'assembling', 'final_slice'] }));
+    const s = stripStage(
+      stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'sample_slice', 'assembling', 'final_slice'] })
+    );
     expect(s).toEqual({ label: 'Нарезка итоговой пластины', step: 5, steps: 6 });
   });
   test('re-slice after a repack is one more step with its own label', () => {
@@ -89,16 +92,86 @@ describe('stripStage', () => {
     expect(s).toEqual({ label: 'Повторная нарезка', step: 7, steps: 8 });
   });
   test('a finish job counts from its own first stage', () => {
-    expect(stripStage(stage({ id: 'final_slice', visited: ['final_slice'] }))).toEqual({ label: 'Нарезка итоговой пластины', step: 1, steps: 2 });
+    expect(stripStage(stage({ id: 'final_slice', visited: ['final_slice'] }))).toEqual({
+      label: 'Нарезка итоговой пластины',
+      step: 1,
+      steps: 2,
+    });
   });
 });
 
 describe('stageItems', () => {
   test('done, current, then required pending; optional stages only once visited', () => {
-    const items = stageItems(stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'assembling', 'final_slice'] }));
+    const items = stageItems(
+      stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'assembling', 'final_slice'] })
+    );
     expect(items.map((i) => [i.label, i.state])).toEqual([
-      ['Пробная нарезка 1 объекта', 'done'], ['Раскладка', 'done'], ['Сборка проекта', 'done'],
-      ['Нарезка итоговой пластины', 'current'], ['Запись результата', 'pending'],
+      ['Пробная нарезка 1 объекта', 'done'],
+      ['Раскладка', 'done'],
+      ['Сборка проекта', 'done'],
+      ['Нарезка итоговой пластины', 'current'],
+      ['Запись результата', 'pending'],
     ]);
+  });
+});
+
+describe('stageRows', () => {
+  const history = [
+    { id: 'probe_slice', attempt: 1, startedAtMs: 0, endedAtMs: 41_000 },
+    { id: 'packing', attempt: 1, startedAtMs: 41_000, endedAtMs: 50_000 },
+    { id: 'assembling', attempt: 1, startedAtMs: 50_000, endedAtMs: null },
+  ];
+
+  test('finished job: every span timed, the open one closed by finishedAt', () => {
+    const rows = stageRows(stage({ id: 'assembling', visited: ['probe_slice', 'packing', 'assembling'], history }), {
+      running: false,
+      failed: false,
+      elapsedNow: 0,
+      finishedAtMs: 52_000,
+    });
+    expect(rows.map((r) => [r.label, r.state, r.seconds])).toEqual([
+      ['Пробная нарезка 1 объекта', 'done', 41],
+      ['Раскладка', 'done', 9],
+      ['Сборка проекта', 'done', 2],
+    ]);
+  });
+
+  test('running job: current span counts live, required stages follow as pending', () => {
+    const rows = stageRows(stage({ id: 'assembling', visited: ['probe_slice', 'packing', 'assembling'], history }), {
+      running: true,
+      failed: false,
+      elapsedNow: 3,
+      finishedAtMs: null,
+    });
+    expect(rows[2]).toMatchObject({ state: 'current', seconds: 3 });
+    expect(rows.slice(3).map((r) => r.state)).toEqual(['pending', 'pending']);
+  });
+
+  test('failed job marks its last span; a repeat span gets the repeat label', () => {
+    const repeat = [
+      ...history.slice(0, 2),
+      { id: 'final_slice', attempt: 1, startedAtMs: 50_000, endedAtMs: 60_000 },
+      { id: 'final_slice', attempt: 2, startedAtMs: 60_000, endedAtMs: null },
+    ];
+    const rows = stageRows(
+      stage({ id: 'final_slice', attempt: 2, visited: ['probe_slice', 'packing', 'final_slice'], history: repeat }),
+      {
+        running: false,
+        failed: true,
+        elapsedNow: 0,
+        finishedAtMs: 65_000,
+      }
+    );
+    expect(rows.at(-1)).toMatchObject({ label: 'Повторная нарезка', state: 'failed', seconds: 5 });
+  });
+
+  test('old jobs without history fall back to the plain list', () => {
+    const rows = stageRows(stage({ id: 'packing', visited: ['probe_slice', 'packing'] }), {
+      running: true,
+      failed: false,
+      elapsedNow: 1,
+      finishedAtMs: null,
+    });
+    expect(rows.every((r) => r.seconds === null)).toBe(true);
   });
 });

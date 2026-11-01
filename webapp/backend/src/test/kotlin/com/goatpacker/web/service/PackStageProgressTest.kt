@@ -46,6 +46,47 @@ class PackStageProgressTest {
     }
 
     @Test
+    fun `история этапов — заход закрывается со входом в следующий, повтор получает свой номер`() {
+        val clock = FakeClock()
+        val t = tracker(clock)
+        val start = clock.now
+        t.onLine(stage("probe_slice", 22.0, 1))
+        clock.advance(20.0)
+        t.onLine(stage("final_slice", 100.0, 20))
+        clock.advance(30.0)
+        t.onLine(stage("repacking", null, null))
+        clock.advance(5.0)
+        val again = t.onLine(stage("final_slice", 100.0, 20)).stage!!
+
+        assertEquals(
+            listOf(
+                com.goatpacker.web.job.StageSpan("probe_slice", 1, start, start + 20_000),
+                com.goatpacker.web.job.StageSpan("final_slice", 1, start + 20_000, start + 50_000),
+                com.goatpacker.web.job.StageSpan("repacking", 1, start + 50_000, start + 55_000),
+                com.goatpacker.web.job.StageSpan("final_slice", 2, start + 55_000, null),
+            ),
+            again.history,
+        )
+    }
+
+    @Test
+    fun `история этапов не растёт без границ и укладывается в stage_json`() {
+        val clock = FakeClock()
+        val t = tracker(clock)
+        var last: com.goatpacker.web.job.JobStage? = null
+        repeat(100) {
+            clock.advance(1.0)
+            last = t.onLine(stage(if (it % 2 == 0) "final_slice" else "window_slice", 10.0, 20)).stage
+        }
+        val stage = last!!
+        assertTrue(stage.history.size <= 30, "${stage.history.size}")
+        // Самые старые заходы отброшены, текущий — последний и открыт.
+        assertEquals(null, stage.history.last().endedAtMs)
+        assertEquals(stage.startedAtMs, stage.history.last().startedAtMs)
+        assertTrue(com.fasterxml.jackson.databind.ObjectMapper().registerModule(com.fasterxml.jackson.module.kotlin.kotlinModule()).writeValueAsString(stage).length < 4000)
+    }
+
+    @Test
     fun `heartbeat двигает процент по времени и не доходит до конца полосы`() {
         val clock = FakeClock()
         val t = tracker(clock)

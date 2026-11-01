@@ -10,16 +10,19 @@ interface StatusStripProps {
   /** Подпись полосы для читалок экрана (aria-valuetext). */
   lineLabel?: string;
   actions: ReactNode;
+  /** Слева от текста — «Инфо»; место не меняется между состояниями, чтобы текст не прыгал. */
+  lead?: ReactNode;
 }
 
 /**
  * Строка статуса над сценой: фиксированная высота, обе строки — в одну строку с многоточием.
  * Сцена под ней всегда на одной высоте: подробности (этапы, файлы, ошибка) открываются поверх сцены.
  */
-export default function StatusStrip({ title, detail, line, lineLabel, actions }: StatusStripProps) {
+export default function StatusStrip({ title, detail, line, lineLabel, actions, lead }: StatusStripProps) {
   const percent = line.kind === 'progress' ? Math.max(0, Math.min(100, line.percent)) : null;
   return (
     <div className="status-strip">
+      {lead}
       <div className="lines">
         <h1 className="l1">{title}</h1>
         <p className="l2">{detail}</p>

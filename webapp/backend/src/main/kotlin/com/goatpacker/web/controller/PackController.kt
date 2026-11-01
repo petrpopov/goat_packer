@@ -26,4 +26,11 @@ class PackController(
     @PostMapping("/jobs/{id}/finish")
     fun finishJob(@org.springframework.web.bind.annotation.PathVariable id: String): ResponseEntity<JobCreatedDto> =
         ResponseEntity.status(HttpStatus.ACCEPTED).body(packService.finish(id))
+
+    /** Отмена идущей проверки нарезкой; упаковка остаётся как была. */
+    @PostMapping("/jobs/{id}/check/cancel")
+    fun cancelCheck(@org.springframework.web.bind.annotation.PathVariable id: String): ResponseEntity<Void> {
+        packService.cancelCheck(id)
+        return ResponseEntity.noContent().build()
+    }
 }

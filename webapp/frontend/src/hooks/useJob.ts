@@ -8,8 +8,8 @@ const POLL_INTERVAL_MS = 1000;
 const ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING', 'FINALIZING', 'LOST', 'RETRY_WAIT']);
 
 /**
- * Поллинг статуса задачи: GET /api/jobs/{id} раз в 1000 мс,
- * пока статус QUEUED/RUNNING; на терминальном статусе опрос останавливается.
+ * Поллинг статуса задачи: GET /api/jobs/{id} раз в 1000 мс, пока идёт она сама или её проверка
+ * нарезкой (check — внутри той же задачи); на терминальном статусе обеих опрос останавливается.
  */
 export function useJob(jobId: string | null) {
   return useQuery<JobStatusResponse>({
@@ -25,7 +25,8 @@ export function useJob(jobId: string | null) {
     refetchInterval: (query) => {
       if (query.state.error instanceof ApiError && [404, 410].includes(query.state.error.status)) return false;
       const status = query.state.data?.status;
-      return !status || ACTIVE_STATUSES.has(status) ? POLL_INTERVAL_MS : false;
+      const check = query.state.data?.check?.status;
+      return !status || ACTIVE_STATUSES.has(status) || (check && ACTIVE_STATUSES.has(check)) ? POLL_INTERVAL_MS : false;
     },
   });
 }

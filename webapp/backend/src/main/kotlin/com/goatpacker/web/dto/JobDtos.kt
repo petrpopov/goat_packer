@@ -43,6 +43,24 @@ data class ArtifactDto(
     val downloadUrl: String,
 )
 
+/**
+ * Проверка нарезкой внутри pack-джоба (локальный режим; в серверном та же форма отдаётся картой). Id внутренней
+ * задачи наружу не уходит: [artifacts] скачиваются по id самой упаковки.
+ */
+@JsonInclude(JsonInclude.Include.ALWAYS)
+data class CheckStatusDto(
+    val status: String,
+    val queuePosition: Long?,
+    val progressPercent: Int,
+    val phaseMessage: String?,
+    val error: String?,
+    val startedAt: java.time.OffsetDateTime?,
+    val finishedAt: java.time.OffsetDateTime?,
+    val stage: JobStageDto?,
+    val pack: PackInfoDto?,
+    val artifacts: List<ArtifactDto>,
+)
+
 /** Итог pack-джоба. */
 data class PackInfoDto(
     val objectCount: Int,
@@ -129,6 +147,8 @@ data class JobStageDto(
     val attempt: Int,
     val visited: List<String>,
     val detail: String?,
+    /** Все заходы в этапы по порядку; фронт показывает пройденные этапы с длительностями и после завершения. */
+    val history: List<com.goatpacker.web.job.StageSpan> = emptyList(),
 ) {
     companion object {
         fun of(stage: com.goatpacker.web.job.JobStage, nowMs: Long = System.currentTimeMillis()) = JobStageDto(
@@ -140,6 +160,7 @@ data class JobStageDto(
             attempt = stage.attempt,
             visited = stage.visited,
             detail = stage.detail,
+            history = stage.history,
         )
     }
 }
@@ -190,4 +211,6 @@ data class JobStatusDto(
     val profile: ProfileDto? = null,
     /** Настройки упаковки как отправлены; только pack. */
     val params: PackParamsDto? = null,
+    /** Проверка нарезкой стола внутри этой упаковки; null — не запускалась. */
+    val check: CheckStatusDto? = null,
 )

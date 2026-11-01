@@ -28,7 +28,16 @@ export function startDownload(artifact: JobArtifact): void {
   );
 }
 
-export default function JobFiles({ artifacts, expiresAt }: { artifacts: JobArtifact[]; expiresAt?: string | null }) {
+export default function JobFiles({
+  artifacts,
+  expiresAt,
+  labelOf,
+}: {
+  artifacts: JobArtifact[];
+  expiresAt?: string | null;
+  /** Своя подпись файла (журналы упаковки и проверки называются одинаково). */
+  labelOf?: (artifact: JobArtifact) => string | undefined;
+}) {
   const files = visibleArtifacts(artifacts);
   return (
     <>
@@ -36,7 +45,7 @@ export default function JobFiles({ artifacts, expiresAt }: { artifacts: JobArtif
         <div className="file-list">
           {files.map((artifact) => (
             <a
-              key={artifact.name}
+              key={artifact.downloadUrl}
               href={artifact.downloadUrl}
               download={artifact.name}
               onClick={(event) => {
@@ -45,7 +54,7 @@ export default function JobFiles({ artifacts, expiresAt }: { artifacts: JobArtif
               }}
             >
               <Icon name={artifact.name.endsWith('.3mf') ? 'download' : 'file'} />
-              {describe(artifact.name).label}
+              <span className="name">{labelOf?.(artifact) ?? describe(artifact.name).label}</span>
               <small>{formatBytes(artifact.sizeBytes)}</small>
             </a>
           ))}

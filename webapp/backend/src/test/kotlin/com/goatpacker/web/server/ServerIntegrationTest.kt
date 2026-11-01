@@ -337,17 +337,83 @@ class ServerIntegrationTest(@Autowired val mvc:MockMvc,@Autowired val json:Objec
             assertEquals("SUCCEEDED",packed["status"].asText(),packed.toString())
             assertEquals(false,packed["pack"]["finalSliced"].asBoolean(),packed.toString())
             assertTrue(packed["artifacts"].any { it["name"].asText()=="pack_state.json" },packed.toString())
-            // Доводка: тот же вход и профиль родителя; фейковый пакер падает, если состояния нет рядом.
-            val finish=client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to pack),headers=mapOf("Idempotency-Key" to newId()))["jobId"].asText()
-            val finished=await(finish)
-            assertEquals("SUCCEEDED",finished["status"].asText(),finished.toString())
-            assertEquals(true,finished["pack"]["finalSliced"].asBoolean(),finished.toString())
-            // Доводка не тратит суточный лимит задач гостя (4): посчитана только упаковка.
+            // Проверка нарезкой — внутри той же задачи: ответ с id родителя, ребёнок скрыт; фейковый пакер падает, если состояния нет рядом.
+            val key=newId()
+            val answered=client.call("POST","/api/v2/jobs/$pack/check",headers=mapOf("Idempotency-Key" to key))["jobId"].asText()
+            assertEquals(pack,answered)
+            // Повтор того же ключа не создаёт второго ребёнка.
+            assertEquals(pack,client.call("POST","/api/v2/jobs/$pack/check",headers=mapOf("Idempotency-Key" to key))["jobId"].asText())
+            val child=jobs.findById(pack).orElseThrow().checkJobId!!
+            assertEquals(pack,jobs.findById(child).orElseThrow().parentJobId)
+            assertEquals(1,jdbc.queryForObject("select count(*) from queue_jobs where parent_job_id=?",Int::class.java,pack))
+            // Пока проверка не кончилась: в статусе родителя она в очереди/работе, второй запуск отклоняется.
+            assertTrue(client.call("GET","/api/v2/jobs/$pack")["check"]["status"].asText() in activeStates)
+            client.call("POST","/api/v2/jobs/$pack/check",expected=400,headers=mapOf("Idempotency-Key" to newId()))
+            worker.dispatch()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+            while(jobs.findById(child).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+            val finished=client.call("GET","/api/v2/jobs/$pack?debug=true")
+            val check=finished["check"]
+            assertEquals("SUCCEEDED",check["status"].asText(),finished.toString())
+            assertEquals(true,check["pack"]["finalSliced"].asBoolean(),finished.toString())
+            assertFalse(finished.toString().contains(child),"id ребёнка не должен попадать в ответ")
+            // Родитель остаётся собой; артефакты проверки скачиваются по id родителя.
+            assertEquals(false,finished["pack"]["finalSliced"].asBoolean())
+            assertTrue(check["artifacts"].all { it["downloadUrl"].asText().startsWith("/api/v2/jobs/$pack/artifacts/") },check.toString())
+            assertTrue(check["artifacts"].none { it["name"].asText()=="pack_state.json" },check.toString())
+            val childArtifact=check["artifacts"].first { it["name"].asText().endsWith(".3mf") }
+            assertTrue(client.call("POST",childArtifact["downloadUrl"].asText(),emptyMap<String,String>())["url"].asText().isNotBlank())
+            assertTrue(client.bytes("/api/v2/jobs/$pack/artifacts/${childArtifact["id"].asText()}/file").isNotEmpty())
+            // Чужой задачей (другой упаковкой того же пользователя) этот артефакт не отдаётся.
+            val other=client.job(file,extra=mapOf("finalSlice" to false))["jobId"].asText()
+            client.call("POST","/api/v2/jobs/$other/artifacts/${childArtifact["id"].asText()}/download",emptyMap<String,String>(),404)
+            client.bytes("/api/v2/jobs/$other/artifacts/${childArtifact["id"].asText()}/file",404)
+            // Ребёнок скрыт: в списке одна строка на упаковку, по его id статус недоступен.
+            val listed=client.call("GET","/api/v2/jobs")
+            assertEquals(2,listed["total"].asInt(),listed.toString())
+            assertTrue(listed["items"].none { it["jobId"].asText()==child })
+            assertTrue(listed["items"].first { it["jobId"].asText()==pack }["check"]["status"].asText()=="SUCCEEDED")
+            client.call("GET","/api/v2/jobs/$child",expected=404)
+            // Суточный лимит гостя (4) проверка не тратит: посчитана упаковка (+ «other»).
             val owner=jobs.findById(pack).orElseThrow().ownerId
-            assertEquals(1,jdbc.queryForObject("select used from request_limits where key=?",Int::class.java,"jobs:$owner"))
-            assertTrue(finished["artifacts"].none { it["name"].asText()=="pack_state.json" },finished.toString())
-            // Нарезанный стол доводить нечего.
-            client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to finish),400,headers=mapOf("Idempotency-Key" to newId()))
+            assertEquals(2,jdbc.queryForObject("select used from request_limits where key=?",Int::class.java,"jobs:$owner"))
+            // Стол уже проверен нарезкой; через старый путь packJobId — то же самое.
+            client.call("POST","/api/v2/jobs/$pack/check",expected=400,headers=mapOf("Idempotency-Key" to newId()))
+            client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to pack),400,headers=mapOf("Idempotency-Key" to newId()))
+            // Удаление упаковки уносит ребёнка, а его артефакты уходят в GC.
+            val keys=jdbc.queryForList("select object_key from artifacts where job_id=?",String::class.java,child)
+            assertTrue(keys.isNotEmpty())
+            client.call("DELETE","/api/v2/jobs/$pack")
+            assertEquals(0,jdbc.queryForObject("select count(*) from queue_jobs where id=?",Int::class.java,child))
+            keys.forEach { k->assertEquals(1,jdbc.queryForObject("select count(*) from object_gc where object_key=?",Int::class.java,k),k) }
+        } finally {worker.stop()}
+    }
+
+    @Test fun `a failed check may be re-run and old clients still get the parent id`() {
+        val client=Client();client.guest()
+        val file=client.upload()
+        val pack=client.job(file,extra=mapOf("finalSlice" to false))["jobId"].asText()
+        val worker=QueueWorker(queue,jobs,blobs,nodes,store,runner,launcher,app,props,json)
+        try {
+            worker.dispatch()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+            while(jobs.findById(pack).orElseThrow().status in activeStates && System.nanoTime()<deadline) Thread.sleep(50)
+            // Чужая задача проверять не может.
+            val stranger=Client();stranger.guest()
+            stranger.call("POST","/api/v2/jobs/$pack/check",expected=404,headers=mapOf("Idempotency-Key" to newId()))
+            // Старый путь: POST /jobs с packJobId отвечает id родителя.
+            assertEquals(pack,client.call("POST","/api/v2/jobs",mapOf("kind" to "PACK","packJobId" to pack),headers=mapOf("Idempotency-Key" to newId()))["jobId"].asText())
+            val first=jobs.findById(pack).orElseThrow().checkJobId!!
+            // Отмена очереди: проверка CANCELLED, её можно запустить снова — ссылка заменяется.
+            client.call("POST","/api/v2/jobs/$pack/check/cancel")
+            assertEquals("CANCELLED",client.call("GET","/api/v2/jobs/$pack")["check"]["status"].asText())
+            client.call("POST","/api/v2/jobs/$pack/check",headers=mapOf("Idempotency-Key" to newId()))
+            val second=jobs.findById(pack).orElseThrow().checkJobId!!
+            assertNotEquals(first,second)
+            assertEquals("QUEUED",client.call("GET","/api/v2/jobs/$pack")["check"]["status"].asText())
+            // Ожидающий в очереди ребёнок отменяется и уходит каскадом вместе с упаковкой.
+            client.call("DELETE","/api/v2/jobs/$pack")
+            assertEquals(0,jdbc.queryForObject("select count(*) from queue_jobs where id in (?,?,?)",Int::class.java,pack,first,second))
         } finally {worker.stop()}
     }
 

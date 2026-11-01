@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.job.JobKind
 import com.goatpacker.web.job.JobPhase
 import com.goatpacker.web.job.JobStage
+import com.goatpacker.web.job.StageSpan
 import kotlin.math.exp
 
 /** Результат разбора одной строки вывода бинарника: фаза, процент, сообщение, этап пакера. */
@@ -208,6 +209,9 @@ class ProgressTracker(
         private val BEST_SO_FAR_RE = Regex("""best so far:\s*(\d+) objects""")
         private const val DETAIL_LIMIT = 300
 
+        /** ~85 символов на заход: 30 заходов + detail укладываются в 4000 символов stage_json. */
+        private const val MAX_HISTORY = 30
+
         /** Доля полосы, до которой этап может дойти сам: конец полосы — только при смене этапа. */
         private const val MAX_FRACTION = 0.95
 
@@ -266,6 +270,7 @@ class ProgressTracker(
     private var repackReason: String? = null
     private var detail: String? = null
     private val visited = LinkedHashSet<String>()
+    private val history = ArrayList<StageSpan>()
     private val attempts = HashMap<PackStage, Int>()
     private var exactPercent = 0.0
     /** Сырая строка последнего layout-события: отдаётся как есть, разбирать её — дело сцены. */
@@ -282,8 +287,15 @@ class ProgressTracker(
                 attempt = stageAttempt,
                 visited = visited.toList(),
                 detail = detail,
+                history = historySnapshot(),
             )
         }
+
+    /**
+     * История заходов для stage_json (лимит 4000 символов у столбца: усечённый JSON не разобрать, поэтому
+     * при переполнении отбрасываются самые старые заходы, а не хвост строки). Текущий заход всегда остаётся.
+     */
+    private fun historySnapshot(): List<StageSpan> = history.takeLast(MAX_HISTORY)
 
     /**
      * Обрабатывает очередную строку вывода. Фаза/процент могут остаться прежними (строка не
@@ -390,14 +402,17 @@ class ProgressTracker(
      * занимают половину оставшегося до конца пути (если своя полоса уже пройдена).
      */
     private fun enter(next: PackStage, expected: Double?, objects: Int?, fromEvent: Boolean) {
+        val now = clock()
+        history.lastOrNull()?.takeIf { it.endedAtMs == null }?.let { history[history.lastIndex] = it.copy(endedAtMs = now) }
         stage = next
-        stageStartedAt = clock()
+        stageStartedAt = now
         stageExpected = expected
         stageObjects = objects
         stageFromEvent = fromEvent
         stageAttempt = (attempts[next] ?: 0) + 1
         attempts[next] = stageAttempt
         visited.add(next.id)
+        history.add(StageSpan(next.id, stageAttempt, now))
         attemptsFraction = 0.0
         if (next == PackStage.PACKING || next == PackStage.REPACKING) bestSoFar = null
 

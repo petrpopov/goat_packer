@@ -45,7 +45,8 @@ export type UploadKind = '3mf' | 'stl';
 
 export type JobKind = 'pack' | 'schedule' | 'calibration';
 
-export type JobStatus = 'QUEUED' | 'RUNNING' | 'FINALIZING' | 'LOST' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+export type JobStatus =
+  'QUEUED' | 'RUNNING' | 'FINALIZING' | 'LOST' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
 
 export type JobPhase =
   | 'upload'
@@ -71,7 +72,15 @@ export type PackStageId =
   | 'window_slice'
   | 'writing';
 
-/** Текущий этап упаковки (только pack-задачи, пока задача выполняется). */
+/** Пройденный (или идущий: endedAtMs null) заход в этап; время — часы исполнителя. */
+export interface StageSpan {
+  id: PackStageId | string;
+  attempt: number;
+  startedAtMs: number;
+  endedAtMs: number | null;
+}
+
+/** Этап упаковки: текущий, пока задача идёт, и последний — после её завершения. */
 export interface JobStage {
   id: PackStageId | string;
   startedAtMs: number;
@@ -86,6 +95,8 @@ export interface JobStage {
   visited: string[];
   /** Последняя английская строка пакера — вторичная подробность. */
   detail: string | null;
+  /** Все заходы в этапы по порядку (у старых задач поля нет). */
+  history?: StageSpan[];
 }
 
 export interface JobArtifact {
@@ -221,10 +232,28 @@ export interface JobStatusResponse {
   schedule: ScheduleInfo | null;
   calibration?: CalibrationInfo | null;
   stage?: JobStage | null;
-  /** Последняя раскладка пакера; остаётся и после успеха. */
+  /** Последняя раскладка пакера (после проверки нарезкой — её); остаётся и после успеха. */
   layout?: PackLayout | null;
+  /** Проверка нарезкой этой упаковки; null — не запускалась. */
+  check?: PackCheck | null;
   /** Когда клиент получил этот ответ (Date.now()); проставляет useJob для локального отсчёта времени. */
   receivedAtMs?: number;
+}
+
+/** Проверка нарезкой внутри задачи упаковки (полная нарезка стола, упакованного без неё). */
+export interface PackCheck {
+  status: JobStatus;
+  queuePosition?: number | null;
+  progressPercent: number;
+  phaseMessage: string | null;
+  error: string | null;
+  startedAt?: string | null;
+  finishedAt: string | null;
+  stage?: JobStage | null;
+  /** Итог проверки (стол мог поменяться: сдвиг или перепаковка); null — проверка не завершилась. */
+  pack: PackJobInfo | null;
+  /** Файлы проверки; ссылки — через id задачи. */
+  artifacts: JobArtifact[];
 }
 
 export interface StartJobResponse {

@@ -25,6 +25,8 @@ export interface BedSceneProps {
   /** Рабочая область из раскладки пакера (учтён отступ от края, заданный пользователем) — вместо
    *  области профиля; подписи стола остаются по профилю. */
   usableOverride?: Rect | null;
+  /** Идёт перебор раскладок, позиций ещё нет: по столу мелькают проекции модели. */
+  searching?: boolean;
   /** Подписи в углах сцены. */
   caption?: string;
   readout?: string;
@@ -34,6 +36,10 @@ const LAYER_MM = 0.2;
 /** Падение копий на стол после раскладки: общая длительность и высота старта, мм. */
 const DROP_MS = 1400;
 const DROP_FROM_MM = 120;
+/** Перебор раскладок: сколько проекций мелькает, шаг смены кадра и разброс вокруг места, мм. */
+const GHOSTS = 48;
+const GHOST_TICK_MS = 200;
+const GHOST_JITTER_MM = 6;
 
 /** oklch/hex CSS-переменная → THREE.Color (через canvas: THREE не понимает oklch). */
 function cssColor(name: string): THREE.Color {
@@ -211,6 +217,10 @@ export default function BedScene(props: BedSceneProps) {
     let solid: THREE.InstancedMesh | null = null;
     let cap: THREE.InstancedMesh | null = null;
     let footprints: THREE.InstancedMesh | null = null;
+    /** Проекции модели для перебора раскладок; места — сетка по рабочей области. */
+    let ghosts: THREE.InstancedMesh | null = null;
+    let ghostSpots: { x: number; y: number }[] = [];
+    let ghostTimer = 0;
     let towerMesh: THREE.Mesh | null = null;
     let footprintSource: FootprintSource | null = null;
     let height = 1;
@@ -351,16 +361,18 @@ export default function BedScene(props: BedSceneProps) {
 
     /** Текстура подложки зависит от --accent-2: перерисовывается при смене темы без перестройки меша. */
     const paintFootprints = () => {
-      if (!footprints || !footprintSource) return;
-      const material = footprints.material as THREE.MeshBasicMaterial;
-      const fp = footprintTexture(footprintSource);
-      material.map?.dispose();
-      material.map = fp.texture;
-      material.needsUpdate = true;
+      if (!footprintSource) return;
+      for (const mesh of [footprints, ghosts]) {
+        if (!mesh) continue;
+        const material = mesh.material as THREE.MeshBasicMaterial;
+        material.map?.dispose();
+        material.map = footprintTexture(footprintSource).texture;
+        material.needsUpdate = true;
+      }
     };
 
     const disposeObjects = () => {
-      for (const o of [solid, cap, footprints])
+      for (const o of [solid, cap, footprints, ghosts])
         if (o) {
           scene.remove(o);
           o.dispose();
@@ -369,15 +381,17 @@ export default function BedScene(props: BedSceneProps) {
         scene.remove(towerMesh);
         disposeTree(towerMesh);
       }
-      if (footprints) {
-        footprints.geometry.dispose();
-        const material = footprints.material as THREE.MeshBasicMaterial;
-        material.map?.dispose();
-        material.dispose();
-      }
+      for (const mesh of [footprints, ghosts])
+        if (mesh) {
+          mesh.geometry.dispose();
+          const material = mesh.material as THREE.MeshBasicMaterial;
+          material.map?.dispose();
+          material.dispose();
+        }
       modelGeometry?.dispose(); // общая для solid и cap; материалы общие на всю сцену
       modelGeometry = null;
-      solid = cap = footprints = null;
+      solid = cap = footprints = ghosts = null;
+      ghostSpots = [];
       towerMesh = null;
       footprintSource = null;
       dropStart = 0;
@@ -453,6 +467,55 @@ export default function BedScene(props: BedSceneProps) {
       placeCopies(drop ? 0 : 1);
       dropStart = drop ? performance.now() : 0;
       scene.add(solid, cap, footprints);
+      // Перебор раскладок (v2-макет): проекции модели по сетке рабочей области, кадр раз в 200 мс.
+      const cell = Math.max(fp.size[0], fp.size[1]) * 0.9;
+      const u = bed.usable;
+      const columns = Math.max(1, Math.floor((u.x1 - u.x0) / cell));
+      const rows = Math.max(1, Math.floor((u.y1 - u.y0) / cell));
+      for (let r = 0; r < rows; r++)
+        for (let c = 0; c < columns; c++)
+          ghostSpots.push({
+            x: u.x0 + ((c + 0.5 + (r % 2) * 0.25) * (u.x1 - u.x0)) / columns,
+            y: u.y0 + ((r + 0.5) * (u.y1 - u.y0)) / rows,
+          });
+      ghosts = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(fp.size[0], fp.size[1]),
+        new THREE.MeshBasicMaterial({
+          map: footprintTexture(footprintSource).texture,
+          transparent: true,
+          opacity: 0.7,
+          depthWrite: false,
+        }),
+        Math.min(GHOSTS, ghostSpots.length)
+      );
+      ghosts.frustumCulled = false;
+      ghosts.visible = false;
+      scene.add(ghosts);
+    };
+
+    /** Кадр перебора: каждая четвёртая проекция на своём месте со сдвигом и поворотом, остальные скрыты. */
+    const placeGhosts = (tick: number) => {
+      if (!ghosts) return;
+      const m = new THREE.Matrix4(),
+        q = new THREE.Quaternion(),
+        s = new THREE.Vector3(1, 1, 1),
+        z = new THREE.Vector3(0, 0, 1);
+      for (let i = 0; i < ghosts.count; i++) {
+        const spot = ghostSpots[(i * 7) % ghostSpots.length];
+        const on = (i * 7 + tick) % 4 === 0;
+        q.setFromAxisAngle(z, ((tick + i) % 4) * 0.5);
+        m.compose(
+          new THREE.Vector3(
+            spot.x + Math.sin(tick + i) * GHOST_JITTER_MM,
+            spot.y + Math.cos(tick * 2 + i) * GHOST_JITTER_MM,
+            on ? 0.07 : -9999
+          ),
+          q,
+          s
+        );
+        ghosts.setMatrixAt(i, m);
+      }
+      ghosts.instanceMatrix.needsUpdate = true;
     };
 
     const fit = () => {
@@ -491,12 +554,22 @@ export default function BedScene(props: BedSceneProps) {
         if (t >= 1) dropStart = 0;
         else dropping = true;
       }
+      // Перебор раскладок: вместо одиночной модели — мелькающие проекции; следующий кадр — по таймеру,
+      // а не постоянным циклом. prefers-reduced-motion — один неподвижный кадр.
+      const searching = Boolean(p.searching && ghosts && !p.placements?.length);
+      if (ghosts) ghosts.visible = searching;
+      for (const o of [solid, cap, footprints]) if (o) o.visible = !searching;
+      window.clearTimeout(ghostTimer);
+      if (searching) {
+        placeGhosts(reducedMotion.matches ? 0 : Math.floor(performance.now() / GHOST_TICK_MS));
+        if (!reducedMotion.matches) ghostTimer = window.setTimeout(invalidate, GHOST_TICK_MS);
+      }
       // Падение — показ готовой раскладки: срез слоя на это время снят, иначе копии в воздухе не видны.
       // clip = 1 — без среза: плоскость ровно на верхней грани даёт z-fighting верха копий.
       const clipZ = p.mode === 'running' && !dropping && p.clip < 1 ? Math.max(LAYER_MM, p.clip * height) : 1e4;
       clipPlane.constant = clipZ;
       // Без среза изнанка не нужна: иначе её край просвечивает оранжевым по контуру модели.
-      if (cap) cap.visible = clipZ < height;
+      if (cap) cap.visible = !searching && clipZ < height;
       slicePlane.visible = p.mode === 'running' && !dropping && p.clip < 1 && bed !== null;
       if (bed && slicePlane.visible) {
         const a = bed.area;
@@ -576,6 +649,7 @@ export default function BedScene(props: BedSceneProps) {
     return () => {
       apiRef.current = null;
       cancelAnimationFrame(frame);
+      window.clearTimeout(ghostTimer);
       observer.disconnect();
       controls.removeEventListener('change', invalidate);
       controls.removeEventListener('start', moved);
@@ -605,7 +679,7 @@ export default function BedScene(props: BedSceneProps) {
       <div className="scene-labels" ref={labelsRef} />
       <div className="scene-legend">
         <span>
-          нельзя печатать <i className="swatch swatch-keepout" />
+          непечатная зона <i className="swatch swatch-keepout" />
         </span>
         <span>
           контур проекции <i className="swatch swatch-footprint" />

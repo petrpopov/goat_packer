@@ -66,7 +66,12 @@ data class JobStage(
     val visited: List<String> = emptyList(),
     /** Последняя человекочитаемая (английская) строка пакера — вторичная подробность, не JSON. */
     val detail: String? = null,
+    /** Все заходы в этапы по порядку (для списка пройденных этапов с длительностями после завершения). */
+    val history: List<StageSpan> = emptyList(),
 )
+
+/** Один заход в этап; [endedAtMs] null — этап ещё идёт (или задача кончилась, не закрыв его). */
+data class StageSpan(val id: String, val attempt: Int, val startedAtMs: Long, val endedAtMs: Long? = null)
 
 /** Неизменяемый срез статусной сводки джоба — обновляется атомарно, гонок нет. */
 data class JobSnapshot(
@@ -201,6 +206,13 @@ class Job(
 
     @Volatile
     var profileDto: com.goatpacker.web.dto.ProfileDto? = null
+
+    /** Проверка нарезкой (локальный режим): у упаковки — id её внутренней задачи, у внутренней — id упаковки. Наружу не отдаётся. */
+    @Volatile
+    var checkJobId: String? = null
+
+    @Volatile
+    var parentJobId: String? = null
 
     @Volatile
     var scheduleResult: ScheduleJobResult? = null

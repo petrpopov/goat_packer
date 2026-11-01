@@ -38,6 +38,8 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
     @Transactional fun create(ownerId:String,key:String,request:JobRequest):CreatedJob {
         if(!Regex("[a-zA-Z0-9_-]{8,100}").matches(key)) bad("Нужен Idempotency-Key длиной 8–100")
         validate(request)
+        // Старые клиенты: PACK по packJobId = проверка нарезкой внутри исходной задачи, ответ — id родителя.
+        if(request.kind=="PACK" && request.packJobId!=null) return check(ownerId,key,request.packJobId)
         platform.locked();val owner=owners.locked(ownerId) ?: missing()
         if(jdbc.queryForObject("select maintenance from operational_state where id=1",Boolean::class.java)==true) throw ServerError(503,"MAINTENANCE","Сервис на обслуживании")
         val hash=Secrets.hash(mapper.writeValueAsString(request))
@@ -46,9 +48,6 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             return CreatedJob(it.id)
         }
         var customFile:UploadEntity?=null
-        // Доводка: PACK по packJobId — тот же вход, профиль и параметры родителя плюс его состояние.
-        var finishParent:QueueJobEntity?=null
-        var finishStateBlob:String?=null
         // STL — только вход упаковки из загруженного файла. Расписание по упаковке STL получает её
         // packed.3mf: имя источника становится .3mf, иначе воркер положил бы проект как input.stl.
         var stl=false
@@ -65,22 +64,13 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             if(!stl && request.customBed==null && file.profileId!=request.profileId) bad("Принтер файла не соответствует выбранному профилю")
             customFile=file
             file.blobId!! to file.originalName
-        } else if(request.kind=="PACK") {
-            val previous=owned(request.packJobId!!,ownerId)
-            if(previous.status!="SUCCEEDED" || previous.kind!="PACK") bad("Нарезать можно только успешную упаковку")
-            val state=artifacts.findAllByJobId(previous.id).find { it.name==com.goatpacker.web.job.JobArtifacts.PACK_STATE } ?: bad("Эта упаковка уже нарезана целиком")
-            finishParent=previous
-            finishStateBlob=promote(state)
-            previous.inputBlobId to previous.originalName
         } else {
             val previous=owned(request.packJobId!!,ownerId)
             if(previous.status!="SUCCEEDED" || previous.kind!="PACK" || previous.profileId!=request.profileId) bad("Нужна успешная упаковка того же принтера")
             val packed=artifacts.findAllByJobId(previous.id).find { it.name=="packed.3mf" } ?: missing()
             promote(packed) to com.goatpacker.web.service.StlInputs.projectName(previous.originalName)
         }
-        // Доводка «Нарезать стол» продолжает уже посчитанную упаковку: в суточный лимит задач она не идёт
-        // (вычислительный бюджет ниже резервируется как обычно).
-        if(finishParent==null) {
+        run {
             val guest=owner.kind=="GUEST"
             val perDay=if(guest) 4 else 10
             limits.hit("jobs:$ownerId",perDay,86400,
@@ -94,15 +84,6 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         quotas.reserve(owner,props.outputReservationBytes)
         val budgetDay=java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         reserveCompute(owner,budgetDay,props.jobTimeoutSeconds)
-        finishParent?.let { parent ->
-            val params=mapper.readValue(parent.paramsJson,JobRequest::class.java).copy(finalSlice=true,finishStateBlobId=finishStateBlob)
-            val token=Secrets.token()
-            val j=jobs.save(QueueJobEntity(ownerId=ownerId,kind="PACK",inputBlobId=input,originalName=name,
-                profileId=parent.profileId,profileJson=parent.profileJson,paramsJson=mapper.writeValueAsString(params),
-                requestKey=key,requestHash=hash,readTokenHash=Secrets.hash(token),reservedBytes=props.outputReservationBytes,
-                computeReservedSeconds=props.jobTimeoutSeconds,budgetDay=budgetDay))
-            return CreatedJob(j.id,token)
-        }
         // Разовый профиль собирается при постановке и хранится снимком, как каталожный (воркер лишь пишет его в profile.json).
         val (dto,profileJson)=request.customBed?.let { bed ->
             val bedFromProject=customFile?.projectBedJson?.let { mapper.readValue(it,com.goatpacker.web.service.ProjectBed::class.java) }
@@ -125,6 +106,54 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
             computeReservedSeconds=props.jobTimeoutSeconds,budgetDay=budgetDay))
         return CreatedJob(j.id,token)
     }
+    /**
+     * «Проверить нарезкой»: полная нарезка стола, собранного без неё, внутри той же задачи. Это внутренняя
+     * дочерняя строка очереди (воркер и пакер те же: PACK с входом, профилем и параметрами родителя,
+     * finalSlice=true и состоянием родителя), привязанная к родителю; наружу её id не отдаётся.
+     * Не считается новой задачей: в суточный лимит не идёт (вычислительный бюджет резервируется как обычно).
+     */
+    @Transactional fun check(ownerId:String,key:String,parentId:String):CreatedJob {
+        if(!Regex("[a-zA-Z0-9_-]{8,100}").matches(key)) bad("Нужен Idempotency-Key длиной 8–100")
+        platform.locked();val owner=owners.locked(ownerId) ?: missing()
+        if(jdbc.queryForObject("select maintenance from operational_state where id=1",Boolean::class.java)==true) throw ServerError(503,"MAINTENANCE","Сервис на обслуживании")
+        val hash=Secrets.hash("check:$parentId")
+        jobs.findByOwnerIdAndRequestKey(ownerId,key)?.let {
+            if(it.requestHash!=hash || it.parentJobId!=parentId) throw ServerError(409,"CONFLICT","Этот ключ запроса использован с другими параметрами")
+            return CreatedJob(parentId)
+        }
+        val parent=owned(parentId,ownerId)
+        if(parent.parentJobId!=null || parent.status!="SUCCEEDED" || parent.kind!="PACK") bad("Нарезать можно только успешную упаковку")
+        val previous=parent.checkJobId?.let { jobs.findById(it).orElse(null) }
+        if(previous!=null) {
+            if(previous.status in activeStates) bad("Проверка нарезкой уже идёт")
+            if(previous.status=="SUCCEEDED") bad("Стол уже проверен нарезкой")
+        }
+        val state=artifacts.findAllByJobId(parent.id).find { it.name==com.goatpacker.web.job.JobArtifacts.PACK_STATE } ?: bad("Эта упаковка уже нарезана целиком")
+        val stateBlob=promote(state)
+        val current=jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java)!!
+        if(current>=props.maxQueue) limited("Очередь заполнена — попробуйте позже")
+        val ownedCount=jdbc.queryForObject("select count(*) from queue_jobs where owner_id=? and status in ('QUEUED','RUNNING','FINALIZING','LOST','RETRY_WAIT')",Long::class.java,ownerId)!!
+        if(props.admissionLimits && ownedCount>=if(owner.kind=="GUEST") 2 else 4) limited("Достигнут лимит ваших активных задач")
+        quotas.reserve(owner,props.outputReservationBytes)
+        val budgetDay=java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+        reserveCompute(owner,budgetDay,props.jobTimeoutSeconds)
+        val params=mapper.readValue(parent.paramsJson,JobRequest::class.java).copy(finalSlice=true,finishStateBlobId=stateBlob)
+        val child=jobs.save(QueueJobEntity(ownerId=ownerId,kind="PACK",inputBlobId=parent.inputBlobId,originalName=parent.originalName,
+            profileId=parent.profileId,profileJson=parent.profileJson,paramsJson=mapper.writeValueAsString(params),
+            requestKey=key,requestHash=hash,readTokenHash=null,reservedBytes=props.outputReservationBytes,
+            computeReservedSeconds=props.jobTimeoutSeconds,budgetDay=budgetDay,parentJobId=parent.id))
+        parent.checkJobId=child.id
+        return CreatedJob(parent.id)
+    }
+    @Transactional fun cancelCheck(id:String,owner:String) {
+        val parent=owned(id,owner)
+        parent.checkJobId?.let { cancel(it,owner) }
+    }
+    /** Дочерняя проверка родителя (null — проверки нет); доступ уже проверен по родителю. */
+    fun checkOf(parent:QueueJobEntity):QueueJobEntity? = parent.checkJobId?.let { jobs.findById(it).orElse(null) }?.takeIf { it.parentJobId==parent.id }
+    /** Артефакт, который можно отдать по id родителя: его собственный или последней проверки. */
+    fun artifactOf(parent:QueueJobEntity,artifactId:String):ArtifactEntity? =
+        artifacts.findById(artifactId).orElse(null)?.takeIf { it.jobId==parent.id || it.jobId==checkOf(parent)?.id }
     /** Артефакт задачи как неизменяемый блоб-вход новой задачи: не зависит от судьбы родителя (GC не тронет). */
     private fun promote(artifact:ArtifactEntity):String {
         val existing=jdbc.query("select id from blobs where object_key=?",{rs,_->rs.getString(1)},artifact.objectKey).firstOrNull()
@@ -132,7 +161,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
     }
     fun owned(id:String,owner:String):QueueJobEntity=jobs.findById(id).orElse(null)?.takeIf { it.ownerId==owner }?.also(::notExpired) ?: missing()
     fun readable(id:String,owner:String,token:String?):QueueJobEntity {
-        val j=jobs.findById(id).orElse(null) ?: missing()
+        val j=jobs.findById(id).orElse(null)?.takeIf { it.parentJobId==null } ?: missing()
         val grant=jdbc.queryForObject("select count(*) from read_grants where owner_id=? and job_id=? and expires_at>now()",Long::class.java,owner,id)!!>0
         if(j.ownerId!=owner && !grant && (token==null || token.length>100 || j.readTokenHash!=Secrets.hash(token))) missing()
         if(owners.findById(j.ownerId).orElse(null)?.blocked!=false) missing()
@@ -150,10 +179,16 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
     }
     @Transactional fun delete(id:String,owner:String) {
         platform.locked();val j=owned(id,owner)
+        if(j.parentJobId!=null) missing()
         if(j.status in activeStates) {j.cancelRequested=true;if(j.status in setOf("QUEUED","RETRY_WAIT")) terminal(j,"CANCELLED",null);return}
+        // Идущая проверка нарезкой: каскад удалил бы строку из-под работающего воркера — сначала отмена, удаление повторяется.
+        val children=jobs.findAllByParentJobId(id)
+        val running=children.filter { it.status in activeStates }
+        if(running.isNotEmpty()) {running.forEach { c->c.cancelRequested=true;if(c.status in setOf("QUEUED","RETRY_WAIT")) terminal(c,"CANCELLED",null) };if(running.any { it.status in activeStates }) return;jobs.flush()}
+        // Артефакты проверок (дети удаляются каскадом) уходят в GC вместе с родительскими.
         jdbc.update("""insert into object_gc(object_key,size_bytes,not_before)
-            select a.object_key,a.size_bytes,now() from artifacts a where a.job_id=?
-            and not exists(select 1 from blobs b where b.object_key=a.object_key) on conflict do nothing""",id)
+            select a.object_key,a.size_bytes,now() from artifacts a where (a.job_id=? or a.job_id in (select c.id from queue_jobs c where c.parent_job_id=?))
+            and not exists(select 1 from blobs b where b.object_key=a.object_key) on conflict do nothing""",id,id)
         jdbc.update("delete from queue_jobs where id=?",id)
     }
     @Transactional fun claim(worker:String,bootId:String?=null):QueueJobEntity? {
@@ -253,7 +288,7 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         platform.locked()
         check(jdbc.queryForObject("select count(*) from worker_nodes where id=? and boot_id=?",Long::class.java,worker,boot)==1L)
         val ids=jdbc.query("select id from queue_jobs where worker_id=? and status in ('RUNNING','FINALIZING','LOST')",{r,_->r.getString(1)},worker)
-        for(id in ids) recoverStopped(jobs.findById(id).orElseThrow(),"Исполнитель перезапущен")
+        for(id in ids) recoverStopped(jobs.findById(id).orElseThrow(),"Исполнитель перезапущен",restarted=true)
     }
     @Transactional fun nodePulse(node:WorkerEntity):Boolean {
         platform.locked()
@@ -271,12 +306,13 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         platform.locked();val j=jobs.locked(id) ?: return
         if(j.fence==fence && j.status in setOf("RUNNING","FINALIZING","LOST")) recoverStopped(j,reason)
     }
-    private fun recoverStopped(j:QueueJobEntity,reason:String) {
+    // restarted: исполнитель поднялся заново (так бывает при каждом обновлении сервера) — пользователю важно, почему задача пошла сначала.
+    private fun recoverStopped(j:QueueJobEntity,reason:String,restarted:Boolean=false) {
         chargeAttempt(j)
         jdbc.update("update job_attempts set status='LOST',finished_at=now(),message=? where job_id=? and fence=?",reason.take(2000),j.id,j.fence)
         if(j.cancelRequested || owners.findById(j.ownerId).orElseThrow().blocked) {terminal(j,"CANCELLED",null);return}
         if(j.attemptCount>=props.maxRetries+1 || j.computeReservedSeconds<=0) {terminal(j,"FAILED",reason);return}
-        j.status="RETRY_WAIT";j.message="Повтор после сбоя исполнителя";j.stageJson=null;j.layoutJson=null;j.error=null;j.workerId=null;j.leaseUntil=null;j.startedAt=null;j.deadlineAt=null;j.progress=0;j.availableAt=Instant.now().plusSeconds(10)
+        j.status="RETRY_WAIT";j.message=if(restarted) "Сервер перезапускался — задача запущена заново" else "Сбой исполнителя — задача запущена заново";j.stageJson=null;j.layoutJson=null;j.error=null;j.workerId=null;j.leaseUntil=null;j.startedAt=null;j.deadlineAt=null;j.progress=0;j.availableAt=Instant.now().plusSeconds(10)
     }
     private fun reserveCompute(owner:PrincipalEntity,day:java.time.LocalDate,seconds:Long) {
         for((key,limit) in listOf(owner.id to (if(owner.kind=="GUEST") props.guestComputeSeconds else props.accountComputeSeconds),"GLOBAL" to props.globalComputeSeconds)) {
@@ -299,6 +335,8 @@ class DurableQueue(private val jobs:QueueJobRepository,private val owners:Princi
         jdbc.update("update job_attempts set status=?,finished_at=now(),message=? where job_id=? and fence=?",status,error?.take(2000),j.id,j.fence)
         j.status=status;j.error=error?.take(2000);j.finishedAt=Instant.now();j.leaseUntil=null;j.reservedBytes=0
         j.expiresAt=if(owners.findById(j.ownerId).orElseThrow().kind=="GUEST") Instant.now().plusSeconds(86400) else null
+        // Результат проверки живёт внутри родителя: срок хранения гостя считается и от её конца, иначе её файлы ушли бы раньше, чем появились.
+        if(j.parentJobId!=null && j.expiresAt!=null) jdbc.update("update queue_jobs set expires_at=greatest(expires_at,?) where id=? and expires_at is not null",java.sql.Timestamp.from(j.expiresAt),j.parentJobId)
     }
     private fun validate(r:JobRequest) {
         if(r.kind !in listOf("PACK","SCHEDULE","CALIBRATION") || (r.fileId==null)==(r.packJobId==null)) bad("Укажите один источник и тип PACK/SCHEDULE/CALIBRATION")
@@ -340,9 +378,15 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
         limits.hit("jobs-ip:${request.remoteAddr}",30,3600)
         return queue.create(actor().id,key,body)
     }
+    /** «Проверить нарезкой» внутри этой же задачи; ответ — id самой задачи (id внутренней проверки наружу не уходит). */
+    @PostMapping("/jobs/{id}/check") fun check(@PathVariable id:String,@RequestHeader("Idempotency-Key") key:String,request:HttpServletRequest):CreatedJob {
+        limits.hit("jobs-ip:${request.remoteAddr}",30,3600)
+        return queue.check(actor().id,key,id)
+    }
+    @PostMapping("/jobs/{id}/check/cancel") fun cancelCheck(@PathVariable id:String) {queue.cancelCheck(id,actor().id)}
     @GetMapping("/jobs") fun list(@RequestParam(defaultValue="0") page:Int):Any {
         if(page !in 0..10000) bad("Некорректная страница")
-        val rows=jobs.findAllByOwnerId(actor().id,PageRequest.of(page,20,org.springframework.data.domain.Sort.by("createdAt").descending()))
+        val rows=jobs.findAllByOwnerIdAndParentJobIdIsNull(actor().id,PageRequest.of(page,20,org.springframework.data.domain.Sort.by("createdAt").descending()))
         return mapOf("items" to rows.content.map { view(it,false,withLayout=false) },"total" to rows.totalElements)
     }
     @GetMapping("/jobs/{id}") fun get(@PathVariable id:String,@RequestParam(defaultValue="false") debug:Boolean,
@@ -352,14 +396,13 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
     @PostMapping("/jobs/{id}/artifacts/{artifact}/download") fun download(@PathVariable id:String,@PathVariable artifact:String,
         @RequestHeader(name="X-Job-Token",required=false) token:String?):Map<String,String> {
         val job=queue.readable(id,actor().id,token)
-        val a=artifacts.findById(artifact).orElse(null)?.takeIf { it.jobId==id } ?: missing()
+        val a=queue.artifactOf(job,artifact) ?: missing()
         val seconds=job.expiresAt?.let { (it.epochSecond-Instant.now().epochSecond).coerceIn(1,300) } ?: 300
         val url=store.signedGet(a.objectKey,a.downloadName,seconds) ?: "/api/v2/jobs/$id/artifacts/$artifact/file"
         return mapOf("url" to url,"filename" to a.downloadName)
     }
     @GetMapping("/jobs/{id}/artifacts/{artifact}/file") fun localDownload(@PathVariable id:String,@PathVariable artifact:String):org.springframework.http.ResponseEntity<ByteArray> {
-        queue.readable(id,actor().id,null)
-        val a=artifacts.findById(artifact).orElse(null)?.takeIf { it.jobId==id } ?: missing()
+        val a=queue.artifactOf(queue.readable(id,actor().id,null),artifact) ?: missing()
         val tmp=Files.createTempFile("goat-download-", ".bin")
         try { store.get(a.objectKey,tmp);return org.springframework.http.ResponseEntity.ok().header("Content-Disposition",org.springframework.http.ContentDisposition.attachment().filename(a.downloadName,Charsets.UTF_8).build().toString()).body(Files.readAllBytes(tmp)) }
         finally { Files.deleteIfExists(tmp) }
@@ -388,7 +431,9 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
         else profiles.list().find { it.id==j.profileId }
     private fun paramsView(r:JobRequest)=com.goatpacker.web.dto.PackParamsDto(r.clearance,r.resolution,r.layout,r.nozzleClean,r.edgeMargin,r.finalSlice,
         r.timeWindowHours,r.timeMarginPct,r.amsCorrection,r.changeSeconds,r.supportOverlapMm,r.customBed)
-    private fun view(j:QueueJobEntity,debug:Boolean,withLayout:Boolean=true):Map<String,Any?> {
+    /** Очередь для статуса: место, оценка ожидания и её причина — одинаково для задачи и её проверки. */
+    private class Waiting(val position:Long?,val estimate:Long?,val reason:String)
+    private fun waiting(j:QueueJobEntity):Waiting {
         val ahead=if(j.status in setOf("QUEUED","RETRY_WAIT")) jdbc.queryForObject("select count(*) from queue_jobs where status in ('QUEUED','RETRY_WAIT') and (created_at,id)<(?,?)",Long::class.java,java.sql.Timestamp.from(j.createdAt),j.id)!! else null
         val capacity=jdbc.queryForObject("select coalesce(sum(capacity),0) from worker_nodes where last_seen_at>now()-interval '30 seconds'",Int::class.java)!!
         val configured=jdbc.queryForObject("select case when paused then 0 else max_parallel end from platform_config where id=1",Int::class.java)!!
@@ -399,6 +444,23 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
         val running=jdbc.queryForObject("select count(*) from queue_jobs where status in ('RUNNING','FINALIZING','LOST')",Long::class.java)!!
         val estimate=if(ahead!=null && slots>0 && (stats["n"] as Number).toInt()>=5)
             (((ahead+running).toDouble()/slots)*(stats["median"] as Number).toDouble()).toLong().coerceAtLeast(0) else null
+        return Waiting(ahead?.plus(1),estimate,if(slots==0) "Нет доступных исполнителей или очередь на паузе" else if(estimate==null) "Недостаточно измерений для надёжной оценки" else "Приблизительно по медиане последних задач; фактическое время может отличаться")
+    }
+    private fun errorView(j:QueueJobEntity,debug:Boolean)=if(debug) j.error else j.error?.substringBefore(com.goatpacker.web.job.CliErrorTranslator.DETAILS_SEPARATOR)?.take(500)
+    /** Артефакты в статусе; [owner] — id, под которым они скачиваются (у проверки — id родителя: id ребёнка наружу не уходит). */
+    private fun artifactsView(j:QueueJobEntity,owner:String,debug:Boolean)=artifacts.findAllByJobId(j.id).filter { debug || !it.debug }
+        .map { mapOf("id" to it.id,"name" to it.downloadName,"sizeBytes" to it.sizeBytes,"downloadUrl" to "/api/v2/jobs/$owner/artifacts/${it.id}/download") }
+    /** Проверка нарезкой внутри задачи (null — не запускалась). Её собственный id в ответ не попадает. */
+    private fun checkView(parent:QueueJobEntity,debug:Boolean,withStage:Boolean):Map<String,Any?>? {
+        val c=queue.checkOf(parent) ?: return null
+        val w=waiting(c)
+        return mapOf("status" to c.status,"queuePosition" to w.position,"estimatedWaitSeconds" to w.estimate,"estimatedWaitFromSeconds" to w.estimate?.div(2),
+            "estimatedWaitToSeconds" to w.estimate?.let { it*2+10 },"estimateReason" to w.reason,
+            "progressPercent" to c.progress,"phaseMessage" to c.message,"error" to errorView(c,debug),"startedAt" to c.startedAt,"finishedAt" to c.finishedAt,
+            "stage" to (if(withStage) stageView(c) else null),"pack" to c.resultJson?.let { mapper.readTree(it) },"artifacts" to artifactsView(c,parent.id,debug))
+    }
+    private fun view(j:QueueJobEntity,debug:Boolean,withLayout:Boolean=true):Map<String,Any?> {
+        val w=waiting(j);val estimate=w.estimate
         val result=j.resultJson?.let { mapper.readTree(it) }
         if(j.kind=="SCHEDULE") result?.path("jobs")?.forEach { row ->
             (row as? com.fasterxml.jackson.databind.node.ObjectNode)?.apply {
@@ -407,22 +469,27 @@ class QueueController(private val queue:DurableQueue,private val jobs:QueueJobRe
             }
         }
         return mapOf("canManage" to (j.ownerId==actor().id),"jobId" to j.id,"kind" to j.kind.lowercase(),"status" to j.status,"phase" to j.phase,"progressPercent" to j.progress,
-            "phaseMessage" to j.message,"error" to (if(debug) j.error else j.error?.substringBefore(com.goatpacker.web.job.CliErrorTranslator.DETAILS_SEPARATOR)?.take(500)),"createdAt" to j.createdAt,"finishedAt" to j.finishedAt,"expiresAt" to j.expiresAt,
-            "originalName" to j.originalName,"queuePosition" to ahead?.plus(1),"estimatedWaitSeconds" to estimate,"estimatedWaitFromSeconds" to estimate?.div(2),"estimatedWaitToSeconds" to estimate?.let { it*2+10 },
-            "estimateReason" to (if(slots==0) "Нет доступных исполнителей или очередь на паузе" else if(estimate==null) "Недостаточно измерений для надёжной оценки" else "Приблизительно по медиане последних задач; фактическое время может отличаться"),
-            "artifacts" to artifacts.findAllByJobId(j.id).filter { debug || !it.debug }.map { mapOf("id" to it.id,"name" to it.downloadName,"sizeBytes" to it.sizeBytes,"downloadUrl" to "/api/v2/jobs/${j.id}/artifacts/${it.id}/download") },
+            "phaseMessage" to j.message,"error" to errorView(j,debug),"createdAt" to j.createdAt,"finishedAt" to j.finishedAt,"expiresAt" to j.expiresAt,
+            "originalName" to j.originalName,"queuePosition" to w.position,"estimatedWaitSeconds" to estimate,"estimatedWaitFromSeconds" to estimate?.div(2),"estimatedWaitToSeconds" to estimate?.let { it*2+10 },
+            "estimateReason" to w.reason,
+            "artifacts" to artifactsView(j,j.id,debug),
             "pack" to if(j.kind=="PACK") result else null,"schedule" to if(j.kind=="SCHEDULE") result else null,
             "calibration" to if(j.kind=="CALIBRATION") result else null,"stage" to stageView(j),
+            // Проверка нарезкой — часть этой задачи (у списка без стадии: она там не нужна).
+            "check" to (if(j.kind=="PACK") checkView(j,debug,withLayout) else null),
             // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
             ) + if(withLayout) {
             // Профиль и настройки — только в статусе одной задачи: список лёгкий.
             val req=if(j.kind=="PACK") runCatching { mapper.readValue(j.paramsJson,JobRequest::class.java) }.getOrNull() else null
-            mapOf("layout" to j.layoutJson?.let { runCatching { mapper.readTree(it) }.getOrNull() },
+            // Раскладка проверки (полная нарезка могла сдвинуть объекты) важнее раскладки упаковки, как только она есть.
+            val layout=(if(j.kind=="PACK") queue.checkOf(j)?.layoutJson else null) ?: j.layoutJson
+            mapOf("layout" to layout?.let { runCatching { mapper.readTree(it) }.getOrNull() },
                 "profile" to req?.let { profileView(j,it) },"params" to req?.let(::paramsView))
         } else emptyMap()
     }
     /** Этап пакера для статуса: прошедшее время считается сейчас (по часам API, startedAtMs — исполнителя). */
     private fun stageView(j:QueueJobEntity):com.goatpacker.web.dto.JobStageDto? =
-        if(j.status !in setOf("RUNNING","FINALIZING")) null
+        // Для упаковки — в любом статусе: фронт показывает пройденные этапы с длительностями и после завершения.
+        if(j.kind!="PACK" && j.status !in setOf("RUNNING","FINALIZING")) null
         else j.stageJson?.let { runCatching { com.goatpacker.web.dto.JobStageDto.of(mapper.readValue(it,com.goatpacker.web.job.JobStage::class.java)) }.getOrNull() }
 }
