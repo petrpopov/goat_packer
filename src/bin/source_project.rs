@@ -9,7 +9,11 @@
 //! Presets are read at run time from the slicer installed in the image (plain JSON) and
 //! flattened by `orca_project`; nothing from Orca is shipped by us. A catalog printer loads its
 //! profile's `vendor` (Orca folder) + `orca_machine`; a custom bed puts W×D×H on Orca's generic
-//! machine (`printer_model` `Custom Printer`). Every failure exits 1 with one line
+//! machine (`printer_model` `Custom Printer`). `--orca` is whichever slicer CLI the job image
+//! carries: in runner-bambu `/opt/slicers/orca/AppRun` is Bambu Studio, and its own BBL tree
+//! exports the same way (verified 2026-11-01 on P1S/A2L: export, pack, final slice OK; the
+//! filament falls back to the vendor's `Generic PLA`, see `orca_project::catalog_presets`). The
+//! A2L has a machine preset only in Bambu Studio's tree. Every failure exits 1 with one line
 //! `error: STL could not be converted: …` (the webapp's CliErrorTranslator keys on it).
 use std::{
     fs,

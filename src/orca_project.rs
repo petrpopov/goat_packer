@@ -105,12 +105,22 @@ pub fn catalog_presets(index: &PresetIndex, vendor: &str, machine: &str) -> Resu
     let process = index
         .select_process(vendor, machine)
         .ok_or_else(|| format!("no process preset for {machine} in {vendor}"))?;
+    let filament = if index.get(FILAMENT_LIBRARY, DEFAULT_FILAMENT).is_some() {
+        cli_preset(index, FILAMENT_LIBRARY, DEFAULT_FILAMENT, machine)?
+    } else {
+        // Bambu Studio's tree (runner-bambu image) has no OrcaFilamentLibrary; its vendor folder
+        // carries the plain `Generic PLA` instead.
+        cli_preset(index, vendor, VENDOR_FILAMENT, machine)?
+    };
     Ok(CliPresets {
         machine: cli_preset(index, vendor, machine, machine)?,
         process: cli_preset(index, vendor, &process, machine)?,
-        filament: cli_preset(index, FILAMENT_LIBRARY, DEFAULT_FILAMENT, machine)?,
+        filament,
     })
 }
+
+/// The vendor-folder filament used when the tree has no Orca filament library (Bambu Studio).
+pub const VENDOR_FILAMENT: &str = "Generic PLA";
 
 /// Orca's generic machine (`CUSTOM_BASE_MACHINE`) with the user's bed: `printable_area`
 /// `[0,0,w,d]`, `printable_height` h, no excluded area (`["0x0"]`, what Orca itself writes for
@@ -437,6 +447,21 @@ mod tests {
         assert_eq!(presets.filament_name(), DEFAULT_FILAMENT);
         assert_eq!(presets.bed().unwrap(), ([0.0, 0.0, 220.0, 220.0], vec![[0.0, 0.0, 18.0, 28.0]]));
         assert!(catalog_presets(&catalog_fixture(), "Acme", "Nope 0.4 nozzle").is_err());
+    }
+
+    #[test]
+    fn a_tree_without_the_orca_filament_library_uses_the_vendors_generic_pla() {
+        // Bambu Studio's resources/profiles (runner-bambu image): BBL/filament/Generic PLA.json,
+        // no OrcaFilamentLibrary.
+        let mut index = PresetIndex::default();
+        index.insert("BBL", json!({"type": "machine", "name": "Bambu Lab P1S 0.4 nozzle", "instantiation": "true",
+            "printable_area": ["0x0", "256x0", "256x256", "0x256"], "printer_model": "Bambu Lab P1S"}));
+        index.insert("BBL", json!({"type": "process", "name": "0.20mm Standard @BBL X1C", "instantiation": "true",
+            "layer_height": "0.2", "compatible_printers": ["Bambu Lab P1S 0.4 nozzle"]}));
+        index.insert("BBL", json!({"type": "filament", "name": VENDOR_FILAMENT, "instantiation": "true", "filament_type": ["PLA"]}));
+        let presets = catalog_presets(&index, "BBL", "Bambu Lab P1S 0.4 nozzle").unwrap();
+        assert_eq!(presets.filament_name(), VENDOR_FILAMENT);
+        assert_eq!(presets.filament["compatible_printers"], json!(["Bambu Lab P1S 0.4 nozzle"]));
     }
 
     #[test]
