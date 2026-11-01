@@ -21,7 +21,7 @@ use goat_packer::{
         RelocatedTower, TOWER_TARGET_TOLERANCE_MM, centre_out_order, ensure_relocated_tower_clear,
         loops_bounds, plate_centre,
         relocate_keepout, relocate_wipe_tower_in_3mf, smallest_containing_zone,
-        tower_corner_error_mm, union_rect,
+        tower_corner_error_mm, union_rect, free_tower_spot,
     },
     progress::{self, RepackReason, Stage, expected_reslice_seconds, expected_slice_seconds},
     print_time::{
@@ -668,9 +668,21 @@ fn run() -> AppResult<()> {
     };
     // The webapp scene draws every winning layout; the first one is "pack", later ones "repack".
     let mut layout_source = progress::LayoutSource::Pack;
+    // Set once the slicer rejected a moved tower: from then on it stays at the source.
+    let mut tower_pinned = false;
     loop {
         if let Some(centre) = centre {
             order_centre_out(&plan.footprint, &mut packed, centre);
+        }
+        // Supports may enter the tower area (`body_exclusions`), but when the plate has a free
+        // spot the tower goes there instead: same objects, no scrap printed into the tower.
+        // Centre-out plates keep their tower at the target.
+        if let (None, Some(probe), false) = (centre, probe_tower, tower_pinned)
+            && let Some(relocated) = clear_tower_of_patches(&args, &profile, &plan, &packed, probe.keepout)?
+        {
+            plan.tower_keepout = Some(relocated.keepout);
+            plan.relocation = Some(relocated);
+            tower_from_contest = true;
         }
         progress::layout(
             layout_source,
@@ -707,11 +719,12 @@ fn run() -> AppResult<()> {
             // fine) gets one repack before the error is final.
             Err(error) if tower_from_contest => {
                 println!(
-                    "final slice failed with the tower moved to a corner; repacking with the \
-                     tower at its source position\n  {}",
+                    "final slice failed with the tower moved off its source position; \
+                     repacking with the tower at its source position\n  {}",
                     error.to_string().lines().take(2).collect::<Vec<_>>().join("\n  ")
                 );
                 tower_from_contest = false;
+                tower_pinned = true;
                 plan.relocation = None;
                 plan.tower_keepout = probe_tower.map(|tower| tower.keepout);
                 repacked = true;
@@ -1299,6 +1312,83 @@ fn choose_tower_position(
         );
     }
     Ok((relocation, packed))
+}
+
+/// When a placement's full patch (supports included) touches the reserved tower keepout,
+/// the nearest spot of the usable bed where a tower of the same width, with the corner
+/// contest's growth room above it, keeps the clearance from every patch and fixed keepout
+/// (`None`: nothing touches, or no such spot). Corner contest rules apply: the spot keeps
+/// `CORNER_TOWER_INSET_MM` from the bed edge, and the shift is relative to the probe keepout,
+/// whose corner the source `wipe_tower_x/y` anchors.
+fn clear_tower_of_patches(
+    args: &Args,
+    profile: &PrinterProfile,
+    plan: &PackPlan,
+    packed: &PackResult,
+    probe_keepout: Rect,
+) -> AppResult<Option<RelocatedTower>> {
+    let Some(reserved) = plan.tower_keepout else {
+        return Ok(None);
+    };
+    // The patch and its bed variant (patch ∪ overhanging silhouette) stay separate objects:
+    // both cover the same area, and one even-odd loop set would read the overlap as a hole.
+    let mut overhang = plan.footprint.clone();
+    overhang.loops = plan.footprint.bed_loops.clone().unwrap_or_default();
+    let objects: Vec<Vec<Vec<Point>>> = packed
+        .placements
+        .iter()
+        .flat_map(|placement| {
+            [
+                placement_world_loops(&plan.footprint, placement),
+                placement_world_loops(&overhang, placement),
+            ]
+        })
+        .filter(|loops| !loops.is_empty())
+        .collect();
+    let reach = |rect: Rect| {
+        Rect::new(
+            rect.min_x - args.clearance,
+            rect.min_y - args.clearance,
+            rect.max_x + args.clearance,
+            rect.max_y + args.clearance,
+        )
+    };
+    let touching = packed
+        .placements
+        .iter()
+        .filter(|placement| {
+            [&plan.footprint, &overhang]
+                .iter()
+                .any(|zone| loops_touch_rect(&placement_world_loops(zone, placement), reach(reserved)))
+        })
+        .count();
+    if touching == 0 {
+        return Ok(None);
+    }
+    let width = reserved.max_x - reserved.min_x;
+    let depth = (reserved.max_y - reserved.min_y)
+        .max((probe_keepout.max_y - probe_keepout.min_y) * (1.0 + CORNER_TOWER_GROWTH));
+    let area = profile.usable_bed()?.inset(CORNER_TOWER_INSET_MM)?;
+    let Some(spot) = free_tower_spot(
+        reserved,
+        (width, depth),
+        area,
+        &objects,
+        &plan.fixed_keepouts,
+        args.clearance,
+    ) else {
+        println!(
+            "prime tower touches the supports of {touching} placement(s); no free spot to move it"
+        );
+        return Ok(None);
+    };
+    let shift = (spot.min_x - probe_keepout.min_x, spot.min_y - probe_keepout.min_y);
+    println!(
+        "prime tower touches the supports of {touching} placement(s); moving it to a free spot \
+         by ({:+.1}, {:+.1}) mm from the source: keepout {:.2},{:.2} → {:.2},{:.2}",
+        shift.0, shift.1, spot.min_x, spot.min_y, spot.max_x, spot.max_y
+    );
+    Ok(Some(RelocatedTower { keepout: spot, shift }))
 }
 
 /// The body loops of one placement in bed coordinates (the whole footprint when it has no

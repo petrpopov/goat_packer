@@ -245,3 +245,131 @@ pub fn smallest_containing_zone(zones: &[HeatZone], bbox: Rect) -> Option<&HeatZ
 pub fn tower_corner_error_mm(measured: Rect, target: Rect) -> f64 {
     (measured.min_x - target.min_x).hypot(measured.min_y - target.min_y)
 }
+
+/// Grid step of the free-spot search and of its occupancy raster.
+const FREE_SPOT_STEP_MM: f64 = 0.5;
+
+/// How many of the nearest raster-free spots get the exact check before giving up: the raster
+/// is conservative, so the first one almost always passes.
+const FREE_SPOT_EXACT_CHECKS: usize = 64;
+
+/// The free place nearest to `current` (by min corner, which `wipe_tower_x/y` anchors) for a
+/// tower keepout of `size` inside `area`: it must keep `clearance` from every object's loops
+/// (the full patch, supports included) and must not overlap a fixed keepout. `None` when no
+/// such place exists.
+///
+/// The objects are rasterized at `FREE_SPOT_STEP_MM` and dilated by the clearance plus one
+/// pixel (pixel-centre sampling misses up to half a diagonal), a summed-area table finds every
+/// empty window, and the nearest windows are confirmed against the exact loops.
+pub fn free_tower_spot(
+    current: Rect,
+    size: (f64, f64),
+    area: Rect,
+    objects: &[Vec<Vec<Point>>],
+    fixed_keepouts: &[Rect],
+    clearance: f64,
+) -> Option<Rect> {
+    let step = FREE_SPOT_STEP_MM;
+    let columns = ((area.max_x - area.min_x) / step).floor() as usize;
+    let rows = ((area.max_y - area.min_y) / step).floor() as usize;
+    let (span_x, span_y) = ((size.0 / step).ceil() as usize, (size.1 / step).ceil() as usize);
+    if columns < span_x || rows < span_y {
+        return None;
+    }
+    let mut occupied = vec![false; columns * rows];
+    for loops in objects {
+        for row in 0..rows {
+            let y = area.min_y + (row as f64 + 0.5) * step;
+            let mut crossings: Vec<f64> = loops
+                .iter()
+                .flat_map(|loop_| loop_.windows(2))
+                .filter(|edge| (edge[0].y > y) != (edge[1].y > y))
+                .map(|edge| {
+                    let (a, b) = (edge[0], edge[1]);
+                    a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y)
+                })
+                .collect();
+            crossings.sort_by(f64::total_cmp);
+            for pair in crossings.chunks_exact(2) {
+                let first = ((pair[0] - area.min_x) / step - 0.5).ceil().max(0.0) as usize;
+                let last = ((pair[1] - area.min_x) / step - 0.5).floor();
+                if last < 0.0 {
+                    continue;
+                }
+                for column in first..=(last as usize).min(columns - 1) {
+                    occupied[row * columns + column] = true;
+                }
+            }
+        }
+    }
+    let radius = (clearance / step).ceil() as usize + 1;
+    let mut dilated = occupied.clone();
+    for row in 0..rows {
+        for column in 0..columns {
+            if !occupied[row * columns + column] {
+                continue;
+            }
+            for r in row.saturating_sub(radius)..(row + radius + 1).min(rows) {
+                for c in column.saturating_sub(radius)..(column + radius + 1).min(columns) {
+                    dilated[r * columns + c] = true;
+                }
+            }
+        }
+    }
+    // Fixed keepouts block every pixel they touch (edge contact is not an overlap).
+    for rect in fixed_keepouts {
+        let c0 = ((rect.min_x - area.min_x) / step).floor().max(0.0) as usize;
+        let c1 = (((rect.max_x - area.min_x) / step).ceil().max(0.0) as usize).min(columns);
+        let r0 = ((rect.min_y - area.min_y) / step).floor().max(0.0) as usize;
+        let r1 = (((rect.max_y - area.min_y) / step).ceil().max(0.0) as usize).min(rows);
+        for r in r0..r1 {
+            for c in c0..c1 {
+                dilated[r * columns + c] = true;
+            }
+        }
+    }
+    let width = columns + 1;
+    let mut sums = vec![0u32; width * (rows + 1)];
+    for row in 0..rows {
+        for column in 0..columns {
+            sums[(row + 1) * width + column + 1] = u32::from(dilated[row * columns + column])
+                + sums[row * width + column + 1]
+                + sums[(row + 1) * width + column]
+                - sums[row * width + column];
+        }
+    }
+    let empty = |row: usize, column: usize| {
+        let (r1, c1) = (row + span_y, column + span_x);
+        sums[r1 * width + c1] + sums[row * width + column]
+            == sums[row * width + c1] + sums[r1 * width + column]
+    };
+    let mut spots: Vec<(f64, Rect)> = Vec::new();
+    for row in 0..=rows - span_y {
+        for column in 0..=columns - span_x {
+            if !empty(row, column) {
+                continue;
+            }
+            let (x, y) = (area.min_x + column as f64 * step, area.min_y + row as f64 * step);
+            let spot = Rect::new(x, y, x + size.0, y + size.1);
+            if spot.max_x > area.max_x + 1e-9 || spot.max_y > area.max_y + 1e-9 {
+                continue;
+            }
+            spots.push(((x - current.min_x).hypot(y - current.min_y), spot));
+        }
+    }
+    spots.sort_by(|a, b| a.0.total_cmp(&b.0));
+    spots
+        .into_iter()
+        .take(FREE_SPOT_EXACT_CHECKS)
+        .map(|(_, spot)| spot)
+        .find(|spot| {
+            let reach = Rect::new(
+                spot.min_x - clearance,
+                spot.min_y - clearance,
+                spot.max_x + clearance,
+                spot.max_y + clearance,
+            );
+            ensure_relocated_tower_clear(*spot, fixed_keepouts).is_ok()
+                && !objects.iter().any(|loops| crate::loops_touch_rect(loops, reach))
+        })
+}

@@ -7,7 +7,7 @@ use goat_packer::{
         HeatZone, centre_out_order, ensure_relocated_tower_clear, loops_bounds, plate_centre,
         relocate_keepout,
         relocate_wipe_tower_in_3mf, shift_wipe_tower_settings, smallest_containing_zone,
-        tower_corner_error_mm,
+        tower_corner_error_mm, free_tower_spot,
     },
 };
 use serde_json::json;
@@ -241,4 +241,67 @@ fn tower_corner_error_ignores_one_sided_growth() {
     let target = Rect::new(145.0, 135.0, 185.0, 185.0);
     let grown = Rect::new(145.0, 135.0, 185.0, 215.0);
     assert_close(tower_corner_error_mm(grown, target), 0.0);
+}
+
+// ---- free tower spot -----------------------------------------------------------------------
+
+fn square(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<Vec<Point>> {
+    vec![vec![
+        Point { x: min_x, y: min_y },
+        Point { x: max_x, y: min_y },
+        Point { x: max_x, y: max_y },
+        Point { x: min_x, y: max_y },
+        Point { x: min_x, y: min_y },
+    ]]
+}
+
+fn grown(rect: Rect, margin: f64) -> Rect {
+    Rect::new(rect.min_x - margin, rect.min_y - margin, rect.max_x + margin, rect.max_y + margin)
+}
+
+#[test]
+fn free_tower_spot_moves_the_tower_off_a_patch_to_the_nearest_free_place() {
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let current = Rect::new(60.0, 60.0, 80.0, 80.0);
+    let objects = vec![square(10.0, 10.0, 70.0, 70.0)];
+    let spot = free_tower_spot(current, (20.0, 20.0), area, &objects, &[], 1.0).unwrap();
+
+    assert_close(spot.max_x - spot.min_x, 20.0);
+    assert_close(spot.max_y - spot.min_y, 20.0);
+    assert!(spot.min_x >= 0.0 && spot.min_y >= 0.0 && spot.max_x <= 100.0 && spot.max_y <= 100.0);
+    assert!(!goat_packer::loops_touch_rect(&objects[0], grown(spot, 1.0)), "{spot:?}");
+    // Right or up by 11 mm clears the square with 1 mm clearance; the raster may add ~1 mm.
+    let shift = (spot.min_x - current.min_x).hypot(spot.min_y - current.min_y);
+    assert!(shift <= 12.5, "shift {shift}, spot {spot:?}");
+}
+
+#[test]
+fn free_tower_spot_respects_fixed_keepouts() {
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let current = Rect::new(60.0, 60.0, 80.0, 80.0);
+    let objects = vec![square(10.0, 10.0, 70.0, 70.0)];
+    // The whole top band is a printer exclusion: only the right column is left.
+    let fixed = [Rect::new(0.0, 72.0, 100.0, 100.0)];
+    let spot = free_tower_spot(current, (20.0, 20.0), area, &objects, &fixed, 1.0).unwrap();
+    assert!(spot.max_y <= 72.0 + 1e-9, "{spot:?}");
+    assert!(spot.min_x >= 71.0 - 1e-9, "{spot:?}");
+    assert!(ensure_relocated_tower_clear(spot, &fixed).is_ok());
+}
+
+#[test]
+fn free_tower_spot_is_none_when_nothing_fits() {
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let current = Rect::new(60.0, 60.0, 80.0, 80.0);
+    let objects = vec![square(5.0, 5.0, 95.0, 95.0)];
+    assert_eq!(free_tower_spot(current, (20.0, 20.0), area, &objects, &[], 1.0), None);
+}
+
+#[test]
+fn free_tower_spot_reads_every_object_as_solid() {
+    // One object per loop set: the same square passed twice must block like one square.
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let current = Rect::new(40.0, 40.0, 50.0, 50.0);
+    let objects = vec![square(30.0, 30.0, 60.0, 60.0), square(30.0, 30.0, 60.0, 60.0)];
+    let spot = free_tower_spot(current, (10.0, 10.0), area, &objects, &[], 1.0).unwrap();
+    assert!(!goat_packer::loops_touch_rect(&objects[0], grown(spot, 1.0)), "{spot:?}");
 }
