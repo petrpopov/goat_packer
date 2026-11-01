@@ -33,7 +33,8 @@ fn main() {
 
     // The binary centers the patch on the model's world center; None centers it on the
     // body's own bbox center. Compare both framings.
-    for (cx, cy) in [(128.0f64, 128.0f64)] {
+    {
+        let (cx, cy) = (128.0f64, 128.0f64);
         let centered = first_layer_footprint(&gcode, Some((cx, cy))).expect("patch");
         let v = patch_within_silhouette(&centered, &silhouette, 0.25, 1.2);
         println!(

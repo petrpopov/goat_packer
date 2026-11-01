@@ -40,10 +40,11 @@ pub fn purge_lines(gcode: &str, printable: [f64; 4]) -> Vec<[f64; 5]> {
                     None => 0.0,
                 };
                 let len = ((nx - x).powi(2) + (ny - y).powi(2)).sqrt();
-                if de > 0.0 && len > 0.5 {
-                    if let Some(strip) = strip(x, y, nx, ny, de, len, z.max(0.05), printable) {
-                        out.push(strip);
-                    }
+                if de > 0.0
+                    && len > 0.5
+                    && let Some(strip) = strip(x, y, nx, ny, de, len, z.max(0.05), printable)
+                {
+                    out.push(strip);
                 }
                 x = nx;
                 y = ny;

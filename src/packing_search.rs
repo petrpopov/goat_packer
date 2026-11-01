@@ -1,174 +1,15 @@
 //! Deterministic packing in a geometry-derived frame. No-fit rasters describe every
 //! forbidden relative integer translation, so a search scans free *bits*, not collisions.
-use super::*;
-use geo::{ConvexHull, MultiPoint};
-
-pub(super) struct Frame {
-    pub footprint: Footprint,
-    angle: f64,
-    center: Point,
-}
-
-fn rotate(p: Point, angle: f64) -> Point {
-    let (s, c) = angle.to_radians().sin_cos();
-    Point {
-        x: p.x * c - p.y * s,
-        y: p.x * s + p.y * c,
-    }
-}
-
-impl Frame {
-    pub fn new(fp: &Footprint, locked: bool) -> Self {
-        if locked {
-            return Self {
-                footprint: fp.clone(),
-                angle: 0.0,
-                center: Point { x: 0.0, y: 0.0 },
-            };
-        }
-        let points: Vec<Point> = fp
-            .loops
-            .iter()
-            .chain(&fp.body_loops)
-            .chain(&fp.support_landing_loops)
-            .chain(fp.bed_loops.iter().flatten())
-            .flatten()
-            .copied()
-            .collect();
-        let hull =
-            MultiPoint::from(points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>()).convex_hull();
-        let vertices: Vec<Point> = hull
-            .exterior()
-            .0
-            .iter()
-            .map(|p| Point { x: p.x, y: p.y })
-            .collect();
-        let quant = |v: f64| (v * 1e6).round() as i64;
-        let mut best = None;
-        for edge in vertices.windows(2) {
-            let angle = -(edge[1].y - edge[0].y)
-                .atan2(edge[1].x - edge[0].x)
-                .to_degrees();
-            let rotated: Vec<_> = vertices.iter().map(|&p| rotate(p, angle)).collect();
-            let min_x = rotated.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-            let max_x = rotated
-                .iter()
-                .map(|p| p.x)
-                .fold(f64::NEG_INFINITY, f64::max);
-            let min_y = rotated.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-            let max_y = rotated
-                .iter()
-                .map(|p| p.y)
-                .fold(f64::NEG_INFINITY, f64::max);
-            let (w, h) = (max_x - min_x, max_y - min_y);
-            let center = Point {
-                x: (min_x + max_x) / 2.0,
-                y: (min_y + max_y) / 2.0,
-            };
-            // Prefer the long side horizontal; resolve half-turn/symmetry ties using geometry,
-            // never vertex order, winding, absolute coordinates, or the input angle.
-            let mut signature: Vec<_> = points
-                .iter()
-                .map(|&p| {
-                    let q = rotate(p, angle);
-                    (quant(q.x - center.x), quant(q.y - center.y))
-                })
-                .collect();
-            signature.sort_unstable();
-            signature.dedup();
-            let key = (quant(w * h), quant(-w), signature);
-            if best.as_ref().is_none_or(|(old, _, _)| key < *old) {
-                best = Some((key, angle, center));
-            }
-        }
-        let (_, angle, rotated_center) = best.expect("nondegenerate footprint");
-        let center = rotate(rotated_center, -angle);
-        let transform = |loops: &[Vec<Point>]| {
-            loops
-                .iter()
-                .map(|ring| {
-                    ring.iter()
-                        .map(|&p| {
-                            let q = rotate(
-                                Point {
-                                    x: p.x - center.x,
-                                    y: p.y - center.y,
-                                },
-                                angle,
-                            );
-                            // Numerical noise below a tenth of a micron must not move a raster boundary.
-                            Point {
-                                x: (q.x * 1e7).round() / 1e7,
-                                y: (q.y * 1e7).round() / 1e7,
-                            }
-                        })
-                        .collect()
-                })
-                .collect()
-        };
-        let mut footprint = fp.clone();
-        footprint.loops = transform(&fp.loops);
-        footprint.body_loops = transform(&fp.body_loops);
-        footprint.support_landing_loops = transform(&fp.support_landing_loops);
-        footprint.bed_loops = fp.bed_loops.as_ref().map(|l| transform(l));
-        footprint.layer_zones = fp
-            .layer_zones
-            .iter()
-            .map(|zone| crate::LayerZone {
-                support_loops: transform(&zone.support_loops),
-                body_loops: transform(&zone.body_loops),
-            })
-            .collect();
-        footprint.width = footprint
-            .loops
-            .iter()
-            .flatten()
-            .map(|p| p.x)
-            .fold(f64::NEG_INFINITY, f64::max)
-            - footprint
-                .loops
-                .iter()
-                .flatten()
-                .map(|p| p.x)
-                .fold(f64::INFINITY, f64::min);
-        footprint.height = footprint
-            .loops
-            .iter()
-            .flatten()
-            .map(|p| p.y)
-            .fold(f64::NEG_INFINITY, f64::max)
-            - footprint
-                .loops
-                .iter()
-                .flatten()
-                .map(|p| p.y)
-                .fold(f64::INFINITY, f64::min);
-        Self {
-            footprint,
-            angle,
-            center,
-        }
-    }
-
-    pub fn to_input(&self, p: &PackedPlacement) -> PackedPlacement {
-        let angle = (p.angle_deg + self.angle).rem_euclid(360.0);
-        let offset = rotate(self.center, angle);
-        PackedPlacement {
-            x_mm: p.x_mm - offset.x,
-            y_mm: p.y_mm - offset.y,
-            angle_deg: angle,
-        }
-    }
-
-    pub fn to_canonical(&self, p: &PackedPlacement) -> PackedPlacement {
-        let offset = rotate(self.center, p.angle_deg);
-        PackedPlacement {
-            x_mm: p.x_mm + offset.x,
-            y_mm: p.y_mm + offset.y,
-            angle_deg: ((p.angle_deg - self.angle).rem_euclid(360.0) * 1e9).round() / 1e9,
-        }
-    }
-}
+use crate::collision::{origin_range, zone_pairs};
+use crate::footprint::Footprint;
+use crate::frame::Frame;
+use crate::grid::grid_layout_inner;
+use crate::layout::{PixelPlacement, better_layout, cap_reached, layout_bbox_area};
+use crate::options::{PackOptions, PackResult, PackedPlacement};
+use crate::pixel_mask::set_bit_range;
+use crate::raster_mask::{RasterMask, rasterize_footprint_with_support};
+use crate::span_raster::{SpanRaster, merge_spans};
+use rayon::prelude::*;
 
 /// All integer translations of B relative to A that overlap at least one occupied pixel.
 /// Span difference: [a,b) - [c,d) = [a-d+1,b-c). Holes remain holes.
@@ -233,7 +74,7 @@ impl FreeCenters {
     fn new(mask: &RasterMask, options: &PackOptions) -> Self {
         let r = options.resolution;
         let b = mask.bed_physical_bounds;
-        let (min_x, min_y, max_x, max_y) = crate::origin_range(options, mask);
+        let (min_x, min_y, max_x, max_y) = origin_range(options, mask);
         let width = (max_x - min_x + 1).max(0) as usize;
         let height = (max_y - min_y + 1).max(0) as usize;
         let mut this = Self {
@@ -253,19 +94,15 @@ impl FreeCenters {
         ];
         for (exclusions, b) in zones {
             for exclusion in exclusions {
-                let lo_x = ((exclusion.min_x - options.bed.min_x - b.max_x - options.clearance)
-                    / r)
+                let lo_x = ((exclusion.min_x - options.bed.min_x - b.max_x - options.clearance) / r)
                     .floor() as i32
                     + 1;
-                let hi_x = ((exclusion.max_x - options.bed.min_x - b.min_x + options.clearance)
-                    / r)
+                let hi_x = ((exclusion.max_x - options.bed.min_x - b.min_x + options.clearance) / r)
                     .ceil() as i32;
-                let lo_y = ((exclusion.min_y - options.bed.min_y - b.max_y - options.clearance)
-                    / r)
+                let lo_y = ((exclusion.min_y - options.bed.min_y - b.max_y - options.clearance) / r)
                     .floor() as i32
                     + 1;
-                let hi_y = ((exclusion.max_y - options.bed.min_y - b.min_y + options.clearance)
-                    / r)
+                let hi_y = ((exclusion.max_y - options.bed.min_y - b.min_y + options.clearance) / r)
                     .ceil() as i32;
                 for y in lo_y.max(min_y)..hi_y.min(max_y + 1) {
                     this.clear(y, lo_x, hi_x);
@@ -317,7 +154,7 @@ impl FreeCenters {
             let row = &self.rows[y];
             for j in 0..row.len() {
                 let index = if reverse_x { row.len() - 1 - j } else { j };
-                let skip = [0, 2, 1, 3][phase % 4] * self.width / 4;
+                let skip = [0, 2, 1, 3][phase % START_PHASES] * self.width / START_PHASES;
                 let lo = if reverse_x { 0 } else { skip };
                 let hi = if reverse_x {
                     self.width - skip
@@ -348,11 +185,102 @@ impl FreeCenters {
     }
 }
 
+/// Mixed palette: the strongest single-orientation families are intermixed rather than
+/// restricting the whole plate to a half-turn pair, and orthogonal orientations are added as
+/// well — rectangles can need a windmill layout even when all single-orientation runs tie.
+const MIXED_FAMILIES: usize = 4;
+/// Quarter turns tried around each shortlisted family's angle (degrees).
+const MIXED_OFFSETS_DEG: [f64; 4] = [0.0, 90.0, 180.0, 270.0];
+/// A sweep starts from one of the bed's four corners. Variants run through the corners fastest,
+/// then through which mask places the first object, then (every `START_PHASE_STRIDE` variants
+/// per mask) through the start phase.
+const CORNERS: usize = 4;
+/// The first object of a plate may start a quarter, half or three quarters along the first row
+/// (`START_PHASES` positions, in the order `FreeCenters::first` tries them).
+const START_PHASES: usize = 4;
+/// Variants per mask between two start phases: all corners, twice (straight and cycling).
+const START_PHASE_STRIDE: usize = 2 * CORNERS;
+/// Candidate heights are compared as integers at this many units per pixel, so float noise
+/// cannot reorder two candidates that are equally high.
+const HEIGHT_QUANTUM: f64 = 1e6;
+/// Sweep variants per palette angle in the mixed pass.
+const MIXED_VARIANTS_PER_ANGLE: usize = 8;
+/// Most sweep variants any single family runs, however high the requested effort.
+const MAX_SWEEP_VARIANTS: usize = 64;
+
+/// A candidate origin for the next object, ordered by the sweep's preference.
+struct Candidate {
+    /// Height of the placement's far edge in sweep direction, quantized so ties compare exactly.
+    top: i64,
+    side: i32,
+    mask: usize,
+    placement: PixelPlacement,
+}
+
+/// Which corner a sweep starts from (bit 0 = from the right, bit 1 = from the top): a fixed
+/// corner, or cycling around the four corners once `variant` is far enough along. The latter
+/// avoids greedy height traps such as four 6x4 rectangles around a 2x2 central hole.
+fn sweep_corner(variant: usize, placed: usize, mask_count: usize) -> usize {
+    if (variant / (CORNERS * mask_count)).is_multiple_of(2) {
+        variant % CORNERS
+    } else {
+        (variant % CORNERS) ^ [0, 1, 3, 2][placed % CORNERS]
+    }
+}
+
+/// The best next placement over every mask's free centers, or `None` when nothing fits.
+fn next_placement(
+    free: &[FreeCenters],
+    masks: &[RasterMask],
+    options: &PackOptions,
+    variant: usize,
+    placed: usize,
+) -> Option<PixelPlacement> {
+    let corner = sweep_corner(variant, placed, masks.len());
+    let reverse_x = corner & 1 != 0;
+    let reverse_y = corner & 2 != 0;
+    let phase = if placed == 0 {
+        variant / (START_PHASE_STRIDE * masks.len())
+    } else {
+        0
+    };
+    let candidates = free.iter().enumerate().filter_map(|(i, f)| {
+        let (x, y) = f.first(reverse_x, reverse_y, phase)?;
+        let b = masks[i].bed_physical_bounds;
+        let top = if reverse_y {
+            -f64::from(y) - b.min_y / options.resolution
+        } else {
+            f64::from(y) + b.max_y / options.resolution
+        };
+        Some(Candidate {
+            top: (top * HEIGHT_QUANTUM).round() as i64,
+            side: if reverse_x { -x } else { x },
+            mask: i,
+            placement: PixelPlacement { mask: i, x, y },
+        })
+    });
+    let best = candidates.min_by(|a, b| {
+        if placed == 0 {
+            let first = (variant / CORNERS) % masks.len();
+            let rank = |i| (i + masks.len() - first) % masks.len();
+            rank(a.mask)
+                .cmp(&rank(b.mask))
+                .then(a.top.cmp(&b.top))
+                .then(a.side.cmp(&b.side))
+        } else {
+            (a.top, a.side, a.mask).cmp(&(b.top, b.side, b.mask))
+        }
+    });
+    best.map(|candidate| candidate.placement)
+}
+
+/// Greedy sweeps over `masks`, one per variant; returns the best layout and the first
+/// sweep's (count, bbox area) as the family's baseline.
 fn pair_search(
     masks: &[RasterMask],
     options: &PackOptions,
     variants: usize,
-) -> (Vec<GridPlacement>, (usize, f64)) {
+) -> (Vec<PixelPlacement>, (usize, f64)) {
     let nfps: Vec<Vec<_>> = masks
         .par_iter()
         .map(|a| masks.iter().map(|b| no_fit(a, b)).collect())
@@ -363,55 +291,7 @@ fn pair_search(
     for variant in 0..variants {
         let mut free = initial.clone();
         let mut placed = Vec::new();
-        loop {
-            // Sweep from a fixed corner, or cycle around the four corners. The latter avoids
-            // greedy height traps such as four 6x4 rectangles around a 2x2 central hole.
-            let corner = if (variant / (4 * masks.len())).is_multiple_of(2) {
-                variant % 4
-            } else {
-                (variant % 4) ^ [0, 1, 3, 2][placed.len() % 4]
-            };
-            let reverse_x = corner & 1 != 0;
-            let reverse_y = corner & 2 != 0;
-            let candidate = free
-                .iter()
-                .enumerate()
-                .filter_map(|(i, f)| {
-                    let phase = if placed.is_empty() {
-                        variant / (8 * masks.len())
-                    } else {
-                        0
-                    };
-                    let (x, y) = f.first(reverse_x, reverse_y, phase)?;
-                    let b = masks[i].bed_physical_bounds;
-                    let top = if reverse_y {
-                        -f64::from(y) - b.min_y / options.resolution
-                    } else {
-                        f64::from(y) + b.max_y / options.resolution
-                    };
-                    let side = if reverse_x { -x } else { x };
-                    Some((
-                        (top * 1e6).round() as i64,
-                        side,
-                        i,
-                        GridPlacement { mask: i, x, y },
-                    ))
-                })
-                .min_by(|a, b| {
-                    if placed.is_empty() {
-                        let first = (variant / 4) % masks.len();
-                        let rank = |i| (i + masks.len() - first) % masks.len();
-                        rank(a.2)
-                            .cmp(&rank(b.2))
-                            .then(a.0.cmp(&b.0))
-                            .then(a.1.cmp(&b.1))
-                    } else {
-                        (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2))
-                    }
-                });
-            let Some((_, _, _, p)) = candidate else {
-                break;
-            };
+        while let Some(p) = next_placement(&free, masks, options, variant, placed.len()) {
             for (i, f) in free.iter_mut().enumerate() {
                 f.exclude(&nfps[p.mask][i], p.x, p.y);
             }
@@ -428,79 +308,115 @@ fn pair_search(
     (best, baseline)
 }
 
-pub(super) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
+fn pack_layout(
+    layout: &[PixelPlacement],
+    masks: &[RasterMask],
+    options: &PackOptions,
+) -> Vec<PackedPlacement> {
+    layout
+        .iter()
+        .map(|p| p.to_packed(masks[p.mask].angle_deg, options))
+        .collect()
+}
+
+/// The best layout of one angle family: a mask at `angle` and (unless the orientation is
+/// locked) its half-turn.
+struct Family {
+    placements: Vec<PackedPlacement>,
+    area: f64,
+    /// (objects, bbox area) of the first sweep alone.
+    baseline: (usize, f64),
+}
+
+fn search_family(frame: &Frame, angle: f64, options: &PackOptions, variants: usize) -> Family {
+    let rasterize = |angle: f64| {
+        rasterize_footprint_with_support(
+            &frame.footprint,
+            angle,
+            options.resolution,
+            options.clearance,
+            options.support_overlap_mm,
+        )
+    };
+    let mut masks = vec![rasterize(angle)];
+    if !options.lock_orientation {
+        masks.push(rasterize(angle + 180.0));
+    }
+    let (best, baseline) = pair_search(&masks, options, variants);
+    Family {
+        area: layout_bbox_area(&best, &masks),
+        placements: pack_layout(&best, &masks, options),
+        baseline,
+    }
+}
+
+/// Angle families ordered by their first sweep alone: increasing effort never removes a
+/// previously searched mixed palette, and together with prefix-ordered sweeps this makes
+/// effort monotone. Returns family indices, best first.
+fn shortlist(families: &[Family]) -> Vec<usize> {
+    let mut ranked: Vec<usize> = (0..families.len()).collect();
+    ranked.sort_by(|&ia, &ib| {
+        let (a, b) = (&families[ia], &families[ib]);
+        b.baseline
+            .0
+            .cmp(&a.baseline.0)
+            .then(a.baseline.1.total_cmp(&b.baseline.1))
+            .then(ia.cmp(&ib))
+    });
+    ranked
+}
+
+/// The winning family: most objects, then smallest bbox, then the earliest angle.
+fn best_family(families: &[Family]) -> &Family {
+    let mut ranked: Vec<usize> = (0..families.len()).collect();
+    ranked.sort_by(|&ia, &ib| {
+        let (a, b) = (&families[ia], &families[ib]);
+        b.placements
+            .len()
+            .cmp(&a.placements.len())
+            .then(a.area.total_cmp(&b.area))
+            .then(ia.cmp(&ib))
+    });
+    &families[ranked[0]]
+}
+
+/// Angles (degrees) of the mixed palette: the shortlisted families' angles and their
+/// quarter turns, without duplicates. Only a bounded local palette needs quadratic no-fit
+/// maps; the full angle grid never incurs an O(angles^2) allocation.
+fn mixed_palette(shortlist: &[usize], options: &PackOptions) -> Vec<f64> {
+    let mut angles: Vec<f64> = Vec::new();
+    for &index in shortlist.iter().take(MIXED_FAMILIES) {
+        let base = index as f64 * options.angle_step_deg;
+        for offset in MIXED_OFFSETS_DEG {
+            let angle = (base + offset).rem_euclid(360.0);
+            if !angles.iter().any(|&a| (a - angle).abs() < 1e-7) {
+                angles.push(angle);
+            }
+        }
+    }
+    angles
+}
+
+pub(crate) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
     let frame = Frame::new(fp, options.lock_orientation);
     let count = if options.lock_orientation {
         1
     } else {
         (180.0 / options.angle_step_deg).ceil().max(1.0) as usize
     };
-    let variants = options.attempts.max(1).div_ceil(count).clamp(1, 64);
-    let results: Vec<_> = (0..count)
+    let variants = options
+        .attempts
+        .max(1)
+        .div_ceil(count)
+        .clamp(1, MAX_SWEEP_VARIANTS);
+    let families: Vec<Family> = (0..count)
         .into_par_iter()
-        .map(|i| {
-            let angle = i as f64 * options.angle_step_deg;
-            let mut masks = vec![rasterize_footprint_with_support(
-                &frame.footprint,
-                angle,
-                options.resolution,
-                options.clearance,
-                options.support_overlap_mm,
-            )];
-            if !options.lock_orientation {
-                masks.push(rasterize_footprint_with_support(
-                    &frame.footprint,
-                    angle + 180.0,
-                    options.resolution,
-                    options.clearance,
-                    options.support_overlap_mm,
-                ));
-            }
-            let (best, baseline) = pair_search(&masks, options, variants);
-            let area = layout_bbox_area(&best, &masks);
-            let placements: Vec<_> = best
-                .iter()
-                .map(|p| PackedPlacement {
-                    x_mm: options.bed.min_x + f64::from(p.x) * options.resolution,
-                    y_mm: options.bed.min_y + f64::from(p.y) * options.resolution,
-                    angle_deg: masks[p.mask].angle_deg,
-                })
-                .collect();
-            (placements, area, baseline)
-        })
+        .map(|i| search_family(&frame, i as f64 * options.angle_step_deg, options, variants))
         .collect();
-    let mut ranked: Vec<_> = results.iter().enumerate().collect();
-    ranked.sort_by(|(ia, a), (ib, b)| {
-        b.0.len()
-            .cmp(&a.0.len())
-            .then(a.1.total_cmp(&b.1))
-            .then(ia.cmp(ib))
-    });
-    let mut placements = ranked[0].1.0.clone();
-    // Shortlisting uses the first sweep only, so increasing effort never removes a previously
-    // searched mixed palette. Together with prefix-ordered sweeps this makes effort monotone.
-    ranked.sort_by(|(ia, a), (ib, b)| {
-        b.2.0
-            .cmp(&a.2.0)
-            .then(a.2.1.total_cmp(&b.2.1))
-            .then(ia.cmp(ib))
-    });
+    let mut placements = best_family(&families).placements.clone();
     let mut attempts_run = count * variants;
-    // Let the strongest families intermix rather than restricting the whole plate to a
-    // half-turn pair. Also include orthogonal orientations: rectangles can need a windmill
-    // layout even when all single-orientation runs tie. Only a bounded local palette needs
-    // quadratic no-fit maps; the full angle grid never incurs an O(angles^2) allocation.
     if !options.lock_orientation && options.attempts > count {
-        let mut angles: Vec<f64> = Vec::new();
-        for (index, _) in ranked.iter().take(4) {
-            let base = *index as f64 * options.angle_step_deg;
-            for offset in [0.0, 90.0, 180.0, 270.0] {
-                let angle = (base + offset).rem_euclid(360.0);
-                if !angles.iter().any(|&a| (a - angle).abs() < 1e-7) {
-                    angles.push(angle);
-                }
-            }
-        }
+        let angles = mixed_palette(&shortlist(&families), options);
         let masks: Vec<_> = angles
             .iter()
             .map(|&a| {
@@ -513,18 +429,11 @@ pub(super) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
                 )
             })
             .collect();
-        let mixed_variants = (options.attempts - count).min(8 * masks.len());
+        let mixed_variants = (options.attempts - count).min(MIXED_VARIANTS_PER_ANGLE * masks.len());
         let (mixed, _) = pair_search(&masks, options, mixed_variants);
         attempts_run += mixed_variants;
         if mixed.len() > placements.len() {
-            placements = mixed
-                .iter()
-                .map(|p| PackedPlacement {
-                    x_mm: options.bed.min_x + f64::from(p.x) * options.resolution,
-                    y_mm: options.bed.min_y + f64::from(p.y) * options.resolution,
-                    angle_deg: masks[p.mask].angle_deg,
-                })
-                .collect();
+            placements = pack_layout(&mixed, &masks, options);
         }
     }
     let grid = grid_layout_inner(&frame.footprint, options);
@@ -549,6 +458,12 @@ pub(super) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collision::placements_collide;
+    use crate::footprint::LayerZone;
+    use crate::geometry::{Point, point_in_loops, rotate_point};
+    use crate::pixel_mask::{PixelMask, masks_overlap};
+    use crate::raster_mask::rasterize_footprint;
+    use std::collections::HashSet;
 
     fn shape() -> Footprint {
         let ring = |points: &[(f64, f64)]| {
@@ -613,7 +528,7 @@ mod tests {
                 Point { x: x0, y: y0 },
             ]
         };
-        fp.layer_zones = vec![crate::LayerZone {
+        fp.layer_zones = vec![LayerZone {
             support_loops: vec![rect(3.5, 0.0, 6.0, 1.0)],
             body_loops: vec![rect(-3.0, -2.0, 0.0, 2.0)],
         }];
@@ -673,7 +588,10 @@ mod tests {
                             || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y));
                 }
             }
-            assert!(differs_from_two_zone, "angle={angle}: landing changed nothing");
+            assert!(
+                differs_from_two_zone,
+                "angle={angle}: landing changed nothing"
+            );
         }
     }
 
@@ -684,7 +602,7 @@ mod tests {
             let loops: Vec<Vec<_>> = fp
                 .loops
                 .iter()
-                .map(|l| l.iter().map(|&p| rotate(p, angle)).collect())
+                .map(|l| l.iter().map(|&p| rotate_point(p, angle)).collect())
                 .collect();
             for resolution in [0.25, 0.5, 1.] {
                 let pixels: HashSet<_> = (-32..32)
@@ -760,7 +678,11 @@ mod tests {
     #[test]
     fn support_core_is_absent_without_the_option_or_a_support_zone() {
         let fp = shape();
-        assert!(rasterize_footprint(&fp, 0., 0.5, 0.5).support_core.is_none());
+        assert!(
+            rasterize_footprint(&fp, 0., 0.5, 0.5)
+                .support_core
+                .is_none()
+        );
         let mut bodyless = fp.clone();
         bodyless.body_loops.clear();
         assert!(
@@ -787,7 +709,7 @@ mod tests {
             let loops: Vec<Vec<_>> = fp
                 .loops
                 .iter()
-                .map(|l| l.iter().map(|&p| rotate(p, angle)).collect())
+                .map(|l| l.iter().map(|&p| rotate_point(p, angle)).collect())
                 .collect();
             for resolution in [0.125, 0.25] {
                 let spans = SpanRaster::scanline(&loops, resolution, (-64, 63, -64, 63));

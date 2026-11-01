@@ -1,10 +1,12 @@
-use std::{error::Error, fs, path::Path};
+//! The printer profile (`profiles/*.json`): the only source of printer geometry.
+
+use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Rect, axis_aligned_line_keepout, plate_centre::HeatZone};
-
-pub type ColoredPackerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+use super::ColoredPackerResult;
+use crate::geometry::{Rect, axis_aligned_line_keepout};
+use crate::plate_centre::HeatZone;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PrinterProfile {
@@ -87,93 +89,15 @@ impl PrinterProfile {
             .exclusion_rectangles
             .iter()
             .map(|rect| {
-                expand_rect(
-                    Rect::new(rect[0], rect[1], rect[2], rect[3]),
-                    SLICER_KEEPOUT_SAFETY_MM,
-                )
+                Rect::new(rect[0], rect[1], rect[2], rect[3]).grown(SLICER_KEEPOUT_SAFETY_MM)
             })
             .collect();
         for line in &self.purge_lines {
             let keepout = axis_aligned_line_keepout(line[0], line[1], line[2], line[3], line[4])?;
-            keepouts.push(expand_rect(
-                keepout,
-                PURGE_LINE_KEEPOUT_SAFETY_MM + purge_tip_overshoot_mm,
-            ));
+            keepouts.push(keepout.grown(PURGE_LINE_KEEPOUT_SAFETY_MM + purge_tip_overshoot_mm));
         }
         Ok(keepouts)
     }
-}
-
-/// CLI-slicing workarounds on a project's `project_settings.config`, shared by every binary
-/// that slices a project copy (`colored_3mf_packer`'s `prepare_cli_copy`, `ams_calibration`).
-/// Blanks `machine_start_gcode` when the profile requires it and resizes a stale
-/// `flush_volumes_matrix` to `filament_colour.len()^2`: a "single_*" project trimmed down from a
-/// multi-colour template keeps the old larger matrix, and OrcaSlicer's CLI rejects the mismatch
-/// outright ("Flush volumes matrix do not match to the correct size!") even when no second
-/// filament is ever used. Returns whether anything changed.
-pub fn apply_cli_settings_workarounds(
-    profile: &PrinterProfile,
-    settings: &mut serde_json::Value,
-) -> bool {
-    let mut changed = false;
-    if profile.blank_start_gcode_for_cli {
-        settings["machine_start_gcode"] = serde_json::Value::String(String::new());
-        changed = true;
-    }
-    if normalize_flush_volumes_matrix(settings) {
-        changed = true;
-    }
-    changed
-}
-
-/// Resizes `settings["flush_volumes_matrix"]` to `filament_colour.len()^2` entries when it doesn't
-/// already match, reusing values from the overlapping top-left block of the old matrix (row-major,
-/// square) and filling any newly-added cells with `"0"`. Returns `false` (no-op) when either field
-/// is missing/not an array or the size already matches.
-pub fn normalize_flush_volumes_matrix(settings: &mut serde_json::Value) -> bool {
-    let Some(filament_count) = settings
-        .get("filament_colour")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::len)
-    else {
-        return false;
-    };
-    let Some(matrix) = settings
-        .get("flush_volumes_matrix")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-    else {
-        return false;
-    };
-    let expected_len = filament_count * filament_count;
-    if matrix.len() == expected_len {
-        return false;
-    }
-    let old_side = (matrix.len() as f64).sqrt().round() as usize;
-    let old_side = if old_side * old_side == matrix.len() { old_side } else { 0 };
-    let zero = serde_json::Value::String("0".to_owned());
-    let mut resized = Vec::with_capacity(expected_len);
-    for row in 0..filament_count {
-        for col in 0..filament_count {
-            let value = if row < old_side && col < old_side {
-                matrix[row * old_side + col].clone()
-            } else {
-                zero.clone()
-            };
-            resized.push(value);
-        }
-    }
-    settings["flush_volumes_matrix"] = serde_json::Value::Array(resized);
-    true
-}
-
-fn expand_rect(rect: Rect, margin: f64) -> Rect {
-    Rect::new(
-        rect.min_x - margin,
-        rect.min_y - margin,
-        rect.max_x + margin,
-        rect.max_y + margin,
-    )
 }
 
 /// Empirically measured extra standoff (mm) BambuStudio/OrcaSlicer's CLI require beyond a plain
@@ -196,11 +120,6 @@ const SLICER_KEEPOUT_SAFETY_MM: f64 = 4.0;
 /// standoff comes from `fixed_keepouts`' tip-overshoot parameter, measured per model.
 const PURGE_LINE_KEEPOUT_SAFETY_MM: f64 = 0.5;
 
-/// The tower bounds are re-measured from the final slice and a repack is forced when they
-/// grow, so the reserve just covers probe-vs-final measurement noise — 4 mm here used to
-/// throw away grid cells whose patch cleared the actual tower by a wide margin.
-const TOWER_KEEPOUT_SAFETY_MM: f64 = 1.0;
-
 pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> {
     let bytes = fs::read(path)
         .map_err(|error| format!("failed to read printer profile {}: {error}", path.display()))?;
@@ -217,174 +136,8 @@ pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> 
     Ok(profile)
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub struct PrimeTowerBounds {
-    pub centerline: Rect,
-    pub keepout: Rect,
-    pub extrusion_width_mm: f64,
-}
-
-pub fn parse_prime_tower_bounds(
-    gcode: &[u8],
-    fallback_line_width_mm: f64,
-    clearance_mm: f64,
-) -> Option<PrimeTowerBounds> {
-    let text = String::from_utf8_lossy(gcode);
-    let mut absolute_mode = true;
-    // Extruder mode only from M82/M83 (not G90/G91): Bambu/Orca emit M83 once and keep
-    // issuing G90/G91 for XY moves, so tying E to G90 would misread every later move.
-    let mut absolute_e = false;
-    let mut last_e = 0.0;
-    let mut x = 0.0;
-    let mut y = 0.0;
-    let mut active = false;
-    let mut nozzle_wipe = false;
-    let mut line_width = fallback_line_width_mm;
-    let mut min_x = f64::INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    let mut max_width = fallback_line_width_mm;
-
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line.starts_with("G90") {
-            absolute_mode = true;
-            continue;
-        }
-        if line.starts_with("M82") {
-            absolute_e = true;
-            continue;
-        }
-        if line.starts_with("M83") {
-            absolute_e = false;
-            continue;
-        }
-        if line.starts_with("G92") {
-            if let Some(value) = gcode_axis(line, 'E') {
-                last_e = value;
-            }
-            continue;
-        }
-        if line.starts_with("G91") {
-            absolute_mode = false;
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("; LINE_WIDTH:") {
-            if let Ok(width) = value.trim().parse::<f64>() {
-                line_width = width;
-            }
-            continue;
-        }
-        if line.contains("WIPE_TOWER_END") || line.contains("WIPE_TOWER_BRIM_END") {
-            active = false;
-            continue;
-        }
-        if line.contains("WIPE_TOWER_START") || line.contains("WIPE_TOWER_BRIM_START") {
-            active = true;
-            continue;
-        }
-        // OrcaSlicer's IDEX tool change (Snapmaker U1) empties and wipes the nozzle at a
-        // garbage point far away from the tower between `;WIPE_START` and `;WIPE_END`, still
-        // inside the WIPE_TOWER section. Those moves are not the tower: counting them made
-        // the "tower bounds" half the plate wide on a real project. BambuStudio spells the
-        // same marker `; WIPE_START` (with a space) and retract-wipes at the object it just
-        // printed, right after `; WIPE_TOWER_START`: on an A2L koza plate that stretched the
-        // tower over the objects and made a relocated tower look ignored.
-        let marker = line.trim_start_matches(';').trim();
-        if marker == "WIPE_START" {
-            nozzle_wipe = true;
-            continue;
-        }
-        if marker == "WIPE_END" {
-            nozzle_wipe = false;
-            continue;
-        }
-        if !(line.starts_with("G0") || line.starts_with("G1")) {
-            continue;
-        }
-        // Only a move that really lays down filament is tower. Bambu retract-wipes at the
-        // object just printed right after `WIPE_TOWER_START` (real A2L koza probe:
-        // `G1 X125.282 Y116.54 E-.4256` while the tower sits at x=170..205); counting that
-        // move inflated the keepout to ~82x88 mm over the object and caused "prime tower
-        // changed again after the permitted re-pack" on every archived multi-colour koza
-        // source. Relative E: E > 0; absolute E: E above the previous value.
-        let extrudes = match gcode_axis(line, 'E') {
-            Some(e) if absolute_e => {
-                let rising = e > last_e;
-                last_e = e;
-                rising
-            }
-            Some(e) => e > 0.0,
-            None => false,
-        };
-        let parsed_x = gcode_axis(line, 'X');
-        let parsed_y = gcode_axis(line, 'Y');
-        if absolute_mode {
-            if let Some(value) = parsed_x {
-                x = value;
-            }
-            if let Some(value) = parsed_y {
-                y = value;
-            }
-        } else {
-            if let Some(value) = parsed_x {
-                x += value;
-            }
-            if let Some(value) = parsed_y {
-                y += value;
-            }
-        }
-        if active
-            && !nozzle_wipe
-            && (parsed_x.is_some() || parsed_y.is_some())
-            && extrudes
-        {
-            min_x = min_x.min(x);
-            min_y = min_y.min(y);
-            max_x = max_x.max(x);
-            max_y = max_y.max(y);
-            max_width = max_width.max(line_width);
-        }
-    }
-
-    if !min_x.is_finite() {
-        return None;
-    }
-    let centerline = Rect::new(min_x, min_y, max_x, max_y);
-    let expansion = max_width * 0.5 + clearance_mm + TOWER_KEEPOUT_SAFETY_MM;
-    Some(PrimeTowerBounds {
-        centerline,
-        keepout: Rect::new(
-            min_x - expansion,
-            min_y - expansion,
-            max_x + expansion,
-            max_y + expansion,
-        ),
-        extrusion_width_mm: max_width,
-    })
-}
-
-pub fn tower_repack_required(reserved_keepout: Rect, final_tower: PrimeTowerBounds) -> bool {
-    final_tower.keepout.min_x < reserved_keepout.min_x
-        || final_tower.keepout.min_y < reserved_keepout.min_y
-        || final_tower.keepout.max_x > reserved_keepout.max_x
-        || final_tower.keepout.max_y > reserved_keepout.max_y
-}
-
-fn gcode_axis(line: &str, axis: char) -> Option<f64> {
-    line.split_whitespace().find_map(|token| {
-        let token = token.trim_start_matches(';');
-        token
-            .strip_prefix(axis)
-            .and_then(|value| value.parse::<f64>().ok())
-    })
-}
-
-const SLICER_KIND_BY_PRINTER_SUBSTRING: &[(&str, &str)] = &[
-    ("Bambu Lab", "bambu"),
-    ("Snapmaker", "orca"),
-];
+const SLICER_KIND_BY_PRINTER_SUBSTRING: &[(&str, &str)] =
+    &[("Bambu Lab", "bambu"), ("Snapmaker", "orca")];
 
 /// Maps a 3MF's `printer_model` string to a slicer kind ("bambu"/"orca") using known printer-name
 /// substrings. `Application` metadata in the 3MF is not used for this because OrcaSlicer-family

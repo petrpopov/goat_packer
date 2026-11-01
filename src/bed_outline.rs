@@ -8,42 +8,105 @@ use std::collections::{BTreeMap, BTreeSet};
 use geo::{Area, Coord, LineString, Polygon, Simplify};
 
 type Key = (i64, i64);
+type Triangle = [[f64; 3]; 3];
 
-fn triangles(stl: &[u8]) -> Option<Vec<[[f64; 3]; 3]>> {
+/// Triangles at the same height when they differ in z by less than this, mm.
+const LEVEL_TOLERANCE_MM: f64 = 1e-3;
+/// Edge vertices are matched on a grid of 1/this mm (0.01 mm).
+const KEY_PER_MM: f64 = 100.0;
+/// Douglas-Peucker tolerance of the traced outline, mm.
+const SIMPLIFY_MM: f64 = 0.5;
+/// An outline with more vertices than this is not a plate, it is noise.
+const MAX_OUTLINE_POINTS: usize = 60;
+/// The finished outline is rounded to 1/this mm (0.1 mm). Multiply-round-divide, not the other
+/// way round: the catalog profiles were written with exactly these floats.
+const OUTLINE_STEPS_PER_MM: f64 = 10.0;
+/// Float slack when comparing the trace with the printable area, mm.
+const BOUNDS_SLACK_MM: f64 = 1e-6;
+/// After the shift the plate must still cover the printable area: a smaller trace is not the
+/// plate (Orca 2.4.2: OrangeStorm Giga's model is 410 mm on an 810 mm bed, Guider 3 Ultra's
+/// traced face is a 120×30 mm detail), and a wrong outline is worse than none.
+const COVER_TOLERANCE_MM: f64 = 1.0;
+
+fn triangles(stl: &[u8]) -> Option<Vec<Triangle>> {
     if stl.len() >= 84 {
         let n = u32::from_le_bytes(stl[80..84].try_into().ok()?) as usize;
         if 84 + n * 50 == stl.len() {
             let f = |o: usize| f32::from_le_bytes(stl[o..o + 4].try_into().unwrap()) as f64;
-            return Some((0..n).map(|i| { let b = 84 + i * 50 + 12; [0, 1, 2].map(|v| [f(b + v * 12), f(b + v * 12 + 4), f(b + v * 12 + 8)]) }).collect());
+            return Some(
+                (0..n)
+                    .map(|i| {
+                        let b = 84 + i * 50 + 12;
+                        [0, 1, 2].map(|v| [f(b + v * 12), f(b + v * 12 + 4), f(b + v * 12 + 8)])
+                    })
+                    .collect(),
+            );
         }
     }
     let text = std::str::from_utf8(stl).ok()?;
     let verts: Vec<[f64; 3]> = text
         .lines()
         .filter_map(|l| {
-            let mut it = l.trim().strip_prefix("vertex")?.split_whitespace().map(|s| s.parse::<f64>().ok());
+            let mut it = l
+                .trim()
+                .strip_prefix("vertex")?
+                .split_whitespace()
+                .map(|s| s.parse::<f64>().ok());
             Some([it.next()??, it.next()??, it.next()??])
         })
         .collect();
-    (!verts.is_empty() && verts.len() % 3 == 0).then(|| verts.chunks(3).map(|c| [c[0], c[1], c[2]]).collect())
+    (!verts.is_empty() && verts.len().is_multiple_of(3))
+        .then(|| verts.chunks(3).map(|c| [c[0], c[1], c[2]]).collect())
 }
 
 pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>> {
     let tris = triangles(stl)?;
-    // Real bed models carry small raised details (logos, clips) above the plate: the plate face is
-    // the horizontal level with the largest total area, not the topmost one.
+    let z_top = plate_level(&tris)?;
+    let ring = largest_ring(&boundary_adjacency(&tris, z_top))?;
+    let points = simplified_points(&ring);
+    fit_to_printable(&points, printable)
+}
+
+/// Real bed models carry small raised details (logos, clips) above the plate: the plate face is
+/// the horizontal level with the largest total area, not the topmost one.
+fn plate_level(tris: &[Triangle]) -> Option<f64> {
     let mut level_area: Vec<(f64, f64)> = Vec::new();
-    for t in tris.iter().filter(|t| t.iter().all(|v| (v[2] - t[0][2]).abs() < 1e-3)) {
-        let area = ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])).abs() / 2.0;
-        match level_area.iter_mut().find(|(z, _)| (*z - t[0][2]).abs() < 1e-3) {
+    for t in tris
+        .iter()
+        .filter(|t| t.iter().all(|v| (v[2] - t[0][2]).abs() < LEVEL_TOLERANCE_MM))
+    {
+        let area = ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1])
+            - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1]))
+            .abs()
+            / 2.0;
+        match level_area
+            .iter_mut()
+            .find(|(z, _)| (*z - t[0][2]).abs() < LEVEL_TOLERANCE_MM)
+        {
             Some((_, a)) => *a += area,
             None => level_area.push((t[0][2], area)),
         }
     }
-    let z_top = level_area.iter().max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0))).map(|l| l.0)?;
-    let key = |v: &[f64; 3]| -> Key { ((v[0] * 100.0).round() as i64, (v[1] * 100.0).round() as i64) };
+    level_area
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)))
+        .map(|l| l.0)
+}
+
+/// For every vertex of the plate face's boundary (edges used by exactly one triangle), its
+/// neighbours along the boundary.
+fn boundary_adjacency(tris: &[Triangle], z_top: f64) -> BTreeMap<Key, Vec<Key>> {
+    let key = |v: &[f64; 3]| -> Key {
+        (
+            (v[0] * KEY_PER_MM).round() as i64,
+            (v[1] * KEY_PER_MM).round() as i64,
+        )
+    };
     let mut edges: BTreeMap<(Key, Key), u32> = BTreeMap::new();
-    for t in tris.iter().filter(|t| t.iter().all(|v| (v[2] - z_top).abs() < 1e-3)) {
+    for t in tris
+        .iter()
+        .filter(|t| t.iter().all(|v| (v[2] - z_top).abs() < LEVEL_TOLERANCE_MM))
+    {
         for i in 0..3 {
             let (a, b) = (key(&t[i]), key(&t[(i + 1) % 3]));
             *edges.entry(if a < b { (a, b) } else { (b, a) }).or_default() += 1;
@@ -56,6 +119,22 @@ pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>
             adjacency.entry(b).or_default().push(a);
         }
     }
+    adjacency
+}
+
+fn ring_line(ring: &[Key]) -> LineString<f64> {
+    LineString::from(
+        ring.iter()
+            .map(|k| Coord {
+                x: k.0 as f64 / KEY_PER_MM,
+                y: k.1 as f64 / KEY_PER_MM,
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The boundary ring enclosing the largest area.
+fn largest_ring(adjacency: &BTreeMap<Key, Vec<Key>>) -> Option<Vec<Key>> {
     let mut seen = BTreeSet::new();
     let mut best: Option<(f64, Vec<Key>)> = None;
     for &start in adjacency.keys() {
@@ -65,7 +144,10 @@ pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>
         let mut ring = vec![start];
         seen.insert(start);
         let mut current = start;
-        while let Some(&next) = adjacency.get(&current).and_then(|n| n.iter().find(|k| !seen.contains(*k))) {
+        while let Some(&next) = adjacency
+            .get(&current)
+            .and_then(|n| n.iter().find(|k| !seen.contains(*k)))
+        {
             seen.insert(next);
             ring.push(next);
             current = next;
@@ -73,32 +155,51 @@ pub fn outline_from_stl(stl: &[u8], printable: [f64; 4]) -> Option<Vec<[f64; 2]>
         if ring.len() < 3 {
             continue;
         }
-        let poly = Polygon::new(LineString::from(ring.iter().map(|k| Coord { x: k.0 as f64 / 100.0, y: k.1 as f64 / 100.0 }).collect::<Vec<_>>()), vec![]);
-        let area = poly.unsigned_area();
+        let area = Polygon::new(ring_line(&ring), vec![]).unsigned_area();
         if best.as_ref().is_none_or(|(a, _)| area > *a) {
             best = Some((area, ring));
         }
     }
-    let (_, ring) = best?;
-    let mut line = LineString::from(ring.iter().map(|k| Coord { x: k.0 as f64 / 100.0, y: k.1 as f64 / 100.0 }).collect::<Vec<_>>());
+    best.map(|(_, ring)| ring)
+}
+
+fn simplified_points(ring: &[Key]) -> Vec<[f64; 2]> {
+    let mut line = ring_line(ring);
     line.close();
-    let simple = line.simplify(0.5);
-    let mut points: Vec<[f64; 2]> = simple.0.iter().map(|c| [c.x, c.y]).collect();
+    let mut points: Vec<[f64; 2]> = line.simplify(SIMPLIFY_MM).0.iter().map(|c| [c.x, c.y]).collect();
     points.pop(); // drop the closing duplicate
-    let (min_x, max_x) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p[0]), b.max(p[0])));
-    let (min_y, max_y) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p[1]), b.max(p[1])));
+    points
+}
+
+/// The outline shifted onto the printable area when the model is centred on the origin, and
+/// rounded; `None` when it does not cover the area or has the wrong number of vertices.
+fn fit_to_printable(points: &[[f64; 2]], printable: [f64; 4]) -> Option<Vec<[f64; 2]>> {
+    let (min_x, max_x) = points
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p[0]), b.max(p[0])));
+    let (min_y, max_y) = points
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p[1]), b.max(p[1])));
     let [ax0, ay0, ax1, ay1] = printable;
-    let contains = min_x <= ax0 + 1e-6 && min_y <= ay0 + 1e-6 && max_x >= ax1 - 1e-6 && max_y >= ay1 - 1e-6;
-    let (dx, dy) = if contains { (0.0, 0.0) } else { ((ax0 + ax1) / 2.0 - (min_x + max_x) / 2.0, (ay0 + ay1) / 2.0 - (min_y + max_y) / 2.0) };
-    // After the shift the plate must still cover the printable area: a smaller trace is not the
-    // plate (Orca 2.4.2: OrangeStorm Giga's model is 410 mm on an 810 mm bed, Guider 3 Ultra's
-    // traced face is a 120×30 mm detail), and a wrong outline is worse than none.
-    const COVER_TOLERANCE_MM: f64 = 1.0;
+    let contains = min_x <= ax0 + BOUNDS_SLACK_MM
+        && min_y <= ay0 + BOUNDS_SLACK_MM
+        && max_x >= ax1 - BOUNDS_SLACK_MM
+        && max_y >= ay1 - BOUNDS_SLACK_MM;
+    let (dx, dy) = if contains {
+        (0.0, 0.0)
+    } else {
+        (
+            (ax0 + ax1) / 2.0 - (min_x + max_x) / 2.0,
+            (ay0 + ay1) / 2.0 - (min_y + max_y) / 2.0,
+        )
+    };
     if max_x - min_x < ax1 - ax0 - COVER_TOLERANCE_MM || max_y - min_y < ay1 - ay0 - COVER_TOLERANCE_MM {
         return None;
     }
-    let round = |v: f64| (v * 10.0).round() / 10.0;
-    (points.len() >= 3 && points.len() <= 60).then(|| points.iter().map(|p| [round(p[0] + dx), round(p[1] + dy)]).collect())
+    let round = |v: f64| (v * OUTLINE_STEPS_PER_MM).round() / OUTLINE_STEPS_PER_MM;
+    (3..=MAX_OUTLINE_POINTS)
+        .contains(&points.len())
+        .then(|| points.iter().map(|p| [round(p[0] + dx), round(p[1] + dy)]).collect())
 }
 
 #[cfg(test)]

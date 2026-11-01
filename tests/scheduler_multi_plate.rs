@@ -96,14 +96,14 @@ fn plates_are_disjoint_and_land_in_bambustudios_own_plate_grid() {
             let expected_x = source_values[9] + dx;
             let expected_y = source_values[10] + dy;
             assert!(
-                (plate_x(&item) - expected_x).abs() < 1e-6,
+                (plate_x(item) - expected_x).abs() < 1e-6,
                 "plate {plate_index} object {offset}: x {} != expected {expected_x}",
-                plate_x(&item)
+                plate_x(item)
             );
             assert!(
-                (plate_y(&item) - expected_y).abs() < 1e-6,
+                (plate_y(item) - expected_y).abs() < 1e-6,
                 "plate {plate_index} object {offset}: y {} != expected {expected_y}",
-                plate_y(&item)
+                plate_y(item)
             );
         }
         cursor += plate.object_count;

@@ -42,10 +42,10 @@ impl PresetIndex {
                     let path = entry?.path();
                     if path.is_dir() {
                         stack.push(path);
-                    } else if path.extension().is_some_and(|e| e == "json") {
-                        if let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&path)?) {
-                            index.insert(&vendor, value);
-                        }
+                    } else if path.extension().is_some_and(|e| e == "json")
+                        && let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&path)?)
+                    {
+                        index.insert(&vendor, value);
                     }
                 }
             }
@@ -54,10 +54,10 @@ impl PresetIndex {
     }
 
     pub fn insert(&mut self, vendor: &str, value: Value) {
-        if let Value::Object(map) = value {
-            if let Some(name) = map.get("name").and_then(Value::as_str) {
-                self.presets.insert((vendor.to_owned(), name.to_owned()), map);
-            }
+        if let Value::Object(map) = value
+            && let Some(name) = map.get("name").and_then(Value::as_str)
+        {
+            self.presets.insert((vendor.to_owned(), name.to_owned()), map);
         }
     }
 
@@ -123,13 +123,14 @@ impl PresetIndex {
     /// 2. else a 0.20 mm process whose `@<suffix>` names the machine (Prusa, Creality: they
     ///    match by `compatible_printers_condition`, which the CLI ignores), `Standard` first;
     /// 3. else the vendor's base process (`fdm_process_common`, else the first root process).
+    ///
     /// Returns the process name (it lives in `vendor`).
     pub fn select_process(&self, vendor: &str, machine: &str) -> Option<String> {
         let processes: Vec<(&str, &Map<String, Value>)> =
             self.of_type("process").filter(|(v, _, _)| *v == vendor).map(|(_, n, m)| (n, m)).collect();
         // Instantiable processes, resolved once, with their rank (layer height from the merged
         // `layer_height`, not the name: Volumic names read `Compatible speed - 0.20mm`).
-        let mut candidates: Vec<((u8, u8), &str, Map<String, Value>)> = processes
+        let mut candidates: Vec<RankedProcess> = processes
             .iter()
             .filter(|(_, m)| m.get("instantiation").and_then(Value::as_str) == Some("true"))
             .filter_map(|(n, _)| {
@@ -158,6 +159,9 @@ impl PresetIndex {
         roots().find(|(n, _)| *n == "fdm_process_common").or_else(|| roots().next()).map(|(n, _)| (*n).to_owned())
     }
 }
+
+/// An instantiable process with its rank, name and resolved settings.
+type RankedProcess<'a> = ((u8, u8), &'a str, Map<String, Value>);
 
 /// Orca numbers: `"0.2"`, `["0.2"]` or a JSON number.
 fn first_number(value: &Value) -> Option<f64> {

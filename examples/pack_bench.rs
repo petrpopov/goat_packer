@@ -11,8 +11,12 @@
 //! ```
 //! `--footprint-json <path>` loads a `Footprint` serialized as JSON instead of an STL (the
 //! test fixtures in `tests/fixtures/`), `--dump-footprint <path>` writes the loaded one.
+//! `--digest` also prints a SHA-256 of every winning layout's placements: the search is
+//! deterministic, so equal digests before and after a refactor prove an identical layout.
 
 use std::{path::PathBuf, process::exit, time::Instant};
+
+use sha2::{Digest, Sha256};
 
 use goat_packer::{
     Footprint, PackOptions, Point, Rect, colored_packer::load_printer_profile, extract_footprint,
@@ -43,8 +47,14 @@ fn run() -> Result<(), String> {
     let mut candidates = 1_000usize;
     let mut stall = 0usize;
     let mut threads: Option<usize> = None;
+    let mut digest = false;
     let mut args = std::env::args().skip(1);
     while let Some(option) = args.next() {
+        // The valueless switch; every other option consumes the next argument.
+        if option == "--digest" {
+            digest = true;
+            continue;
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for {option}"))?;
@@ -149,6 +159,10 @@ fn run() -> Result<(), String> {
                 "rotation {rotation:>7.2}° seed {seed}: {} objects in {elapsed:.2} s",
                 best.placements.len()
             );
+            if digest {
+                let bytes = serde_json::to_vec(&best.placements).unwrap();
+                println!("  digest {:x}", Sha256::digest(&bytes));
+            }
             counts.push(best.placements.len());
         }
     }
