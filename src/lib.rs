@@ -83,4 +83,7 @@ pub use packing::pack_footprint;
 pub use pixel_mask::{PixelMask, masks_overlap};
 pub use raster_mask::{RasterMask, rasterize_footprint, rasterize_footprint_with_support};
 pub use stl::extract_footprint;
-pub use validation::validate_result;
+pub use validation::{
+    LayoutRules, PrintPlacement, RasterValidator, VectorValidator, validate_raster,
+    validate_result, validate_vector,
+};

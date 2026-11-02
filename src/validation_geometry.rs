@@ -1,151 +1,276 @@
 //! Vector-space publication check, independent of rasterization and no-fit maps: the exact
 //! gaps of `keepout::pair_rules` between placed kinds, and the exact class rules of
 //! `keepout::permission` against the plate zones (hull ∩ zone, part box distances, material
-//! against strips). This validates the supplied envelope, not supports a future slicer
-//! might generate.
+//! against strips and the tower). This validates the supplied envelope, not supports a
+//! future slicer might generate. Support cores (`support_overlap_mm`) are raster-only.
+//!
+//! Cost model: the shapes of a rotation class are built once in the print frame (`class`)
+//! and every copy is a translation of them, so no polygon is rebuilt per placement. Pairs are
+//! culled by their boxes and checked in parallel, and the first conflict in placement order
+//! is reported whatever the thread count.
 
-use geo::{Area, BooleanOps, BoundingRect, Distance, Euclidean, MultiPolygon};
+mod class;
+mod edge_grid;
+mod region;
+mod zones;
 
 use crate::footprint::Footprint;
-use crate::geometry::{Point, Rect, polygon_from_loop};
-use crate::keepout::{Permission, ZoneClass, pair_rules, permission};
-use crate::kind_masks::{PlateZone, ZoneArea, join_sag_mm, plate_zones, zone_material};
+use crate::geometry::{Point, Rect, rotate_loops};
+use crate::keepout::{BodyRule, pair_rules};
+use crate::kind_masks::{join_sag_mm, plate_zones};
 use crate::object_print::{Loops, ObjectPrint, PrintKind};
 use crate::options::{PackOptions, PackResult, PackedPlacement};
+use crate::validation::{
+    LayoutRules, PrintPlacement, check_print_placements, check_prints, first_failure, meeting_pairs,
+};
+use class::{ClassShapes, rotated_print};
+use rayon::prelude::*;
+use region::{Region, closer_than, negated, overlaps};
+use zones::{ZoneShape, breaks_zone};
 
+/// Float slack of the exact tests, mm.
 const GAP_EPS: f64 = 1e-7;
-const AREA_EPS: f64 = 1e-9;
 
-/// Material of one kind (or one zone), placed on the plate.
-struct Zone {
-    polygon: MultiPolygon,
-    bounds: Option<geo::Rect>,
+/// The exact check of layouts of fixed prints and rules: the shapes are built once, so a
+/// caller re-validating (the published winner, then `PackPlan::build`) pays for them once.
+pub struct VectorValidator {
+    classes: Vec<ClassShapes>,
+    zones: Vec<ZoneShape>,
+    body_rule: BodyRule,
+    clearance_mm: f64,
 }
 
-impl Zone {
-    fn new(loops: &[Vec<Point>]) -> Self {
-        // Kinds use even-odd rings, not necessarily one exterior followed by holes.
-        // XOR preserves holes, islands and winding without sharing raster fill logic.
-        let mut polygon = MultiPolygon::new(vec![]);
-        for ring in loops {
-            polygon = polygon.xor(&MultiPolygon::new(vec![polygon_from_loop(ring)]));
-        }
-        let bounds = polygon.bounding_rect();
-        Self { polygon, bounds }
-    }
-
-    fn conflicts(&self, other: &Self, gap: f64) -> bool {
-        let (Some(a), Some(b)) = (self.bounds, other.bounds) else {
-            return false;
-        };
-        // Almost every pair is far apart, including most height-band pairs.
-        if a.max().x + gap < b.min().x
-            || b.max().x + gap < a.min().x
-            || a.max().y + gap < b.min().y
-            || b.max().y + gap < a.min().y
-        {
-            return false;
-        }
-        // The masks draw round joins as inscribed chords, so the search may place two
-        // kinds up to the chord sag closer than the gap (`join_sag_mm`, under a micron).
-        let tolerance = GAP_EPS + join_sag_mm(gap);
-        if gap > tolerance && Euclidean.distance(&self.polygon, &other.polygon) < gap - tolerance {
-            return true;
-        }
-        self.polygon.intersection(&other.polygon).unsigned_area() > AREA_EPS
-    }
+/// A broken pair rule: `own` of one placement too close to `foreign` of the other.
+struct PairBreak {
+    own: PrintKind,
+    foreign: PrintKind,
+    band: Option<usize>,
+    gap: f64,
+    /// The later placement holds `own`.
+    flipped: bool,
 }
 
-/// One placement: its print on the plate and every kind as a zone.
-struct Placed {
-    print: ObjectPrint,
-    kinds: Vec<(PrintKind, usize, Zone)>,
-    hulls: Vec<Zone>,
-    /// The legacy bed extent (everything the footprint prints), when the legacy bed rule holds.
-    extent: Option<Rect>,
-}
-
-impl Placed {
-    fn new(print: &ObjectPrint, extent: &Loops, p: &PackedPlacement) -> Self {
-        let placed = place_print(print, p);
-        let mut kinds = vec![
-            (PrintKind::Silhouette, 0, Zone::new(&placed.silhouette)),
-            (PrintKind::Landing, 0, Zone::new(&placed.landing)),
-            (PrintKind::Brim, 0, Zone::new(&placed.brim)),
-            (PrintKind::SupportBase, 0, Zone::new(&placed.support_base)),
-        ];
-        for (kind, bands) in [
-            (PrintKind::BodyBand, &placed.body),
-            (PrintKind::SupportBand, &placed.support),
-            (PrintKind::InterfaceBand, &placed.interface),
-        ] {
-            kinds.extend(
-                bands
-                    .iter()
-                    .enumerate()
-                    .map(|(k, loops)| (kind, k, Zone::new(loops))),
-            );
-        }
-        let hulls = placed
-            .part_hulls
-            .iter()
-            .map(|hull| Zone::new(std::slice::from_ref(hull)))
+impl VectorValidator {
+    /// `prints[i]` is rotation class `i`, already in its plate-aligned frame (a placement is
+    /// a pure translation of it).
+    pub fn new(prints: &[ObjectPrint], rules: &LayoutRules) -> Result<VectorValidator, String> {
+        rules.check_values()?;
+        check_prints(prints)?;
+        let classes = prints
+            .par_iter()
+            .map(|print| ClassShapes::new(print.clone(), None))
             .collect();
-        let extent =
-            (!extent.is_empty()).then(|| Rect::of_points(p.place_loops(extent).iter().flatten()));
-        Placed {
-            print: placed,
-            kinds,
-            hulls,
-            extent,
+        Ok(VectorValidator::from_classes(classes, rules))
+    }
+
+    fn from_classes(classes: Vec<ClassShapes>, rules: &LayoutRules) -> VectorValidator {
+        VectorValidator {
+            classes,
+            zones: rules.zones.iter().map(ZoneShape::new).collect(),
+            body_rule: rules.body_rule,
+            clearance_mm: rules.clearance_mm,
         }
     }
 
-    fn kind(&self, kind: PrintKind, band: usize) -> Option<&Zone> {
-        self.kinds
+    /// The first broken rule, by placement order: a placement's zones before its pairs with
+    /// earlier placements.
+    pub fn check(&self, placements: &[PrintPlacement]) -> Result<(), String> {
+        check_print_placements(placements, self.classes.len())?;
+        let at: Vec<Point> = placements.iter().map(PrintPlacement::origin).collect();
+        let zone_failure = placements
+            .par_iter()
+            .enumerate()
+            .find_map_first(|(index, p)| {
+                let class = &self.classes[p.print];
+                self.zones
+                    .iter()
+                    .find(|zone| breaks_zone(class, at[index], zone, self.clearance_mm))
+                    .map(|zone| (index, zone_message(index, zone)))
+            });
+        // Boxes grown by half the widest gap meet whenever two copies can break a pair rule.
+        let reach = self.widest_gap() * 0.5;
+        let boxes: Vec<Rect> = placements
             .iter()
-            .find(|(k, b, _)| *k == kind && *b == band)
-            .map(|(.., zone)| zone)
+            .zip(&at)
+            .map(|(p, &at)| self.classes[p.print].bounds_at(at).grown(reach))
+            .collect();
+        let pair_failure = meeting_pairs(&boxes)
+            .par_iter()
+            .find_map_first(|&(previous, index)| {
+                let (a, b) = (&placements[previous], &placements[index]);
+                let shift = Point {
+                    x: at[index].x - at[previous].x,
+                    y: at[index].y - at[previous].y,
+                };
+                self.pair_break(&self.classes[a.print], &self.classes[b.print], shift)
+                    .map(|found| (index, pair_message(previous, index, &found)))
+            });
+        first_failure(zone_failure, pair_failure)
+    }
+
+    fn widest_gap(&self) -> f64 {
+        pair_rules(self.body_rule)
+            .iter()
+            .map(|rule| rule.gap.mm(self.clearance_mm))
+            .fold(0.0, f64::max)
+    }
+
+    /// The first pair rule `a` and `b` (at `shift` from `a`) break, tested both ways.
+    fn pair_break(&self, a: &ClassShapes, b: &ClassShapes, shift: Point) -> Option<PairBreak> {
+        for rule in pair_rules(self.body_rule) {
+            let banded = is_band_kind(rule.a) || is_band_kind(rule.b);
+            let bands = if banded {
+                a.band_count().max(b.band_count())
+            } else {
+                1
+            };
+            let gap = rule.gap.mm(self.clearance_mm);
+            for band in 0..bands {
+                let found = |flipped| PairBreak {
+                    own: rule.a,
+                    foreign: rule.b,
+                    band: banded.then_some(band),
+                    gap,
+                    flipped,
+                };
+                if kinds_break((a, rule.a), (b, rule.b), band, shift, gap) {
+                    return Some(found(false));
+                }
+                let mirrored = rule.a == rule.b;
+                if !mirrored && kinds_break((b, rule.a), (a, rule.b), band, negated(shift), gap) {
+                    return Some(found(true));
+                }
+            }
+        }
+        None
     }
 }
 
+/// `own`'s kind against `foreign`'s kind in `band`, `foreign` at `shift` from `own`.
+fn kinds_break(
+    (own, own_kind): (&ClassShapes, PrintKind),
+    (foreign, foreign_kind): (&ClassShapes, PrintKind),
+    band: usize,
+    shift: Point,
+    gap: f64,
+) -> bool {
+    match (
+        own.region(own_kind, band),
+        foreign.region(foreign_kind, band),
+    ) {
+        (Some(a), Some(b)) => breaks_gap(a, b, shift, gap),
+        _ => false,
+    }
+}
+
+/// The exact layout check of the slicer-free core (design §8.5): run it on the published
+/// winner only. Building a `VectorValidator` once is cheaper when the same prints are checked
+/// again.
+pub fn validate_vector(
+    prints: &[ObjectPrint],
+    placements: &[PrintPlacement],
+    rules: &LayoutRules,
+) -> Result<(), String> {
+    VectorValidator::new(prints, rules)?.check(placements)
+}
+
+/// `a` and `b` moved by `shift` break a rule that keeps them `gap` apart. The masks draw
+/// round joins as inscribed chords, so the search may place two kinds up to the chord sag
+/// closer than the gap (`join_sag_mm`, under a micron): that much is tolerated.
+fn breaks_gap(a: &Region, b: &Region, shift: Point, gap: f64) -> bool {
+    let tolerance = GAP_EPS + join_sag_mm(gap);
+    if gap > tolerance {
+        closer_than(a, b, shift, gap - tolerance)
+    } else {
+        overlaps(a, b, shift)
+    }
+}
+
+fn is_band_kind(kind: PrintKind) -> bool {
+    matches!(
+        kind,
+        PrintKind::BodyBand | PrintKind::SupportBand | PrintKind::InterfaceBand
+    )
+}
+
+fn zone_message(index: usize, zone: &ZoneShape) -> String {
+    format!(
+        "placement {index} breaks the {:?} zone '{}' (vector check)",
+        zone.zone.class, zone.zone.id
+    )
+}
+
+fn pair_message(previous: usize, index: usize, found: &PairBreak) -> String {
+    let (own, foreign) = if found.flipped {
+        (index, previous)
+    } else {
+        (previous, index)
+    };
+    let band = found
+        .band
+        .map_or(String::new(), |band| format!(" in band {band}"));
+    format!(
+        "placements {previous} and {index} overlap or violate clearance: {:?} of {own} within \
+         {} mm of {:?} of {foreign}{band} (vector check)",
+        found.own, found.gap, found.foreign
+    )
+}
+
+/// The vector half of `validate_result`: a legacy footprint in original coordinates, one
+/// class per distinct placement angle (its kinds turn rigidly with the model).
 pub(crate) fn validate_geometry(
     fp: &Footprint,
     options: &PackOptions,
     result: &PackResult,
 ) -> Result<(), String> {
-    let rules = options.effective_plate_rules();
-    let zones = plate_zones(&rules, None)?;
-    // Original coordinates, not the rounded canonical frame used by the raster search.
+    let plate = options.effective_plate_rules();
+    let rules = LayoutRules {
+        zones: plate_zones(&plate, None)?,
+        body_rule: plate.body_rule,
+        clearance_mm: options.clearance,
+        support_overlap_mm: options.support_overlap_mm,
+    };
     let print = ObjectPrint::from_legacy(fp);
+    // Legacy rules keep the legacy bed rule: everything printed stays on the bed.
     let extent = if options.plate_rules.is_none() {
         legacy_extent(fp)
     } else {
         Loops::new()
     };
-    let bands = print.band_count();
-    let mut placed: Vec<Placed> = Vec::with_capacity(result.placements.len());
-    for (index, p) in result.placements.iter().enumerate() {
-        let current = Placed::new(&print, &extent, p);
-        if let Some(zone) = zones
-            .iter()
-            .find(|zone| breaks_zone(&current, zone, options.clearance))
-        {
-            return Err(format!(
-                "placement {index} breaks the {:?} zone '{}' (vector check)",
-                zone.class, zone.id
-            ));
-        }
-        for (previous, other) in placed.iter().enumerate() {
-            if pairs_conflict(&current, other, rules.body_rule, bands, options.clearance) {
-                return Err(format!(
-                    "placements {previous} and {index} overlap or violate clearance (vector check)"
-                ));
+    let (angles, placements) = angle_classes(&result.placements);
+    let classes = angles
+        .par_iter()
+        .map(|&angle| {
+            let extent = (!extent.is_empty())
+                .then(|| Rect::of_points(rotate_loops(&extent, angle).iter().flatten()));
+            ClassShapes::new(rotated_print(&print, angle), extent)
+        })
+        .collect();
+    VectorValidator::from_classes(classes, &rules).check(&placements)
+}
+
+/// The distinct angles of `placements` in order of appearance, and every placement as a
+/// translation of its angle's class.
+pub(crate) fn angle_classes(placements: &[PackedPlacement]) -> (Vec<f64>, Vec<PrintPlacement>) {
+    let mut angles: Vec<f64> = Vec::new();
+    let placements = placements
+        .iter()
+        .map(|p| {
+            let known = angles
+                .iter()
+                .position(|a| a.to_bits() == p.angle_deg.to_bits());
+            let print = known.unwrap_or_else(|| {
+                angles.push(p.angle_deg);
+                angles.len() - 1
+            });
+            PrintPlacement {
+                print,
+                x_mm: p.x_mm,
+                y_mm: p.y_mm,
             }
-        }
-        placed.push(current);
-    }
-    Ok(())
+        })
+        .collect();
+    (angles, placements)
 }
 
 /// Every loop of the legacy footprint: the legacy bed rule keeps all of it on the bed.
@@ -162,163 +287,4 @@ fn legacy_extent(fp: &Footprint) -> Loops {
         .chain(zones)
         .cloned()
         .collect()
-}
-
-/// A pair rule of `keepout::pair_rules` broken between two placements, both ways.
-fn pairs_conflict(
-    a: &Placed,
-    b: &Placed,
-    body_rule: crate::keepout::BodyRule,
-    bands: usize,
-    clearance: f64,
-) -> bool {
-    pair_rules(body_rule).iter().any(|rule| {
-        let banded = [rule.a, rule.b].iter().any(|kind| is_band_kind(*kind));
-        let gap = rule.gap.mm(clearance);
-        (0..if banded { bands } else { 1 }).any(|k| {
-            let pair = |x: &Placed, y: &Placed| match (x.kind(rule.a, k), y.kind(rule.b, k)) {
-                (Some(za), Some(zb)) => za.conflicts(zb, gap),
-                _ => false,
-            };
-            pair(a, b) || pair(b, a)
-        })
-    })
-}
-
-fn is_band_kind(kind: PrintKind) -> bool {
-    matches!(
-        kind,
-        PrintKind::BodyBand | PrintKind::SupportBand | PrintKind::InterfaceBand
-    )
-}
-
-/// Whether the placement breaks a row of the permission matrix against `zone`.
-fn breaks_zone(placed: &Placed, zone: &PlateZone, clearance: f64) -> bool {
-    let kinds = [
-        PrintKind::Silhouette,
-        PrintKind::BodyBand,
-        PrintKind::Landing,
-        PrintKind::Brim,
-        PrintKind::SupportBase,
-        PrintKind::SupportBand,
-        PrintKind::InterfaceBand,
-    ];
-    let extent_out = zone.class == ZoneClass::Boundary
-        && matches!(zone.area, ZoneArea::Outside { inside, .. }
-            if placed.extent.is_some_and(|e| e.sticks_out_of(inside, GAP_EPS)));
-    extent_out
-        || kinds
-            .iter()
-            .any(|&kind| match permission(kind, zone.class) {
-                Permission::Allowed => false,
-                Permission::PartBox => parts_break(placed, zone, false),
-                Permission::PartHull => parts_break(placed, zone, true),
-                Permission::Forbidden { gap } => {
-                    material_breaks(placed, kind, zone, gap.mm(clearance))
-                }
-            })
-}
-
-/// Part boxes (or hulls; against an `Outside` zone a hull fits exactly when its box does).
-fn parts_break(placed: &Placed, zone: &PlateZone, hulls: bool) -> bool {
-    let boxes = &placed.print.part_boxes;
-    match &zone.area {
-        ZoneArea::Outside { inside, .. } => boxes.iter().any(|b| b.sticks_out_of(*inside, GAP_EPS)),
-        ZoneArea::Rect(rect) if !hulls => boxes.iter().any(|b| {
-            b.min_x < rect.max_x - GAP_EPS
-                && b.max_x > rect.min_x + GAP_EPS
-                && b.min_y < rect.max_y - GAP_EPS
-                && b.max_y > rect.min_y + GAP_EPS
-        }),
-        area => {
-            let zone = area_zone(area);
-            if hulls && !placed.hulls.is_empty() {
-                placed.hulls.iter().any(|hull| hull.conflicts(&zone, 0.0))
-            } else {
-                boxes
-                    .iter()
-                    .any(|b| Zone::new(&[rect_ring(*b)]).conflicts(&zone, 0.0))
-            }
-        }
-    }
-}
-
-/// The kind's material that can meet `zone` keeps `gap` from it.
-fn material_breaks(placed: &Placed, kind: PrintKind, zone: &PlateZone, gap: f64) -> bool {
-    let materials = zone_material(&placed.print, kind, zone);
-    match &zone.area {
-        ZoneArea::Outside {
-            inside,
-            material_inset_mm,
-        } => {
-            let allowed = inside.grown(-material_inset_mm);
-            materials.iter().any(|(_, loops)| {
-                Rect::of_points(loops.iter().flatten())
-                    .grown(gap)
-                    .sticks_out_of(allowed, GAP_EPS)
-            })
-        }
-        area => {
-            let zone = area_zone(area);
-            materials.iter().any(|&(band, _)| {
-                placed
-                    .kind(kind, band)
-                    .is_some_and(|m| m.conflicts(&zone, gap))
-            })
-        }
-    }
-}
-
-fn area_zone(area: &ZoneArea) -> Zone {
-    match area {
-        ZoneArea::Rect(rect) => Zone::new(&[rect_ring(*rect)]),
-        ZoneArea::Loops(loops) => Zone::new(loops),
-        ZoneArea::Outside { .. } => unreachable!("outside zones are box tests"),
-    }
-}
-
-fn rect_ring(r: Rect) -> Vec<Point> {
-    [
-        (r.min_x, r.min_y),
-        (r.max_x, r.min_y),
-        (r.max_x, r.max_y),
-        (r.min_x, r.max_y),
-        (r.min_x, r.min_y),
-    ]
-    .iter()
-    .map(|&(x, y)| Point { x, y })
-    .collect()
-}
-
-/// `print` placed by `p`: every kind turned and moved, part boxes rebuilt from the placed
-/// hulls (or the placed box corners when the print has no hull per box).
-fn place_print(print: &ObjectPrint, p: &PackedPlacement) -> ObjectPrint {
-    let place = |loops: &Loops| p.place_loops(loops);
-    let bands = |bands: &[Loops]| bands.iter().map(place).collect();
-    let part_hulls = place(&print.part_hulls);
-    let part_boxes = if part_hulls.len() == print.part_boxes.len() {
-        part_hulls
-            .iter()
-            .map(|hull| Rect::of_points(hull.iter()))
-            .collect()
-    } else {
-        let corners = |b: &Rect| vec![rect_ring(*b)];
-        let boxes = print.part_boxes.iter().map(|b| place(&corners(b)));
-        boxes
-            .map(|ring| Rect::of_points(ring.iter().flatten()))
-            .collect()
-    };
-    ObjectPrint {
-        rotation_deg: print.rotation_deg + p.angle_deg,
-        part_boxes,
-        silhouette: place(&print.silhouette),
-        part_hulls,
-        landing: place(&print.landing),
-        brim: place(&print.brim),
-        body: bands(&print.body),
-        support_base: place(&print.support_base),
-        support: bands(&print.support),
-        interface: bands(&print.interface),
-        provenance: print.provenance.clone(),
-    }
 }

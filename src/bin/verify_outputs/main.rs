@@ -19,13 +19,15 @@
 //! the Python verifier.
 //!
 //! Modules: `args` (command line), `checks` (the checks, in run order), `project` (reading the
-//! 3MF), `matrix` (transforms), `stl` (the collision STL), `report` (the output).
+//! 3MF), `matrix` (transforms), `rules` (its own copy of the packer's permission matrix and
+//! pair table), `stl` (the collision STL), `report` (the output).
 
 mod args;
 mod checks;
 mod matrix;
 mod project;
 mod report;
+mod rules;
 mod stl;
 
 use std::fs;
