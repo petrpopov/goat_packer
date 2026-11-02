@@ -1,6 +1,38 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 3.5,
+    "keepouts": [
+      {
+        "class": "hard",
+        "id": "bed_exclude_0",
+        "rect": [
+          312.0,
+          0.0,
+          324.0,
+          200.0
+        ],
+        "source": "bed_exclude_area"
+      },
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            137.0,
+            0.0,
+            0.0,
+            0.0,
+            0.5000001644500002
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
-  "edge_margin_mm": 0.0,
+  "edge_margin_mm": 3.5,
   "exclusion_rectangles": [
     [
       312.0,
@@ -9,6 +41,7 @@
       200.0
     ]
   ],
+  "gui_flavour": "snapmaker-orca-2.4",
   "id": "snapmaker_j1",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

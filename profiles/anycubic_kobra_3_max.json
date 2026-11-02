@@ -1,4 +1,32 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "hard",
+        "id": "bed_exclude_0",
+        "rect": [
+          0.0,
+          0.0,
+          3.0,
+          420.0
+        ],
+        "source": "bed_exclude_area"
+      },
+      {
+        "class": "hard",
+        "id": "bed_exclude_1",
+        "rect": [
+          423.0,
+          0.0,
+          426.0,
+          420.0
+        ],
+        "source": "bed_exclude_area"
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [
@@ -15,6 +43,7 @@
       420.0
     ]
   ],
+  "gui_flavour": "orca-2.4",
   "id": "anycubic_kobra_3_max",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

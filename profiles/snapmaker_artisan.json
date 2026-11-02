@@ -1,7 +1,29 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 3.5,
+    "keepouts": [
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            140.0,
+            0.0,
+            0.0,
+            0.0,
+            0.5000002605943922
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
-  "edge_margin_mm": 0.0,
+  "edge_margin_mm": 3.5,
   "exclusion_rectangles": [],
+  "gui_flavour": "snapmaker-orca-2.4",
   "id": "snapmaker_artisan",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

@@ -1,16 +1,20 @@
-//! `annotate`: the macro-purge rule for existing catalog profiles.
+//! `annotate`: bed rules, GUI flavour and the macro-purge rule for existing catalog profiles.
 
 use std::{fs, path::PathBuf};
 
+use goat_packer::colored_packer::PrinterProfile;
+use goat_packer::colored_packer::bed_rules::old_field_mismatches;
 use goat_packer::orca_presets::PresetIndex;
 use serde_json::{Map, Value, json};
 
 use crate::AppResult;
+use crate::profile_text::with_top_level;
+use crate::rules::{PrinterFacts, derive};
 use crate::util::{is_hand_made, json_files};
 
-/// Edge margin for a printer whose start G-code purges inside a firmware macro: where the macro
+/// Edge band for a printer whose start G-code purges inside a firmware macro: where the macro
 /// draws its line we cannot know, 5 mm is the custom-bed default for the same reason.
-const MACRO_PURGE_MARGIN_MM: f64 = 5.0;
+pub const MACRO_PURGE_MARGIN_MM: f64 = 5.0;
 const MACRO_NOTE_PREFIX: &str = "start G-code calls firmware macros";
 /// Firmware commands that are not user macros (and never purge): Klipper built-ins seen in Orca
 /// 2.4.2 start G-codes, Bambu's `SYNC`. Without the list a K1 `BED_MESH_CALIBRATE` or an X2D
@@ -102,46 +106,20 @@ fn macro_note(names: &[String]) -> String {
     )
 }
 
-/// Applies the macro-purge rule to a profile value (qualify): no detected purge lines and macro
-/// calls in the start G-code → edge margin at least [`MACRO_PURGE_MARGIN_MM`]. Returns the note.
-pub fn apply_macro_margin(profile: &mut Value, names: &[String]) -> Option<String> {
-    let purge_empty = profile
-        .get("purge_lines")
-        .and_then(Value::as_array)
-        .is_none_or(Vec::is_empty);
-    if names.is_empty() || !purge_empty {
-        return None;
-    }
-    let current = profile
-        .get("edge_margin_mm")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-    profile["edge_margin_mm"] = json!(current.max(MACRO_PURGE_MARGIN_MM));
-    Some(macro_note(names))
+/// A purge the probe could not see: macro calls in the start G-code and no detected lines.
+pub fn hidden_macro_purge(purge_lines: &[[f64; 5]], names: &[String]) -> bool {
+    !names.is_empty() && purge_lines.is_empty()
 }
 
-/// The same rule as a minimal text edit of a pretty-printed profile (like [`with_vendor_display`]:
-/// a serde round-trip would rewrite the floats of qualified purge lines and outlines): the
-/// top-level `edge_margin_mm` line is raised to the margin and the note is put into (or replaced
-/// in) `source.notes`. `None` when the text does not have that shape.
-fn with_macro_margin(text: &str, names: &[String]) -> Option<String> {
+/// The `source.notes` entry of a hidden macro purge, `None` without one.
+pub fn macro_purge_note(purge_lines: &[[f64; 5]], names: &[String]) -> Option<String> {
+    hidden_macro_purge(purge_lines, names).then(|| macro_note(names))
+}
+
+/// The macro note put into (or replaced in) `source.notes` as a minimal text edit (see
+/// `profile_text`). `None` when the text does not have that shape.
+fn with_macro_note(text: &str, names: &[String]) -> Option<String> {
     let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
-    let margin = lines
-        .iter()
-        .position(|l| l.starts_with("  \"edge_margin_mm\": "))?;
-    let value: f64 = lines[margin]["  \"edge_margin_mm\": ".len()..]
-        .trim_end_matches(',')
-        .trim()
-        .parse()
-        .ok()?;
-    if value < MACRO_PURGE_MARGIN_MM {
-        let comma = if lines[margin].ends_with(',') {
-            ","
-        } else {
-            ""
-        };
-        lines[margin] = format!("  \"edge_margin_mm\": {MACRO_PURGE_MARGIN_MM:.1}{comma}");
-    }
     let note = format!("      {}", serde_json::to_string(&macro_note(names)).ok()?);
     match lines.iter().position(|l| l == "    \"notes\": [") {
         Some(open) => {
@@ -180,9 +158,42 @@ fn with_macro_margin(text: &str, names: &[String]) -> Option<String> {
     Some(out)
 }
 
-/// `annotate --orca <presets> [--profiles profiles/]`: the macro-purge rule for existing catalog
-/// profiles (hand-made ones are never touched); each `orca_machine` is resolved in its own
-/// `vendor` folder. Prints how many profiles call macros and how many files changed.
+/// One catalog profile with its derived rules written in: `bed_rules`, `gui_flavour`, the
+/// matching `edge_margin_mm` and the macro note. The result must load as a profile whose old
+/// fields agree with its rules.
+fn annotated(text: &str, value: &Value, index: &PresetIndex) -> AppResult<String> {
+    let field = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default();
+    let machine = index.resolve(field("vendor"), field("orca_machine"))?;
+    let facts = PrinterFacts::of_machine(&machine);
+    let profile: PrinterProfile = serde_json::from_value(value.clone())?;
+    let derived = derive(&profile, field("vendor"), &facts);
+    let shape = || "no pretty-printed profile object / source block to edit".to_owned();
+    let mut text = text.to_owned();
+    if hidden_macro_purge(&profile.purge_lines, &facts.macros) {
+        text = with_macro_note(&text, &facts.macros).ok_or_else(shape)?;
+    }
+    for (key, set) in [
+        ("edge_margin_mm", json!(derived.edge_margin_mm)),
+        ("bed_rules", serde_json::to_value(&derived.bed_rules)?),
+        ("gui_flavour", json!(derived.gui_flavour)),
+    ] {
+        text = with_top_level(&text, key, &set).ok_or_else(shape)?;
+    }
+    let written: PrinterProfile = serde_json::from_str(&text)?;
+    if let Some(rules) = &written.bed_rules {
+        rules.validate()?;
+    }
+    let mismatches = old_field_mismatches(&written);
+    if !mismatches.is_empty() {
+        return Err(mismatches.join("; ").into());
+    }
+    Ok(text)
+}
+
+/// `annotate --orca <presets> [--profiles profiles/]`: derives the bed rules, GUI flavour and
+/// edge margin of every existing catalog profile (hand-made ones are never touched), each
+/// `orca_machine` resolved in its own `vendor` folder, and applies the macro-purge rule. No
+/// slicing: the rules come from the profile's fields and its machine preset.
 pub fn annotate(raw: Vec<String>) -> AppResult<()> {
     let mut args = raw.into_iter();
     let mut dir = PathBuf::from("profiles");
@@ -198,47 +209,22 @@ pub fn annotate(raw: Vec<String>) -> AppResult<()> {
         }
     }
     let index = PresetIndex::load(&orca.ok_or("missing --orca")?)?;
-    let paths = json_files(&dir)?;
-    let (mut catalog, mut with_macros, mut purge_visible, mut changed) = (0, 0, 0, Vec::new());
-    for path in paths {
+    let (mut catalog, mut changed) = (0, Vec::new());
+    for path in json_files(&dir)? {
         let text = fs::read_to_string(&path)?;
         let value: Value = serde_json::from_str(&text)?;
         if is_hand_made(&value) {
             continue;
         }
         catalog += 1;
-        let field = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default();
-        let machine = index
-            .resolve(field("vendor"), field("orca_machine"))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        let names = start_gcode_macros(&start_gcode(&machine));
-        if names.is_empty() {
-            continue;
-        }
-        with_macros += 1;
-        if value
-            .get("purge_lines")
-            .and_then(Value::as_array)
-            .is_some_and(|p| !p.is_empty())
-        {
-            purge_visible += 1;
-            continue;
-        }
-        let edited = with_macro_margin(&text, &names).ok_or_else(|| {
-            format!(
-                "{}: no top-level edge_margin_mm / source block to edit",
-                path.display()
-            )
-        })?;
+        let edited =
+            annotated(&text, &value, &index).map_err(|e| format!("{}: {e}", path.display()))?;
         if edited != text {
             fs::write(&path, edited)?;
-            changed.push(format!("{} ({})", field("id"), names.join(", ")));
+            changed.push(path.display().to_string());
         }
     }
-    println!(
-        "{catalog} catalog profiles, {with_macros} call start G-code macros ({purge_visible} with detected purge lines), {} rewritten",
-        changed.len()
-    );
+    println!("{catalog} catalog profiles, {} rewritten", changed.len());
     for line in changed {
         println!("  {line}");
     }
@@ -272,40 +258,86 @@ mod tests {
     }
 
     #[test]
-    fn macro_purge_raises_the_margin_only_without_detected_purge() {
+    fn the_macro_note_is_only_for_a_purge_the_probe_could_not_see() {
         let names = vec!["PRINT_START".to_owned()];
-        let mut bare = json!({"edge_margin_mm": 0.0, "purge_lines": []});
-        assert!(
-            apply_macro_margin(&mut bare, &names)
-                .unwrap()
-                .contains("PRINT_START")
-        );
-        assert_eq!(bare["edge_margin_mm"], 5.0);
-        let mut wide = json!({"edge_margin_mm": 8.0, "purge_lines": []});
-        apply_macro_margin(&mut wide, &names).unwrap();
-        assert_eq!(wide["edge_margin_mm"], 8.0);
-        let mut purged = json!({"edge_margin_mm": 0.0, "purge_lines": [[1.0, 2.0, 3.0, 2.0, 1.0]]});
-        assert!(apply_macro_margin(&mut purged, &names).is_none());
-        assert_eq!(purged["edge_margin_mm"], 0.0);
-        assert!(apply_macro_margin(&mut bare, &[]).is_none());
+        let note = macro_purge_note(&[], &names).unwrap();
+        assert!(note.contains("PRINT_START") && note.contains("5 mm edge margin"));
+        assert!(macro_purge_note(&[[1.0, 2.0, 3.0, 2.0, 1.0]], &names).is_none());
+        assert!(macro_purge_note(&[], &[]).is_none());
     }
 
     #[test]
-    fn macro_margin_is_a_minimal_text_edit() {
+    fn macro_note_is_a_minimal_text_edit() {
         let names = vec!["PRINT_START".to_owned(), "START_PRINT".to_owned()];
         let text = "{\n  \"edge_margin_mm\": 0.0,\n  \"outline\": [\n    0.49999396104662325\n  ],\n  \"source\": {\n    \"imported\": \"d\",\n    \"notes\": [\n      \"process: p\"\n    ],\n    \"qualified\": true\n  }\n}\n";
-        let edited = with_macro_margin(text, &names).unwrap();
-        assert!(edited.contains("  \"edge_margin_mm\": 5.0,\n"));
+        let edited = with_macro_note(text, &names).unwrap();
+        assert!(edited.contains("  \"edge_margin_mm\": 0.0,\n"));
         assert!(edited.contains("0.49999396104662325"));
         assert!(edited.contains("      \"process: p\",\n      \"start G-code calls firmware macros (PRINT_START, START_PRINT); purge not visible — 5 mm edge margin\"\n    ],"));
         // Idempotent: the note is replaced, not repeated.
-        assert_eq!(with_macro_margin(&edited, &names).unwrap(), edited);
+        assert_eq!(with_macro_note(&edited, &names).unwrap(), edited);
         // No notes yet: the array is created inside `source`.
         let bare =
             "{\n  \"edge_margin_mm\": 6.5,\n  \"source\": {\n    \"qualified\": true\n  }\n}\n";
-        let edited: Value =
-            serde_json::from_str(&with_macro_margin(bare, &names).unwrap()).unwrap();
-        assert_eq!(edited["edge_margin_mm"], 6.5);
+        let edited: Value = serde_json::from_str(&with_macro_note(bare, &names).unwrap()).unwrap();
         assert_eq!(edited["source"]["notes"].as_array().unwrap().len(), 1);
+    }
+
+    /// A catalog file as `extract`/`qualify` write it: serde pretty print, alphabetical keys.
+    fn catalog_text(vendor: &str, purge: Value) -> String {
+        let profile = json!({
+            "id": "acme_box", "printer_name": "Acme Box", "printer_model": "Acme Box",
+            "vendor": vendor, "orca_machine": "Acme Box 0.4 nozzle", "slicer_kind": "orca",
+            "slicer_path": "/opt/slicers/orca/AppRun", "blank_start_gcode_for_cli": false,
+            "no_check_for_final_tower_probe": false, "printable_area": [0.0, 0.0, 220.0, 220.0],
+            "edge_margin_mm": 0.0, "exclusion_rectangles": [[0.0, 0.0, 18.0, 28.0]],
+            "purge_lines": purge, "tower_marker_style": "wipe_tower", "tower_line_width_mm": 0.5,
+            "source": {"orca_tag": "v2.4.2", "qualified": true}
+        });
+        let mut text = serde_json::to_string_pretty(&profile).unwrap();
+        text.push('\n');
+        text
+    }
+
+    fn index(vendor: &str, start_gcode: &str) -> PresetIndex {
+        let mut index = PresetIndex::default();
+        index.insert(
+            vendor,
+            json!({"type": "machine", "name": "Acme Box 0.4 nozzle", "instantiation": "true",
+                   "printer_model": "Acme Box", "machine_start_gcode": start_gcode}),
+        );
+        index
+    }
+
+    #[test]
+    fn annotate_writes_rules_flavour_and_margin_and_is_idempotent() {
+        let text = catalog_text("Acme", json!([]));
+        let index = index("Acme", "G28\nPRINT_START BED=60\n");
+        let once = annotated(&text, &serde_json::from_str(&text).unwrap(), &index).unwrap();
+        let profile: PrinterProfile = serde_json::from_str(&once).unwrap();
+        assert_eq!(profile.edge_margin_mm, MACRO_PURGE_MARGIN_MM);
+        assert_eq!(profile.gui_flavour.unwrap().to_string(), "orca-2.4");
+        let rules = profile.bed_rules.unwrap();
+        let ids: Vec<&str> = rules.keepouts.iter().map(|k| k.id.as_str()).collect();
+        assert_eq!(ids, vec!["bed_exclude_0", "macro_purge"]);
+        assert!(once.contains("purge not visible"));
+        // Only the touched keys change; the second run changes nothing.
+        assert!(once.starts_with("{\n  \"bed_rules\": {"));
+        assert!(once.contains("  \"gui_flavour\": \"orca-2.4\",\n  \"id\": \"acme_box\","));
+        let twice = annotated(&once, &serde_json::from_str(&once).unwrap(), &index).unwrap();
+        assert_eq!(twice, once);
+    }
+
+    #[test]
+    fn annotate_keeps_a_visible_purge_soft_and_the_margin_at_the_gui_band() {
+        let text = catalog_text("Snapmaker", json!([[85.0, 1.0, 185.0, 1.0, 1.8]]));
+        let index = index("Snapmaker", "G28\nPRINT_START\n");
+        let once = annotated(&text, &serde_json::from_str(&text).unwrap(), &index).unwrap();
+        let profile: PrinterProfile = serde_json::from_str(&once).unwrap();
+        assert_eq!(profile.edge_margin_mm, 3.5);
+        let rules = profile.bed_rules.unwrap();
+        assert_eq!(rules.body_edge_band_mm, 3.5);
+        assert!(rules.keepouts.iter().all(|k| k.edge_band_mm.is_none()));
+        assert!(!once.contains("purge not visible"));
     }
 }

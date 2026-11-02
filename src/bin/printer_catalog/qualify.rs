@@ -1,6 +1,10 @@
 //! `qualify`: slice a draft end-to-end in the runner image (spec «Qualification», CLI spike
 //! appendix). Not unit-tested as a whole: tests never call a slicer (CLAUDE.md); the pure
-//! helpers below are.
+//! helpers in `args`, `probe` and `files` are.
+
+mod args;
+mod files;
+mod probe;
 
 use std::{
     fs,
@@ -8,105 +12,29 @@ use std::{
 };
 
 use goat_packer::{
+    colored_packer::PrinterProfile,
     embedded_mesh::write_binary_stl,
     orca_presets::PresetIndex,
-    orca_project::{self, check_result_json, failure_line, find_file, read_json},
-    process_output::bounded_output,
-    purge_detect::purge_lines,
+    orca_project::{self, check_result_json, read_json},
+    purge_detect::{DEFAULT_FILAMENT_DIAMETER_MM, PurgeStrip, purge_strips},
     slicer_cli::slice_command,
 };
 use serde_json::{Value, json};
 
 use crate::AppResult;
-use crate::annotate::{apply_macro_margin, start_gcode, start_gcode_macros};
+use crate::annotate::macro_purge_note;
+use crate::extract::first_number;
+use crate::rules::{PrinterFacts, derive};
 use crate::util::{is_hand_made, today};
+use args::{QualifyArgs, Stage, parse_qualify_args};
+use files::{append_report, join_numbers, read_gcode, report_row, reset_dir, run_logged};
+use probe::{PROBE_CUBE_HEIGHT_MM, PROBE_CUBE_MM, cube_triangles, probe_origin};
 
 /// Exit code for "qualification ran and failed, report row written" — the wrapper tells it
 /// apart from a crash or a `timeout` kill (which leave no row).
 const EXIT_NOT_QUALIFIED: i32 = 3;
-const DEFAULT_ORCA: &str = "/opt/slicers/orca/AppRun";
 /// The packer's default `--clearance`; verify_outputs must require the same minimum gap.
 const PACKER_CLEARANCE_MM: f64 = 0.7;
-const REPORT_HEADER: &str =
-    "| vendor | printer_model | id | result | reason | seconds |\n|---|---|---|---|---|---|\n";
-/// The probe is a cube of this edge, mm, and this tall.
-const PROBE_CUBE_MM: f64 = 20.0;
-const PROBE_CUBE_HEIGHT_MM: f64 = 10.0;
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Stage {
-    /// Flatten presets and export `probe.3mf` (needs the Orca CLI: runner-orca image).
-    Export,
-    /// Probe slice, purge detection, pack + verify, write the profile (needs the draft's
-    /// slicer: runner-bambu for Bambu printers).
-    Pack,
-    All,
-}
-
-#[derive(Debug)]
-struct QualifyArgs {
-    draft: PathBuf,
-    orca: Option<PathBuf>,
-    orca_slicer: PathBuf,
-    slicer: Option<PathBuf>,
-    packer: PathBuf,
-    verify: PathBuf,
-    work: PathBuf,
-    out: PathBuf,
-    report: Option<PathBuf>,
-    stage: Stage,
-}
-
-fn parse_qualify_args(raw: Vec<String>) -> AppResult<QualifyArgs> {
-    let mut args = raw.into_iter();
-    let (mut draft, mut orca, mut slicer, mut work, mut report) = (None, None, None, None, None);
-    let mut orca_slicer = PathBuf::from(DEFAULT_ORCA);
-    let mut packer = PathBuf::from("colored_3mf_packer");
-    let mut verify = PathBuf::from("verify_outputs");
-    let mut out = PathBuf::from("profiles");
-    let mut stage = Stage::All;
-    while let Some(option) = args.next() {
-        let value = args
-            .next()
-            .ok_or_else(|| format!("missing value for {option}"))?;
-        match option.as_str() {
-            "--draft" => draft = Some(PathBuf::from(value)),
-            "--orca" => orca = Some(PathBuf::from(value)),
-            "--orca-slicer" => orca_slicer = PathBuf::from(value),
-            "--slicer" => slicer = Some(PathBuf::from(value)),
-            "--packer" => packer = PathBuf::from(value),
-            "--verify" => verify = PathBuf::from(value),
-            "--work" => work = Some(PathBuf::from(value)),
-            "--out" => out = PathBuf::from(value),
-            "--report" => report = Some(PathBuf::from(value)),
-            "--stage" => {
-                stage = match value.as_str() {
-                    "export" => Stage::Export,
-                    "pack" => Stage::Pack,
-                    "all" => Stage::All,
-                    other => return Err(format!("unknown stage {other} (export|pack|all)").into()),
-                }
-            }
-            _ => return Err(format!("unknown option {option}").into()),
-        }
-    }
-    let args = QualifyArgs {
-        draft: draft.ok_or("missing --draft")?,
-        orca,
-        orca_slicer,
-        slicer,
-        packer,
-        verify,
-        work: work.ok_or("missing --work")?,
-        out,
-        report,
-        stage,
-    };
-    if args.stage != Stage::Pack && args.orca.is_none() {
-        return Err("missing --orca (needed to export the probe)".into());
-    }
-    Ok(args)
-}
 
 pub fn qualify(raw: Vec<String>) -> AppResult<()> {
     let args = parse_qualify_args(raw)?;
@@ -199,8 +127,10 @@ fn export_probe(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult<()
         args.work.join("presets.json"),
         serde_json::to_vec_pretty(
             &json!({"machine": presets.machine_name(), "process": presets.process_name(), "filament": presets.filament_name(),
-                    // The pack stage may run without --orca (runner-bambu): it reads the macros here.
-                    "start_gcode_macros": start_gcode_macros(&start_gcode(&presets.machine))}),
+                    // The pack stage may run without --orca (runner-bambu): it reads the machine
+                    // facts (start G-code macros, first-layer scan) and the filament here.
+                    "printer_facts": PrinterFacts::of_machine(&presets.machine),
+                    "filament_diameter_mm": first_number(presets.filament.get("filament_diameter"))}),
         )?,
     )?;
     let cube = args.work.join("cube.stl");
@@ -247,20 +177,24 @@ fn pack_and_verify(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult
         Some(path) => path.clone(),
         None => PathBuf::from(draft_str(draft, "slicer_path")?),
     };
-    let purge = detect_purge(args, draft, &slicer, probe)?;
+    let presets = read_json(&args.work.join("presets.json")).unwrap_or_default();
+    let filament_diameter = presets
+        .get("filament_diameter_mm")
+        .and_then(Value::as_f64)
+        .unwrap_or(DEFAULT_FILAMENT_DIAMETER_MM);
+    let strips = detect_purge(args, draft, &slicer, probe, filament_diameter)?;
+    let purge: Vec<[f64; 5]> = strips.iter().map(|strip| strip.line).collect();
 
     let mut profile = draft.clone();
     profile["purge_lines"] = json!(purge);
-    let presets = read_json(&args.work.join("presets.json")).unwrap_or_default();
-    let macros: Vec<String> = serde_json::from_value(
-        presets
-            .get("start_gcode_macros")
-            .cloned()
-            .unwrap_or_default(),
-    )
-    .unwrap_or_default();
-    // Before packing: the probe plate must already keep the macro-purge margin.
-    let macro_note = apply_macro_margin(&mut profile, &macros);
+    let mut facts: PrinterFacts =
+        serde_json::from_value(presets.get("printer_facts").cloned().unwrap_or_default())
+            .unwrap_or_default();
+    facts.purge_z_mm = strips.iter().map(|strip| strip.z_mm).reduce(f64::max);
+    let macro_note = macro_purge_note(&purge, &facts.macros);
+    // Before packing: the probe plate must already keep the derived rules and the matching
+    // edge margin (a hidden macro purge's band among them).
+    with_derived_rules(&mut profile, draft_str(draft, "vendor")?, &facts)?;
     profile["slicer_path"] = json!(slicer.display().to_string());
     let passed = pack_with_workarounds(args, &profile, probe)?;
     verify_packed(args, &profile, &passed, &purge)?;
@@ -309,13 +243,24 @@ fn pack_and_verify(args: &QualifyArgs, draft: &Value, probe: &Path) -> AppResult
     ))
 }
 
+/// Writes the derived `bed_rules`, `gui_flavour` and `edge_margin_mm` into a profile value.
+fn with_derived_rules(profile: &mut Value, vendor: &str, facts: &PrinterFacts) -> AppResult<()> {
+    let typed: PrinterProfile = serde_json::from_value(profile.clone())?;
+    let derived = derive(&typed, vendor, facts);
+    profile["edge_margin_mm"] = json!(derived.edge_margin_mm);
+    profile["bed_rules"] = serde_json::to_value(&derived.bed_rules)?;
+    profile["gui_flavour"] = json!(derived.gui_flavour);
+    Ok(())
+}
+
 /// Probe slice of the untouched probe: the real start G-code, so its purge is in the G-code.
 fn detect_purge(
     args: &QualifyArgs,
     draft: &Value,
     slicer: &Path,
     probe: &Path,
-) -> AppResult<Vec<[f64; 5]>> {
+    filament_diameter_mm: f64,
+) -> AppResult<Vec<PurgeStrip>> {
     let printable: [f64; 4] =
         serde_json::from_value(draft.get("printable_area").cloned().unwrap_or_default())
             .map_err(|_| "draft printable_area is not [x0,y0,x1,y1]")?;
@@ -329,7 +274,7 @@ fn detect_purge(
     )?;
     check_result_json(&probe_out, "probe slice")?;
     let gcode = read_gcode(&probe_out)?;
-    Ok(purge_lines(&gcode, printable))
+    Ok(purge_strips(&gcode, printable, filament_diameter_mm))
 }
 
 /// Known CLI workarounds, tried in this order only when the packer itself fails (plan Task 6).
@@ -422,232 +367,4 @@ fn verify_packed(
         &args.work.join("verify.log"),
         "verify_outputs",
     )
-}
-
-fn reset_dir(dir: &Path) -> std::io::Result<()> {
-    if dir.exists() {
-        fs::remove_dir_all(dir)?;
-    }
-    fs::create_dir_all(dir)
-}
-
-fn join_numbers(values: &[f64]) -> String {
-    values
-        .iter()
-        .map(f64::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-/// Runs the command with stdout+stderr saved to `log`; a non-zero exit becomes an error carrying
-/// the last meaningful output line (the packer prints `error: …` last).
-fn run_logged(command: &mut std::process::Command, log: &Path, what: &str) -> AppResult<()> {
-    let output = bounded_output(command)
-        .map_err(|e| format!("{what}: cannot start {:?}: {e}", command.get_program()))?;
-    fs::write(log, [&output.stdout[..], &output.stderr[..]].concat())?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let reason = failure_line(&output.stderr)
-        .or_else(|| failure_line(&output.stdout))
-        .unwrap_or_default();
-    Err(format!("{what} failed ({}): {reason}", output.status).into())
-}
-
-/// Plain `plate_1.gcode` (Orca and BambuStudio CLI with `--slice 1 --outputdir`), else a G-code
-/// inside a `.gcode.3mf`.
-fn read_gcode(dir: &Path) -> AppResult<String> {
-    if let Some(path) = find_file(dir, |n| n.ends_with(".gcode")) {
-        return Ok(String::from_utf8_lossy(&fs::read(path)?).into_owned());
-    }
-    let packaged =
-        find_file(dir, |n| n.ends_with(".gcode.3mf")).ok_or("probe slice wrote no G-code")?;
-    let mut zip = zip::ZipArchive::new(fs::File::open(packaged)?)?;
-    let name = zip
-        .file_names()
-        .filter(|n| n.ends_with(".gcode"))
-        .min()
-        .map(str::to_owned)
-        .ok_or("no G-code inside the .gcode.3mf")?;
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut zip.by_name(&name)?, &mut text)?;
-    Ok(text)
-}
-
-/// Lower-left corner for the probe cube: centred in the draft's printable area, off its
-/// exclusion rectangles (`orca_project::free_spot`).
-fn probe_origin(draft: &Value, size: f64) -> (f64, f64) {
-    let area: [f64; 4] =
-        serde_json::from_value(draft.get("printable_area").cloned().unwrap_or_default())
-            .unwrap_or([0.0, 0.0, size, size]);
-    let exclusions: Vec<[f64; 4]> = serde_json::from_value(
-        draft
-            .get("exclusion_rectangles")
-            .cloned()
-            .unwrap_or_default(),
-    )
-    .unwrap_or_default();
-    orca_project::free_spot(area, &exclusions, (size, size))
-}
-
-/// Closed box `[0,w]×[0,d]×[0,h]`, 12 triangles wound counter-clockwise seen from outside.
-fn cube_triangles(w: f64, d: f64, h: f64) -> Vec<[(f64, f64, f64); 3]> {
-    let v = |i: usize| {
-        let (x, y, z) = (i & 1, (i >> 1) & 1, (i >> 2) & 1);
-        (x as f64 * w, y as f64 * d, z as f64 * h)
-    };
-    // Faces as corner quads (outward CCW): -z, +z, -y, +y, -x, +x.
-    let quads = [
-        [0, 2, 3, 1],
-        [4, 5, 7, 6],
-        [0, 1, 5, 4],
-        [2, 6, 7, 3],
-        [0, 4, 6, 2],
-        [1, 3, 7, 5],
-    ];
-    quads
-        .iter()
-        .flat_map(|q| [[v(q[0]), v(q[1]), v(q[2])], [v(q[0]), v(q[2]), v(q[3])]])
-        .collect()
-}
-
-fn report_row(
-    vendor: &str,
-    model: &str,
-    id: &str,
-    result: &str,
-    reason: &str,
-    seconds: f64,
-) -> String {
-    let cell = |s: &str| s.replace('|', "\\|").replace(['\n', '\r'], " ");
-    format!(
-        "| {} | {} | {} | {} | {} | {seconds:.0} |\n",
-        cell(vendor),
-        cell(model),
-        cell(id),
-        result,
-        cell(reason)
-    )
-}
-
-/// One `write` per row with O_APPEND: rows from parallel containers do not interleave.
-fn append_report(path: &Path, row: &str) -> std::io::Result<()> {
-    use std::io::Write as _;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let fresh = !path.exists();
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    let text = if fresh {
-        format!("{REPORT_HEADER}{row}")
-    } else {
-        row.to_owned()
-    };
-    file.write_all(text.as_bytes())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn probe_cube_sits_centred_and_off_exclusions() {
-        let plain = json!({"printable_area": [0.0, 0.0, 256.0, 256.0], "exclusion_rectangles": []});
-        assert_eq!(probe_origin(&plain, 20.0), (118.0, 118.0));
-        let blocked = json!({"printable_area": [0.0, 0.0, 256.0, 256.0], "exclusion_rectangles": [[100.0, 100.0, 156.0, 156.0]]});
-        let (x, y) = probe_origin(&blocked, 20.0);
-        assert!(
-            x + 20.0 <= 100.0 || x >= 156.0 || y + 20.0 <= 100.0 || y >= 156.0,
-            "({x}, {y})"
-        );
-        let h2d = json!({"printable_area": [25.0, 0.0, 325.0, 320.0]});
-        assert_eq!(probe_origin(&h2d, 20.0), (165.0, 150.0));
-    }
-
-    #[test]
-    fn probe_cube_is_closed_and_wound_outwards() {
-        let triangles = cube_triangles(20.0, 20.0, 10.0);
-        assert_eq!(triangles.len(), 12);
-        // Divergence theorem: the signed volume is +w·d·h only for outward (CCW) winding.
-        let volume: f64 = triangles
-            .iter()
-            .map(|[a, b, c]| {
-                (a.0 * (b.1 * c.2 - b.2 * c.1) - a.1 * (b.0 * c.2 - b.2 * c.0)
-                    + a.2 * (b.0 * c.1 - b.1 * c.0))
-                    / 6.0
-            })
-            .sum();
-        assert!((volume - 4000.0).abs() < 1e-9, "{volume}");
-        let max = triangles
-            .iter()
-            .flatten()
-            .fold((0.0_f64, 0.0_f64, 0.0_f64), |m, p| {
-                (m.0.max(p.0), m.1.max(p.1), m.2.max(p.2))
-            });
-        assert_eq!(max, (20.0, 20.0, 10.0));
-    }
-
-    #[test]
-    fn qualify_args_need_orca_except_for_the_pack_stage() {
-        let args = |list: &[&str]| parse_qualify_args(list.iter().map(|s| s.to_string()).collect());
-        let pack = args(&["--draft", "d.json", "--work", "w", "--stage", "pack"]).unwrap();
-        assert_eq!(pack.stage, Stage::Pack);
-        assert_eq!(pack.orca_slicer, PathBuf::from(DEFAULT_ORCA));
-        assert!(pack.slicer.is_none());
-        assert!(args(&["--draft", "d.json", "--work", "w"]).is_err());
-        let all = args(&[
-            "--draft", "d.json", "--work", "w", "--orca", "o", "--slicer", "/s",
-        ])
-        .unwrap();
-        assert_eq!(
-            (all.stage, all.slicer),
-            (Stage::All, Some(PathBuf::from("/s")))
-        );
-        assert!(args(&["--draft", "d.json", "--work", "w", "--stage", "nope"]).is_err());
-    }
-
-    #[test]
-    fn report_rows_escape_cells_and_get_one_header() {
-        let row = report_row(
-            "Acme",
-            "Box | 2",
-            "acme_box",
-            "failed",
-            "line1\nline2",
-            12.4,
-        );
-        assert_eq!(
-            row,
-            "| Acme | Box \\| 2 | acme_box | failed | line1 line2 | 12 |\n"
-        );
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("report.md");
-        append_report(&path, &row).unwrap();
-        append_report(&path, &row).unwrap();
-        let text = fs::read_to_string(&path).unwrap();
-        assert_eq!(text.matches("| vendor |").count(), 1);
-        assert_eq!(text.lines().count(), 4);
-    }
-
-    #[test]
-    fn gcode_is_read_plain_or_from_a_gcode_3mf() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("plate_1.gcode"), ";LAYER_CHANGE\n").unwrap();
-        assert_eq!(read_gcode(dir.path()).unwrap(), ";LAYER_CHANGE\n");
-        let dir = tempfile::tempdir().unwrap();
-        let mut zip =
-            zip::ZipWriter::new(fs::File::create(dir.path().join("plate_1.gcode.3mf")).unwrap());
-        zip.start_file(
-            "Metadata/plate_1.gcode",
-            zip::write::SimpleFileOptions::default(),
-        )
-        .unwrap();
-        std::io::Write::write_all(&mut zip, b"G1 X1\n").unwrap();
-        zip.finish().unwrap();
-        assert_eq!(read_gcode(dir.path()).unwrap(), "G1 X1\n");
-        assert!(read_gcode(tempfile::tempdir().unwrap().path()).is_err());
-    }
 }

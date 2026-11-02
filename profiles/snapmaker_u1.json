@@ -15,19 +15,20 @@
     270.5,
     271.0
   ],
-  "edge_margin_mm": 4.0,
+  "edge_margin_mm": 3.5,
   "support_edge_margin_mm": 0.7,
   "plate_outline": [[4.5,-10.5],[266.5,-10.5],[275.5,-1.5],[275.5,273.5],[266.5,282.5],[4.5,282.5],[-4.5,273.5],[-4.5,-1.5]],
   "exclusion_rectangles": [],
-  "purge_lines": [
-    [
-      85.0,
-      1.0,
-      185.0,
-      1.0,
-      0.5
-    ]
-  ],
+  "purge_lines": [[85.0, 1.0, 185.0, 1.0, 1.8]],
   "tower_marker_style": "wipe_tower",
-  "tower_line_width_mm": 0.5
+  "tower_line_width_mm": 0.5,
+  "gui_flavour": "snapmaker-orca-2.4",
+  "bed_rules": {
+    "body_edge_band_mm": 3.5,
+    "print_edge_reserve_mm": 0.0,
+    "keepouts": [
+      { "id": "purge", "class": "soft", "frame": "gcode", "z_range_mm": [0.0, 0.25],
+        "strips": [[85.0, 1.0, 185.0, 1.0, 1.8]], "source": "machine_start_gcode" }
+    ]
+  }
 }

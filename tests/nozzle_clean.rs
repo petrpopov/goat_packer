@@ -24,6 +24,8 @@ fn test_profile(nozzle_clean_gcode: Option<&str>) -> PrinterProfile {
         nozzle_clean_gcode: nozzle_clean_gcode.map(str::to_owned),
         filament_change_seconds: None,
         heat_zones: vec![],
+        bed_rules: None,
+        gui_flavour: None,
     }
 }
 

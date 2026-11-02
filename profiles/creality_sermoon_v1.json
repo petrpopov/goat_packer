@@ -1,7 +1,36 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            173.0,
+            10.0,
+            173.0,
+            170.0,
+            0.8053399136399615
+          ],
+          [
+            173.4,
+            170.0,
+            173.4,
+            40.0,
+            0.9911875860184142
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [],
+  "gui_flavour": "orca-2.4",
   "id": "creality_sermoon_v1",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

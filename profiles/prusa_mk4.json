@@ -1,7 +1,13 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [],
+  "gui_flavour": "orca-2.4",
   "id": "prusa_mk4",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

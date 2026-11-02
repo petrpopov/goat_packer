@@ -119,7 +119,7 @@ pub fn extract(raw: Vec<String>) -> AppResult<()> {
 }
 
 /// Orca stores numbers as strings, string lists or `"a;b"`; the first value as a number.
-fn first_number(value: Option<&Value>) -> Option<f64> {
+pub fn first_number(value: Option<&Value>) -> Option<f64> {
     match value? {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.split([';', ',']).next()?.trim().parse().ok(),

@@ -1,7 +1,64 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            123.0,
+            123.0,
+            208.0,
+            123.0,
+            0.481056375080937
+          ],
+          [
+            208.0,
+            123.0,
+            208.0,
+            125.0,
+            0.481056375080937
+          ],
+          [
+            208.0,
+            125.0,
+            123.0,
+            125.0,
+            0.481056375080937
+          ],
+          [
+            123.0,
+            125.0,
+            123.0,
+            208.0,
+            0.48105637508093696
+          ],
+          [
+            123.0,
+            208.0,
+            125.0,
+            208.0,
+            0.481056375080937
+          ],
+          [
+            125.0,
+            208.0,
+            125.0,
+            126.0,
+            0.48105637508093696
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [],
+  "gui_flavour": "orca-2.4",
   "id": "qidi_x_plus_3",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

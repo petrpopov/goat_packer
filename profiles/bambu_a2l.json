@@ -17,6 +17,16 @@
   "tower_marker_style": "wipe_tower",
   "tower_line_width_mm": 0.5,
   "filament_change_seconds": 95,
+  "gui_flavour": "bambu-02.08",
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "print_edge_reserve_mm": 0.0,
+    "keepouts": [
+      { "id": "purge", "class": "soft", "frame": "gcode", "z_range_mm": [0.0, 0.2],
+        "strips": [[105.0, 1.0, 185.0, 1.0, 2.0]],
+        "source": "machine_start_gcode: firmware G130 load line near y -0.2, kept conservative" }
+    ]
+  },
   "heat_zones": [
     { "name": "inner", "rect": [102, 93.4, 228, 226.6] },
     { "name": "middle", "rect": [60, 49, 270, 271] },

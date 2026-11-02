@@ -55,6 +55,8 @@ pub fn test_profile() -> PrinterProfile {
         nozzle_clean_gcode: None,
         filament_change_seconds: None,
         heat_zones: vec![],
+        bed_rules: None,
+        gui_flavour: None,
     }
 }
 

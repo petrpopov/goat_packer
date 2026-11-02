@@ -1,7 +1,43 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            50.0,
+            220.0,
+            70.0,
+            220.0,
+            1.4431691252428112
+          ],
+          [
+            70.0,
+            220.0,
+            200.0,
+            220.0,
+            0.7400867308937493
+          ],
+          [
+            200.0,
+            219.6,
+            130.0,
+            219.6,
+            0.6872233929727672
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [],
+  "gui_flavour": "orca-2.4",
   "id": "flashforge_ad5x",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

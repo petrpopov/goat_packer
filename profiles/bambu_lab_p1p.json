@@ -1,4 +1,57 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "hard",
+        "id": "bed_exclude_0",
+        "rect": [
+          0.0,
+          0.0,
+          18.0,
+          28.0
+        ],
+        "source": "bed_exclude_area"
+      },
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            18.0,
+            1.0,
+            240.0,
+            1.0,
+            0.8125952281772585
+          ],
+          [
+            240.0,
+            1.0,
+            240.0,
+            11.0,
+            0.8418486563916397
+          ],
+          [
+            239.5,
+            11.0,
+            239.5,
+            1.5,
+            0.8861564804122523
+          ],
+          [
+            239.5,
+            1.5,
+            18.0,
+            1.5,
+            0.814429528918065
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [
@@ -9,6 +62,7 @@
       28.0
     ]
   ],
+  "gui_flavour": "bambu-02.08",
   "id": "bambu_lab_p1p",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

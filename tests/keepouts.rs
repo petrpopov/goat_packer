@@ -1,5 +1,11 @@
 //! The permission matrix and the pair table (design 2026-11-02, §7.2 and §7.3) pinned cell by
-//! cell, plus the plate rules around them.
+//! cell, plus the plate rules around them: a profile's bed rules (`profile_rules`) and what
+//! each zone class allows on placed objects (`zone_rules`).
+
+#[path = "keepouts/profile_rules.rs"]
+mod profile_rules;
+#[path = "keepouts/zone_rules.rs"]
+mod zone_rules;
 
 use goat_packer::keepout::{
     BodyRule, Gap, Keepout, KeepoutFrame, KeepoutShape, Permission, PlateRules, ZoneClass,

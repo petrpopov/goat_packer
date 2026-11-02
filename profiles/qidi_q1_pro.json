@@ -1,4 +1,82 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "hard",
+        "id": "bed_exclude_0",
+        "rect": [
+          25.0,
+          240.0,
+          115.0,
+          245.0
+        ],
+        "source": "bed_exclude_area"
+      },
+      {
+        "class": "hard",
+        "id": "bed_exclude_1",
+        "rect": [
+          208.0,
+          240.0,
+          245.0,
+          245.0
+        ],
+        "source": "bed_exclude_area"
+      },
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            91.3804,
+            105.523,
+            176.38,
+            105.523,
+            0.4810586388862965
+          ],
+          [
+            176.38,
+            105.523,
+            176.38,
+            107.523,
+            0.481056375080937
+          ],
+          [
+            176.38,
+            107.523,
+            91.3804,
+            107.523,
+            0.4810586388862965
+          ],
+          [
+            91.3804,
+            107.523,
+            91.3804,
+            190.523,
+            0.48105637508093696
+          ],
+          [
+            91.3804,
+            190.523,
+            93.3804,
+            190.523,
+            0.481056375080937
+          ],
+          [
+            93.3804,
+            190.523,
+            93.3804,
+            108.523,
+            0.48105637508093696
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [
@@ -15,6 +93,7 @@
       245.0
     ]
   ],
+  "gui_flavour": "orca-2.4",
   "id": "qidi_q1_pro",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

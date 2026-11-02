@@ -5,6 +5,7 @@ use std::{fs, path::Path};
 use serde::{Deserialize, Serialize};
 
 use super::ColoredPackerResult;
+use super::bed_rules::{GuiFlavour, ProfileBedRules};
 use crate::geometry::{Rect, axis_aligned_line_keepout};
 use crate::plate_centre::HeatZone;
 
@@ -17,15 +18,19 @@ pub struct PrinterProfile {
     pub blank_start_gcode_for_cli: bool,
     pub no_check_for_final_tower_probe: bool,
     pub printable_area: [f64; 4],
+    /// How far model bodies keep from the printable edge; with `bed_rules` it equals their
+    /// body margin (U1: Snapmaker Orca's 3.5 mm part band, equality passes).
     pub edge_margin_mm: f64,
     /// Edge margin for the supports and brim (the printed patch beyond the model) when it
     /// differs from `edge_margin_mm`, which then binds the model only (`PackOptions::body_bed`).
-    /// U1: the 4 mm margin keeps the meshes off the edge, but a hand-made 48-goat plate
+    /// U1: the edge margin keeps the meshes off the edge, but a hand-made 48-goat plate
     /// printed its support bases 0.7 mm from the printable edge (the closest the owner found
-    /// Snapmaker Orca to accept), and the 4 mm margin on the 47.6 mm support patch held the
-    /// packer at 45. A set value is calibrated: it replaces the packer's default drift reserve
-    /// for supports at the bed edge. Absent = `edge_margin_mm` binds everything: a macro purge
-    /// (`printer_catalog annotate`) may run anywhere near the edge.
+    /// Snapmaker Orca to accept), and the then 4 mm margin on the 47.6 mm support patch held
+    /// the packer at 45. A set value is calibrated: it replaces the packer's default drift
+    /// reserve for supports at the bed edge, which is why U1 keeps 0.7 here while its
+    /// `bed_rules` reserve is 0 (the support model's calibrated margin covers the drift
+    /// there). Absent = `edge_margin_mm` binds everything: a macro purge (`printer_catalog
+    /// annotate`) may run anywhere near the edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub support_edge_margin_mm: Option<f64>,
     pub exclusion_rectangles: Vec<[f64; 4]>,
@@ -54,6 +59,19 @@ pub struct PrinterProfile {
     /// less bed. Absent = printer heats the whole bed; the centre is the usable bed's.
     #[serde(default)]
     pub heat_zones: Vec<HeatZone>,
+    /// The printer's plate zones by class (design 2026-11-02, §7.4): what the slicer-free
+    /// core packs against (`bed_rules::plate_rules`). The old bed fields above stay and must
+    /// say the same (`bed_rules::old_field_mismatches`): the legacy pipeline, the webapp and
+    /// `source_project --edge-margin` read them. Absent = the old fields through the legacy
+    /// table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bed_rules: Option<ProfileBedRules>,
+    /// The slicer GUI the plate is opened in (`"bambu-02.08"`, `"snapmaker-orca-2.4"`,
+    /// `"orca-2.4"`): its own acceptance rules (Snapmaker Orca's 3.5 mm part band) and the
+    /// support behaviour to predict. A job prefers the project's own `Application`; this is the
+    /// fallback, and the only source an STL job has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gui_flavour: Option<GuiFlavour>,
 }
 
 impl PrinterProfile {
@@ -113,7 +131,7 @@ impl PrinterProfile {
 /// exclusion corner, so this was raised to 4.0mm and applied uniformly to every keepout the packer
 /// reserves. Isolated single-object measurements and reduced-attempt tuning runs both understate
 /// what a fully packed, maximally-dense real plate needs.
-const SLICER_KEEPOUT_SAFETY_MM: f64 = 4.0;
+pub(super) const SLICER_KEEPOUT_SAFETY_MM: f64 = 4.0;
 
 /// Purge-line keepout grows by half the line width already; the line's coordinates come
 /// straight from the printer profile, so the base margin only needs to absorb raster
@@ -135,6 +153,11 @@ pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> 
     }
     profile.usable_bed()?;
     profile.support_bed()?;
+    if let Some(rules) = &profile.bed_rules {
+        rules
+            .validate()
+            .map_err(|error| format!("printer profile {}: {error}", path.display()))?;
+    }
     Ok(profile)
 }
 
@@ -194,6 +217,8 @@ mod tests {
             nozzle_clean_gcode: None,
             filament_change_seconds: None,
             heat_zones: vec![],
+            bed_rules: None,
+            gui_flavour: None,
         }
     }
 

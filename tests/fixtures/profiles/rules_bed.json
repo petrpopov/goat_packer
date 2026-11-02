@@ -1,0 +1,25 @@
+{
+  "id": "test_rules_bed",
+  "printer_name": "Test Rules Bed",
+  "slicer_kind": "orca",
+  "slicer_path": "",
+  "blank_start_gcode_for_cli": false,
+  "no_check_for_final_tower_probe": false,
+  "printable_area": [0.5, 1.0, 270.5, 271.0],
+  "edge_margin_mm": 3.5,
+  "support_edge_margin_mm": 0.7,
+  "exclusion_rectangles": [[0.5, 1.0, 18.5, 29.0]],
+  "purge_lines": [[85.0, 1.0, 185.0, 1.0, 1.8]],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5,
+  "gui_flavour": "snapmaker-orca-2.4",
+  "bed_rules": {
+    "body_edge_band_mm": 3.5,
+    "print_edge_reserve_mm": 0.0,
+    "keepouts": [
+      { "id": "corner", "class": "hard", "rect": [0.5, 1.0, 18.5, 29.0], "source": "bed_exclude_area" },
+      { "id": "purge", "class": "soft", "frame": "gcode", "z_range_mm": [0.0, 0.25],
+        "strips": [[85.0, 1.0, 185.0, 1.0, 1.8]], "source": "machine_start_gcode" }
+    ]
+  }
+}

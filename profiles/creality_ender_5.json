@@ -1,7 +1,36 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            2.0,
+            10.0,
+            2.0,
+            140.0,
+            0.6607917240122761
+          ],
+          [
+            2.3,
+            140.0,
+            2.3,
+            10.0,
+            0.6607917240122761
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [],
+  "gui_flavour": "orca-2.4",
   "id": "creality_ender_5",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

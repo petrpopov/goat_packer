@@ -1,7 +1,50 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            0.0,
+            1.0,
+            205.0,
+            1.0,
+            0.7430952135396588
+          ],
+          [
+            205.0,
+            1.6,
+            5.0,
+            1.6,
+            0.7616725938781503
+          ],
+          [
+            5.0,
+            2.0,
+            65.0,
+            2.0,
+            1.803961406553514
+          ],
+          [
+            65.0,
+            2.0,
+            105.0,
+            2.0,
+            3.0
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [],
+  "gui_flavour": "orca-2.4",
   "id": "anycubic_i3_mega_s",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,

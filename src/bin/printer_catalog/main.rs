@@ -19,21 +19,26 @@
 //! exported by the Orca CLI, slicing and packing use the draft's slicer, so a Bambu printer
 //! runs `--stage export` in runner-orca and `--stage pack` in runner-bambu.
 //!
-//! `annotate` (and `qualify` for new profiles): a purge done by a firmware macro called from the
-//! start G-code (`PRINT_START`, `START_PRINT`, …) never reaches the sliced G-code, so
-//! `purge_detect` cannot see it; such a profile without detected `purge_lines` gets a
-//! [`annotate::MACRO_PURGE_MARGIN_MM`] edge margin and a `source.notes` entry.
+//! `annotate` (and `qualify` for new profiles) derive `bed_rules` and `gui_flavour` (`rules`,
+//! design 2026-11-02 §7.6) from the profile's fields and its machine preset, no slicing, and set
+//! `edge_margin_mm` to what the rules keep bodies from the edge. A purge done by a firmware
+//! macro called from the start G-code (`PRINT_START`, `START_PRINT`, …) never reaches the
+//! sliced G-code, so `purge_detect` cannot see it; such a profile without detected
+//! `purge_lines` gets a hard [`annotate::MACRO_PURGE_MARGIN_MM`] edge band and a `source.notes`
+//! entry.
 //!
 //! Only numbers and our own traced polygon leave Orca's files (AGPL, never copied). Draft JSON
 //! keys are alphabetical: serde_json is built without `preserve_order`, so `Map` is a BTreeMap.
 //!
-//! One module per command: `extract`, `qualify`, `relabel`, `annotate`; `util` holds what they
-//! share.
+//! One module per command: `extract`, `qualify`, `relabel`, `annotate`; `rules` derives the bed
+//! rules, `profile_text` edits catalog files line by line, `util` holds the rest they share.
 
 mod annotate;
 mod extract;
+mod profile_text;
 mod qualify;
 mod relabel;
+mod rules;
 mod util;
 
 use std::error::Error;

@@ -35,11 +35,55 @@ fn detects_slicer_kind_from_the_vendor_in_printer_model() {
     assert_eq!(detect_slicer_kind_from_printer_model("Unknown Printer"), None);
 }
 
+#[test]
+fn bed_rules_and_gui_flavour_load_and_resolve_in_the_plate_frame() {
+    use goat_packer::colored_packer::bed_rules::{ProjectBed, old_field_mismatches, plate_rules};
+    use goat_packer::keepout::KeepoutShape;
+    let profile = fixture("rules_bed.json");
+    assert_eq!(profile.gui_flavour.as_ref().unwrap().to_string(), "snapmaker-orca-2.4");
+    assert_eq!(profile.bed_rules.as_ref().unwrap().keepouts.len(), 2);
+    assert!(old_field_mismatches(&profile).is_empty());
+    let project = ProjectBed { gcode_offset: (0.0, 2.0), first_layer_height_mm: Some(0.25) };
+    let rules = plate_rules(&profile, &project).unwrap();
+    assert_eq!((rules.body_edge_band_mm, rules.print_edge_reserve_mm), (3.5, 0.0));
+    assert_eq!(rules.keepouts[1].shape, KeepoutShape::Strips(vec![[85.0, 3.0, 185.0, 3.0, 1.8]]));
+    assert_eq!(rules.keepouts[1].z_range_mm, Some([0.0, 0.25]));
+    // The serialized profile keeps both fields as written.
+    let json = serde_json::to_value(&profile).unwrap();
+    assert_eq!(json["gui_flavour"], "snapmaker-orca-2.4");
+    assert_eq!(json["bed_rules"]["keepouts"][1]["frame"], "gcode");
+    assert!(json["bed_rules"]["keepouts"][0].get("frame").is_none());
+}
+
+#[test]
+fn a_profile_with_malformed_bed_rules_or_an_unknown_gui_does_not_load() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles/rules_bed.json"),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let broken = [
+        text.replace("\"rect\": [0.5, 1.0, 18.5, 29.0]", "\"rect\": [0.5, 1.0, 18.5, 29.0], \"edge_band_mm\": 2.0"),
+        text.replace("\"id\": \"purge\"", "\"id\": \"corner\""),
+        text.replace("snapmaker-orca-2.4", "cura-5.0"),
+        text.replace("snapmaker-orca-2.4", "orca-latest"),
+    ];
+    for (index, broken) in broken.iter().enumerate() {
+        assert_ne!(broken, &text, "case {index} changed nothing");
+        let path = dir.path().join(format!("broken_{index}.json"));
+        std::fs::write(&path, broken).unwrap();
+        assert!(load_printer_profile(&path).is_err(), "case {index} loaded");
+    }
+}
+
 /// Every `profiles/*.json` (hand-made and catalog-generated) must load, and ids / printer names
 /// must be unique: the webapp detects a project's profile by `printer_name`, so two profiles for
-/// one printer would make detection ambiguous.
+/// one printer would make detection ambiguous. Each one declares its bed rules and GUI, the rules
+/// resolve, and its old bed fields (read by the legacy pipeline, the webapp and
+/// `source_project --edge-margin`) say the same thing.
 #[test]
 fn every_repo_profile_loads_with_unique_id_and_printer_name() {
+    use goat_packer::colored_packer::bed_rules::{ProjectBed, old_field_mismatches, plate_rules};
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("profiles");
     let mut ids = std::collections::BTreeSet::new();
     let mut names = std::collections::BTreeSet::new();
@@ -54,6 +98,10 @@ fn every_repo_profile_loads_with_unique_id_and_printer_name() {
         let id = raw["id"].as_str().unwrap_or_else(|| panic!("{}: no id", path.display())).to_owned();
         assert!(ids.insert(id.clone()), "duplicate id {id}");
         assert!(names.insert(profile.printer_name.clone()), "duplicate printer_name {}", profile.printer_name);
+        assert!(profile.bed_rules.is_some() && profile.gui_flavour.is_some(), "{}: no bed_rules / gui_flavour", path.display());
+        plate_rules(&profile, &ProjectBed::default()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mismatches = old_field_mismatches(&profile);
+        assert!(mismatches.is_empty(), "{}: {mismatches:?}", path.display());
         count += 1;
     }
     assert!(count > 0, "no profiles in {}", dir.display());

@@ -1,4 +1,50 @@
 {
+  "bed_rules": {
+    "body_edge_band_mm": 0.0,
+    "keepouts": [
+      {
+        "class": "hard",
+        "id": "bed_exclude_0",
+        "rect": [
+          246.0,
+          0.0,
+          256.0,
+          20.0
+        ],
+        "source": "bed_exclude_area"
+      },
+      {
+        "class": "soft",
+        "frame": "gcode",
+        "id": "purge",
+        "source": "machine_start_gcode",
+        "strips": [
+          [
+            0.0,
+            0.0,
+            0.0,
+            98.8,
+            0.6361168799820258
+          ],
+          [
+            0.45,
+            98.8,
+            0.45,
+            100.0,
+            1.4345070834232625
+          ],
+          [
+            0.9,
+            100.0,
+            0.9,
+            0.0,
+            0.6342142372702152
+          ]
+        ]
+      }
+    ],
+    "print_edge_reserve_mm": 0.0
+  },
   "blank_start_gcode_for_cli": false,
   "edge_margin_mm": 0.0,
   "exclusion_rectangles": [
@@ -9,6 +55,7 @@
       20.0
     ]
   ],
+  "gui_flavour": "orca-2.4",
   "id": "elegoo_centauri_carbon",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,
