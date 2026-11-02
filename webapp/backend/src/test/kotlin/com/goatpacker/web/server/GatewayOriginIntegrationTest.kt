@@ -45,7 +45,6 @@ class GatewayOriginIntegrationTest {
             registry.add("platform.admin-login") { "" }
             // Testcontainers' port-forward tunnel is our only proxy in this isolated server.
             registry.add("server.tomcat.remoteip.internal-proxies") { ".*" }
-            registry.add("app.profiles-dir") { "../../profiles" }
         }
     }
 

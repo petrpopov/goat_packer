@@ -1,0 +1,20 @@
+{
+  "id": "test_corner_bed",
+  "printer_name": "Test Corner Bed",
+  "vendor": "TSTV",
+  "vendor_display": "Test Vendor",
+  "orca_machine": "Test Corner Bed 0.4 nozzle",
+  "slicer_kind": "bambu",
+  "slicer_path": "/test/slicers/bambu",
+  "blank_start_gcode_for_cli": false,
+  "no_check_for_final_tower_probe": true,
+  "printable_area": [0.0, 0.0, 256.0, 256.0],
+  "edge_margin_mm": 0.0,
+  "plate_outline": [[7,0],[71,0],[81,-10],[251,-10],[258,-3],[258,251],[251,258],[7,258],[0,251],[0,7]],
+  "exclusion_rectangles": [[0.0, 0.0, 18.0, 28.0]],
+  "purge_lines": [[18.0, 1.0, 240.0, 1.0, 0.5]],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5,
+  "filament_change_seconds": 91,
+  "nozzle_clean_gcode": "M400 ; test wipe\nG1 Z{max_layer_z + 3.0} F1200\nG1 X70 F21000\nG1 Z{layer_z} F1200"
+}

@@ -333,11 +333,11 @@ class PackStageProgressTest {
     @Test
     fun `планировщик игнорирует JSON-события слайсера`() {
         val t = ProgressTracker(JobKind.SCHEDULE)
-        t.onLine("[Bambu Lab A2L] slicing sample 1/5: batch 8/30")
+        t.onLine("[Test Wide Bed] slicing sample 1/5: batch 8/30")
         val event = t.onLine("""{"event":"slicer_output","stream":"stdout","message":"objects, jobs ["}""")
 
         assertEquals(JobPhase.BENCHMARK to 23, event.phase to event.progressPercent)
-        assertEquals("[Bambu Lab A2L] slicing sample 1/5: batch 8/30", event.phaseMessage)
+        assertEquals("[Test Wide Bed] slicing sample 1/5: batch 8/30", event.phaseMessage)
         assertNull(event.stage)
     }
 

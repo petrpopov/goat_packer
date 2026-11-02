@@ -34,7 +34,7 @@ class ProjectSecurityTest {
             mapOf("../outside" to "x"),
             mapOf("X.xml" to "<x/>", "x.xml" to "<x/>"),
             mapOf("3D/3dmodel.model" to "<!DOCTYPE model [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><model>&x;</model>"),
-            mapOf("Metadata/project_settings.config" to """{"printer_model":"Bambu Lab P1S","post_process":["/bin/sh"]}"""),
+            mapOf("Metadata/project_settings.config" to """{"printer_model":"Test Corner Bed","post_process":["/bin/sh"]}"""),
         )
         for (entries in hostileProjects) {
             project(entries) { assertThrows(BadRequestException::class.java) { inspector.inspect(it) } }
@@ -44,12 +44,12 @@ class ProjectSecurityTest {
     @Test fun `valid model and empty scripts remain accepted`() {
         val entries = mapOf(
             "3D/3dmodel.model" to "<model/>",
-            "Metadata/project_settings.config" to """{"printer_model":"Bambu Lab P1S","post_process":[]}""",
+            "Metadata/project_settings.config" to """{"printer_model":"Test Corner Bed","post_process":[]}""",
         )
         project(entries) {
             val result = inspector.inspect(it)
             inspector.requireModel(result)
-            assertEquals("Bambu Lab P1S", result.printerModel)
+            assertEquals("Test Corner Bed", result.printerModel)
         }
     }
 }

@@ -46,7 +46,7 @@ class JobSubmissionIntegrationTest : ServerIntegrationTestBase() {
         b.call("GET", "/api/v2/jobs/$id", headers = mapOf("X-Job-Token" to created["readToken"].asText()))
         b.call("DELETE", "/api/v2/jobs/$id", expected = 404)
         assertEquals(1, a.call("GET", "/api/v2/jobs/$id")["queuePosition"].asInt())
-        assertTrue(jobs.findById(id).orElseThrow().profileJson.contains("Bambu Lab P1S"))
+        assertTrue(jobs.findById(id).orElseThrow().profileJson.contains("Test Corner Bed"))
         a.call("DELETE", "/api/v2/jobs/$id")
         assertEquals("CANCELLED", a.call("GET", "/api/v2/jobs/$id")["status"].asText())
     }
@@ -65,7 +65,7 @@ class JobSubmissionIntegrationTest : ServerIntegrationTestBase() {
         assertEquals(listOf(0.0, 0.0, 250.0, 210.0), unknown["projectBed"]["printableArea"].map { it.asDouble() })
         assertEquals(listOf(listOf(0.0, 0.0, 20.0, 30.0)), unknown["projectBed"]["exclusionRectangles"].map { rect -> rect.map { it.asDouble() } })
         assertEquals(unknown["projectBed"], c.call("GET", "/api/v2/uploads/${unknown["fileId"].asText()}")["projectBed"])
-        assertTrue(c.uploadRaw("p1s.3mf", descriptorProject3mf("Bambu Lab P1S", settings))["projectBed"].isNull)
+        assertTrue(c.uploadRaw("corner.3mf", descriptorProject3mf("Test Corner Bed", settings))["projectBed"].isNull)
     }
 
     @Test fun `pack status carries originalName, profile and params for the read-only workspace, and the input downloads like an artifact`() {
@@ -73,14 +73,14 @@ class JobSubmissionIntegrationTest : ServerIntegrationTestBase() {
         a.guest()
         val b = Client()
         b.guest()
-        val data = descriptorProject3mf("Bambu Lab P1S")
+        val data = descriptorProject3mf("Test Corner Bed")
         val file = a.upload()
         val created = a.job(file, extra = mapOf("clearance" to 1.5, "finalSlice" to false))
         val id = created["jobId"].asText()
         val status = a.call("GET", "/api/v2/jobs/$id")
         assertEquals("cat.3mf", status["originalName"].asText())
-        assertEquals("bambu_p1s", status["profile"]["id"].asText())
-        assertEquals(a.call("GET", "/api/v2/profiles").first { it["id"].asText() == "bambu_p1s" }, status["profile"])
+        assertEquals("test_corner_bed", status["profile"]["id"].asText())
+        assertEquals(a.call("GET", "/api/v2/profiles").first { it["id"].asText() == "test_corner_bed" }, status["profile"])
         assertEquals(1.5, status["params"]["clearance"].asDouble(), 1e-9)
         assertFalse(status["params"]["finalSlice"].asBoolean())
         assertEquals("search", status["params"]["layout"].asText())
@@ -111,8 +111,8 @@ class JobSubmissionIntegrationTest : ServerIntegrationTestBase() {
     @Test fun `calibration is rejected for a printer without AMS changes`() {
         val client = Client()
         client.guest()
-        val file = client.upload("Snapmaker U1", "snapmaker_u1")
-        val error = client.send(mapOf("fileId" to file, "profileId" to "snapmaker_u1", "kind" to "CALIBRATION"), 400)
+        val file = client.upload("Test Margin Bed", "test_margin_bed")
+        val error = client.send(mapOf("fileId" to file, "profileId" to "test_margin_bed", "kind" to "CALIBRATION"), 400)
         assertTrue(error.toString().contains("для этого принтера калибровка не нужна"), error.toString())
     }
 
@@ -126,7 +126,7 @@ class JobSubmissionIntegrationTest : ServerIntegrationTestBase() {
             val b = Client()
             b.guest()
             val file = b.upload()
-            b.send(mapOf("fileId" to file, "profileId" to "bambu_p1s"), 429)
+            b.send(mapOf("fileId" to file, "profileId" to "test_corner_bed"), 429)
             a.call("DELETE", "/api/v2/jobs/$id")
             assertNotNull(b.job(file)["jobId"])
         } finally {

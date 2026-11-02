@@ -65,7 +65,7 @@ describe('stage timing text', () => {
 
   test('json is never shown, scheduler lines are', () => {
     expect(looksLikeJson('{"event":"slicer_output","stream":"stdout","message":"x"}')).toBe(true);
-    expect(looksLikeJson('[Bambu Lab A2L] slicing sample 1/5: batch 8/30')).toBe(false);
+    expect(looksLikeJson('[Test Wide Bed] slicing sample 1/5: batch 8/30')).toBe(false);
     expect(looksLikeJson(null)).toBe(false);
   });
 });

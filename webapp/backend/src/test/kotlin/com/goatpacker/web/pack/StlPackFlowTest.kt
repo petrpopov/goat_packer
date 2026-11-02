@@ -38,7 +38,6 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
             registry.add("app.slicer-presets") { presets.toString() }
             registry.add("app.orca-slicer") { "/fake/orca" }
             registry.add("app.bambu-slicer") { "/fake/bambu" }
-            registry.add("app.profiles-dir") { "../../profiles" }
             registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
         }
     }
@@ -61,13 +60,13 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
 
     @Test
     fun `STL на принтере каталога — source_project с пресетом машины, затем пакер по input_3mf`() {
-        val jobId = pack(cube, "profileId" to "prusa_mk4s")
+        val jobId = pack(cube, "profileId" to "test_catalog_bed")
         val body = mockMvc.awaitJobCompletion(jobId)
         assertEquals(30, body["pack"]["objectCount"].asInt())
         val source = lines(jobId, "source-args.txt")
         assertEquals(
-            listOf("--stl", "input.stl", "--presets", presets.toString(), "--orca", "/fake/orca", "--vendor", "Prusa",
-                "--machine", "Prusa MK4S 0.4 nozzle", "--output", "input.3mf", "--work-dir", "stl-work"),
+            listOf("--stl", "input.stl", "--presets", presets.toString(), "--orca", "/fake/orca", "--vendor", "TestPresets",
+                "--machine", "Test Catalog Bed 0.4 nozzle", "--output", "input.3mf", "--work-dir", "stl-work"),
             source,
         )
         assertTrue(Files.isRegularFile(dir(jobId).resolve("input.stl")))
@@ -77,7 +76,7 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
         // Каталожный профиль указывает слайсер runner-образа — локально джоб получает копию со своим.
         val profile = json.readTree(Path.of(packer.after("--profile")).toFile())
         assertEquals("/fake/orca", profile["slicer_path"].asText())
-        assertEquals("prusa_mk4s", profile["id"].asText())
+        assertEquals("test_catalog_bed", profile["id"].asText())
     }
 
     @Test
@@ -95,18 +94,18 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
     }
 
     @Test
-    fun `STL на Bambu — пресет BBL, без дерева Bambu Studio экспортирует Orca, пакует Bambu Studio`() {
-        val jobId = pack(cube, "profileId" to "bambu_p1s")
+    fun `STL на bambu-принтере — папка пресетов из vendor, без дерева Bambu Studio экспортирует Orca, пакует Bambu Studio`() {
+        val jobId = pack(cube, "profileId" to "test_corner_bed")
         mockMvc.awaitJobCompletion(jobId)
         val source = lines(jobId, "source-args.txt")
-        assertEquals("BBL", source.after("--vendor"))
-        assertEquals("Bambu Lab P1S 0.4 nozzle", source.after("--machine"))
+        assertEquals("TSTV", source.after("--vendor"))
+        assertEquals("Test Corner Bed 0.4 nozzle", source.after("--machine"))
         assertEquals("/fake/orca", source.after("--orca"))
     }
 
     @Test
     fun `ошибка конвертации — понятная причина, пакер не запускается`() {
-        val jobId = pack("solid FAIL\nfacet normal 0 0 1\nendsolid\n".toByteArray(), "profileId" to "prusa_mk4s")
+        val jobId = pack("solid FAIL\nfacet normal 0 0 1\nendsolid\n".toByteArray(), "profileId" to "test_catalog_bed")
         val body = awaitFailure(jobId)
         val error = body["error"].asText()
         assertTrue(error.startsWith("Не удалось подготовить проект из STL: the model's footprint"), error)

@@ -1,0 +1,27 @@
+{
+  "id": "test_catalog_bed",
+  "printer_name": "Test Catalog Bed",
+  "printer_model": "Test Catalog Bed",
+  "vendor": "TestPresets",
+  "vendor_display": "Test Vendor",
+  "orca_machine": "Test Catalog Bed 0.4 nozzle",
+  "slicer_kind": "orca",
+  "slicer_path": "/opt/slicers/orca/AppRun",
+  "blank_start_gcode_for_cli": false,
+  "no_check_for_final_tower_probe": false,
+  "nozzle_diameter": 0.4,
+  "printable_area": [0.0, 0.0, 250.0, 210.0],
+  "printable_height": 220.0,
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "purge_lines": [],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5,
+  "source": {
+    "imported": "2026-11-01",
+    "notes": ["generic test profile shaped like a printer_catalog import"],
+    "orca_tag": "test",
+    "qualified": true,
+    "qualified_on": "2026-11-01"
+  }
+}

@@ -9,14 +9,14 @@ const base: PrinterProfile = {
 };
 
 describe('bedSpec', () => {
-  test('P1S: dimensions along two sides and the 18×28 corner', () => {
+  test('corner-exclusion bed: dimensions along two sides and the 18×28 corner', () => {
     const bed = bedSpec({ ...base, exclusionRectangles: [[0, 0, 18, 28]], plateOutline: [[0, 0], [258, 0], [258, 258], [0, 258]] });
     expect(bed.area).toEqual({ x0: 0, y0: 0, x1: 256, y1: 256 });
     expect(bed.usable).toEqual(bed.area);
     expect(bed.labels.map((l) => l.text)).toEqual(['256 мм', '256 мм', '18×28']);
     expect(bed.exclusions).toEqual([{ x0: 0, y0: 0, x1: 18, y1: 28 }]);
   });
-  test('U1: edge margin shrinks the usable area and gets a label', () => {
+  test('margin bed: edge margin shrinks the usable area and gets a label', () => {
     const bed = bedSpec({ ...base, edgeMarginMm: 4, printableArea: [0.5, 1, 270.5, 271] });
     expect(bed.usable).toEqual({ x0: 4.5, y0: 5, x1: 266.5, y1: 267 });
     expect(bed.labels.map((l) => l.text)).toEqual(['270 мм', '270 мм', 'отступ 4 мм']);

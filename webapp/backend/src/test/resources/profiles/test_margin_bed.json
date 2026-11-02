@@ -1,0 +1,18 @@
+{
+  "id": "test_margin_bed",
+  "printer_name": "Test Margin Bed",
+  "vendor": "Test Tools",
+  "orca_machine": "Test Margin Bed (0.4 nozzle)",
+  "slicer_kind": "orca",
+  "slicer_path": "/test/slicers/orca",
+  "blank_start_gcode_for_cli": true,
+  "no_check_for_final_tower_probe": true,
+  "printable_area": [0.5, 1.0, 270.5, 271.0],
+  "edge_margin_mm": 4.0,
+  "support_edge_margin_mm": 0.7,
+  "plate_outline": [[4.5,-10.5],[266.5,-10.5],[275.5,-1.5],[275.5,273.5],[266.5,282.5],[4.5,282.5],[-4.5,273.5],[-4.5,-1.5]],
+  "exclusion_rectangles": [],
+  "purge_lines": [[85.0, 1.0, 185.0, 1.0, 0.5]],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5
+}

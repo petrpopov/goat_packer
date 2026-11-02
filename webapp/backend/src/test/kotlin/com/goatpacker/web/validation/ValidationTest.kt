@@ -31,28 +31,27 @@ class ValidationTest(
         fun properties(registry: DynamicPropertyRegistry) {
             registry.add("app.packer-bin") { FakeBins.install(tmpRoot, "fake-packer.sh") }
             registry.add("app.scheduler-bin") { FakeBins.install(tmpRoot, "fake-scheduler.sh") }
-            registry.add("app.profiles-dir") { "../../profiles" }
             registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
         }
     }
 
-    private val goat = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
+    private val goat = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed"))
 
     @Test
     fun `pack из stl без пресетов слайсера локально — понятная 400, чужое расширение — подсказкой`() {
         val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, "solid goat\nfacet normal 0 0 1\nendsolid goat\n".toByteArray())
-        val body = mockMvc.perform(multipart("/api/pack/jobs").file(stl).param("profileId", "bambu_a2l"))
+        val body = mockMvc.perform(multipart("/api/pack/jobs").file(stl).param("profileId", "test_wide_bed"))
             .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
         assertTrue("STL в локальном режиме требует GOAT_SLICER_PRESETS" in body, body)
         val obj = MockMultipartFile("file", "goat.obj", MediaType.APPLICATION_OCTET_STREAM_VALUE, byteArrayOf(1))
-        val other = mockMvc.perform(multipart("/api/pack/jobs").file(obj).param("profileId", "bambu_a2l"))
+        val other = mockMvc.perform(multipart("/api/pack/jobs").file(obj).param("profileId", "test_wide_bed"))
             .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
         assertTrue("Нужен файл .3mf или .stl" in other, other)
     }
 
     @Test
     fun `pack без файла — 400`() {
-        mockMvc.perform(multipart("/api/pack/jobs").param("profileId", "bambu_a2l"))
+        mockMvc.perform(multipart("/api/pack/jobs").param("profileId", "test_wide_bed"))
             .andExpect(status().isBadRequest)
     }
 
@@ -61,7 +60,7 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(goat)
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("clearance", "100"),
         )
             .andExpect(status().isBadRequest)
@@ -82,15 +81,15 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(goat)
-                .param("profileId", "bambu_p1s")
+                .param("profileId", "test_corner_bed")
                 .param("nozzleClean", "абракадабра"),
         )
             .andExpect(status().isBadRequest)
     }
 
     @Test
-    fun `pack с nozzleClean на принтере без кода чистки (a2l, u1) — 400`() {
-        for (profileId in listOf("bambu_a2l", "snapmaker_u1")) {
+    fun `pack с nozzleClean на принтере без кода чистки (широкий стол, стол с кромкой) — 400`() {
+        for (profileId in listOf("test_wide_bed", "test_margin_bed")) {
             mockMvc.perform(
                 multipart("/api/pack/jobs")
                     .file(goat)
@@ -112,7 +111,7 @@ class ValidationTest(
             mockMvc.perform(
                 multipart("/api/pack/jobs")
                     .file(goat)
-                    .param("profileId", "bambu_a2l")
+                    .param("profileId", "test_wide_bed")
                     .param("amsCorrection", "true")
                     .param(name, value),
             )
@@ -121,23 +120,23 @@ class ValidationTest(
     }
 
     @Test
-    fun `calibration без варианта из списка или для u1 — 400`() {
-        mockMvc.perform(multipart("/api/calibration/jobs").file(goat).param("profileId", "bambu_a2l").param("variant", "fast"))
+    fun `calibration без варианта из списка или для тулчейнджера — 400`() {
+        mockMvc.perform(multipart("/api/calibration/jobs").file(goat).param("profileId", "test_wide_bed").param("variant", "fast"))
             .andExpect(status().isBadRequest)
-        val u1 = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Snapmaker U1"))
-        val body = mockMvc.perform(multipart("/api/calibration/jobs").file(u1).param("profileId", "snapmaker_u1"))
+        val toolchanger = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Margin Bed"))
+        val body = mockMvc.perform(multipart("/api/calibration/jobs").file(toolchanger).param("profileId", "test_margin_bed"))
             .andExpect(status().isBadRequest).andReturn().response.contentAsString
         assertTrue(body.contains("калибровка не нужна"), body)
     }
 
     @Test
-    fun `pack и schedule с коррекцией AMS на тулчейнджере (u1) — 400`() {
-        val u1 = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Snapmaker U1"))
+    fun `pack и schedule с коррекцией AMS на тулчейнджере — 400`() {
+        val toolchanger = MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Margin Bed"))
         for (endpoint in listOf("/api/pack/jobs", "/api/schedule/jobs")) {
             val body = mockMvc.perform(
                 multipart(endpoint)
-                    .file(u1)
-                    .param("profileId", "snapmaker_u1")
+                    .file(toolchanger)
+                    .param("profileId", "test_margin_bed")
                     .param("amsCorrection", "true"),
             )
                 .andExpect(status().isBadRequest)
@@ -151,7 +150,7 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .file(goat)
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("amsCorrection", "true")
                 .param("changeSeconds", "700"),
         )
@@ -161,9 +160,9 @@ class ValidationTest(
     @Test
     fun `pack с файлом не 3mf-расширения — 400`() {
         // Проект 3MF, переименованный в .stl, — не STL: отказ до постановки (и в /profiles/detect).
-        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
+        val stl = MockMultipartFile("file", "goat.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed"))
         for (path in listOf("/api/pack/jobs", "/api/profiles/detect")) {
-            val body = mockMvc.perform(multipart(path).file(stl).param("profileId", "bambu_a2l"))
+            val body = mockMvc.perform(multipart(path).file(stl).param("profileId", "test_wide_bed"))
                 .andExpect(status().isBadRequest).andReturn().response.getContentAsString(Charsets.UTF_8)
             assertTrue("Файл .stl повреждён или не является STL" in body, "$path: $body")
         }
@@ -174,7 +173,7 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .file(goat)
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("dayStart", "23:00")
                 .param("nightStart", "10:00"),
         )
@@ -186,7 +185,7 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .file(goat)
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("horizonEnd", "99:00"),
         )
             .andExpect(status().isBadRequest)
@@ -194,7 +193,7 @@ class ValidationTest(
 
     @Test
     fun `schedule без файла и без packJobId — 400`() {
-        mockMvc.perform(multipart("/api/schedule/jobs").param("profileId", "bambu_a2l"))
+        mockMvc.perform(multipart("/api/schedule/jobs").param("profileId", "test_wide_bed"))
             .andExpect(status().isBadRequest)
     }
 
@@ -203,7 +202,7 @@ class ValidationTest(
         mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .param("packJobId", "no-such-job")
-                .param("profileId", "bambu_a2l"),
+                .param("profileId", "test_wide_bed"),
         )
             .andExpect(status().isBadRequest)
     }

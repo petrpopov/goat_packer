@@ -21,10 +21,10 @@ class StlInputsTest {
 
     @Test
     fun `каталожный принтер — vendor и orca_machine, свой стол — custom-bed из разового профиля`() {
-        val catalog = mapper.readTree("""{"id":"prusa_mk4s","printer_name":"Prusa MK4S","vendor":"Prusa","vendor_display":"Prusa","orca_machine":"Prusa MK4S 0.4 nozzle"}""")
+        val catalog = mapper.readTree("""{"id":"test_catalog_bed","printer_name":"Test Catalog Bed","vendor":"TestPresets","vendor_display":"Test Vendor","orca_machine":"Test Catalog Bed 0.4 nozzle"}""")
         assertEquals(
-            listOf("/b/source_project", "--stl", "input.stl", "--presets", "/p", "--orca", "/s", "--vendor", "Prusa",
-                "--machine", "Prusa MK4S 0.4 nozzle", "--output", "input.3mf", "--work-dir", "stl-work"),
+            listOf("/b/source_project", "--stl", "input.stl", "--presets", "/p", "--orca", "/s", "--vendor", "TestPresets",
+                "--machine", "Test Catalog Bed 0.4 nozzle", "--output", "input.3mf", "--work-dir", "stl-work"),
             StlInputs.command("/b/source_project", "/p", "/s", catalog),
         )
         val custom = CustomProfile.build(mapper, CustomBed(220.5, 220.0, 250.0, 5.0), null, CustomProfile.NAME) { "/s" }
@@ -76,9 +76,9 @@ class StlInputsTest {
     fun `цепочка — одна оболочка, кавычки экранированы, без подготовки команда как есть`() {
         val main = listOf("/bin/packer", "--source", "input.3mf")
         assertEquals(main, ShellChain.command(null, main))
-        val chain = ShellChain.command(listOf("/bin/source_project", "--machine", "Snapmaker U1 (0.4 nozzle)", "--vendor", "O'Brien"), main)
+        val chain = ShellChain.command(listOf("/bin/source_project", "--machine", "Test Margin Bed (0.4 nozzle)", "--vendor", "O'Brien"), main)
         assertEquals(
-            listOf("/bin/sh", "-c", "'/bin/source_project' '--machine' 'Snapmaker U1 (0.4 nozzle)' '--vendor' 'O'\\''Brien' && exec '/bin/packer' '--source' 'input.3mf'"),
+            listOf("/bin/sh", "-c", "'/bin/source_project' '--machine' 'Test Margin Bed (0.4 nozzle)' '--vendor' 'O'\\''Brien' && exec '/bin/packer' '--source' 'input.3mf'"),
             chain,
         )
         val run = ProcessBuilder(listOf("/bin/sh", "-c", ShellChain.script(listOf("printf", "%s|", "a b", "O'Brien"), listOf("echo", "ok")))).start()
@@ -88,7 +88,7 @@ class StlInputsTest {
     @Test
     fun `конвертация STL — сообщение и начало полосы пробы, пока пакер не начал этап`() {
         val tracker = ProgressTracker(JobKind.PACK, clock = { 0L }, initialMessage = StlInputs.CONVERSION_MESSAGE)
-        var event = tracker.onLine("source project input.3mf: machine Prusa MK4S 0.4 nozzle, process p, filament f")
+        var event = tracker.onLine("source project input.3mf: machine Test Catalog Bed 0.4 nozzle, process p, filament f")
         assertEquals(JobPhase.PROBE, event.phase)
         assertEquals(PackStage.PROBE_SLICE.bandStart, event.progressPercent)
         assertEquals("Готовлю проект из STL…", event.phaseMessage)

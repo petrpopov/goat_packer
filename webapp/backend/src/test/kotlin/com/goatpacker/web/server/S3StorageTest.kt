@@ -54,10 +54,10 @@ class S3StorageTest {
                     store.delete("jobs/test/binary-$size")
                 }
                 val client = HttpClient.newHttpClient()
-                val signed = store.signedGet("jobs/test/result", "cat_p1s_40_packed.3mf", 60)
+                val signed = store.signedGet("jobs/test/result", "cat_test_40_packed.3mf", 60)
                 val response = client.send(HttpRequest.newBuilder(URI(signed)).GET().build(), HttpResponse.BodyHandlers.ofString())
                 assertEquals(200, response.statusCode(), response.body())
-                assertTrue(response.headers().firstValue("content-disposition").orElse("").contains("cat_p1s_40_packed.3mf"))
+                assertTrue(response.headers().firstValue("content-disposition").orElse("").contains("cat_test_40_packed.3mf"))
                 val unsigned = client.send(HttpRequest.newBuilder(URI("$endpoint/goat/jobs/test/result")).GET().build(), HttpResponse.BodyHandlers.discarding())
                 assertEquals(403, unsigned.statusCode())
                 store.delete("jobs/test/result")

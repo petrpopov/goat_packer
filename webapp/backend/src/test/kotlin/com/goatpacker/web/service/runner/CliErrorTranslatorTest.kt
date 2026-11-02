@@ -37,16 +37,16 @@ class CliErrorTranslatorTest {
 
     @Test
     fun `несовпадение принтера и профиля называет обоих`() {
-        val tail = "error: source printer 'Bambu Lab P1S' does not match profile 'Snapmaker U1'"
+        val tail = "error: source printer 'Test Corner Bed' does not match profile 'Test Margin Bed'"
         val headline = CliErrorTranslator.translate(tail)!!
-        assertTrue(headline.contains("Bambu Lab P1S"), headline)
-        assertTrue(headline.contains("Snapmaker U1"), headline)
+        assertTrue(headline.contains("Test Corner Bed"), headline)
+        assertTrue(headline.contains("Test Margin Bed"), headline)
     }
 
     @Test
     fun `exclusion area от слайсера переводится`() {
         val tail = """
-            error: Bambu Lab P1S slicing failed (exit status: 192)
+            error: Test Corner Bed slicing failed (exit status: 192)
             slicer report: goat4_magnet_x2.stl is too close to exclusion area, there may be collisions when printing.
         """.trimIndent()
         val headline = CliErrorTranslator.translate(tail)!!
@@ -56,7 +56,7 @@ class CliErrorTranslatorTest {
     @Test
     fun `провал слайсинга выносит код и отчёт слайсера`() {
         val tail = """
-            error: Bambu Lab P1S slicing failed (exit status: 154)
+            error: Test Corner Bed slicing failed (exit status: 154)
             slicer report: Some objects are too close; your G-code may have conflicts.
         """.trimIndent()
         val headline = CliErrorTranslator.translate(tail)!!
