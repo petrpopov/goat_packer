@@ -6,11 +6,13 @@ stage reads. Later parts of this spec set cover clearance volumes (collision / a
 merging, placement, smoothing, drawing and the first-layer base.
 
 **Licence rule.** Bambu Studio, OrcaSlicer and Snapmaker Orca are AGPL-3.0. This file describes
-*behaviour* in our own words: prose, formulas, constants, step order, edge cases and our own
-algorithm-level pseudo-code. It contains no pasted or transliterated source. Citations point at the
-upstream lines so a reviewer can check a behaviour; they are not a template for code structure or
-names. Upstream identifiers appear only as cross-references next to a citation; our modules use
-the design doc's names.
+*behaviour* in our own words: prose, formulas, constants, order properties, edge cases and recorded
+test vectors. It contains no pasted or transliterated source. Citations point at the upstream lines
+so a reviewer can check a behaviour; they are not a template for code structure or names. Upstream
+identifiers appear only as cross-references next to a citation; our operations and fields use our
+own names (design §1, glossary in 02 §1.4). Where an upstream procedure is greedy or order-dependent
+(the tip outset rounds, the roof stack, the line connector), this part states the result as
+recurrences, predicates and precedence rules, not as the upstream loop.
 
 **Citation prefixes** (all under `/tmp/goat_src/<tree>/src/libslic3r/`):
 
@@ -42,16 +44,25 @@ stated.
 
 Notation used throughout:
 
-- All geometry lives in the **object frame** (§1.1) on an integer grid of 1 nm (upstream scales mm
-  by 10⁶; `SCALING_FACTOR` is 1e-6 for every bed smaller than 2147 mm, O/S/R `libslic3r.h:60-62`).
+- All geometry lives in the **object frame** (§1.1) on the **flavour's integer grid** (design §5.2,
+  02 §1.1):
+  - B: **1 unit = 10 nm**, 32-bit coordinates (scaling factor 10⁻⁵, B `libslic3r.h:40,58`);
+  - O/S/R: 1 unit = 1 nm, 64-bit coordinates (10⁻⁶ for every bed smaller than 2147 mm, O/S/R
+    `libslic3r.h:60-62`).
+  Values in "units" below are per flavour; §4 gives both columns.
 - `A ⊕ r` grows region A by distance r, `A ⊖ r` shrinks it. The join type is written as a subscript:
   `⊕sq` square corners, `⊕mi(m)` mitred with limit m, `⊕rd(t)` rounded with arc tolerance t.
-  Unless stated, upstream offsets use mitred joins with limit 3. Upstream's offset also drops input
-  edges shorter than 0.005·|r| before offsetting (a fork-specific Clipper change, O
-  `ClipperUtils.cpp:274-277`, constant `ClipperUtils.hpp:34`).
+  Unless stated, upstream offsets use mitred joins with limit 3. **The offset library raises any mitre
+  limit below 2 to 2** (02 §1.1), so every `⊕mi(1.2)` in this spec set acts as `⊕mi(2)`: corners are
+  mitred out to 2·r and squared off beyond. Upstream's offset also drops input vertices closer than
+  0.005·|r| to the previously kept one before offsetting (a fork-specific change, O
+  `ClipperUtils.cpp:274-277`, constant `ClipperUtils.hpp:34`). Our `polygon_ops` emulates both
+  (design §5.2).
 - `\` difference, `∩`, `∪` the usual set operations on regions (non-zero fill unless stated).
-- `trunc(x)` truncates toward zero. Many lengths are converted mm → nm by truncation, not rounding
-  (`scaled<coord_t>`, O `Point.hpp:663-668`). §4 lists the exact integers that result.
+- `trunc(x)` truncates toward zero. Lengths are converted mm → grid units by truncation of the double
+  quotient x / scaling factor, not by rounding (O `Point.hpp:663-668`). Because 10⁻⁵ and 10⁻⁶ are not
+  exact in binary, some round numbers lose a unit: 2.0 mm is 199 999 units in B (2.0/10⁻⁵ =
+  199 999.999…), and 0.03 mm is 2 999 units in B. §4 lists the exact integers that result.
 - "f32" marks values computed in single precision upstream; the spec says where that changes a
   discrete decision.
 
@@ -73,7 +84,8 @@ Notation used throughout:
   dedup grid (§5.7) are expressed relative to this centre. The goat projects need the full item
   transform plus every component transform (`3D/3dmodel.model` items and components), not the
   first component only.
-- Mesh vertices are transformed in f32 with X and Y pre-multiplied by 10⁶ (nm) and Z left in mm
+- Mesh vertices are transformed in f32 with X and Y pre-multiplied by the grid scale (10⁵ in B, 10⁶ in
+  O/S/R) and Z left in mm
   (O `TriangleMeshSlicer.cpp:1827-1862`). A port in f64 differs by a few nm; that is inside every
   margin we use.
 - Filament shrink: B scales each region's slices and the paint projections about the origin by
@@ -160,7 +172,7 @@ For each volume that needs slicing (normal part, negative part, modifier) and ea
 
 1. **Triangle ∩ plane.** Each triangle crossing z = slice_z contributes one segment. An edge
    crossing strictly yields the point `b + (a − b)·t` (t from the Z values, f64, rounded half-up to
-   nm; vertices ordered by index for a stable result). A vertex exactly on the plane is used as is.
+   the grid unit; vertices ordered by index for a stable result). A vertex exactly on the plane is used as is.
    An edge lying in the plane counts only when the third vertex is **below** the plane, so the plane
    catches the top faces of a horizontal surface and misses its bottom faces. Horizontal triangles
    are not sliced.
@@ -188,7 +200,8 @@ Volume types (3MF `model_settings.config` `subtype`): `normal_part`, `negative_p
 
 - The **object section** used by supports is `L_k` = union over all regions of their slices. With
   more than one region (the goat: body and pompom use different extruders) the union is done by a
-  10 nm outward offset, so L_k is 10 nm larger than the exact union (O `Layer.cpp:38-64`,
+  10-unit outward offset (10 nm in O/S/R, 100 nm in B: `ClipperSafetyOffset` = 10 units), so L_k is
+  that much larger than the exact union (O `Layer.cpp:38-64`,
   `ClipperUtils.hpp:362-365`); with one region it is the region slice as is. For geometry this is:
 
   ```text
@@ -324,9 +337,9 @@ For each normal part, for each state (enforcer, blocker), project its painted fa
 (O `PrintObject.cpp:4646-4673`, `TriangleMeshSlicer.cpp:2058-2158`, `:587-905`; S identical; B adds
 the shrink scale §1.1; R uses the sliced transform):
 
-1. Transform vertices into the object frame (f32, XY in nm).
+1. Transform vertices into the object frame (f32, XY in grid units).
 2. Classify each painted triangle by the sign of the cross product of its XY projection computed in
-   integer nm after truncating the coordinates, flipped if the transform mirrors:
+   integer grid units after truncating the coordinates, flipped if the transform mirrors:
    negative → **down-facing**, positive → up-facing, zero with three distinct vertices →
    **vertical**, zero with a repeated vertex → degenerate.
 3. Down-facing and degenerate triangles form the patch to project. Two triangles are neighbours in
@@ -341,9 +354,11 @@ the shrink scale §1.1; R uses the sliced transform):
    overlap and are used with non-zero fill (unioned by the later boolean operations). Each part's
    projection is appended to the same per-layer list.
 6. **Vertical enforcer points.** For enforcers only, each vertical painted triangle contributes its
-   centroid (object frame). Each point becomes a circle of radius 0.5 mm (a 315-gon: upstream
-   passes 25 where a chord *error* in nm is expected, `make_circle(radius, 25)`, B
-   `Support/TreeSupport3D.cpp:4459-4473`, O `:3470-3483`) added to the overhang list of the first
+   centroid (object frame). Each point becomes a circle of radius 0.5 mm. Upstream passes 25 where a
+   chord *error* in grid units is expected (`make_circle(radius, 25)`, B
+   `Support/TreeSupport3D.cpp:4459-4473`, O `:3470-3483`), so the vertex count is
+   ⌈π / acos(1 − 25/r_units)⌉: a **315-gon** on the 1 nm grid (O/S/R), a **100-gon** on B's 10 nm grid.
+   The circle is added to the overhang list of the first
    layer whose slice_z ≥ the point's z, if that layer is neither 0 nor beyond the top. The goat has
    none.
 7. **Enforcer / blocker volumes** (`support_enforcer`, `support_blocker` parts) are sliced like
@@ -481,7 +496,7 @@ For each cluster:
   - small if every layer's narrow ≤ w, average narrow < w/2, average area < 4 mm² and the cluster
     spans < 3 layers;
   - otherwise small if `outline ⊖ 2.5w` is empty or its bbox is < 2 mm in both axes. (The upstream
-    condition also compares the layer count with half of 2 mm in nm, which is always true.)
+    condition also compares the layer count with half of 2 mm in grid units, which is always true.)
   - `enforce_add`: the cluster touches E_l on one of its layers.
 - O/S/R: not sharp-tail, not cantilever, and `outline ⊖ w` has a bbox narrower than 2w in X **or**
   Y (an empty erosion counts as narrower) → small. Because the first member enters the outline
@@ -569,7 +584,8 @@ Realizations: "guard tripped, layers processed before the trip kept their seeds"
 order the scheduler allows. With one thread the order is ascending k, so the trip at layer j keeps
 seeds on layers < j. The island-count trigger is deterministic and our code evaluates it exactly;
 the clock trigger is not modelled (the goat's detection runs far below 30 s on an idle machine, but
-the server has shown load average 44). Open question Q4: does any goat layer exceed 100 islands?
+the server has shown load average 44). Q4 (answered provisionally): no goat layer exceeds 100 islands
+(at most 40, review appendix A).
 
 ### 3.10 What the goat actually depends on (measured)
 
@@ -593,35 +609,37 @@ settings), O `:36-93`, `:265-355`; S as O except bottom-interface handling; R as
 locals: O `TreeSupport3D.cpp:1256-1316`, B `:1132-1199`. Support-fill parameters: O
 `Support/SupportParameters.hpp:17-238`, B `:16-325`.
 
-Symbols: lh = layer height, w_s = support line width as the **f32 flow width truncated to nm**
-(0.42 → 419 999 nm), D = branch distance, α = branch angle, α_s = slow angle.
+Symbols: lh = layer height, w_s = support line width as the **f32 flow width truncated to the flavour
+grid** (0.42 → 41 999 units in B, 419 999 nm in O/S/R), D = branch distance, α = branch angle, α_s = slow
+angle. **B values are in B's 10 nm units, O/S values in nm** (§0; design §5.2). Physical sizes agree to
+within one B unit; the integers differ, and every later truncation inherits the difference.
 
-| quantity | formula | B (P1S, A2L) | O / S (U1) |
+| quantity | formula | B (P1S, A2L), 10 nm units | O / S (U1), nm |
 |---|---|---|---|
-| lh | trunc(layer_height) | 280 000 | 280 000 |
-| w_s, roof line width | trunc(f32 flow width) | 419 999 | 419 999 |
-| r_b branch radius | trunc(branch diameter)/2; B `tree_support_branch_diameter`, O `…_organic` | 1 000 000 | 1 000 000 |
-| r_min tip radius | trunc(clamp(tip diameter, 0, branch diameter))/2; B fixed 0.8 mm, O `tree_support_tip_diameter` | 400 000 | 400 000 |
+| lh | trunc(layer_height) | 28 000 | 280 000 |
+| w_s, roof line width | trunc(f32 flow width) | 41 999 | 419 999 |
+| r_b branch radius | trunc(branch diameter) div 2; B `tree_support_branch_diameter`, O `…_organic` | **99 999** (2.0 mm → 199 999) | 1 000 000 |
+| r_min tip radius | trunc(clamp(tip diameter, 0, branch diameter)) div 2; B fixed 0.8 mm, O `tree_support_tip_diameter` | 40 000 | 400 000 |
 | α | clamp(angle, 0, 90° − 1e-4 rad); B `tree_support_branch_angle`, O `tree_support_branch_angle_organic` | 45° | 40° |
 | α_s | clamp(slow angle, 0, α − 1e-4 rad); B fixed 25°, O `tree_support_angle_slow` | 25° | 25° |
-| move_fast | trunc(tan α · lh) (double tan; tan 45° = 0.9999999999999999) | **279 999** | 234 947 |
-| move_slow | trunc(tan α_s · lh) | 130 566 | 130 566 |
-| clearance-volume step | move − 2 (fast, slow), used by the avoidance stage | 279 997 / 130 564 | 234 945 / 130 564 |
+| move_fast | trunc(tan α · lh) (double tan; tan 45° = 0.9999999999999999) | **27 999** | 234 947 |
+| move_slow | trunc(tan α_s · lh) | 13 056 | 130 566 |
+| clearance-volume step | move − 2 (fast, slow), used by the avoidance stage | 27 997 / 13 054 | 234 945 / 130 564 |
 | tip_layers | max((r_b − r_min) div (w_s div 3), r_b div lh), integer divisions | 4 | 4 |
-| radius growth per layer | tan(`tree_support_branch_diameter_angle`) · lh (double) | 24 496.8 (5°) | 24 496.8 |
-| radius(dtt) | dtt ≤ tip_layers: r_min + (r_b − r_min)·dtt div tip_layers; else r_b + (dtt − tip_layers)·growth; + foot term (next spec) | r(0)=0.4 mm, r(4)=1.0 mm | same |
-| bp_radius (foot target) | fixed 7.5 mm / 2 | 3 750 000 | 3 750 000 |
-| bp growth per layer | min(tan(0.7 rad)·lh, ½w_s) | 209 999.5 | 209 999.5 |
+| radius growth per layer | tan(`tree_support_branch_diameter_angle`) · lh (double) | 2 449.68 (5°) | 24 496.8 |
+| radius(dtt) | dtt ≤ tip_layers: r_min + (r_b − r_min)·dtt div tip_layers; else r_b + (dtt − tip_layers)·growth; + foot term (02 §1.2) | r(0) = 40 000, r(4) = 99 999 | r(0) = 0.4 mm, r(4) = 1.0 mm |
+| bp_radius (foot target) | trunc(7.5 mm) div 2 | 374 999 | 3 750 000 |
+| bp growth per layer | min(tan(0.7 rad)·lh, ½w_s) | 20 999.5 | 209 999.5 |
 | layer_start_bp_radius | trunc((bp_radius − r_b) / bp growth) | 13 | 13 |
-| recommended min radius at layer l | l < 13: r_b + (13 − l)·bp growth, else 0 | 3 729 993 at l = 0 | same |
+| recommended min radius at layer l | l < 13: r_b + (13 − l)·bp growth, else 0 | 372 992 at l = 0 | 3 729 993 at l = 0 |
 | increase_radius_until | radius r_b, reached at dtt = tip_layers · (r_b div r_b) | 4 | 4 |
 | rests on model | not `support_on_build_plate_only` | false | false |
-| min_dtt_to_model, max_to_model growth | ceil(1 mm / lh), 1 mm / 2 (unused: build plate only) | 4, 0.5 mm | 4, 0.5 mm |
-| xy | trunc(`support_object_xy_distance`) (B: ≥ 0.01; B clamps to max(top gap, 0.2) if `top_z_overrides_xy_distance`, 0 here) | 750 000 | 750 000 |
-| xy_min | min(xy, trunc(½ · max external-perimeter flow width over regions)) | 209 999 | 209 999 |
+| min_dtt_to_model, max_to_model growth | ceil(1 mm / lh), 1 mm / 2 (unused: build plate only) | 4, ≈ 0.5 mm | 4, 0.5 mm |
+| xy | trunc(`support_object_xy_distance`) (B: ≥ 0.01; B clamps to max(top gap, 0.2) if `top_z_overrides_xy_distance`, 0 here) | 75 000 | 750 000 |
+| xy_min | min(xy, trunc(½ · max external-perimeter flow width over regions)) | 20 999 | 209 999 |
 | use xy_min for tips | xy > xy_min | true | true |
-| first-layer gap | `support_object_first_layer_gap` (first-layer base stage) | P1S 1.2, A2L 0.75 | 0.75 |
-| top gap | round(top_z / lh + 1e-4) · lh (`independent_support_layer_height = 0`); zero top gap switches on the "zero gap" variants | 0.28 (P1S 0.28, A2L 0.24 → 0.28) | 0.24 → 0.28 |
+| first-layer gap | `support_object_first_layer_gap` (first-layer base stage) | P1S 1.2, A2L 0.75 mm | 0.75 mm |
+| top gap | round(top_z / lh + 1e-4) · lh (`independent_support_layer_height = 0`); zero top gap switches on the "zero gap" variants | 0.28 mm (P1S 0.28, A2L 0.24 → 0.28) | 0.24 → 0.28 mm |
 | z_top_layers, z_bottom_layers | round(gap / lh) | 1, 1 | 1, 1 |
 | z_delta (tip offset) | z_top_layers + 1 | 2 | 2 |
 | roof layers R | `support_interface_top_layers` | 3 | 3 |
@@ -629,35 +647,36 @@ Symbols: lh = layer height, w_s = support line width as the **f32 flow width tru
 | support_bottom_layers | (floor·lh + lh/2) div lh when top and bottom interfaces are on | 3 | 3 |
 | D (tip line spacing input) | B `tree_support_branch_distance`, O `tree_support_branch_distance_organic` | **5 mm** | **1 mm** |
 | top rate | B fixed 30 %, O `tree_support_top_rate` | 30 | 30 |
-| connect_length | trunc(w_s·100/top_rate + max(2·r_min − w_s, 0)) | 1 779 997 (1.78 mm) | same |
-| roof line distance (unused by the roof fill, see §5.5) | trunc(`support_interface_spacing`) + w_s | 919 999 | same |
+| connect_length | trunc(w_s·100/top_rate + max(2·r_min − w_s, 0)) | 177 997 (1.78 mm) | 1 779 997 (1.78 mm) |
+| roof line distance (unused by the roof fill, see §5.5) | trunc(`support_interface_spacing`) + w_s | 91 998 | 919 999 |
 | base pattern spacing | `support_base_pattern_spacing` (drawing, not tips) | 2.5 mm | 2.5 mm |
 | wall count | max(1, `tree_support_wall_count`) | 1 (P1S 0, A2L −1) | 1 (0) |
 | minimum roof area | fixed 1 mm² | 1 mm² | 1 mm² |
 | minimum support area | fixed 0 (so small-area removal in §5.3 is off) | 0 | 0 |
 | support offset | fixed 0 (no config key feeds it) | 0 | 0 |
-| outline resolution | trunc(`resolution`) | 30 000 | 30 000 |
+| outline resolution | trunc(`resolution`) | **2 999** | 30 000 |
 | force_tip_to_roof | R > 0 and (soluble/zero-gap interface, or π·r_min² > 1 mm²) | false (0.503 mm²) | false |
-| extra_outset (§5.3) | max(0, r_min − w_s div 2) + (use xy_min ? w_s div 2 : 0) | 400 000 | 400 000 |
-| outset step (§5.3) | w_s div 8 (because acc + 2·w_s > r_min always here) | 52 499 | 52 499 |
-| tip dedup cell | (r_min + 1) div 10 | 40 000 | 40 000 |
+| extra_outset (§5.3) | max(0, r_min − w_s div 2) + (use xy_min ? w_s div 2 : 0) | 40 000 | 400 000 |
+| outset step (§5.3) | w_s div 8 (because acc + 2·w_s > r_min always here) | 5 249 | 52 499 |
+| tip dedup cell | (r_min + 1) div 10 | 4 000 (40 µm) | 40 000 (40 µm) |
 | max_overhang_insert_lag | computed but only used by disabled code | — | — |
 
 Support-fill parameters used by the tip line generator (§5.5):
 
-| quantity | formula | value (all three) |
+| quantity | formula | value |
 |---|---|---|
-| flow spacing s | f32: width − height·(1 − π/4) | 0.3599115 mm |
+| flow spacing s | f32: width − height·(1 − π/4) | 0.3599115 mm (all three) |
 | base fill density | f32: s / (s + D) | B 0.0671488, O 0.2646580 |
-| base line spacing | trunc(s_nm / density) ≈ s + D | B 5 359 911, O 1 359 911 |
+| base line spacing | trunc(s / density) on the flavour grid ≈ s + D | B 535 991 units (5.35991 mm), O 1 359 911 nm |
 | interface density | min(1, s / (`support_interface_spacing` + s)) | 0.4185448 |
-| roof line spacing | trunc(s_nm / f32 interface density) ≈ s + 0.5 | 859 911 |
+| roof line spacing | trunc(s / f32 interface density) ≈ s + 0.5 | B 85 991 units, O 859 911 nm |
 | base / roof pattern | sparse "support base" lines unless density > 0.95 or sheath (wall count > 0); honeycomb base pattern (and B lightning) select other generators | support base / support base |
 | base / interface angle | `support_angle`, `support_angle` + 90° | 0°, 90° |
 
-Unsupported values (explicit error): honeycomb or lightning base pattern, soluble or zero-gap
-interfaces, raft layers > 0, `independent_support_layer_height = 1`, support on model
-(`support_on_build_plate_only = 0`) until the to-model clearance volumes are specified.
+Unsupported values return `Unsupported(<setting>)` (design §5.7, with the full list): honeycomb or
+lightning base pattern, soluble or zero-gap interfaces, raft layers > 0,
+`independent_support_layer_height = 1`, support on model (`support_on_build_plate_only = 0`) until the
+to-model clearance volumes are specified.
 
 ---
 
@@ -686,81 +705,86 @@ are inserted at layer `m = k − z_delta = k − 2`; only m in [1, n − 3] is u
 
 The **forbidden region** of layer l is `F_l = AvoidFast(r_min, l) ⊕mi(1.2) 5 µm` (support on the
 bed only; with support on the model it would be `Coll(r_min, l)` instead). The 5 µm keeps points on
-the boundary out.
+the boundary out. The requested mitre limit 1.2 acts as 2 (§0): convex corners with an interior angle
+between 60° and ≈ 113° are mitred instead of squared off (a few µm at this offset).
 
 ### 5.3 One task (overhang of layer k, insertion layer m = k − 2)
 
-```text
-P        = union of H_k
-reg      = P \ F_m                                  # tips may stand here
-rest     = (P \ (reg ⊕mi(1.2) w_s/2)) ∩ F_m        # overhang not within half a line of reg
-C0       = Coll(0, m)                               # bare outlines grown by xy_min
-acc      = 0
-while rest ≠ ∅ and acc + w_s/8 < extra_outset:      # 7 rounds here: acc = 1..7 × 52 499 nm
-    acc += w_s/8
-    rest = rest \ grow_clear(reg, 1.5·acc, C0)
-    reg  = reg ∪ (grow_clear(rest, acc, C0) \ F_m)
-roofs    = P \ F_m                                  # when roof layers R > 0
-reg      = reg \ (roofs ⊕ 10 nm)
-for each connected part A of roofs (in boolean-output order): sample(A, roof_candidate = true)
-for each connected part A of reg   (in boolean-output order): sample(A, roof_candidate = false)
-```
-
-`grow_clear(A, r, C)` for the distances used here (r below the 0.63 mm step limit) is a single
-round-joined grow by r (arc tolerance 0.01 mm), Douglas-Peucker at 0.015 mm, minus C
-(O `:792-848`). With roofs enabled (all projects), almost everything goes through the roof
-candidate path; `reg` keeps only the thin fringe added by the outset rounds.
-
-### 5.4 `sample(A, roof_candidate)` for insertion layer m
-
-**Roof stack** (only for roof candidates, R = 3; O `:1133-1186`):
+Definitions (P = union of H_k; F_m from §5.2; C0 = Coll(0, m), the bare outlines grown by xy_min;
+G(X, r) = (X ⊕rd(0.01 mm) r, Douglas-Peucker at 0.015 mm) ∖ C0, a single round grow for every r used here,
+which stays below the 0.63 mm step limit of the stepped offset, O `:792-848`):
 
 ```text
-t = 0;  A_0 = A
-while t < R and m − t ≥ 1:
-    next = A_t \ (F_{m−t−1} ⊕mi(1.2) 5 µm)
-    if area(next) < 1 mm²:
-        if t > 0: lines = roof-pattern lines of A_{t−1} (§5.5), resampled at connect_length,
-                  classified at layer m − (t−1), keeping only points still outside the avoidance
-                  of layer m − t (§5.6)
-        stop
-    roof[t] = A_t   (placed at layer m − t)
-    A_{t+1} = next; t += 1
+reg_0  = P ∖ F_m                                        tips may stand here
+rest_0 = (P ∖ (reg_0 ⊕mi(1.2) w_s/2)) ∩ F_m             forbidden overhang farther than half a line from reg_0
+a_j    = j · σ,  σ = w_s div 8,  j = 1 … n,  n = max{ j : j·σ < extra_outset }      (n = 7 for the goats, both grids)
+rest_j = rest_{j−1} ∖ G(reg_{j−1}, 1.5·a_j)
+reg_j  = reg_{j−1} ∪ (G(rest_j, a_j) ∖ F_m)
+roofs  = P ∖ F_m                                        (when roof layers R > 0)
+fringe = reg_n ∖ (roofs ⊕ 10 units)                      10 nm O/S/R, 100 nm B (safety offset)
 ```
 
-If the stack has t > 0 roofs and no lines were produced, and the final area A_t generates no roof
-lines, the stack is truncated at the first roof whose own roof lines are empty. Roofs are emitted as
-interface polygons: roof[0] is the contact layer at m, roof[i] (i ≥ 1) interface layers at m − i
-(base-interface layers only exist with soluble interfaces). If the stack reaches the bed
-(t ≥ m) the remaining area becomes a roof on layer 0 and no tips are made.
+In words: in round j, forbidden overhang within 1.5·a_j of the region where tips may already stand is
+dropped (the branches of those tips will cover it), and the rest is offered back as a fringe grown by a_j
+and cut by F_m, so tips can stand at its edge. Once rest is empty the recurrence is stationary (upstream
+stops early; the result is the same). After the n rounds, `rest_n` is overhang that gets no tip.
 
-**Tip lines**, when the stack produced none:
+Sampling (§5.4): every connected part of `roofs` as a roof candidate, then every connected part of `fringe`
+as a plain candidate. Within each set the parts come in the boolean library's output order. This order
+reaches the tip list (§5.7) and therefore the merge order (02 §4.2). `polygon_ops` must return components in
+one documented, deterministic order. Whether it matches Clipper-1's output order is part of the backend
+question that WP S4 reports on (design §5.2).
 
-| case | line source | resample spacing |
-|---|---|---|
-| roof candidate, t = 0 (area one layer down < 1 mm²) | base pattern on A at spacing s + D | **r_min / 2 = 0.2 mm** ("continuous tips") |
-| roof candidate, t ≥ 1 (stack complete) | roof pattern on A_t (§5.5) | connect_length |
-| not a roof candidate | base pattern on A | connect_length |
+With roofs enabled (all projects), almost everything goes through the roof candidate path; the fringe is
+the thin band added by the outset rounds.
+
+### 5.4 Sampling one area A at insertion layer m
+
+**Roof stack** (only for roof candidates, R = 3; O `:1133-1186`). Define the shrinking sequence
+
+```text
+A_0 = A,   A_{t+1} = A_t ∖ (F_{m−t−1} ⊕mi(1.2) 5 µm)
+```
+
+The **stack depth** T is the largest t ≤ min(R, m) such that area(A_s) ≥ 1 mm² for every 1 ≤ s ≤ t
+(T = 0 if area(A_1) < 1 mm²). Then:
+
+- **Roofs:** A_s is placed at layer m − s for s = 0 … T − 1: the contact layer at m (s = 0), interface layers
+  below (base-interface layers only exist with soluble interfaces).
+- **Bed:** if T = m (the stack reaches layer 1 with every area ≥ 1 mm², possible only when m ≤ R), the
+  remaining area A_m becomes a roof on layer 0 and no tips are made. This takes precedence over the
+  T = R row below.
+- **Tip lines:**
+
+  | stack result | line source | classified at | resample spacing |
+  |---|---|---|---|
+  | T = 0 (the area one layer down is < 1 mm²) | base pattern on A at spacing s + D | layer m | **r_min / 2 = 0.2 mm** ("continuous tips") |
+  | 0 < T < R (cut short by the area test) | roof-pattern lines of A_{T−1} (§5.5) | layer m − T + 1; keep only points still outside the avoidance of layer m − T (§5.6) | connect_length |
+  | T = R (stack complete) | roof pattern on A_T (§5.5) | layer m − T | connect_length |
+  | not a roof candidate | base pattern on A | layer m | connect_length |
+
+- **Truncation:** if T > 0 and the stack yields no line point at all, the stack is shortened to end at the
+  first roof A_s whose own roof lines are empty.
 
 **Small-area fallback.** Let `need = clamp(trunc(perimeter(A) / connect_length), 1, 3)`. If the
 lines hold `need` points or fewer in total, the outline of the area is sampled instead, with
 spacing connect_length and at least `need` points. Upstream intends to sample an inset of the
 outline (A ⊖ w_s/2.2, mitred 1.2) but its test almost never selects the inset, so in practice the
-outline of A itself is sampled (O `Support/TreeSupport3D.cpp:1196-1214`; flag in our code). Areas thinner than s (0.36 mm)
-produce no fill lines at all and always fall back.
+outline of A itself is sampled (O `Support/TreeSupport3D.cpp:1196-1214`; a flag in our code). Areas
+thinner than s (0.36 mm) produce no fill lines at all and always fall back.
 
-**Classification and insertion** (§5.6 for the point status): points are classified at layer
-`m − t`; a point inside both avoidances splits its line and is dropped. Each surviving point
-becomes a tip record on layer `m − t` with:
+**Classification and insertion** (§5.6 for the point status): points are classified at their layer
+(table above); a point inside both avoidances splits its line and is dropped. Each surviving point
+becomes a tip record on that layer `m − t` (t = the roof depth it serves) with:
 
-| field | value |
+| field (ours) | value |
 |---|---|
 | position | the point |
-| initial area | circle of radius 10 µm (45-gon) around it |
+| initial area | circle of radius 10 µm around it: a **45-gon** on the 1 nm grid (O/S/R), a **15-gon** on B's 10 nm grid (02 §1.3) |
 | reaches bed safely | status "outside AvoidSafe" |
 | supports a roof | t > 0 |
 | hold still for | R − t layers (0 if R = 0) |
-| skip ovalisation | r_min < 3·w_s, no roof tip layers, and the point's line has more than 5 points |
+| keep round (no ovalisation) | r_min < 3·w_s, no roof tip layers, and the point's line has more than 5 points |
 | distance to top, radius steps, foot growth | 0 |
 
 So the overhang of layer k inserts tips on layers k − 2, k − 3, k − 4 or k − 5 (t = 0..3).
@@ -780,40 +804,50 @@ identical; R identical except §5.5.4):
    (in the object frame); i.e. the perpendicular coordinate of every line is congruent to that of
    the centre modulo the spacing. The part is first shrunk by s/2 (mitred, limit 3), and each line
    contributes its chords inside the shrunk part (holes split chords). Coordinates are rotated in
-   f64 and rounded to nm.
-3. **Connection** of chords into polylines along the shrunk boundary (`connect_base_support`).
-   Notation: `ls` = line spacing, s = flow spacing, an *arc* = the boundary stretch between two
-   consecutive chord ends on the same boundary ring, its *score* = the largest distance of the arc
-   from the straight line through its two ends or outside the band between them (its bulge).
-   Steps in order:
-   1. Chord ends are attached to the nearest boundary point; boundary stretches that pass within
-      0.8·s of any chord (ignoring the last 1.7·s of each chord end) are cut out of the arcs
-      ("trimmed"), and so are short stretches lying entirely within s/2 of their own chord.
-   2. Boundary rings with no chord end become closed polylines if longer than 0.15·s + ls/2
-      (shortened by 0.15·s at the end).
-   3. Arcs trimmed at both ends that leave a chord and come back to it or its neighbour are emitted
-      as separate pieces: only the parts of the untrimmed arc that lie inside the band between the
-      chord line and the neighbouring chord line (each side narrowed by s/2), pieces shorter than
-      ls/2 dropped.
-   4. Chord ends are extended along the boundary when the boundary stays within 0.33·ls of the
-      chord's line and runs on for more than 0.5·ls beyond the end; if both directions qualify the
-      longer one wins.
-   5. Arcs whose two ends lie on the same chord line ("vertical" arcs) are taken first; a trimmed
-      one only if its untrimmed part is longer than 1.3·ls.
-   6. For every remaining chord end, look at its two arcs: if their scores overlap the window
-      [1.3·ls, 2·ls] (larger ≥ 1.3·ls and smaller ≤ 2·ls) and differ by at least 25 % of the
-      larger, mark each of the two that scores above 1.3·ls. Marked arcs are taken longest-score
-      first.
-   7. Left-to-right zig-zag: every chord not yet joined is connected to its successor along the
-      boundary unless both already belong to the same chain.
-   8. Caps: arcs that loop from a chord back to its own other end are taken if still free.
-   9. T-joints: every still-free arc, highest score first, is taken if it joins two different
-      chains or scores above 2·ls.
-   10. Arcs scoring above 3·ls, and caps scoring above 0.5·ls, are emitted as extra open pieces even
-       when their ends are used (each shortened by s/2 at its start).
-   Output order: the pieces of steps 2, 3 and 10 in creation order, then the chord chains in chord
-   order. The result is a set of polylines whose vertices lie on chords and boundary; §5.6
-   resamples them, so the piece order is the tip order inside one part.
+   f64 and rounded to the grid unit.
+3. **Connection of chords into polylines** (our `join_chords`; upstream `connect_base_support`,
+   O `Fill/FillBase.cpp:2173-2640`). Stated as the result, not as upstream's step order.
+
+   *Objects.* `ls` = line spacing, s = flow spacing. Every chord end is attached to its nearest point on
+   the shrunk boundary. An **arc** is the boundary stretch between two consecutive chord ends on one
+   ring. Its **score** is its bulge: the largest distance of the arc from the straight line through its
+   two ends, or outside the band between them. An arc is **trimmed** where it passes within 0.8·s of any
+   chord (ignoring the last 1.7·s at each chord end), and where a short stretch lies entirely within
+   s/2 of its own chord. A **chain** is a maximal sequence of chords joined by selected arcs; selecting
+   an arc never closes a cycle of chords.
+
+   *Output.* A set of polylines of four kinds:
+
+   | kind | definition |
+   |---|---|
+   | free ring | a boundary ring with no chord end, longer than 0.15·s + ls/2, shortened by 0.15·s at its end |
+   | excursion piece | for an arc trimmed at both ends that leaves a chord and returns to it or to its neighbour: the parts of the untrimmed arc inside the band between the two chord lines (each side narrowed by s/2), pieces shorter than ls/2 dropped |
+   | bulge piece | every arc with score > **3·ls**, and every cap (an arc from a chord back to its own other end) with score > 0.5·ls, even if its ends are used elsewhere; each shortened by s/2 at its start |
+   | chain | chords joined by the selected arcs (below), each chord end first extended along the boundary where the boundary stays within 0.33·ls of the chord's line for more than 0.5·ls beyond the end (the longer direction wins) |
+
+   *Arc selection.* Each chord end takes at most one arc. Arcs are selected class by class in the
+   precedence order below. Inside a class the stated order applies, and an arc is taken only if both
+   ends are still free and it closes no cycle:
+
+   | precedence | class | condition | order inside the class |
+   |---|---|---|---|
+   | 1 | same-line arcs | both ends on one chord line; a trimmed one only if its untrimmed part is longer than 1.3·ls | boundary order |
+   | 2 | contrast arcs | at a chord end whose two arcs have scores with the larger ≥ **1.3·ls**, the smaller ≤ **2·ls**, and a difference ≥ 25 % of the larger: each of the two arcs scoring above 1.3·ls | decreasing score |
+   | 3 | zig-zag | the arc joining each chord to its successor along the boundary | chords left to right |
+   | 4 | caps | arcs from a chord back to its own other end | boundary order |
+   | 5 | T-joints | any remaining arc that joins two different chains, or scores above **2·ls** | decreasing score |
+
+   The bold thresholds (1.3·ls and 2·ls in class 2, 2·ls in class 5, 3·ls for bulge pieces) are the
+   three process-static values of item 4. The 1.3·ls of class 1 and the 0.5·ls of caps are evaluated per call.
+
+   *Output order* (it becomes the tip order inside one part, §5.6): free rings, excursion pieces and bulge
+   pieces in creation order, then the chains in chord order. All vertices lie on chords or on the boundary.
+
+   *Test vectors.* The order and selection must be pinned by recorded (polygon, spacing, angle) →
+   polylines vectors. WP S3 records them from a source where the connector's output is printed directly:
+   the base layers of a synthetic normal-support slice in R with density < 0.95 and no sheath (pattern
+   "support base"; to be confirmed per flavour), or the private instrumented build of review §5.3. Until
+   then the connector's fidelity is part of δ.
 4. **Process-static thresholds (nondeterminism S9).** In B 02.08.02.61, O 2.4.2 and S 2.4.0 the
    three arc thresholds of steps 6, 9 and 10 (1.3, 2 and 3 × ls) are initialised **once per
    process** from the line spacing of the first call ever made (the 1.3·ls of step 5 and the
@@ -822,9 +856,9 @@ identical; R identical except §5.5.4):
    In a GUI session it is the first support fill of the session, possibly another project. R
    2.5.0-rc removed the `static` with exactly this comment (R `Fill/FillBase.cpp:2696-2701`; static in O `:2464-2466`, B `:2367-2369`, S `:2456-2458`).
    Realizations: two families per flavour (thresholds from roof spacing or from base spacing), plus
-   the session-history family in the GUI. Our ensemble adds the axis
-   `arc_thresholds ∈ {roof, base}`; the canonical member uses roof (the most common first call when
-   roofs are enabled is unknown: open question Q2).
+   the session-history family in the GUI. The ensemble enumerates both families as members (axis
+   `arc_thresholds ∈ {roof, base}`, design §5.4); R has one. Which family a given slice lands in is
+   unknown (open question Q2); the GUI session effect is design Q20.
 
 ### 5.6 Resampling a polyline and classifying points
 
@@ -856,30 +890,34 @@ matching its status.
 
 ### 5.7 Insertion order and dedup (nondeterminism S1)
 
-- Each tip is inserted under one lock: compute its cell `(trunc(x / 40 000), trunc(y / 40 000))`
-  in object-frame nm (truncation toward zero, so the cells straddling an axis are twice as wide);
-  if that cell already holds a tip **on the same layer**, the new tip is discarded; otherwise it is
-  appended to that layer's list. The list order is the input of the merge stage (next spec), so
-  order is part of the result.
-- Within a task the order is deterministic: roof parts first, then fringe parts, each in boolean
-  output order; within a part, line by line, point by point.
-- Tasks are the overhang layers k in ascending order, processed by a parallel loop with dynamic
-  splitting. A layer list m receives tips from tasks k = m + 2 … m + 5 (roof depths 0..3). With
-  several threads the tips of these tasks interleave at **single-tip granularity** in an order set
-  by thread timing; each task's own order is preserved. A dedup collision across tasks keeps the
-  earlier tip.
-- With one thread, tasks run in ascending k: this is the **canonical order** of our implementation
-  (member 0 of the ensemble).
-- Realizations: any interleaving of the ≤ 4 writer sequences per layer list, plus the choice of
-  survivor when two writers hit the same cell. Without roofs (R = 0) every list has one writer and
-  S1 disappears. The design doc's ensemble (ascending, descending, seeded interleavings) covers this
-  axis.
+- **List content.** The tip list of layer m is the tips of every task writing it, in one interleaving
+  that keeps each task's own order. A tip is dropped when its **dedup cell** already holds an earlier
+  tip of the same layer list. Cell = (trunc(x / c), trunc(y / c)) in object-frame grid units with
+  c = (r_min + 1) div 10: 4 000 units in B, 40 000 nm in O/S/R, i.e. 40 µm in both. Truncation toward
+  zero makes the cells that straddle an axis twice as wide. The list order is the input of the merge stage
+  (02 §4.2), so order is part of the result.
+- **Order within a task** is deterministic: roof parts first, then fringe parts, each in the component
+  order of §5.3; within a part, line by line, point by point (§5.6).
+- **Writers.** A layer list m receives tips from the tasks k = m + 2 … m + 5 (roof depths 0..3). Upstream
+  runs the tasks in a parallel loop with dynamic splitting and appends under a lock, so with several
+  threads the writers interleave at **single-tip granularity** in an order set by thread timing; a dedup
+  collision across tasks keeps whichever tip came first.
+- **Canonical order** (ours): tasks in ascending k, each task's tips in full before the next, which is the
+  one-thread order. It is the order of every core ensemble member (design §5.4).
+- **Realizations:** any interleaving of the ≤ 4 writer sequences per layer list, plus the choice of
+  survivor when two writers hit the same cell. Without roofs (R = 0) every list has one writer and S1
+  disappears.
+- **Status: unproven as a source of printed variation.** R contains the same race (R
+  `Support/TreeSupport3D.cpp:1023-1026` inside the parallel loop at `:1371`) yet produced one realization
+  in 30 rotation-0 observations, full plates included (M §2.4, §5.3). Seeded interleavings stay an
+  optional ensemble axis (design §3.2, §5.4) until the discriminating experiment (design §11, C5) shows
+  that they matter.
 
 ### 5.8 Output contract to the descent stage
 
 Per support layer m (0 ≤ m < highest support layer): an ordered list of tip records (§5.4 fields)
 and the roof polygons per layer and role (contact, interface). Everything is in the object frame,
-nm integers.
+integers on the flavour grid (B 10 nm, O/S/R 1 nm).
 
 ---
 
@@ -887,11 +925,11 @@ nm integers.
 
 | id | source | flavours | realizations | our handling |
 |---|---|---|---|---|
-| S1 | tip insertion order and first-come dedup (§5.7) | B O S R | interleavings of ≤ 4 writer tasks per layer | ensemble axis (design §5.4) |
-| S3 | detection guard: clock or > 100 islands, racy shared flags (§3.9) | B O S R | "tripped from layer j" with any processed-before set | island trigger computed exactly; if it fires, switch-layer axis; clock trigger reported as a risk |
+| S1 | tip insertion order and first-come dedup (§5.7) | B O S R | interleavings of ≤ 4 writer tasks per layer | canonical order in every core member; seeded interleavings an optional axis, unproven (R deterministic, design §3.2) |
+| S3 | detection guard: clock or > 100 islands, racy shared flags (§3.9) | B O S R | "tripped from layer j" with any processed-before set | island trigger computed exactly (goat ≤ 40 islands per layer, review appendix A); if it fires, `Unsupported` until the switch-layer axis exists (design §5.7); clock trigger reported as a risk |
 | S7 | f32 / libm (tan, sqrt, f32 heights, f32 midpoints, f32 densities) | all | rare flips of discrete tests (sharp-tail emission, dedup cell, line count) | emulate f32 where §1-§5 say so; `libm` for transcendental functions |
-| S9 (new) | process-static arc thresholds in the support-base line connector (§5.5.4) | B O S (fixed in R) | thresholds from roof spacing, from base spacing, or from an earlier slice in the GUI session | ensemble axis `arc_thresholds` |
-| S10 (new, negligible) | process-static closing ε for multi-region elephant-foot restore (§1.5) | B O S R | only differs if objects with different closing radii were sliced earlier in the process | none (all projects 0.049) |
+| S9 | process-static arc thresholds in the support-base line connector (§5.5.4) | B O S (fixed in R) | thresholds from roof spacing, from base spacing, or from an earlier slice in the GUI session | core ensemble axis `arc_thresholds ∈ {roof, base}` (design §5.4); GUI session history not modelled (design Q20) |
+| S10 (negligible) | process-static closing ε for multi-region elephant-foot restore (§1.5) | B O S R | only differs if objects with different closing radii were sliced earlier in the process | none (all projects 0.049) |
 | — | slicer segment order (§1.3), slab segment order (§2.6) | all | different loop start vertices, same geometry | start-dependent steps (Douglas-Peucker, half-length point §5.6) inherit it: below 3 µm; Q3 |
 
 Not sources here: the per-layer parallel loops of §1, §2 and §3.2-§3.3 (each writes its own layer),
@@ -925,21 +963,23 @@ the sequential §3.4-§3.7, the cluster order (sequential), the boolean results 
 
 ## 8. Open questions
 
-- **Q1. Fidelity target for the line connector (§5.5.3).** Exact tip positions need a faithful
-  re-implementation of the arc/zig-zag rules from this behaviour description (≈ 600 lines
-  upstream). A simpler "chords only" generator changes tip positions by up to one line spacing
-  along the boundary. Decide after the descent stage exists: compare envelopes from both against
-  the 20-run P1S union.
+- **Q1. Fidelity target for the line connector (§5.5.3). Answered** (lead, 2026-11-02, design §14
+  Q17): a behaviourally faithful connector, because the S9 families exist only through its
+  process-static thresholds. A "chords only" generator (tip positions off by up to one line spacing)
+  remains a diagnostic. Remaining work: the recorded test vectors of §5.5 item 3.
 - **Q2. Which family S9 lands in.** In a single-object CLI run the first fill call is a race; in the
   owner's GUI it depends on session history (normal supports sliced earlier set other values).
   Needs a measurement: slice the same project in R (fixed) and B with one thread and compare tip
   layers' interface polylines, or instrument by comparing roof-only vs base-only projects.
-- **Q3. Ring start vertices.** Douglas-Peucker and the half-length point depend on where the
-  boolean library starts each ring. Matching upstream exactly requires the same Clipper 1
-  behaviour (including the fork's short-edge decimation). The design's backend choice (its Q6)
-  should take this into account; otherwise these effects go into δ.
-- **Q4. Island count guard on the goat.** Our A4 must report the maximum islands per layer; if any
-  goat layer exceeds 100, S3 is active on every slice and becomes a real ensemble axis.
+- **Q3. Ring start vertices and component order. Partly answered** (design §5.2, §14 Q6): the backend
+  is `i_overlay` behind `polygon_ops`, emulating Clipper-1 semantics where they change discrete
+  decisions (mitre floor, arc tolerance, decimation, grid). Ring start vertices (Douglas-Peucker, the
+  half-length point) and the component order of boolean results (§5.3) are not guaranteed to match
+  Clipper-1. Their effect goes into δ, and WP S4 reports whether it dominates.
+- **Q4. Island count guard on the goat. Answered provisionally** (review appendix A, approximate
+  shapely reconstruction): at most 40 islands on one layer (P1S, 0° and 225°), 33 (A2L), 17 (U1); no layer
+  exceeds 100, so S3 explains neither B's spread nor the 225° supports. A4 must log the exact count; above
+  100 the model returns `Unsupported` (design §5.7).
 - **Q5. Orca fast path for disjoint parts** (§1.4): verify with a two-cube object in R before
   supporting such models; until then reject objects whose parts have disjoint XY boxes on a layer.
 - **Q6. Bridge removal** (§3.7.1): treated as no-op (evidence: U1). Needs a rule or a rejection for
@@ -949,10 +989,21 @@ the sequential §3.4-§3.7, the cluster order (sequential), the boolean results 
   crossing the painted Z range (the goat's belly band, z ≈ 13 mm, may be such a case).
 - **Q8. O first-member-per-layer cluster quirk** (§3.5): affects only `support_critical_regions_only
   = 0`; confirm with one R slice (two islands of one layer under one cluster).
+- **Q9. B supports at z 26-41.6 mm at 225° only** (M §2.2: P1S and A2L, 5 of 5 runs, bands 13-20,
+  15-25 mm² per band, object frame x −14..15, y 3..14). Candidate mechanisms in this part: the
+  axis-aligned bbox rules of sharp-tail growth (§3.4) and small-overhang removal (§3.6), and B's
+  floating-ring cantilever rule (§3.2 step 5). None is shown to be the cause. Needed before
+  `--rotations` admits classes beyond {0°, 180°} (design Q21; the 5° sweep is design §11 C9).
+- **Q10. Corpus fixtures for §3.** Two corpus findings are predicted by this part and are cheap
+  acceptance tests: `arch` (flat 30 mm bridge) gets no support with critical-only in every flavour
+  (M §2.7), and R does not support the mushroom's 24.8° cone (single-layer clusters are small, §3.6),
+  while B does (floating-ring cantilever, §3.2 step 5) (M §2.8).
 
 ## 9. Validation hooks for the implementation
 
 - A1: 160 layers, z values of §1.2.2 for all three projects (fixture: first/last 3 values).
+- Settings: every integer of §4 for both grids (B in 10 nm units, O/S in nm) as fixture values; the
+  vertex counts 15/45 (tip seed) and 100/315 (vertical enforcer circle).
 - A3: the decode statistics of §2.4 (7907 / 7668 / 239 / depth 6 / 10158 / 2191 / 60.80 mm² /
   3.22 mm² / 0 vertical) and the E_k layer sets of §2.6 (P1S/A2L 31 layers, U1 30 layers).
 - A4: per-layer counts of plain, enforced, cantilever and sharp-tail polygons logged; total area of

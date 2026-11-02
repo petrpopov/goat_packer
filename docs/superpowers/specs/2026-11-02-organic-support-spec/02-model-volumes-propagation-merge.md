@@ -5,24 +5,28 @@ generator. It starts after the tips have been placed (part 01) and ends with one
 node per layer, before organic smoothing and drawing (part 03).
 
 **Licence rule.** BambuStudio, OrcaSlicer and Snapmaker Orca are AGPL-3.0. This document describes behaviour
-in our own words: formulas, constants, step order, data flow and edge cases. It contains no source code and no
-transliteration. The `file:line` references are there so that an implementer can check a behaviour against
-upstream. They are not material to copy. Where exact reproduction needs a precise procedure (the AABB
-reordering in §4.2, the compaction in §4.4), the procedure is written here as prose steps at the algorithm
-level.
+in our own words: formulas, constants, data flow, edge cases, order properties and recorded test vectors. It
+contains no source code and no transliteration. The `file:line` references are there so that an implementer
+can check a behaviour against upstream. They are not material to copy. Where exact reproduction depends on an
+order (the AABB reordering of §4.2, the merge rounds of §4.4, the compaction of §5.4, the nearest boundary
+point of §5.5), the spec states the resulting order as invariants and pins it with test vectors (§8), not
+with a step-by-step procedure. Operations and fields carry our names (glossary §1.4); upstream names appear
+only in citations.
 
 **Versions** (sources in `/tmp/goat_src`):
 
 | tag | slicer | used by |
 |---|---|---|
 | **B** | BambuStudio v02.08.02.61 (`bambu_0208`) | owner's P1S / A2L GUI and CLI |
-| **O24** | OrcaSlicer v2.4.2 (`orca_242`) | server U1 |
-| **S24** | Snapmaker Orca v2.4.0 (`snaporca240`) | owner's U1 GUI |
-| **O25** | OrcaSlicer v2.5.0-rc (`orca_250rc`) | local `/Applications/OrcaSlicer.app` |
+| **O** | OrcaSlicer v2.4.2 (`orca_242`) | server U1 |
+| **S** | Snapmaker Orca v2.4.0 (`snaporca240`) | owner's U1 GUI |
+| **R** | OrcaSlicer v2.5.0-rc (`orca_250rc`) | local `/Applications/OrcaSlicer.app` |
 
 Unless noted, paths are relative to `src/libslic3r/Support/`. `TMV` = `TreeModelVolumes.cpp`, `TS3` =
 `TreeSupport3D.cpp`, `TSC` = `TreeSupportCommon.hpp`, `TS3H` = `TreeSupport3D.hpp`. Line numbers are given
-as `O24 n / S24 n / O25 n / B n` when they differ.
+as `O n / S n / R n / B n` when they differ. The tags B/O/R/S are the same in every part of this spec set.
+The flavour tag R always stands alone (a table column or before a citation). R(d, f), with arguments, is
+the radius function of §1.2.
 
 ---
 
@@ -41,13 +45,13 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
    ⌊(n+2)/4⌋ ≥ T, and buckets of 2 otherwise.
    - The realizations over all T form a small, enumerable set of intervals of T (§4.7). There are at most
      max⌊(n+2)/4⌋ + 1 of them, about 11 for a goat.
-   - **O25's "fix" pins the rule to the T = 1 class.**
+   - **R's "fix" pins the rule to the T = 1 class.**
    - The owner's GUIs run on a 14-thread M3 Max (`hw.logicalcpu = 14`). For every layer with n ≤ 53 they
      are in the **bucket-of-2 class**, the same class as the server's many-core Orca 2.4.2 run. Local Orca
      2.5-rc is in a *different* class.
 3. **Merging happens on every layer.** The "merge every x layers" throttle was written for micrometre units.
-   In the slicers' units (1 nm, or 10 nm in B) its maximum is 0, so the condition is always true (§3.2). The `mergelayer` code paths
-   are therefore always the ones taken.
+   In the slicers' units (1 nm, or 10 nm in B) its maximum is 0, so the condition is always true (§3.2). The merge-only computations inside a move
+   therefore always run.
 4. **`min_feature_size` is read in the wrong unit.** The percentage value (25) is used as millimetres, so it
    becomes 25 mm (`TSC:59` and peers). The "safe movement step" is therefore about 25.2 mm, which has two
    consequences:
@@ -67,8 +71,8 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
    nodes are placed.
 7. **Only Bambu treats the bed's outside (and its exclusion zones) as an obstacle** (§2.8). It is a 1 m ring
    around the bed polygon, cut into four pieces with 2 mm slits on the bed's centroid axes.
-   O24, S24 and O25 have no bed obstacle. All four clip the support to the bed later (part 03).
-8. **For this stage, O24 ≡ S24** on the goat settings. Their differences (roof bookkeeping, two guards that
+   O, S and R have no bed obstacle. All four clip the support to the bed later (part 03).
+8. **For this stage, O ≡ S** on the goat settings. Their differences (roof bookkeeping, two guards that
    never trigger here) do not change node positions. B differs in:
    - where its settings come from;
    - the bed obstacle;
@@ -77,7 +81,7 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
      changes every integer truncation, e.g. V_f = 0.27999 mm against 0.279999 mm, and the tip seed polygon
      has 15 vertices against 45.
 
-   O25 differs in:
+   R differs in:
    - the bucket rule;
    - collision simplification, plus support-blocker volumes now counting as obstacles.
 
@@ -93,16 +97,19 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
   | flavour | unit | coordinates | Clipper | where defined |
   |---|---|---|---|---|
   | **B** | **1 unit = 10 nm** (1 mm = 10⁵, scaling factor 10⁻⁵) | 32-bit | built with 32-bit coordinates (`src/clipper/clipper.hpp:83`) | `libslic3r.h:40,58` |
-  | **O24/S24/O25** | **1 unit = 1 nm** (1 mm = 10⁶; Orca switches to 10⁻⁵ only for beds ≥ 2147 mm) | 64-bit | 64-bit coordinates, orientation cross products in *double* (`deps_src/clipper/clipper.hpp:85-97`) | `libslic3r.h:43,60-70` |
+  | **O/S/R** | **1 unit = 1 nm** (1 mm = 10⁶; Orca switches to 10⁻⁵ only for beds ≥ 2147 mm) | 64-bit | 64-bit coordinates, orientation cross products in *double* (`deps_src/clipper/clipper.hpp:85-97`) | `libslic3r.h:43,60-70` |
 
   Every constant written in "units" below (rounding guards, the 5-unit extra speed, the integer truncations
-  of speeds and radii) is therefore 10× coarser in B than in Orca. Physical thresholds that upstream writes
-  in mm are the same in both: ε_A, the 100 nm box epsilon, every offset and arc tolerance.
+  of speeds and radii, the 10-unit boolean safety offset) is therefore 10× coarser in B than in Orca.
+  Physical thresholds that upstream writes in mm are the same in both: ε_A, the 100 nm box epsilon, every
+  offset and arc tolerance. mm → units conversions truncate the double quotient, so some round values lose
+  a unit in B: 2.0 mm → 199 999, 0.03 mm → 2 999, 7.5 mm → 749 999 (01 §0, §4).
 - **Offsets** use the semantics of the Clipper 1 library (Angus Johnson, v6.4.x, Boost licence; an
-  independent port is fine licence-wise), with one Slic3r addition:
+  independent port is fine licence-wise), with one Slic3r addition. Our `polygon_ops` facade reproduces the
+  rules of this list on top of `i_overlay` (design §5.2):
   - **Input decimation.** Before offsetting by distance d, a ring drops every vertex closer than
     0.005·|d| to the previously kept vertex, and trailing vertices closer than that to the first vertex
-    (O24 `ClipperUtils.cpp:277`, `deps_src/clipper/clipper.cpp:3380`).
+    (O `ClipperUtils.cpp:277`, `deps_src/clipper/clipper.cpp:3380`).
   - **⊕m(d)** is a miter-join offset. Upstream passes miter limit 1.2, but Clipper raises any limit below 2
     to 2 (`clipper.cpp:3542`). So corners are mitred out to 2·d and squared off beyond that.
   - **⊕M3(d)** is a miter offset with limit 3 (the library default).
@@ -111,10 +118,10 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
     (`clipper.cpp:3547-3557`). ⊖ means a negative offset.
   - **Offsetting a set of rings** offsets each ring on its own (holes in the opposite sense) and then unions
     the result with the non-zero rule (shrinking adds the usual bounding frame with the negative rule).
-  - **"union_ex then offset"** first resolves the input to polygons-with-holes. It then offsets each outer
-    contour by +d and each hole by −d, and subtracts the holes.
-- **Booleans** (∪, ∩, ∖) use the non-zero fill rule. `diff_clipped` first crops the clip set to the
-  subject's bounding box; the result is the same.
+  - **ex(X)** resolves a ring set X to polygons-with-holes (non-zero rule). **ex(X) ⊕ d** then offsets each
+    outer contour by +d and each hole by −d, and subtracts the holes.
+- **Booleans** (∪, ∩, ∖) use the non-zero fill rule. A difference whose clip set is first cropped to the
+  subject's bounding box (an upstream speed-up) gives the same result.
 - **S(τ) = simplify.** For each ring: Douglas–Peucker with tolerance τ on the closed ring (first vertex
   repeated, then dropped), then a self-union of that ring with the non-zero rule, with holes reoriented back.
   The mode of that union differs by flavour:
@@ -122,8 +129,8 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
   | flavour | union mode |
   |---|---|
   | B | "strictly simple" (`Polygon.cpp:658`) |
-  | O24, S24 | not strictly simple (`TSC:591` constant `false`) |
-  | O25 | plain union (`Polygon.cpp:685`), equivalent to O24 |
+  | O, S | not strictly simple (`TSC:591` constant `false`) |
+  | R | plain union (`Polygon.cpp:685`), equivalent to O |
 
   The difference is vertex-level only: touching vertices are split or not, and the area is the same.
 - **ε_A** = 10⁻⁶ mm² = (0.001 mm)². "Area > ε_A" is the test for "non-empty".
@@ -133,10 +140,10 @@ as `O24 n / S24 n / O25 n / B n` when they differ.
 
 ### 1.2 Derived settings (evaluated for the goat projects)
 
-Formulas follow `TreeSupportSettings` (`TSC:267` / S24 268 / O25 285 / B 258). Setting names are the
+Formulas follow `TreeSupportSettings` (`TSC:267` / S 268 / R 285 / B 258). Setting names are the
 project keys.
 
-| symbol | meaning, formula | B (P1S, A2L) | O24/S24/O25 (U1) |
+| symbol | meaning, formula | B (P1S, A2L) | O/S/R (U1) |
 |---|---|---|---|
 | lh | `layer_height` (the first layer is not used here) | 0.28 mm | 0.28 mm |
 | w | support line width | 0.42 mm | 0.42 mm |
@@ -145,25 +152,25 @@ project keys.
 | V_f | trunc(tan θ_f · lh), in units | **27 999 units of 10 nm = 0.27999 mm** (tan 45° evaluates to 0.9999999999999999) | **234 947 nm** |
 | V_s | trunc(tan θ_s · lh) | 13 056 units = 0.13056 mm | 130 566 nm |
 | V_f′, V_s′ | the volumes' copies, V − 2 units ("rounding guard", `TMV:63`) | 27 997 / 13 054 units | 234 945 / 130 564 nm |
-| r_tip | tip radius. B: hard-coded 0.8/2; Orca: `tree_support_tip_diameter`/2, clamped to ≤ branch diameter | 0.4 mm | 0.4 mm |
-| r_b | branch radius. B: `tree_support_branch_diameter`/2; Orca: `_organic`/2 | 1.0 mm | 1.0 mm |
+| r_tip | tip radius. B: hard-coded 0.8/2; Orca: `tree_support_tip_diameter`/2, clamped to ≤ branch diameter | 40 000 units = 0.4 mm | 400 000 nm |
+| r_b | branch radius = trunc(diameter) div 2. B: `tree_support_branch_diameter`; Orca: `_organic` | **99 999 units = 0.99999 mm** (2.0 mm truncates to 199 999) | 1 000 000 nm |
 | N_tip | tip layers = max(⌊(r_b − r_tip)/⌊w/3⌋⌋, ⌊r_b/lh⌋), integer division in units | 4 | 4 |
 | g | radius growth per layer = tan(`tree_support_branch_diameter_angle`)·lh | 0.0244968 mm | same |
-| R_inc | "increase radius until" radius = r_b | 1.0 mm | same |
+| R_inc | "increase radius until" radius = r_b | 0.99999 mm | 1.0 mm |
 | N_inc | its layer = N_tip · ⌊R_inc/r_b⌋ | 4 | 4 |
-| r_bp | trunk foot target, hard-coded 7.5/2 | 3.75 mm | same |
-| g_bp | foot growth per layer = min(tan(0.7 rad)·lh, w/2) | 0.21 mm | same |
+| r_bp | trunk foot target, trunc(7.5 mm) div 2 | 374 999 units | 3 750 000 nm |
+| g_bp | foot growth per layer = min(tan(0.7 rad)·lh, w/2) | 20 999.5 units | 209 999.5 nm |
 | L_bp | layers of foot zone = trunc((r_bp − r_b)/g_bp) (an integer, not 13.1) | **13** | 13 |
 | g_ft | foot increment per unit of "foot count" = g_bp − g (double) | 0.1855032 mm | same |
 | g_ft′ | the same, truncated to units (used only in §3.6) | 18 550 units = 0.18550 mm | 185 503 nm |
 | xy | `support_object_xy_distance` (B: at least 0.01; B lowers it to max(top gap, 0.2) if `top_z_overrides_xy_distance`, which is off here) | 0.75 mm | 0.75 mm |
 | xy_min | min(xy, ½·external-perimeter width) | 0.21 mm | 0.21 mm |
 | δ | xy − xy_min | 0.54 mm | 0.54 mm |
-| z_top, z_bot | round(gap / lh). The gaps are first snapped to multiples of lh (`Slicing.cpp`: O24 164-187, B 115-123) | 1, 1 | 1, 1 |
+| z_top, z_bot | round(gap / lh). The gaps are first snapped to multiples of lh (`Slicing.cpp`: O 164-187, B 115-123) | 1, 1 | 1, 1 |
 | res | `resolution` | 0.03 mm | 0.03 mm |
 | mfs | `min_feature_size` *percentage value read as millimetres* (bug, §0.4) | **25 mm** | **25 mm** |
-| rests_on_model | ¬`support_on_build_plate_only` | **false** | **false** |
-| min_dtt_model | ⌈1.0 mm / lh⌉ (to-model only) | 4 | 4 |
+| to_model_allowed | ¬`support_on_build_plate_only` | **false** | **false** |
+| min_depth_model | ⌈1.0 mm / lh⌉ (to-model only) | 4 | 4 |
 | Δr_model,max | 1.0 mm / 2 (to-model only) | 0.5 mm | 0.5 mm |
 
 **Radius functions** (`TSC:545-563`, identical in all four):
@@ -173,11 +180,12 @@ project keys.
   - base(d) = r_b + (d − N_tip)·g for d > N_tip;
   - R(d, f) = trunc(base(d) + f·g_ft), with the sum taken in double.
 
-  Values: R(0..4) = 0.40, 0.55, 0.70, 0.85, 1.00 mm. R(5) = 1.0245 mm. R(89) = 3.082 mm.
-- **recMin(l)**, the recommended minimum radius at layer l: r_b + (L_bp − l)·g_bp for l < L_bp, else 0;
-  truncated. recMin(0) = **3.73 mm**, recMin(12) = 1.21 mm.
-- **effective radius height** eDTT(e) = (e.erh < N_inc) ? min(e.dtt, N_inc) : e.erh.
-- **real radius** ρ(e) = R(eDTT(e), e.foot). **Collision radius** c(e) = R(e.erh, e.foot) ≤ ρ(e).
+  Values (Orca): R(0..4) = 0.40, 0.55, 0.70, 0.85, 1.00 mm, R(5) = 1.0245 mm, R(89) = 3.082 mm. B (units):
+  R(0..4) = 40 000, 54 999, 69 999, 84 999, 99 999.
+- **r_rec(l)**, the recommended minimum radius at layer l: r_b + (L_bp − l)·g_bp for l < L_bp, else 0;
+  truncated. r_rec(0) = **3.73 mm** (B 372 992 units, Orca 3 729 993 nm), r_rec(12) = 1.21 mm.
+- **effective radius height** d_eff(e) = (e.rdepth < N_inc) ? min(e.depth, N_inc) : e.rdepth.
+- **real radius** ρ(e) = R(d_eff(e), e.foot). **Collision radius** c(e) = R(e.rdepth, e.foot) ≤ ρ(e).
 
 ### 1.3 Interfaces
 
@@ -192,25 +200,58 @@ project keys.
     and coordinates truncated. Upstream asks for "25", but the circle function takes 25 as a chord error in
     *units*, so k = ⌈2π / (2·acos(1 − 25/r_units))⌉. That gives **k = 45 in Orca** (r = 10 000 nm) and
     **k = 15 in B** (r = 1 000 units) (`TS3:866`, B 884-885, `Polygon.cpp:743`);
-  - target_height = l; target_position = next_position = result = p;
-  - erh = dtt = 0, foot = 0;
-  - flags to_buildplate, to_model_gracious, can_use_safe_radius (from the tip's line status), use_min_xy
-    (= xy > xy_min, true here), supports_roof, skip_ovalisation;
-  - dont_move_until (3 for an ordinary tip with 3 interface layers);
+  - origin_layer = l; origin_xy = hint = centre = p;
+  - rdepth = depth = 0, foot = 0;
+  - flags to_bed, graceful, past_holes (from the tip's line status), tight_xy
+    (= xy > xy_min, true here), under_roof, keep_round;
+  - hold_until (3 for an ordinary tip with 3 interface layers);
   - roof-recovery counters (only part 03 uses them).
 - **B_obj** (Bambu only): the bed polygon in the frame of this object's first instance (§2.8).
 
 **Output** (to part 03): for each layer l, a list of nodes. Each node has:
-- a centre `result`;
-- its state (erh, dtt, foot, flags);
+- its centre;
+- its state (rdepth, depth, foot, flags);
 - the indices of its parents in layer l+1;
 - its IA.
 
 Deleted nodes have been removed and the indices remapped (§5.4).
 
+### 1.4 Our names (glossary)
+
+Design §1 forbids upstream identifiers in operative text. This part uses the names below. The right-hand
+column exists only so that a reviewer can find the behaviour upstream.
+
+| ours | meaning | upstream (citation only) |
+|---|---|---|
+| `depth` | layers below the element's highest tip | `distance_to_top` (dtt) |
+| `rdepth` | radius height, normally `depth`, may lag | `effective_radius_height` |
+| `foot` | foot-growth count (double) | `elephant_foot_increases` |
+| `centre` | placed node position | `result_on_layer` |
+| `hint` | position hint for placement | `next_position` |
+| `origin_layer`, `origin_xy` | the tip the branch ultimately serves | `target_height`, `target_position` |
+| `to_bed` | must and can reach the bed | `to_buildplate` |
+| `graceful` | lands on the model gracefully | `to_model_gracious` |
+| `past_holes` | may use the Slow / FastSafe (hole-closed) avoidances | `can_use_safe_radius` |
+| `tight_xy` | still allowed the reduced xy distance | `use_min_xy` |
+| `under_roof` | supports a roof | `supports_roof` |
+| `keep_round` | no ovalisation | `skip_ovalisation` |
+| `hold_until` | `depth` before which the branch does not move | `dont_move_until` |
+| `model_growth` | radius increase spent on to-model merges | `increased_to_model_radius` |
+| `last_setting` | setting that produced the element | `last_area_increase` |
+| `lost`, `very_lost` | debug flags | `lost`, `verylost` |
+| `to_model_allowed` | support may rest on the model | `support_rests_on_model` |
+| `radius_key`, `next_key` | §2.2 cache key and next key | `ceilRadius`, `getRadiusNextCeil` |
+| `r_rec(l)`, `d_eff` | recommended minimum radius, effective radius height | `recommendedMinRadius`; the state overload of `getRadius` |
+| `step_down` | move an element one layer down | `propagate_down` |
+| `radius_valid` | §3.6 radius test | `validWithRadius` |
+| `try_merge` | §4.5 pair merge | `merge_influence_areas_two_elements` |
+| `nearest_inside`, `nearest_boundary` | §5.5 | `move_inside_if_outside`, `move_inside` |
+| `ex(·)` | resolve rings to polygons with holes | `union_ex` |
+| `fill_notches` | 03 §3.7 notch filling | `smooth_outward` |
+
 ---
 
-## 2. Model volumes (`TreeModelVolumes`)
+## 2. Model volumes (upstream `TreeModelVolumes`)
 
 All volumes are per-object. The generator never sees neighbouring objects.
 
@@ -219,7 +260,7 @@ All volumes are per-object. The generator never sees neighbouring objects.
 O_l = S(res)(slice of layer l) (`TMV:115` / B 133). B then appends the bed-ring pieces (§2.8) to *every*
 O_l, after simplification.
 
-### 2.2 Radius keys (cache quantization) — `ceilRadius` (`TMV:835` / S24 834 / O25 894 / B 853)
+### 2.2 Radius keys (cache quantization), our `radius_key` (upstream `ceilRadius`, `TMV:835` / S 834 / R 894 / B 853)
 
 Every request carries a radius r and a flag *min* (use xy_min instead of xy). It is mapped to a **key** K,
 and all caches are indexed by (K, layer).
@@ -235,7 +276,7 @@ and all caches are indexed by (K, layer).
   Key sequence: **0, 0.4, 1.5, 2.6, 3.9, 5.85, 8.775, 13.1625 mm …**
 - **Key:** K(r, min) = q(r) when min is set. Otherwise K(r, regular) = q(r + δ) for r > 0, and **exactly δ**
   (0.54 mm, not rounded) for r = 0 (`TMV.hpp:149`).
-- **Next ceil:** nextCeil(r, min) = q(r) when min is set, otherwise q(r + δ) − δ. It is used when the radius
+- **Next ceil:** next_key(r, min) = q(r) when min is set, otherwise q(r + δ) − δ. It is used when the radius
   grows (§3.6).
 - **Clearance:** the collision for key K offsets the outline by **K + xy_min** (§2.3). So the centre
   clearance actually enforced for a branch of radius r is:
@@ -259,16 +300,16 @@ from tip radii, i.e. q(R(d)) and q(R(d) + δ) for d = 0…N_tip. Every key betwe
 that list is marked "ignorable", and q skips it. For the goat settings the reachable keys are
 {0.4, 1.5, 2.6}, so **no key is ignorable**. A port must still implement the rule for other settings.
 
-### 2.3 Collision Coll(K, l) (`TMV:416-580` / S24 416 / O25 468 / B 435)
+### 2.3 Collision Coll(K, l) (`TMV:416-580` / S 416 / R 468 / B 435)
 
 Collision is the set of centre positions where a branch of key K would hit the model on layer l. The rule
 uses the z-gap layers on both sides:
 
 ```
-Coll(K, l) = ∪_{j=max(0, l−z_bot)}^{l}            ( union_ex(O_j) ⊕m (K + xy_min) )
-           ∪ ∪_{i=1}^{z_top}, l+i<N_obj          ( union_ex(O_{l+i}) ⊕m (K + ρ_i) )
-           [O25 only: ∪ ( union_ex(Blocker_l) ⊕m K )]
-then: union (non-zero); O25 additionally applies S(res).
+Coll(K, l) = ∪_{j=max(0, l−z_bot)}^{l}            ( ex(O_j) ⊕m (K + xy_min) )
+           ∪ ∪_{i=1}^{z_top}, l+i<N_obj          ( ex(O_{l+i}) ⊕m (K + ρ_i) )
+           [R only: ∪ ( ex(Blocker_l) ⊕m K )]
+then: union (non-zero); R additionally applies S(res).
 ```
 
 - **ρ_i**, the reduced clearance toward the layers above:
@@ -279,13 +320,13 @@ then: union (non-zero); O25 additionally applies S(res).
     should sit under.
 - **Layers below.** The layer itself and the z_bot layers below it are obstacles at full xy_min.
 - When K + xy_min = 0, the offset is skipped and only the union remains. That never happens here.
-- **Blockers.** In O24, S24 and B the generator loads support-blocker volumes but never adds them. A
+- **Blockers.** In O, S and B the generator loads support-blocker volumes but never adds them. A
   "last mesh" test is off by one (`TMV:472`, B 490), so the branch that would add them never runs.
-  - The same bug also skips the final S(res), so collisions in O24/S24/B stay **unsimplified** after the
+  - The same bug also skips the final S(res), so collisions in O/S/B stay **unsimplified** after the
     union.
-  - O25 fixes the test (`TMV:525`). There, blockers enter, offset by K with no xy, and collisions are
+  - R fixes the test (`TMV:525`). There, blockers enter, offset by K with no xy, and collisions are
     simplified.
-  - No goat project has blockers. The only goat-relevant O25 difference is the S(res) simplification,
+  - No goat project has blockers. The only goat-relevant R difference is the S(res) simplification,
     a vertex-level change of up to 0.03 mm.
 - **Edges.** The ring set for layer j < 0 is empty. Layers at or above N_obj (the object's layer count, which
   is larger than N) are skipped.
@@ -295,7 +336,7 @@ then: union (non-zero); O25 additionally applies S(res).
 CollHF is defined only for K < R_inc + δ = 1.54 mm, i.e. keys 0.4 and 1.5:
 
 ```
-CollHF(K, l) = S(res)( union_ex( Coll(K_R, l) ) ⊕r( 5 units − (K_R − K) ; res ) ),
+CollHF(K, l) = S(res)( ex( Coll(K_R, l) ) ⊕r( 5 units − (K_R − K) ; res ) ),
                K_R = K(R_inc, regular) = q(1.54 mm) = 2.6 mm
 ```
 
@@ -305,7 +346,7 @@ CollHF(K, l) = S(res)( union_ex( Coll(K_R, l) ) ⊕r( 5 units − (K_R − K) ; 
 - "Safe" avoidances use it, so that branches near the tip cannot route through holes smaller than the
   radius they will soon grow to.
 
-### 2.5 Avoidance Avoid_τ,t(K, l) (`TMV:614-714` / S24 614 / O25 673 / B 632)
+### 2.5 Avoidance Avoid_τ,t(K, l) (`TMV:614-714` / S 614 / R 673 / B 632)
 
 Avoidance is the set of centres from which a branch of key K cannot reach the target t ∈ {plate, model}
 when it moves at the speed of type τ ∈ {Slow, FastSafe, Fast}.
@@ -332,7 +373,7 @@ Avoid(K, l)  = S(res)( A_n ),  l ≥ 1, where
   τ = FastSafe and K ≥ R_inc + δ, it is served as Fast. Slow keeps its own cache, but for K ≥ 1.54 mm it uses
   the plain collision as C.
 - **Which variants exist.** The generator computes to-plate avoidances when at least one to-plate request
-  exists, and to-model avoidances only when rests_on_model. **The goat projects use only the three to-plate
+  exists, and to-model avoidances only when to_model_allowed. **The goat projects use only the three to-plate
   avoidances.**
 - **Where they are used:**
   - Fast and FastSafe: the validity tests of fast moves and the error move;
@@ -349,8 +390,8 @@ Place_0(l) is computed for l ≥ z_bot + 1, as part of the radius-0 collision pa
 Place_0(l) = ( O_{l−z_bot−1} ⊕M3 xy_min ) ∖ ( (O_l ⊕m xy_min) ∪ Blocker_{l−z_bot−1} )
 ```
 
-Place(K, l) = union_ex(Place_0(l)) ⊖m (K + xy_min + δ) for l ≥ 1. Place(K, 0) is empty: the plate is not
-"model", and the machine-border term upstream is always empty here. In O24, S24 and B, Place_0 is
+Place(K, l) = ex(Place_0(l)) ⊖m (K + xy_min + δ) for l ≥ 1. Place(K, 0) is empty: the plate is not
+"model", and the machine-border term upstream is always empty here. In O, S and B, Place_0 is
 unsimplified and has no blockers (same off-by-one as §2.3).
 
 ### 2.7 Wall restriction WR(K, l) (`TMV:765-833`)
@@ -369,10 +410,10 @@ grown by 0.75 mm, plus the z-gap terms of §2.3. Coll(0, l) is the same grown by
 - **Keying.** The lookup uses K = q(r), with no δ added, whatever the min flag.
 - **Variant choice.** WR_min is used when the requester's min flag is set and δ > 0.
 
-### 2.8 Machine border and bed exclusions (`TMV:54-90` B; `TMV:39-52` O24/S24/O25)
+### 2.8 Machine border and bed exclusions (`TMV:54-90` B; `TMV:39-52` O/S/R)
 
-**B_obj, the bed in the object frame** (all versions compute it; `TreeSupport.cpp` O24 654 / S24 627 /
-O25 698 / B 626):
+**B_obj, the bed in the object frame** (all versions compute it; `TreeSupport.cpp` O 654 / S 627 /
+R 698 / B 626):
 
 1. Start from `printable_area`.
 2. Subtract the `bed_exclude_area` rectangles (four points each). B also subtracts `wrapping_exclude_area`
@@ -405,7 +446,7 @@ Consequences:
 - **P1S.** The 18×28 mm corner exclusion is part of B_obj, so branches of the *slicing object* bend away
   from it. Every copy then prints that bent tree (part 03, S4).
 
-**O24 / S24 / O25:** the border obstacle is explicitly empty (`TMV:39-52`). B_obj is used only to clip
+**O / S / R:** the border obstacle is explicitly empty (`TMV:39-52`). B_obj is used only to clip
 support layers afterwards (part 03).
 
 ### 2.9 Caching, laziness, cost
@@ -413,7 +454,7 @@ support layers afterwards (part 03).
 - **Storage.** Each volume kind (Coll, CollHF, Avoid ×3 types ×2 targets, Place, WR, WR_min) is a map
   layer → (key → polygons). Results are pure functions of (K, l) and the inputs.
 - **Precalculation and laziness.** Upstream precalculates a key set:
-  - avoidance keys = {q(R(d)+δ), q(R(d)), q(recMin(l)+δ)} over the layers where they can occur;
+  - avoidance keys = {q(R(d)+δ), q(R(d)), q(r_rec(l)+δ)} over the layers where they can occur;
   - collision keys additionally {0, δ, q(R_inc + δ)} on all layers.
 
   It computes anything else on demand. Avoidance is a bottom-up recurrence, so computing it lazily in
@@ -426,7 +467,7 @@ support layers afterwards (part 03).
 
 ### 2.10 Differences (volumes)
 
-| item | B | O24 | S24 | O25 |
+| item | B | O | S | R |
 |---|---|---|---|---|
 | bed outside + exclusions as obstacle | **yes** (ring, slits) | no | no | no |
 | collision simplified after union | no | no | no | **S(res)** |
@@ -437,34 +478,34 @@ support layers afterwards (part 03).
 
 ---
 
-## 3. Influence-area propagation (`create_layer_pathing`, `increase_areas_one_layer`, `increase_single_area`)
+## 3. Influence-area propagation (upstream `create_layer_pathing`, `increase_areas_one_layer`, `increase_single_area`)
 
 ### 3.1 Element state (`TS3H:79-233`)
 
 Each element (branch node) stores the following.
 
-- **Identity and position:** layer l, dtt (layers below its highest tip), target_height and
-  target_position (the tip it ultimately serves), next_position (a position hint, §4.5), result (centre;
+- **Identity and position:** layer l, depth (layers below its highest tip), origin_layer and
+  origin_xy (the tip it ultimately serves), hint (a position hint, §4.5), centre (the placed position;
   "unset" is a sentinel).
-- **Radius bookkeeping:** erh (radius height, normally equal to dtt but allowed to lag), foot (double,
-  elephant-foot count), increased_to_model_radius.
+- **Radius bookkeeping:** rdepth (radius height, normally equal to depth but allowed to lag), foot (double,
+  elephant-foot count), model_growth.
 - **Flags:**
-  - to_buildplate;
-  - to_model_gracious;
-  - use_min_xy (still allowed the reduced xy distance);
-  - supports_roof;
-  - can_use_safe_radius ("past any holes": may use Slow and FastSafe avoidances);
-  - skip_ovalisation;
+  - to_bed;
+  - graceful;
+  - tight_xy (still allowed the reduced xy distance);
+  - under_roof;
+  - past_holes ("past any holes": may use Slow and FastSafe avoidances);
+  - keep_round;
   - deleted, marked (scratch);
-  - lost, verylost (debug only).
-- **Movement:** dont_move_until (a dtt threshold), and last_area_increase (the setting that produced the
+  - lost, very_lost (debug only).
+- **Movement:** hold_until (a depth threshold), and last_setting (the setting that produced the
   element; geometrically irrelevant here, §3.2).
 - **Geometry:** parent indices into layer l+1, and the IA (a polygon set of allowed centres).
 - **Merging copy** (only while merging): the IA, the to-plate part P_bp, the to-model part P_m, and the
   bounding box of all three grown by 100 nm.
 
-Moving an element one layer down ("propagate down"): dtt + 1, layer − 1, result reset to unset,
-skip_ovalisation cleared. O24/O25 also decrement a pending roof-recovery counter (part 03 only).
+Moving an element one layer down (`step_down`): depth + 1, layer − 1, centre reset to unset,
+keep_round cleared. O/R also decrement a pending roof-recovery counter (part 03 only).
 
 ### 3.2 Per-layer loop
 
@@ -491,21 +532,20 @@ shortcut that reuses the parent's last setting is disabled when merging, so it i
 
 ### 3.3 Speeds and extra terms (`TS3:1816-1860`)
 
-P is the parent on layer l; C = propagate_down(P), with erh_C = erh_P and foot_C = foot_P. r_P = c(P).
+P is the parent on layer l; C = step_down(P), with rdepth_C = rdepth_P and foot_C = foot_P. r_P = c(P).
+K(·) is the radius key in P's xy mode (§2.2).
 
-```
-e  = 5 units                 (added to both speeds; 50 nm in B, 5 nm in Orca)
-e_s = 0                      (added to the slow speed only)
-r⁺ = R(erh_P + 1, foot_P);   Δr = r⁺ − r_P
-if K(r⁺, P.min) == K(r_P, P.min)  or  r⁺ < R_inc:   e  += Δr
-else:                                                e_s += min(Δr, (V_f + e) − (V_s + e_s))
-if l < L_bp  and  recMin(l−1) < R(erh_C + 1, foot_C):        (literally "<", see note)
-     if K(R(erh_P+1, foot_P+1), P.min) == K(r_P, P.min):    e  += g_bp
-     else:                                                   e_s += min(g_bp, V_f − (V_s + e_s))
-v_fast = V_f + e
-v_slow = V_s + e + e_s
-s      = (C.min ? xy_min : xy) + (min(z_top, z_bot) > 0 ? mfs : 0)   (O24/O25: if s = 0 then 0.1 mm)
-```
+The two speeds are v_fast = V_f + e and v_slow = V_s + e + e_s. They start at e = 5 units (50 nm in B,
+5 nm in Orca) and e_s = 0. Two growth terms are then added, the radius term first; each goes either to both
+speeds or to the slow speed only:
+
+| term | applies when | adds to both speeds (to e) | otherwise adds to the slow speed only (to e_s) |
+|---|---|---|---|
+| radius growth Δr = R(rdepth_P + 1, foot_P) − r_P | always | Δr, if K(R(rdepth_P + 1, foot_P)) = K(r_P) or R(rdepth_P + 1, foot_P) < R_inc | min(Δr, V_f + e − V_s − e_s), so the slow speed never passes the fast one |
+| foot growth g_bp | l < L_bp and r_rec(l − 1) < R(rdepth_C + 1, foot_C) (strict) | g_bp, if K(R(rdepth_P + 1, foot_P + 1)) = K(r_P) | min(g_bp, V_f − V_s − e_s) (without e) |
+
+The **safe step** is s = (C.min ? xy_min : xy) + (min(z_top, z_bot) > 0 ? mfs : 0); O and R replace s = 0 by
+0.1 mm.
 
 Typical values (B, θ = 45°):
 
@@ -517,30 +557,37 @@ Typical values (B, θ = 45°):
 
 For U1 (θ = 40°), v_fast is 0.045 mm lower.
 
-- **Foot bonus condition.** The bonus is granted when the branch is *already wider* than recMin, which is
+- **Foot bonus condition.** The bonus is granted when the branch is *already wider* than r_rec, which is
   exactly when §3.6 plans no foot growth. Reproduce it literally.
 - **s with the mfs bug.** s = 25.21 or 25.75 mm.
 
 ### 3.4 Stepped safe offset SOI(A, d, W, s, c, n) (`TS3:792` / B `SupportCommon.cpp:2187`)
 
-SOI grows A by d without jumping across the wall set W in one step. W is pre-cropped to bbox(A) + d.
+SOI grows A by d through the free space without jumping across the wall set W in one step (W is first
+cropped to bbox(A) ⊕ d, which does not change the result). **Rule:** grow in k equal steps of length
+`step` ≤ s, subtracting W after every step; grow the remainder d − k·step without a wall check; simplify;
+and subtract W once more when the "final" flag is set. A degenerate input is first made growable with U\*.
+With d = 0 the result is A ∖ W if final, else A.
 
-1. final := (c = 0); A := U\*(A).
-2. If d = 0: return final ? A ∖ W : union(A).
-3. k := (d > c) ? ⌊(d − c)/s⌋ : 0.
-4. If d − k·s > c: if (k+1)·s ≤ d then k := k+1, else final := true.
-5. step := s. If n > 1 and k + [d < c or d mod s ≠ 0] < n:
-   step := ⌊d/n⌋; if step ≥ s then step := s, k := n; else k := ⌊d/step⌋.
-6. Repeat k times (i = 0…k−1): A := (A ⊕r(step; 0.01 mm)) ∖ W. After steps with i mod 10 = 7, apply
-   S(0.015 mm).
-7. rest := d − k·step. If rest > 100 nm: A := A ⊕r(rest; 0.01 mm).
-8. A := S(0.015 mm)(A). If final: A := A ∖ W. Return union(A).
+The step count and length, as maths (x⁺ = max(x, 0), [·] = 1 if true else 0):
+
+```text
+q      = ⌊(d − c)⁺ / s⌋
+k₁     = q + [d − q·s > c ∧ (q + 1)·s ≤ d]
+final  = (c = 0) ∨ (d − q·s > c ∧ (q + 1)·s > d)
+if n > 1 ∧ k₁ + [d < c ∨ d mod s ≠ 0] < n:      step = min(⌊d/n⌋, s),   k = (⌊d/n⌋ ≥ s) ? n : ⌊d/step⌋
+else:                                            step = s,               k = k₁
+rest   = d − k·step                              (grown only if > 100 nm)
+```
+
+Each step is a round offset ⊕r(step; 0.01 mm) followed by ∖ W. S(0.015 mm) is applied after the 8th, 18th,
+28th … step, and once at the end (before the final ∖ W). The result is returned as a union (non-zero).
 
 **Evaluated for the goats (s ≈ 25 mm ≫ every d).**
 
 - **Slow area** A_slow = SOI(IA_P, v_slow, W, s, 0, 2) gives *two half-steps*. Each half-step is a round
   offset by ⌊v_slow/2⌋ followed by subtracting W, and a final S(0.015) and ∖W follow.
-- **Fast area.** In upstream "offset_independent_faster" is always false here. The fast area is therefore
+- **Fast area.** Upstream's independent fast offset is never selected here. The fast area is therefore
   A_fast = SOI(A_slow, V_f − (V_s + e_s), W, s, s + r, 1), which is **a single round offset of A_slow
   with no W check**, plus S(0.015).
 - **Error area** (the error entry of §3.5):
@@ -556,66 +603,68 @@ SOI grows A by d without jumping across the wall set W in one step. W is pre-cro
 A setting is (avoidance type τ, speed ∈ {slow, fast, 0}, grow-radius?, ok/error, min?, move?). The order is
 built as follows; an entry identical to an existing one is not added again.
 
-- **If ¬C.can_use_safe_radius** (still possibly above a hole). None of the first three entries move: they
+- **If ¬C.past_holes** (still possibly above a hole). None of the first three entries move: they
   test whether the unmoved IA is already outside the safe avoidance.
   1. (Slow, slow, grow, ok, regular, **no move**);
-  2. only if C.dtt < ⌈N_tip/2⌉ = 2: (Fast, slow, grow, ok, regular, no move);
+  2. only if C.depth < ⌈N_tip/2⌉ = 2: (Fast, slow, grow, ok, regular, no move);
   3. (FastSafe, fast, grow, ok, regular, no move);
   4. (FastSafe, fast, keep, ok, regular, move);
   5. (Fast, fast, keep, ok, regular, move).
 - **Else:**
   1. (Slow, slow, grow, ok, regular, move);
   2. (Slow, slow, keep, ok, regular, move);
-  3. only if C.dtt < N_tip: (FastSafe, slow, grow, ok, regular, move);
+  3. only if C.depth < N_tip: (FastSafe, slow, grow, ok, regular, move);
   4. (FastSafe, fast, grow, ok, regular, move);
   5. (FastSafe, fast, keep, ok, regular, move).
 
   There is no plain Fast normal move in this branch. For K ≥ 1.54 mm, FastSafe *is* Fast (§2.5).
 - **If C.min:** every entry above is followed by its twin with min = true. The regular variant is always
   tried first.
-- **Error entry**, appended if C.to_buildplate, or if C.to_model_gracious and IA_P ∩ Place(r, l) = ∅:
+- **Error entry**, appended if C.to_bed, or if C.graceful and IA_P ∩ Place(r, l) = ∅:
   (Fast, fast, keep, **error**, min = C.min, move).
-- **Dont-move entry**, prepended if C.dtt < C.dont_move_until and C.can_use_safe_radius:
+- **Dont-move entry**, prepended if C.depth < C.hold_until and C.past_holes:
   (Slow, 0, grow, ok, regular, no move).
 
-  With 3 top interface layers, ordinary tips have dont_move_until = 3. A tip column therefore stays
-  vertical for 2 layers below the tip, if the Slow test allows it, and starts moving at dtt = 3.
+  With 3 top interface layers, ordinary tips have hold_until = 3. A tip column therefore stays
+  vertical for 2 layers below the tip, if the Slow test allows it, and starts moving at depth = 3.
 
 The settings are tried in order and **the first valid one wins** (§3.6). If none is valid, the element fails
 (§3.8).
 
-### 3.6 Evaluating one setting (`increase_single_area`, `TS3:1588-1724` / B 1464)
+### 3.6 Evaluating one setting (upstream `increase_single_area`, `TS3:1588-1724` / B 1464)
 
 Input: the setting σ, the area A (A_slow if σ.speed = slow, A_fast if fast; for the error entry, the error
 area), and the parent P. Output: the new state C′ or "invalid".
 
-1. C′ := propagate_down(P); if σ.grow: C′.erh += 1. r := c(C′).
+1. C′ := step_down(P); if σ.grow: C′.rdepth += 1. r := c(C′).
 2. X := (σ.move) ? A : IA_P. X is the "increased area without collision" and is kept for §3.7.
-3. **To-plate part:** P_bp := U\*(X ∖ Avoid_σ.τ,plate(r, l−1, σ.min)). If C′ is not yet to_buildplate and
-   area(P_bp) > ε_A, set to_buildplate (a "taint correction").
-4. **To-model part** (only if rests_on_model): P_m := U\*(X ∖ Avoid_σ.τ,model(…)). If C′ is not yet
-   gracious, then:
-   - if area(P_m) ≥ ε_A, set gracious and keep P_m;
+3. **To-plate part:** P_bp := U\*(X ∖ Avoid_σ.τ,plate(r, l−1, σ.min)). If C′ is not yet to_bed and
+   area(P_bp) > ε_A, set to_bed (a "taint correction").
+4. **To-model part** (only if to_model_allowed): P_m := U\*(X ∖ Avoid_σ.τ,model(…)). If C′ is not yet
+   graceful, then:
+   - if area(P_m) ≥ ε_A, set graceful and keep P_m;
    - otherwise replace it by P_m := U\*(X ∖ Coll(r, l−1, σ.min)), i.e. route down anyway and land on the
      model non-gracefully.
-5. Q := to_buildplate ? P_bp : P_m.
+5. Q := to_bed ? P_bp : P_m.
 6. **Radius growth** (only if σ.grow and area(Q) > ε_A).
-   - **validWithRadius(r′)** is true if K(r′, σ.min) ≤ K(r, σ.min). Otherwise it is
+   - **radius_valid(r′)** is true if K(r′, σ.min) ≤ K(r, σ.min). Otherwise it is
      area(X ∖ Avoid_σ.τ,·(r′, l−1, σ.min)) > ε_A, with the target avoidance (plate, or model/collision as
      in step 4).
    - Let K_before := K(r, σ.min).
-   - **Catch-up** (radius lagging behind dtt). If c(C′) < R_inc and c(C′) < ρ(C′):
-     - target := min(ρ(C′), R_inc) and ν := nextCeil(r, σ.min);
-     - while ν < target and validWithRadius(nextCeil(ν + 1 unit, σ.min)): ν := that value;
-     - then raise C′.erh one step at a time while erh + 1 < C′.dtt, R(erh+1, foot) ≤ ν and
-       R(erh+1, foot) ≤ ρ(C′).
+   - **Catch-up** (radius lagging behind depth). If c(C′) < R_inc and c(C′) < ρ(C′), with ρ₀ = ρ(C′) and
+     target = min(ρ₀, R_inc):
+     - the key chain ν₀ = next_key(r, σ.min), ν_{i+1} = next_key(ν_i + 1 unit, σ.min) is followed while it
+       stays valid: ν = ν_j for the smallest j with ν_j ≥ target or ¬radius_valid(ν_{j+1});
+     - C′.rdepth becomes the largest x with rdepth ≤ x ≤ C′.depth − 1 and R(x, foot) ≤ min(ν, ρ₀) (it keeps
+       its value if no larger x qualifies; R(x, foot) is non-decreasing in x, and x never passes N_inc because
+       ρ₀ ≤ R_inc there).
    - r := c(C′).
-   - **Elephant foot.** Let g_ft′ = trunc(g_bp − g) (integer here, unlike in R).
-     - planned := min(1, (recMin(l−1) − ρ(C′)) / g_ft′).
-     - If planned > 0, C′ is to_buildplate, ρ(C′) ≥ r_b, ρ(C′) ≥ R_inc and
-       validWithRadius(R(C′.erh, C′.foot + planned)), then C′.foot += planned and r := c(C′).
-     - So a trunk gains up to g_bp = 0.21 mm of radius per layer: 0.0245 from dtt growth plus 0.1855 from
-       foot growth. Below layer 13 it tracks recMin (3.73 mm at layer 0) whenever the bigger avoidance still
+   - **Elephant foot.** Let g_ft′ = trunc(g_bp − g) (an integer here, unlike the double g_ft inside R(d, f)).
+     - planned := min(1, (r_rec(l−1) − ρ(C′)) / g_ft′).
+     - If planned > 0, C′ is to_bed, ρ(C′) ≥ r_b, ρ(C′) ≥ R_inc and
+       radius_valid(R(C′.rdepth, C′.foot + planned)), then C′.foot += planned and r := c(C′).
+     - So a trunk gains up to g_bp = 0.21 mm of radius per layer: 0.0245 from depth growth plus 0.1855 from
+       foot growth. Below layer 13 it tracks r_rec (3.73 mm at layer 0) whenever the bigger avoidance still
        leaves room. Where it does not, the foot simply stays thinner.
    - If K(r, σ.min) ≠ K_before: recompute P_bp (and P_m) with the new r, and set Q accordingly.
 7. Valid iff area(Q) > ε_A.
@@ -628,10 +677,10 @@ upstream (`TS3:1626`). A port must **not** simplify X there.
 On the first valid σ:
 
 - C := C′, and r := c(C).
-- **bypass** := ¬σ.move or (σ.min and C.dtt < N_tip).
-- If σ.move: dont_move_until := 0. Otherwise: C.result := P.result. A tip's own position is copied down, so
+- **bypass** := ¬σ.move or (σ.min and C.depth < N_tip).
+- If σ.move: hold_until := 0. Otherwise: C.centre := P.centre. A tip's own position is copied down, so
   dont-move columns are exactly vertical.
-- can_use_safe_radius := (σ.τ ≠ Fast).
+- past_holes := (σ.τ ≠ Fast).
 - If σ is regular: C.min := false. A branch never goes back to min mode.
 - **Stored IA:**
 
@@ -640,23 +689,23 @@ On the first valid σ:
   ```
 
   The IA is bounded by *collision* at the final radius. Avoidance only gated validity and produced P_bp.
-- For merging, keep P_bp (if to_buildplate) and P_m (if rests_on_model), unless the element is a bypass.
+- For merging, keep P_bp (if to_bed) and P_m (if to_model_allowed), unless the element is a bypass.
   Set the bbox to extents(IA_C) ± 100 nm.
 
 ### 3.8 When a branch is dropped
 
 - **Failure.** If no setting is valid, the error move included, the candidate gets an empty IA and is dropped
-  (§3.2 step 3). In addition, the *parent's* result is reset and its gracious flag cleared. In node placement
+  (§3.2 step 3). In addition, the *parent's* centre is reset and its graceful flag cleared. In node placement
   (§5) the parent then has no centre, so it is deleted together with **every element above it in that
   subtree**: the reset cascades up through all parents, up to their tips.
 - **Error moves.** An error move ("teleport") only allows 1.5 × fast speed with the Fast avoidance and no
-  wall check. A branch that survives one is flagged "lost" (debug only) and loses can_use_safe_radius.
+  wall check. A branch that survives one is flagged "lost" (debug only) and loses past_holes.
 - **To-model branches** may also be deleted in placement (§5.3). That never happens in the goat projects:
   every tip there is to-plate, and the AND in §4.5 keeps every element to-plate.
 
 ### 3.9 Differences (propagation)
 
-| item | B | O24 | S24 | O25 |
+| item | B | O | S | R |
 |---|---|---|---|---|
 | speeds, settings order, SOI, validity, foot | same | same | same | same |
 | s = 0 guard (0.1 mm) | absent | present | absent | present (never triggers here) |
@@ -680,43 +729,31 @@ object frame).
 
 ### 4.2 AABB reordering (`AABBTreeIndirect.hpp:93-205`, identical in all four)
 
-M is reordered in place by building a balanced median-split tree over the candidate bounding boxes. Only the
-resulting order is used; the tree itself is discarded. A port needs exactly this permutation.
+M is reordered in place by building a balanced median-split tree over the candidates' bounding boxes. Only
+the resulting order is used. The order has these properties:
 
-`build(lo, hi)` on an index range, inclusive:
+- **Recursive median split.** A range [lo, hi] with more than one element is split at mid = ⌊(lo + hi)/2⌋
+  into [lo, mid] and [mid + 1, hi], each ordered the same way in turn (left first).
+- **Axis.** The split axis is the longer side of the union of the range's bounding boxes (element boxes,
+  not centroids); x on a tie.
+- **Partition.** After the split, no centroid coordinate on the left exceeds the element at mid, and none on
+  the right is below it, along the axis. Centroids are (min + max) div 2 per axis, truncated toward zero.
+- **Which permutation.** Among the orders with these properties, the one produced is that of the textbook
+  median-of-three quickselect with Hoare partitioning (Sedgewick's variant): the first, middle and last
+  elements of the active range are sorted in place by three compare-and-swaps; the middle one becomes the
+  pivot and is parked just before the last; both scans stop on keys equal to the pivot; the pivot is swapped
+  back to the meeting point; ranges of at most three elements stop after the three-element sort; the search
+  narrows to the side that holds mid.
 
-1. If lo = hi, stop.
-2. Compute the union box of the range. **axis** = the axis with the larger extent, x on a tie.
-3. mid := ⌊(lo + hi)/2⌋. Run **select(lo, hi, axis, k = mid)** (below).
-4. build(lo, mid), then build(mid + 1, hi).
+Quickselect is not stable, so **the result depends on the input order of M**. This is how the tip order (S1)
+reaches every later merge. The permutation is pinned by the test vectors of §8.1.
 
-`select(lo, hi, axis, k)` is a quickselect with a median-of-three pivot and a Hoare-style partition. v(i)
-means the centroid of the element at i on that axis. While lo < hi:
+### 4.3 Buckets (S2) (`TS3:2380-2403` / B 2236-2259; R 2428-2445)
 
-1. c := ⌊(lo + hi)/2⌋.
-2. Sort the three entries at lo, c and hi in place with three conditional swaps:
-   - (lo, c) if v(lo) > v(c);
-   - then (lo, hi) if v(lo) > v(hi);
-   - then (c, hi) if v(c) > v(hi).
-3. pivot := v(c).
-4. If hi ≤ lo + 2, stop: the range is already ordered.
-5. Swap the entries at c and hi − 1. Set i := lo, j := hi − 1.
-6. Repeat:
-   - advance i by one at least once, until v(i) ≥ pivot (position hi − 1 stops it);
-   - move j back by one at least once, until v(j) ≤ pivot or j ≤ i;
-   - if i ≥ j, leave the loop; otherwise swap i and j.
-7. Swap the entries at i and hi − 1, which puts the pivot at i.
-8. If k < i: hi := i − 1. If k = i: stop. Otherwise: lo := i + 1.
-
-Quickselect is not a stable sort, so **the result depends on the input order of M**. This is how the tip
-order (S1) reaches every later merge.
-
-### 4.3 Buckets (S2) (`TS3:2380-2403` / B 2236-2259; O25 2428-2445)
-
-- **B, O24, S24.** T = `tbb::this_task_arena::max_concurrency()`.
+- **B, O, S.** T = `tbb::this_task_arena::max_concurrency()`.
   - If m := ⌊(n + 2)/4⌋ ≥ T: **m buckets of 4**.
   - Otherwise: **⌊n/2⌋ buckets of 2**.
-- **O25:** always m buckets of 4. That is exactly the old rule with T = 1.
+- **R:** always m buckets of 4. That is exactly the old rule with T = 1.
 
 Buckets are consecutive ranges of the reordered M, starting at 0:
 - If the last bucket runs past n, it is cut at n. It then has size 2 or 3 with size-4 buckets, never fewer
@@ -727,63 +764,58 @@ Thread count only decides the bucket size; the buckets themselves are processed 
 
 ### 4.4 Merge rounds
 
-**Round 1: within each bucket ("leaves").** For a bucket range [a, e):
+Notation: `try_merge(dst, src)` is the pair test of §4.5; on success dst takes the merged state and src
+is emptied. Two removal disciplines appear, both standard container operations:
 
-```
-i := a
-while i + 1 < e:
-    for j := i+1 … e−1:
-        if pairMerge(dst = M[i], src = M[j]) succeeds:
-            move M[e−1] into slot j;  e := e − 1
-            restart the scan for the same i from j := i+1      (i absorbs again)
-    if no pair succeeded in a full scan: i := i + 1
-```
+- **remove-by-last** (Rust `Vec::swap_remove`): the removed slot receives the range's current last
+  element, and the range shrinks by one at the end;
+- **remove-by-first** (Rust `VecDeque::swap_remove_front`): the removed slot receives the live range's
+  current first element, and the range shrinks by one at the front.
 
-The bucket's end becomes e.
+**Round 1, inside each bucket.** The leftmost live element is the destination. It is offered every later
+element in current position order. On a success the absorbed element is removed by remove-by-last, and the
+offers start again from the element right after the destination, because the merged area is larger now. When
+a full pass finds no partner, the next element becomes the destination. The bucket's live range shrinks
+accordingly.
 
-**Later rounds: pairwise over neighbouring buckets.** In each round, bucket 2k (dst set D) absorbs bucket
-2k+1 (src set S). An odd last bucket is carried over unchanged. Then the list of buckets is halved. Merging
-two sets works like this:
+**Later rounds, pairwise over neighbouring buckets.** Bucket 2k (set D) absorbs bucket 2k + 1 (set S); an
+odd last bucket is carried over unchanged; the bucket list then halves. For two sets:
 
-```
-for each src position s in S, left to right:
-    find the first d in D (left to right) with pairMerge(dst = D[d], src = S[s]);
-    if found:
-        the absorbed src slot is refilled: the earliest still-unabsorbed src (at S's
-        moving start pointer) is moved into slot s, and the start pointer advances
-        then the absorbing D[d] tries every LATER element of D (positions d+1 … end) as src:
-            on success that element is removed by moving D's last element into its slot
-            (D shrinks; the same slot is re-tested)
-after all srcs: the unabsorbed srcs, which now occupy [start pointer, end of S) in their
-current order, are appended right after the (possibly shrunk) D
-```
+- the elements of S are offered in their current left-to-right order; each goes to the **first** element of D
+  (left to right) that accepts it;
+- an absorbed S element is removed by remove-by-first on S's live range;
+- right after an absorption, the absorbing D element is offered every **later** element of D (positions after
+  it, in order); each one it absorbs is removed from D by remove-by-last, and the same position is offered
+  again;
+- afterwards the live range of S follows D directly, in its current order.
 
-Two properties follow:
+Invariants:
 
-- **The destination is always the element on the left side** (lower position in the AABB order). It keeps
-  its identity, its parents first, and its next_position hint (§4.5).
-- **Unabsorbed srcs are permuted.** Each absorption moves the oldest survivor into the absorbed slot, so the
-  survivors do *not* keep their original relative order. A port must reproduce this.
+- **The destination is always the element on the left** (lower position). It keeps its identity, its
+  parents come first, and it keeps its `hint` (§4.5).
+- **Survivors are permuted.** Remove-by-last moves the tail of a range forward; remove-by-first moves the
+  oldest survivor of S into the absorbed slot. The survivors do *not* keep their original relative order.
 
 The merged layer is the final range of bucket 0. **Its order is the order of the next layer.** Positions
-past its end hold emptied elements, which the caller skips because their IA is empty.
+past its end hold emptied elements, which the caller skips because their IA is empty. The test vectors of
+§8.2 pin this order together with the bucket rule of §4.3.
 
 ### 4.5 Pair merge test and result (`TS3:2093-2269` / B 1960)
 
-pairMerge(dst, src) on layer step l → l−1:
+try_merge(dst, src) on layer step l → l−1:
 
 1. **Rejects.** Refuse the merge if:
-   - dst.gracious ≠ src.gracious; or
+   - dst.graceful ≠ src.graceful; or
    - dst.min ≠ src.min (min-xy and regular branches never merge).
 2. **Bigger and smaller.** bigger := dst if c(dst) > c(src), else src (**ties → src is "bigger"**).
    smaller := the other. Δ := |ρ(bigger) − ρ(smaller)|, using real radii.
 3. **Box test.** smaller.bbox grown by Δ must intersect bigger.bbox (closed boxes: touching counts).
    Otherwise refuse.
-4. **to_bp merge** := dst.to_buildplate ∧ src.to_buildplate. If false (to-model only):
+4. **to_bp merge** := dst.to_bed ∧ src.to_bed. If false (to-model only):
    - if one is to-plate and one to-model, the to-model one may grow by the radius difference. Refuse if its
      accumulated increase would exceed Δr_model,max;
-   - refuse if neither supports a roof and max(dtt) < min_dtt_model.
-5. Refuse if bigger is not can_use_safe_radius but smaller is.
+   - refuse if neither supports a roof and max(depth) < min_depth_model.
+5. Refuse if bigger is not past_holes but smaller is.
 6. useMin := bigger.min ∧ smaller.min. Wcoll := Coll(c(smaller), l−1, useMin).
    **grow(X) := SOI(X, Δ, Wcoll, s′ = 2·(xy + c(smaller) − 3 units), c = 0, n = 0)**. Here xy is the regular
    0.75 mm even in min mode. Because s′ ≥ 2.3 mm > Δ, this is one round offset ⊕r(Δ; 0.01) when Δ > 100 nm,
@@ -791,25 +823,25 @@ pairMerge(dst, src) on layer step l → l−1:
 7. **I := grow(smaller.P) ∩ bigger.P**, with P = P_bp for a to_bp merge and P_m otherwise.
 8. Refuse if area(I) ≤ ε_A, or if area(I ⊖m 0.025 mm) ≤ ε_A. The second test means the overlap must be at
    least about 0.05 mm thick.
-9. **Hint.** new_next := moveInsideIfOutside(I, **dst**.next_position) (§5.5). That is the point of the
+9. **Hint.** new_next := nearest_inside(I, **dst**.hint) (§5.5). That is the point of the
    merge overlap closest to the destination's previous hint (the original tip position for an unmerged
    branch).
 10. **Merged state:**
-    - layer l−1, next_position = new_next;
-    - min, supports_roof, can_use_safe_radius: OR;
-    - dont_move_until, erh, dtt: max;
-    - to_buildplate, gracious: AND;
-    - target_height/target_position from the one with the higher target_height (**ties → src**);
-    - foot := |max(c(dst), c(src)) − R(erh, 0)| / (g_bp − g). This is the foot count that makes the merged
+    - layer l−1, hint = new_next;
+    - min, under_roof, past_holes: OR;
+    - hold_until, rdepth, depth: max;
+    - to_bed, graceful: AND;
+    - origin_layer/origin_xy from the one with the higher origin_layer (**ties → src**);
+    - foot := |max(c(dst), c(src)) − R(rdepth, 0)| / (g_bp − g). This is the foot count that makes the merged
       collision radius equal the larger input's;
-    - increased_to_model_radius: the value from step 4 if one was set, else the max of both;
-    - result unset, deleted/marked cleared;
-    - last_area_increase: an elementwise min/OR/AND mix, irrelevant here;
-    - roof bookkeeping: O24/O25 keep the max of the pending roof-recovery counts and depths; B/S24 keep the
+    - model_growth: the value from step 4 if one was set, else the max of both;
+    - centre unset, deleted/marked cleared;
+    - last_setting: an elementwise min/OR/AND mix, irrelevant here;
+    - roof bookkeeping: O/R keep the max of the pending roof-recovery counts and depths; B/S keep the
       min of the missing roof count (part 03).
 11. **Merged areas:**
     - IA := U\*(grow(smaller.IA) ∩ bigger.IA, I);
-    - for a to_bp merge: P_bp := I, and if rests_on_model, P_m := (both gracious ? U\*(grow(smaller.P_m)
+    - for a to_bp merge: P_bp := I, and if to_model_allowed, P_m := (both graceful ? U\*(grow(smaller.P_m)
       ∩ bigger.P_m, I) : IA);
     - for a to-model merge: P_m := I.
 12. dst.parents := dst.parents followed by src.parents. dst takes the merged state and areas. The bbox is
@@ -833,7 +865,7 @@ pairs. With n ≤ ~50 this is cheap.
 
 | id | source | effect | realizations |
 |---|---|---|---|
-| S2 | bucket size from T (B, O24, S24) | different pairings, so different merges, positions and later n | one per **T-class** (below) |
+| S2 | bucket size from T (B, O, S) | different pairings, so different merges, positions and later n | one per **T-class** (below) |
 | S1 (input) | order of TipLists[l] (part 01) | AABB order and dst/src roles in every layer | whatever part 01 enumerates |
 | S4 (B) | B_obj in the slicing object's frame | bed obstacles move with the object | one per object placement |
 | S7 | libm/FMA differences in Clipper's trigonometry and in tan() | ±1 unit vertex moves; rarely flips an ε_A test | not enumerable; absorb with a margin |
@@ -848,9 +880,10 @@ pairs. With n ≤ ~50 this is cheap.
   filled;
 - node placement is serial.
 
-Within one slicer process T is constant. It is the default TBB arena size, i.e. the number of logical CPUs:
-- respecting the Linux CPU affinity mask (`taskset`, docker `--cpuset-cpus`);
-- *not* the docker `--cpus` quota.
+Within one slicer process T is constant. It is the default TBB arena size, i.e. the number of logical CPUs
+respecting the Linux CPU affinity mask (`taskset`, docker `--cpuset-cpus`). **Assumption, unverified:** a
+docker `--cpus` quota does not change T. Whether the server's oneTBB build reads cgroup CPU quotas is open
+(§7 Q2); if it does, a `--cpus 2` runner is in the T = 2 class.
 
 The Bambu CLI does not limit it (no global control in `src/BambuStudio.cpp`).
 
@@ -873,7 +906,7 @@ loop:
 ```
 
 - At most (number of distinct m_L) + 1 runs. For a goat (n ≤ ~40, m ≤ 10) that is about ≤ 11 runs.
-- **O25 = class of T = 1**: every layer uses buckets of 4.
+- **R = class of T = 1**: every layer uses buckets of 4.
 - **The owner's 14-thread Mac** is in the "all buckets of 2" class unless some layer has n ≥ 54. So is any
   server with ≥ 14 logical CPUs.
 
@@ -881,8 +914,11 @@ Empirical support: the P1S single-core runs (4/4 identical) lie *outside* the un
 (tree-support research §3.2). That is consistent with T = 1 being a different class from T = 14.
 
 **The combined realization set of this stage** is
-{ F(flavour, O, B_obj, TipLists_σ, T_class) : σ ∈ tip orders from part 01, T_class from the loop above },
-with T_class fixed to {1} for O25.
+{ F(flavour, O, B_obj, TipLists_{φ,σ}, T_class) : φ ∈ S9 families, σ ∈ tip orders, T_class from the loop
+above }, where the tip lists come from part 01 for connector-threshold family φ (01 §5.5 item 4) and tip
+order σ (canonical; seeded interleavings only on the optional S1 axis, 01 §5.7). T_class is fixed to {1} for
+R, and φ has one value there. The design's ensemble (design §5.4) runs exactly this set, with the T-class
+walk done separately for each φ.
 
 ---
 
@@ -890,16 +926,16 @@ with T_class fixed to {1} for O25.
 
 ### 5.1 Bottom nodes
 
-For every element on layer 0: result := moveInsideIfOutside(IA, next_position). Then its parents are placed
+For every element on layer 0: centre := nearest_inside(IA, hint). Then its parents are placed
 (§5.2).
 
-next_position is the original tip position for an unmerged branch, or the merge hint from §4.5 step 9. The
+hint is the original tip position for an unmerged branch, or the merge hint from §4.5 step 9. The
 foot therefore lands **as close as possible under the last merge point or the tip**, but outside the
 collision of its final radius. With regular xy and a full foot, that is at least 6.06 mm from O_0, and
 ≥ 5.955 mm from O_1 through the z-gap (§2.2–2.3).
 
 **Measured check (B, P1S single-object slices `/private/tmp/goatdiag/det/one1.gcode` and `all1.gcode`).**
-At z = 0.48 (layer 1) the isolated full-size trunks print as circles of radius 3.53–3.54 mm (recMin(1) =
+At z = 0.48 (layer 1) the isolated full-size trunks print as circles of radius 3.53–3.54 mm (r_rec(1) =
 3.52). Their centres sit **5.97–6.04 mm** from the same layer's printed body, and 6.0–6.5 mm from the
 first-layer body.
 - That matches the regular-mode key clearance 5.85 + 0.21 = 6.06 mm.
@@ -913,19 +949,19 @@ first-layer body.
 
 Layers are processed from l = 1 up. For every element e on layer l, in list order:
 
-1. If e has no result:
-   - if e is to_buildplate (a dead end below it, §3.8), or e.dtt < min_dtt_model and it does not support a
+1. If e has no centre:
+   - if e is to_bed (a dead end below it, §3.8), or e.depth < min_depth_model and it does not support a
      roof: **delete e**;
    - otherwise (to-model only): place a model contact (§5.3).
-2. If e is not deleted, was not reached from below (not marked) and target_height = l, delete it. This is a
+2. If e is not deleted, was not reached from below (not marked) and origin_layer = l, delete it. This is a
    tip that nothing supports.
-3. If e is deleted: reset the result of every parent of e. Those parents are then deleted when their layer is
+3. If e is deleted: reset the centre of every parent of e. Those parents are then deleted when their layer is
    processed, so the cascade climbs to the tips.
-4. Otherwise, for every parent p of e: if p.result is unset, set
-   **p.result := moveInsideIfOutside(IA_p, e.result)**, and mark p.
+4. Otherwise, for every parent p of e: if p.centre is unset, set
+   **p.centre := nearest_inside(IA_p, e.centre)**, and mark p.
 
 These are the **lazy paths**: a parent stays exactly above its child when the child's point lies in the
-parent's IA, and otherwise moves to the nearest point of the parent's IA. Two kinds of result are already
+parent's IA, and otherwise moves to the nearest point of the parent's IA. Two kinds of centre are already
 set and are never overwritten:
 
 - tips: their position is set at insertion;
@@ -939,49 +975,44 @@ construction:
 
 ### 5.3 To-model contacts (inactive for the goats)
 
-- **Gracious elements.** Walk upward along the single-parent chain while IA ∩ Place(c, layer) ≠ ∅, and stop at
+- **Graceful elements.** Walk upward along the single-parent chain while IA ∩ Place(c, layer) ≠ ∅, and stop at
   a merge point (more than one parent). Put the contact at the highest such layer, at
-  moveInsideIfOutside(IA, next_position), and delete the elements below it. If no layer qualifies, fall back
-  to the non-gracious rule.
-- **Non-gracious elements:** result := moveInsideIfOutside(IA, next_position) on the element's own layer.
+  nearest_inside(IA, hint), and delete the elements below it. If no layer qualifies, fall back
+  to the non-graceful rule.
+- **Non-graceful elements:** centre := nearest_inside(IA, hint) on the element's own layer.
 
-### 5.4 Compaction (`remove_deleted_elements`, `TS3:2642`)
+### 5.4 Compaction (upstream `remove_deleted_elements`, `TS3:2642`)
 
-Process layers from top to bottom:
+Layers are compacted from top to bottom. **Order property:** on each layer, the deleted elements at the end
+of the list are truncated first; then every remaining deleted slot, lowest index first, receives the current
+last surviving element (remove-by-last, `Vec::swap_remove`, after truncating trailing deleted entries). The
+surviving elements' parent indices are rewritten through the old → new map of the layer above. This permutes
+each layer's order, so part 03 must not assume the pathing order. Test vectors: §8.3.
 
-1. Drop trailing deleted elements.
-2. When a deleted element is found at i, drop the trailing deleted ones again, then move the last element
-   into slot i and re-examine slot i.
-3. Rewrite the surviving elements' parent indices through the old→new map of the layer above.
+### 5.5 `nearest_inside(P, x)` and `nearest_boundary(P, x)` (upstream `move_inside_if_outside`, `move_inside`; `TS3:1458-1586`, same in all four)
 
-This permutes each layer's order. Part 03 must not assume the pathing order.
+- **Inside test.** If x is inside P, `nearest_inside` returns x. Inside uses the even-odd count over all
+  rings, and a point on a boundary counts as inside. Empty P: x is unchanged.
+- **Otherwise** it returns `nearest_boundary(P, x)`: the nearest boundary point among these candidates, on
+  every ring with at least 2 vertices, ignoring zero-length edges:
+  - **edge candidates:** for an edge a → b with t = (b − a)·(x − a) and L = |b − a|² in 64-bit integers, the
+    projection a + trunc((b − a)·(t/L)) when 0 < t < L (computed in double, **truncated toward zero per
+    component**);
+  - **vertex candidates:** a vertex v whose incoming edge has t ≥ L (x projects at or past its end) and
+    whose outgoing edge has t ≤ 0 (x projects at or before its start).
+- **Ties.** Distances are squared integer distances. A later candidate wins only if **strictly** closer, so
+  ties go to the first ring, then to the first candidate in visiting order. Each ring is visited starting with
+  its **closing edge** (q_{k−1} → q₀), then (q₀ → q₁), …; a vertex candidate takes the position of its
+  outgoing edge.
+- **Result.** The point lies on the boundary to within one grid unit (10 nm in B, 1 nm in Orca). It is not
+  pushed inside and may be one unit outside. Because of the per-component truncation it can differ from the
+  exact nearest point by up to one unit per axis.
 
-### 5.5 `moveInsideIfOutside(P, x)` and `moveInside` (`TS3:1458-1586`, same in all four)
-
-- **Inside test.** If x is inside P, return x. Inside uses the even-odd count over all rings, and a point on
-  a boundary counts as inside.
-- **Otherwise,** return the point of P's boundary nearest to x, computed as follows. For each ring
-  q₀…q_{k−1} with k ≥ 2, visit its edges in the order (q_{k−1}→q₀), (q₀→q₁), …, (q_{k−2}→q_{k−1}). Keep a
-  flag "x projects beyond the end of the previous edge", initialised from the edge (q_{k−2}→q_{k−1}). For
-  each edge a→b, with t = (b−a)·(x−a) and L = |b−a|² in 64-bit integers:
-  - L = 0: skip the edge (a advances).
-  - t ≤ 0 and the flag is set: candidate = vertex a. Clear the flag.
-  - t ≤ 0 and the flag is clear: no candidate.
-  - t ≥ L: no candidate; set the flag.
-  - Otherwise: candidate = a + trunc((b − a)·(t/L)), computed in double and truncated per component. Clear
-    the flag.
-
-  A candidate replaces the best one only if its squared integer distance is **strictly** smaller, so ties
-  keep the first ring and the first edge.
-- **Result.** The returned point lies on the boundary, within one unit (10 nm in B, 1 nm in Orca). It is
-  not pushed inside, and it may be one unit outside.
-- **Empty P:** x is unchanged.
-
-The `distance ≠ 0` mode of `moveInside` (inward push by a distance) is not used in this stage.
+The `distance ≠ 0` mode (inward push by a distance) is not used in this stage. Test vectors: §8.4.
 
 ### 5.6 Differences (placement)
 
-None between B, O24, S24 and O25 (only whitespace and debug asserts differ).
+None between B, O, S and R (only whitespace and debug asserts differ).
 
 ---
 
@@ -991,35 +1022,42 @@ None between B, O24, S24 and O25 (only whitespace and debug asserts differ).
    grid; Orca: 1 nm grid). Hard-code the speeds instead of calling tan, to avoid S7 in the settings:
    - B: V_f = 27 999 and V_s = 13 056 units;
    - Orca U1: V_f = 234 947 nm and V_s = 130 566 nm.
-2. Implement Clipper-1-compatible offsets and booleans on the flavour's grid. Include:
+2. Use `polygon_ops` (design §5.2, lead decision): `i_overlay` on the flavour's grid, emulating the
+   Clipper-1 semantics that change discrete decisions:
    - the 0.005·|d| input decimation;
    - the miter-limit floor of 2;
-   - the arc-tolerance rule;
+   - the arc-tolerance rule (§1.1);
+   - B's strictly-simple simplification union (§1.1 S(τ));
    - 32-bit coordinates for B; 64-bit for Orca, whose orientation tests use double cross products and so
      are not exact for very large coordinate products. Exact int128 predicates can differ there in
      degenerate cases.
 
-   An i_overlay/geo-based engine is fine for envelopes, but it will not reproduce upstream vertex for
-   vertex.
+   `i_overlay` will not reproduce Clipper-1 vertex for vertex (ring start vertices, component order, vertex
+   splitting). Those differences enter δ. The facade stays swappable, and WP S4 reports whether they dominate
+   δ (if they do, a Clipper-1-compatible engine replaces `i_overlay` behind the same facade).
 3. Build the volumes lazily, keyed by (K, l), with the flavour switches of §2.10.
 4. Run §3–§5 single-threaded. Use ordered containers only (`Vec`, `BTreeMap`). Never iterate a hash map.
-5. Run the ensemble: the outer loop is over the tip orders from part 01. The inner loop is over the T-classes
-   (§4.7), for B, O24 and S24 only.
+5. Run the ensemble (design §5.4): for each S9 family of part 01, the exact T-class walk of §4.7 (B, O
+   and S; R has the single class T = 1), with the canonical tip order; seeded tip orders only on the
+   optional S1 axis.
 6. Hand the node lists to part 03.
 
-**Expected fidelity.** Exact up to S7 (±1 unit per vertex, occasionally a flipped ε_A test) and up to
-Clipper-port differences. The envelope margin ε from the research (0.1–0.2 mm) is meant to absorb these.
+**Expected fidelity.** Exact up to S7 (±1 unit per vertex, occasionally a flipped ε_A test) and up to the
+backend differences of item 2. The envelope margin δ absorbs these. The research's 0.1-0.2 mm figure is not
+a bound: the corpus shows realizations several mm outside the known axes (design §3.2 SU, §5.5).
 
 ---
 
 ## 7. Open questions and validation items
 
 1. **TBB concurrency in the GUIs.** I found no global thread limit in the CLI entry points or in Print.
-   Whether the B and S24 GUIs ever cap TBB (preferences, energy mode) is unverified. Check: slice the P1S
+   Whether the B and S GUIs ever cap TBB (preferences, energy mode) is unverified. Check: slice the P1S
    probe in the GUI and on the CLI on the same Mac and compare L1/bands.
 2. **oneTBB and cgroups.** Does the server's TBB build read cgroup CPU quotas when it sizes the default arena?
-   If it does, docker `--cpus 2` would mean T = 2, a different S2 class from the owner's GUIs. The critic
-   (C4) assumed host cores. This needs a one-line probe binary or a log of `max_concurrency()` on the runner.
+   If it does, docker `--cpus 2` would mean T = 2, a different S2 class from the owner's GUIs. §4.7 and design
+   §3.2 treat "quotas do not change T" as an **assumption** until this is checked (a one-line probe binary
+   or a log of `max_concurrency()` on the runner). The ensemble enumerates every T-class anyway, so the
+   answer matters only for `--slicer-threads` and for reading the corpus.
 3. **Feet clearance from key rounding: partly confirmed.** In the existing single-object P1S G-code (§5.1)
    the two isolated full feet sit 5.97–6.04 mm from the body, against 6.06 mm predicted. Still open:
    - do the 4.4–4.5 mm trunks belong to the min-xy class (≥ 4.11 mm) or to partially grown feet?
@@ -1027,14 +1065,83 @@ Clipper-port differences. The envelope margin ε from the research (0.1–0.2 mm
 
    A port-vs-G-code comparison per node would settle both.
 4. **The mfs bug.** If a user sets `min_feature_size` to 0 %, s drops to 0.75 / 0.21 mm. The wall
-   restriction then applies to every step, and "offset independent faster" can become true. The general SOI
+   restriction then applies to every step, and upstream's independent fast offset can be selected. The general SOI
    rule in §3.4 covers this, but it has not been exercised. Pin the setting or flag it in the packer.
 5. **B's bed ring centroid** uses B_obj's area centroid. For the P1S L-shaped bed (with the corner exclusion)
    the centroid is at about (128.9, 128.9) instead of (128, 128), so the slits sit about 0.9 mm off the bed
    centre. Harmless, but a port must use the same centroid definition.
-6. **O25 for U1.** O25 puts U1 into the T = 1 class and simplifies collisions. That differs from the owner's
-   S24 GUI in two independent ways. Matching the GUI argues for O24 on ≥ 14 cores, or for a port that runs
-   the S24 flavour with the bucket-of-2 class, not O25.
-7. **S1 coupling.** Whether the multi-core realizations seen in practice (8 distinct in 20 P1S runs) are
-   fully explained by tip-order permutations × one T-class is for part 01 to show. This stage contributes no
-   other run-to-run variation on a fixed machine.
+6. **R for U1.** R puts U1 into the T = 1 class and simplifies collisions. That differs from the owner's
+   S GUI in two independent ways. Matching the GUI argues for O on ≥ 14 cores, or for a port that runs
+   the S flavour with the bucket-of-2 class, not R.
+7. **S1 coupling: answered negatively by the corpus.** The multi-core realizations seen in practice
+   (B P1S: 16 line-level realizations in 7 L1 families in 53 rotation-0 observations, M §5.3) are **not**
+   explained by tip-order permutations × one T-class as specified: R, with the same race, is deterministic
+   (1 realization in 30 observations), the T-class is constant on one machine, and S9 gives two families.
+   This stage contributes no other run-to-run variation on a fixed machine. The B source is open (design
+   §3.2 SU, Q15).
+
+---
+
+## 8. Test vectors for the order rules
+
+Generated by `/tmp/vec02/vectors.py` (our own reference code written from §4.2, §4.3-§4.4, §5.4 and §5.5).
+They encode this part's reading of upstream (`AABBTreeIndirect.hpp:93-205`, `TS3:2270-2444`, `:2642`,
+`:1458-1586`). WP S3 checks them once against a recorded upstream run (the private instrumented build of the
+review, §5.3) before relying on them. A mismatch means the text above is wrong, not the vector. Coordinates
+are grid units. `tests/support_model.rs` carries them verbatim.
+
+### 8.1 AABB order (§4.2)
+
+Input: one box (min x, min y, max x, max y) per element, listed in input order (index 0, 1, …). Output: the
+input indices in final order.
+
+| # | boxes | output |
+|---|---|---|
+| A1 | (0,0,0,0) (10,1,10,1) (5,2,5,2) (−3,0,−3,0) (7,−1,7,−1) (2,3,2,3) (5,0,5,0) | 3 0 5 2 6 4 1 |
+| A2 (equal centroid x on one axis, extents tie → x) | (4,0,4,0) (4,5,4,5) (1,1,1,1) (4,2,4,2) (9,9,9,9) (4,1,4,1) (0,8,0,8) (4,3,4,3) | 2 0 5 6 3 7 1 4 |
+| A3 (y longer, negative coordinates) | (−5,−20,−3,−18) (0,10,2,12) (−1,−1,1,1) (3,30,5,31) (−4,5,−2,6) (1,−9,2,−8) | 0 5 2 4 1 3 |
+| A4 (square extent) | (0,0,0,0) (4,4,4,4) (4,0,4,0) (0,4,0,4) (2,2,2,2) | 0 4 3 2 1 |
+
+### 8.2 Merge rounds (§4.3-§4.4)
+
+Abstract pair test: elements are labels; `try_merge(dst, src)` succeeds iff some label of dst and some label
+of src form a listed pair, and the merged element carries the union of labels. The input is already in AABB
+order. "+" joins the labels of a merged element.
+
+| # | input | mergeable pairs | T | bucket size | output order |
+|---|---|---|---|---|---|
+| M1 | a b c d e | ab, ce | 1 | 4 | a+b, d, c+e |
+| M1 | a b c d e | ab, ce | ≥ 2 | 2 | a+b, c+e, d |
+| M2 | a b c d e f g h | ab, ah, bh, cf | ≤ 2 | 4 | a+b+h, d, c+f, g, e |
+| M2 | a b c d e f g h | ab, ah, bh, cf | ≥ 3 | 2 | a+b+h, c+f, d, g, e |
+| M3 | a b c d e f g h i | ab, cg, di | ≤ 2 | 4 | a+b, d+i, c+g, f, e, h |
+| M3 | a b c d e f g h i | ab, cg, di | ≥ 3 | 2 | a+b, c+g, d+i, f, e, h |
+| M4 | a b c d e f g | ab, cg, ef, be | ≤ 2 | 4 | a+b+e+f, d, c+g |
+| M4 | a b c d e f g | ab, cg, ef, be | ≥ 3 | 2 | a+b+e+f, c+g, d |
+
+### 8.3 Compaction (§5.4)
+
+Input: per position, 1 = deleted. Output: the original indices of the survivors in final order.
+
+| deleted flags | output |
+|---|---|
+| 0 1 0 0 1 0 | 0 5 2 3 |
+| 1 0 0 1 1 | 2 1 |
+| 0 0 1 1 1 | 0 1 |
+| 1 1 0 1 0 0 1 | 5 4 2 |
+
+### 8.4 Nearest boundary point (§5.5)
+
+| polygon (rings) | x | result | why |
+|---|---|---|---|
+| square (0,0) (10,0) (10,10) (0,10) | (5,5) | (5,5) | inside |
+| same | (12,5) | (10,5) | edge projection |
+| same | (13,13) | (10,10) | vertex wedge |
+| same | (−2,−3) | (0,0) | vertex wedge at the closing edge's end |
+| same | (10,12) | (10,10) | vertex |
+| triangle (0,0) (9,0) (0,7) | (6,6) | (5,3) | exact projection (4.22, 3.72); the offset from a = (9,0), (−4.78, 3.72), is truncated toward zero to (−4, 3) |
+| same | (3,8) | (2,5) | exact projection (1.38, 5.92), offset (−7.62, 5.92) → (−7, 5); vertex (0,7) at the same squared distance is no candidate |
+| same | (10,−1) | (9,0) | vertex |
+| two squares (0,0)-(4,4) and (10,0)-(14,4) | (7,2) | (4,2) | tie between rings: first ring wins |
+| same | (7,5) | (4,4) | tie between rings: first ring wins |
+| square with a repeated vertex (0,0) (10,0) (10,0) (10,10) (0,10) | (12,−1) | (10,0) | zero-length edge ignored |

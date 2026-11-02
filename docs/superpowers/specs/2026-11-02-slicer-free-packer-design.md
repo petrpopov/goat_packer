@@ -6,11 +6,14 @@ contest and the mandatory final slice with deterministic models of what the slic
 The slicer stays available as an optional verification step.
 
 Inputs: `/tmp/goat_research/{tree-support-research,zones-research,core-map,pipeline-map,nesting-research,real-plates-analysis}.md`
-(cited below as TSR, ZR, CM, PM, NR, RP) and the slicer checkouts in `/tmp/goat_src`.
-Separate behaviour specs, written later and dated, give the detailed behaviour of the organic
-support generator, the first layer and brim, the prime tower and the GUI acceptance checks. This
-document fixes the interfaces those specs must fill, and it marks every version difference and
-source of nondeterminism that the architecture must handle.
+(cited below as TSR, ZR, CM, PM, NR, RP), the calibration corpus `/tmp/goat_calib/MANIFEST.md` (cited as
+M) and the slicer checkouts in `/tmp/goat_src`.
+The behaviour specs live in `2026-11-02-organic-support-spec/`: 01 layers, overhangs, tips; 02 volumes,
+propagation, merging, placement; 03 smoothing, drawing, first layer, brims; 04 prime tower; 05 landing
+(first-layer body). `00-review.md` there is the consistency review; its P0/P1 fixes and the lead's
+decisions on it (2026-11-02, §14) are folded into this revision. This document fixes the interfaces those
+specs fill, and it marks every version difference and source of nondeterminism that the architecture must
+handle.
 
 Slicer source prefixes in this document: **B** = BambuStudio v02.08.02.61 (`bambu_0208`,
 `zones_bambu2861`), **O** = OrcaSlicer 2.4.2 (`orca_242`), **R** = OrcaSlicer 2.5.0-rc
@@ -26,14 +29,21 @@ unless they start with `slic3r/`.
    written from behaviour specs, and it is never a translation of AGPL source (section 1). One
    generator, with a small set of explicit *flavour* switches (B / O / R / S), runs an
    **ensemble** over the slicer's known nondeterminism. The union of the ensemble plus a
-   calibrated margin per band is the support envelope. Rejected: our own support meshes in the
+   calibrated margin per band is the support envelope. **Fidelity target** (lead, 2026-11-02): a
+   behaviourally faithful generator (the same stages, formulas, constants and integer grid per
+   flavour: B 10 nm units with 32-bit truncation, O/R/S 1 nm), an ensemble over the *known* axes
+   (the exact merge-bucket thread classes of 02 §4.7, the two connector-threshold families S9, and
+   tip-insertion interleavings S1 as an optional axis), plus a margin δ calibrated against the corpus.
+   B's run-to-run spread has a source nobody has identified yet (§3.2), so δ must cover the corpus
+   realizations until WP S4 finds it. Rejected: our own support meshes in the
    3MF (TSR §5.1; this changes the print), blocker fences (they do not work in B/O/S, TSR §0.6),
    and cached slicer probes as the production source (that is not slicer-free; they are kept
    only as an offline calibration tool).
 2. **Every object's geometry is split into typed kinds**: body per 2 mm band, landing (first-layer
    body), object brim, support base, support bands and interfaces. The prime tower has a body
-   kind and a brim/chamfer kind. All collision rules are one **permission matrix** over kinds,
-   coded once. Printer profiles declare only geometry and class (hard / restricted / soft).
+   kind (the column plus the chamfer rings of layers ≥ 1, each with its z-range) and an L0 brim
+   kind. All collision rules are one **permission matrix** over kinds, coded once. Printer
+   profiles declare only geometry and class (hard / restricted / soft).
 3. **One plate realization per rotation class.** Identical copies share one support generation,
    and only the first copy in model order is clipped by the bed (ZR §0.1, §5; TSR §2.10). So a
    plate prints exactly one realization per rotation class, translated to every copy. The
@@ -52,7 +62,11 @@ Measured headroom (CM §10.2, NR §3.3, RP §5.3, §6): with real realized suppo
 portfolio reaches U1 51-52 / P1S 43 / A2L 69-72 at one orientation, and 55 / 47 / 79 with 0/180.
 The binding constraint is the support base against the foreign landing, and the density depends
 on the envelope at about 0.7-0.95 objects per mm of edge (NR §3.4). **The calibrated margin δ is
-therefore the main risk to the targets** (section 5.5, open question Q1).
+therefore the main risk to the targets** (section 5.5, open question Q1). The corpus makes the risk
+concrete: realizations the slicers print lie up to 3.0 mm (first layer) and 4.4 mm (bands) outside a
+5-run single-object union for B, and the owner's U1 GUI (S) lies 0.7-4.1 / 1.5-5.4 mm outside the R CLI
+union (M §2.3-§2.4, §5.2). P1S and A2L already miss their targets at g + δ ≈ 1.5 mm (RP §5.3). The
+targets hold only if the ensemble reproduces most of those realizations, so that δ stays small.
 
 ---
 
@@ -69,6 +83,12 @@ translated code would make it AGPL.
   names and data types follow this design, not upstream (`descend.rs`, not
   `increase_areas_one_layer`).
 - Review checklist item: "no upstream identifier names, no line-by-line correspondence".
+- Where exact order matters (AABB reordering, merge rounds, nearest boundary point, list
+  compaction, the fill connector), the specs state the result as invariants and order properties,
+  and pin it with **recorded test vectors**, not with a step-by-step procedure.
+- Operation and field names in the specs and the code are ours: `nearest_inside`,
+  `radius_valid`, `step_down`, `radius_key`, `try_merge`, `fill_notches`, `to_bed`, `hold_until`,
+  `hint`, … (glossary in 02 §1.4). Upstream names appear only inside citations.
 - Existing code that calls itself a port goes through the same review and, if needed, is rewritten
   from a behaviour description: `src/plate_centre/gui_tower.rs` ("ports
   `PartPlate::estimate_wipe_tower_size`") is in WP I3.
@@ -110,7 +130,7 @@ translated code would make it AGPL.
 | equal-height `layer_config_ranges` collapse into a fixed profile (so they stay organic) | yes | yes | yes | yes | O `Slicing.cpp:244-315` |
 | branch distance / angle keys | `tree_support_branch_distance`, `_branch_angle` | `*_organic` keys | `*_organic` | `*_organic` | `Support/TreeSupportCommon.hpp` B:82-83, O:85-86, R:103-104, S:86-87 |
 | slow angle, tip diameter, top rate | fixed 25°, 0.8 mm, 30 % | settings | settings | settings | B `TreeSupportCommon.hpp:80-89` |
-| `support_critical_regions_only` | keeps cantilevers, sharp tails and overhang ∩ (enforcer grown) | clears plain overhangs, keeps cantilevers (+ enforcers) | as O | as O | B `Support/TreeSupport.cpp:1216-1250`; O `:1086-1089` |
+| `support_critical_regions_only` | keeps cantilevers, sharp tails and overhang ∩ (enforcer grown) | clears plain overhangs, keeps cantilevers, enforced areas and sharp-tail supports | as O | as O | B `Support/TreeSupport.cpp:1216-1250`; O `:1043-1115` (01 §3.7) |
 | "fully floating contour ⇒ cantilever" | yes | no | no | no | B `TreeSupport.cpp:1009-1050` |
 | merge bucket size | from thread count (S2) | from thread count | **fixed 4** | from thread count | `TreeSupport3D.cpp` B:2238-2244, O:2385-2391, R:2432-2434, S:2389-2395 |
 | support-blocker volumes as branch obstacles | no (off-by-one) | no | **yes** | no | `TreeModelVolumes.cpp` B:490, O:472, R:525, S:472 |
@@ -120,7 +140,11 @@ translated code would make it AGPL.
 | keep-main connectivity pruning per tree | yes | no | no | no | B `Support/TreeSupport3D.cpp:4933-4960,5075-5164` |
 | first-layer support expansion | −1 = auto 2 mm, grown in steps | max(0, e − fine) | as O | as O | `Support/SupportCommon.cpp` B:343,404,448; O:288; R:456; S:359 |
 | per-nozzle support exclusion volumes, `bed_exclude_volumes` | no | no | yes | no | R `TreeSupport3D.cpp:3488-3522`; R/main `PrintConfig.cpp` |
-| auto-brim width formula (volume groups) | same | same | same | same | `Brim.cpp` B:760-806, O:260-306, R:301-347, S:761-806 |
+| auto-brim width formula (volume groups) | thermal term ×0 | thermal term on | on | on | `Brim.cpp` B:760-806 (`:798`), O:260-306 (`:298`), R:301-347, S:761-806; 03 §5.2 |
+| extra 5 mm brim for thin islands | off (always-false guard) | on | on | on | O `Brim.cpp:514-520`, B `:946`; 03 §5.2 |
+| no-brim set closed by one brim spacing | yes | no | no | yes | O `Brim.cpp:674` (commented); 03 §5.3 |
+| integer grid (`coord_t`) | **10 nm units, 32-bit** | 1 nm, 64-bit | 1 nm, 64-bit | 1 nm, 64-bit | B `libslic3r.h:40,58`; O `:43,60` |
+| arc thresholds of the support-base connector | process-static (S9) | static | **per call** | static | B `Fill/FillBase.cpp:2367-2369`; R `:2696-2701`; 01 §5.5.4 |
 | organic "support brim" | none (the wide L1 patch is the expansion) | none | none | none | O `Brim.cpp:594,612` (commented) |
 | `bed_exclude_area` encoding | groups of 4 points = rectangles | one polygon | one polygon | one polygon | B `slic3r/GUI/PartPlate.cpp:397-413`; S `PrintConfig.cpp:9201-9225` |
 | body vs exclusion | per-part 2D convex hull ∩ zone = error (touching OK) | same rule | same | same | B `Print.cpp:944-993`; S `Print.cpp:1390-1440` |
@@ -129,23 +153,30 @@ translated code would make it AGPL.
 | GUI: body within 3.5 mm of the edge (spiral lift) | no | no | no | **serious warning** (part bbox, strict <) | S `slic3r/GUI/3DScene.cpp:1381-1401` |
 | CLI: toolpath outside | per object bbox + 2 mm, `-104` | + 2 mm, `-102` | as O | — | `GCode/GCodeProcessor.cpp:1845` |
 | ConflictChecker collinear-overlap rule | yes | yes | yes | absent | ZR §0.7 |
-| tower brim | L0 + **chamfer always on**, ≤ 3 mm, one loop narrower per layer | L0 only (measured) | L0 only | `prime_tower_brim_chamfer` ≤ max width | B `GCode/WipeTower.cpp:3706-3735`; S `GCode/WipeTower2.cpp:2303-2345` |
-| GUI tower anchor margin | 15 mm | 1 mm | 1 mm | 1 mm | B `slic3r/GUI/PartPlate.cpp:2284-2293`, `libslic3r.h:77` |
+| tower brim and chamfer | L0 brim + **chamfer always on**, ≤ 3 mm, one loop narrower per layer (5 layers, z ≤ 1.88 at 0.28 mm) | L0 brim only (measured) | L0 brim only | L0 brim + `prime_tower_brim_chamfer` ≤ max width (U1: 8 layers, z ≤ 2.49) | B `GCode/WipeTower.cpp:3706-3735`; S `GCode/WipeTower2.cpp:2303-2345`; 04 §4.6 |
+| tower anchor moved by the slicer | GUI on project open: [15, bed − Ŝ − 15], Ŝ = GUI estimate with *n* = the plate's filaments; CLI never | GUI keeps the stored anchor on open (clamps with 1 + brim only on a preset change); CLI never | **CLI and GUI on every slice**: margin 1 + estimated brim (+ cone bulge); snaps when within 5 mm of the range, relocates (object-dependent) beyond | GUI on **every scene reload**, including after each slice with the real depth: margin 1 + `prime_tower_brim_width` (U1: 6 mm) | 04 §6; B `slic3r/GUI/PartPlate.cpp:4808-4895`; R `OrcaSlicer.cpp:6479-6512`; S `slic3r/GUI/GLCanvas3D.cpp:3866-3910` |
 
 ### 3.2 Nondeterminism: sources, realizations, coverage
 
-| id | source | flavours | realizations it can produce | coverage in this design |
-|---|---|---|---|---|
-| S1 | **Tip insertion race.** Parallel per-layer tasks append tips (roof layers insert up to 3 layers lower) into a shared per-layer list under a mutex. First come wins the ~0.04 mm dedup cell. List order drives AABB sorting and merge partner choice. | B, O, R, S | any interleaving of the writer tasks' sequences for a layer (each task keeps its own order); 2-4 writers per layer list; which of two coincident tips survives | ensemble axis `interleave`: member 0 = writers in ascending layer order; member 1 = descending; then seeded interleavings from our own PCG with fixed seeds (section 5.4) |
-| S2 | **Merge bucket size** = 4 if the bucket count would reach the thread count, else 2 | B, O, S (R fixed) | one realization per distinct per-layer 2/4 pattern; depends on the slicing machine's hardware threads (1..64; Docker `--cpus` does not change it) | ensemble axis `threads` ∈ {1, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 64}, deduplicated by output hash; R: {4 only} |
-| S3 | Overhang-detection guard (`Support/TreeSupport.cpp` O:848, B:961, R:990, S:821): once elapsed time exceeds 30 s **or** a layer has more than 100 overhang islands, sharp-tail detection and small-overhang removal stop for later layers. The flag is written from parallel layer tasks, so the switch layer is racy. | all | "guard tripped from layer j" for any j | The island-count trigger is deterministic and is modelled exactly; when it fires, the switch layer becomes an ensemble axis. The time trigger is not modelled (goat detection takes ≪ 30 s). The report sets `overhang_guard_risk` above a calibrated mesh size. |
-| S4 | bed obstacle and clip in the first copy's frame | B obstacle + clip; O/R/S clip | bent or clipped trees copied to every copy | removed by canonical-first ordering (section 9.7) and the hard bed rule for supports |
-| S5 | rotation (fill-line angle, square joins, AABB splits) | all | one family per rotation matrix | one ensemble per rotation class; rotated envelopes are never reused (RP §4: 180° realizations rotated back match only at IoU 0.82-0.86) |
-| S6 | flavour / version | — | different generator | flavour resolved per job (section 5.3); U1 GUI (S) vs server CLI (O) measured 5.4 mm L1 / 8 mm bands apart, mixed with rotation (TSR §3.2) |
-| S7 | float / libm across CPU architectures | all | rare flips of discrete decisions | our code uses `libm` and fixed operation order. Upstream's own flips are covered by δ. |
-| S8 | full-plate contention (other objects slice at the same time) | B (observed) | the 40-goat P1S plate lay 0.81 mm (L1) / 1.18 mm (bands) outside a 20-run single-object union | this is S1/S2 under other timings. The explicit interleaving ensemble is expected to cover it; calibration measures the remainder into δ. |
+The ids S1-S10 name sources of variation. They are unrelated to the work packages S1-S4 of §12; outside the
+§12 tables this document writes those as "WP S1" … "WP S4".
 
-Not sources (TSR §3.1): Jacobi-style smoothing, memoized volume caches, membership-only hash sets.
+| id | source | flavours | realizations it can produce | status (corpus) | coverage in this design |
+|---|---|---|---|---|---|
+| S1 | **Tip insertion race.** Parallel per-layer tasks append tips (roof layers insert up to 3 layers lower) into a shared per-layer list under a mutex. First come wins the ~0.04 mm dedup cell. List order drives AABB sorting and merge partner choice (01 §5.7). | B, O, R, S (same code in R: `Support/TreeSupport3D.cpp:1023-1026` in the parallel loop at `:1371`) | any interleaving of the ≤ 4 writer sequences of a layer list; which of two coincident tips survives | **unproven.** R has the same race yet gave 1 realization in 30 rotation-0 observations, full plates included (M §2.4, §5.3). | optional ensemble axis `interleave` (off by default): canonical member = writers in ascending layer order; seeded interleavings from our own PCG on request. Switched on by default only if the discriminating experiment (§11, calibration item C5) shows realizations. |
+| S2 | **Merge bucket size** = 4 if ⌊(n+2)/4⌋ ≥ T, else 2, with T = the TBB arena size (02 §4.3) | B, O, S (R fixed to the T = 1 class) | one realization per **T-class**: T values that make the same 2/4 decision on every layer give identical runs (02 §4.7). At most (distinct ⌊(n_L+2)/4⌋) + 1 classes, ≈ 11 for a goat. The owner's 14-thread Mac is in the "all buckets of 2" class unless a layer has n ≥ 54. | constant on one machine, so it explains no run-to-run spread | ensemble axis `t_class`: the **exact** class walk of 02 §4.7 (T := 1; run; T := b + 1 until b = ∞). R: {T = 1} only. T follows the Linux affinity mask (`taskset`, `--cpuset-cpus`); that Docker `--cpus` quotas do not change it is an **assumption** (oneTBB cgroup handling unverified, 02 §7 Q2). |
+| S3 | Overhang-detection guard (`Support/TreeSupport.cpp` O:848, B:961, R:990, S:821): once elapsed time exceeds 30 s **or** a layer has more than 100 overhang islands, sharp-tail detection and small-overhang removal stop for later layers. The flag is written from parallel layer tasks, so the switch layer is racy. | all | "guard tripped from layer j" for any j | island trigger ruled out on the goat (≤ 40 islands per layer at every checked angle; review appendix A) | The island-count trigger is deterministic and is modelled exactly; when it fires, the model returns `Unsupported` (§5.7) until a switch-layer ensemble axis exists. The time trigger is not modelled (goat detection takes ≪ 30 s). The report sets `overhang_guard_risk` above a calibrated mesh size. |
+| S4 | bed obstacle and clip in the first copy's frame | B obstacle + clip; O/R/S clip | bent or clipped trees copied to every copy | confirmed (ZR §5) | removed by canonical-first ordering (section 9.7) and the hard bed rule for supports |
+| S5 | rotation (fill-line angle, square joins, AABB splits) | all | one family per rotation matrix | confirmed: object-frame patches differ by IoU 0.74-0.86 between rotations (M §2.1, §4) | one ensemble per rotation class; rotated envelopes are never reused |
+| S6 | flavour / version | — | different generator | U1: S GUI 0.7-4.1 mm (L1) / 1.5-5.4 mm (bands) outside the R CLI union at the same rotation (M §2.4) | flavour resolved per job (section 5.3) |
+| S7 | float / libm across CPU architectures | all | rare flips of discrete decisions | not observed | our code uses `libm` and fixed operation order. Upstream's own flips are covered by δ. |
+| S8 | full-plate contention (other objects slice at the same time) | B, S (observed) | B P1S CLI plates and samples put up to 26.5 mm² of L1 (2.4 mm out) and 189 mm² of bands (4.4 mm out) outside the 5-single-run union; one plate 3.0 / 3.7 mm (M §2.3, §5.2) | same families as single-object runs (M §2.5: one realization per rotation class per slice) | S2 is constant per machine and S1 is unproven, so contention is **not** explained by a known axis. Covered by δ, calibrated on the corpus plates. |
+| S9 | **Process-static arc thresholds** of the support-base line connector (01 §5.5.4): initialised once per process from the first fill's line spacing | B, O, S (R fixed, `Fill/FillBase.cpp:2696-2701`) | two families in a CLI run (thresholds from the roof spacing 0.86 mm or from the base spacing: 5.36 mm B, 1.36 mm O/S); in a GUI session also any earlier slice's spacing | at most two families; does not explain B's spread alone | ensemble axis `arc_thresholds ∈ {roof, base}` (R: one member). GUI session history is not modelled (open question Q20). |
+| S10 | process-static closing ε of the multi-region elephant-foot restore (01 §1.5) | all | only after objects with other closing radii in the same process | negligible | none |
+| SU | **unidentified B source** | B (and S GUI) | B: 16 line-level realizations in 7 L1 families (≈ 657, 654, 652, 630, 617, 570, 565 mm²) in 53 P1S rotation-0 observations, still growing (M §2.3, §5.3); 4-5 distinct in 5 runs at every B rotation; S GUI: two slices of one 48-goat layout differ (M §2.4) | S1 + S2 + S9 as specified do not explain it; S3 is ruled out | **δ must cover every corpus realization** (§5.5). WP S4 investigates the source (calibration items C5-C7, §11). |
+
+Not sources (TSR §3.1, 02 §4.7, 03 §8): Jacobi-style smoothing, memoized volume caches, membership-only hash
+sets, the per-element moves and the merge buckets (disjoint writes), per-tree drawing.
 
 ---
 
@@ -160,24 +191,36 @@ Not sources (TSR §3.1): Jacobi-style smoothing, memoized volume caches, members
   {0°, 180°} (option `--rotations`). Support-free objects keep today's free canonical frame and
   any angle (`frame.rs`).
 - **Bands:** absolute index k covers z ∈ [k·2 mm, (k+1)·2 mm) (`LAYER_BAND_MM`). Empty and
-  one-sided bands keep their index (current invariant). "First layer" means the printed
-  layer 0 (z ≤ `initial_layer_print_height`). It is its own kind, not band 0.
+  one-sided bands keep their index (current invariant).
+- **Band rule (one rule for every kind; lead, 2026-11-02).** Printed layer l occupies the interval
+  (z_{l−1}, z_l], with z_{−1} = 0 and z_l its print_z. Its material belongs to **every band the
+  interval overlaps with positive length**: band k iff z_{l−1} < 2(k+1) and z_l > 2k. A layer whose top
+  lies exactly on a band boundary belongs only to the lower band. Example (P1S grid): the layer with
+  print_z 2.16 occupies (1.88, 2.16] and belongs to bands 0 and 1, so it is tested against a foreign
+  body top at z = 1.95 in band 0. Bodies follow the same rule: `body[k]` is the union of the printed
+  sections of the layers in band k, which the mesh slab [min z_{l−1}, max z_l] over those layers
+  contains (§4.2). `validate_result`, `verify_outputs` and `realization_from_gcode` share this rule
+  (one table test). The repo's present `floor(print_z / 2)` binning (`learning.rs`, the corpus'
+  `derive.py`) differs at band edges; corpus band polygons are re-binned before calibration.
+- **First layer:** "first layer" means the printed layer 0, interval (0, h0]. Its material is in
+  band 0 **and** in its own first-layer kinds (`landing`, `support_base`), which carry the precise
+  first-layer tests. The band copy makes band 0 the conservative superset.
 
 ### 4.2 Kinds
 
 | kind | definition (material extent, line width included) | producer | used by |
 |---|---|---|---|
-| `body[k]` | projection of every normal part's material inside slab k (a union of slab-clipped triangles, not sampled sections) | `mesh_section` | body/body (option), support/body pairs, tower brim (low bands) |
+| `body[k]` | projection of every normal part's material inside the slab [min z_{l−1}, max z_l] over the layers l of band k (§4.1 band rule; band k extended outward to whole layers), as a union of slab-clipped triangles, not sampled sections | `mesh_section` | body/body (option), support/body pairs, tower body (chamfer bands) |
 | `silhouette` | ∪ `body[k]` | `mesh_section` | body/body (default), restricted/hard bbox tests |
 | `part_hulls` | 2D convex hull per normal part | `mesh_section` | hard keepouts (the slicer's exclusion rule) |
 | `part_boxes` | XY bbox per normal part | `mesh_section` | printable bounds, restricted band |
-| `landing` | first-layer body: the section at the layer-0 slice height, plus thin-tip overshoot (perimeter/Arachne tips, measured ≤ 1.66 mm, PM §7 row 5). Elephant-foot compensation is ignored: it shrinks the printed outline by 0.15 mm, so ignoring it is conservative. | `first_layer` (behaviour spec) | support base vs foreign landing, soft zones |
-| `brim` | object brim ring: `brim_type`, `brim_width`, auto rule; empty for the goats (auto rule gives 0; probes have no Brim feature, PM §3.2) | `first_layer::brim` | keepout reporting only (the slicer trims brims, ZR §0.6) |
-| `support_base` | first-layer support: feet grown by the expansion in steps, trimmed by own `landing ⊕ first_layer_gap` (TSR §2.8) | `support_model` | support base vs foreign landing; hard zones; tower body |
-| `support[k]` | support material printed above layer 0 in band k | `support_model` | support vs foreign `body[k]`; hard zones; tower body |
+| `landing` | first-layer body (05): the union of the normal parts' sections at z = h0/2, grown by ε_L = 0.05 mm (classic walls) or max(0.05, ½·(min_bead_width − min_feature_size)) (Arachne, unmeasured). Elephant-foot compensation is ignored: it is applied only on wide features, and the corpus prints within 0.026 mm of the section in all 120 slices (05 §3) | `first_layer` (05) | support base vs foreign landing, soft zones, tower brim |
+| `brim` | object brim ring: `brim_type`, `brim_width`, auto rule (03 §5); empty for the goats (auto rule gives 0; probes have no Brim feature, PM §3.2) | `first_layer::brim` | keepout reporting only (the slicer trims brims, ZR §0.6) |
+| `support_base` | first-layer support: feet grown by the expansion in steps, each step trimmed by the slicer's **own uncompensated layer-0 section grown by `support_object_first_layer_gap` with square joins** (03 §4.2, B7), not by the conservative `landing` | `support_model` | support base vs foreign landing; hard zones; tower body (L0 column) |
+| `support[k]` | support material of every printed layer in band k (§4.1 band rule; band 0 includes the layer-0 base) | `support_model` | support vs foreign `body[k]`; hard zones; tower body incl. chamfer rings |
 | `interface[k]` | the part of `support[k]` printed as interface (role kept for diagnostics and the strict option) | `support_model` | the same as `support[k]`; `--interfaces-as-body` moves it into `body[k]` |
-| `tower_body` | plate-level: tower column, all heights to the tower top | `tower_model` | hard for bodies and supports |
-| `tower_brim[l]` | plate-level: brim at L0 plus chamfer rings per layer up to the chamfer top | `tower_model` | soft for support base and brims; hard for bodies in those bands |
+| `tower_body` | plate-level, z-ranged pieces: the tower column on every layer up to the tower top, **plus the chamfer rings of layers ≥ 1** (B: 5 layers, z ≤ 1.88; S: 8 layers, z ≤ 2.49; 04 §4.6), each ring with its own layer interval | `tower_model` | hard for bodies and supports in every band its pieces meet |
+| `tower_brim` | plate-level: the **L0 brim ring only**, z ∈ (0, h0] | `tower_model` | allowed for support base and object brims (owner); hard for landings |
 
 The skirt is not modelled. `skirt_loops > 0` is an explicit error, since the slicer does not clip
 it (ZR §3.4; open question Q11).
@@ -188,9 +231,9 @@ it (ZR §3.4; open question Q11).
 ObjectPrint            // one rotation class, footprint frame, mm, even-odd loops
   rotation_deg
   silhouette, part_hulls, part_boxes, landing, brim
-  body:      Vec<Loops>   // index = absolute band
-  support_base: Loops
-  support:   Vec<Loops>   // index = absolute band
+  body:      Vec<Loops>   // index = absolute band, §4.1 band rule
+  support_base: Loops     // layer 0 only (also contained in support[0])
+  support:   Vec<Loops>   // index = absolute band, §4.1 band rule
   interface: Vec<Loops>
   provenance: { flavour, members, margins, cache_key }
 ```
@@ -232,18 +275,32 @@ Stage B runs once per ensemble member. Our module names:
 | A3 | `paint` | decode the painted enforcer/blocker facets (`paint_supports`) and project the down-facing ones per layer |
 | A4 | `overhangs` | overhang areas by threshold angle, cantilevers, sharp tails, small-overhang removal, critical-only filter, enforcer union with its fixed grow; flavour switches from §3.1 |
 | A5 | `clearance` | per layer and radius class: collision (own area grown by radius + xy, with z-gap layers), avoidance to the bed (slow, fast, fast-safe), placeable areas. B: the bed-outside ring is an extra obstacle. |
-| B1 | `tips` | tip seeding in overhang and roof areas (line pattern at branch spacing, resampled at the connect length), insertion layer offsets, first-come dedup **in the member's order** (S1) |
+| B1 | `tips` | tip seeding in overhang and roof areas (line pattern at branch spacing, resampled at the connect length; the connector's arc thresholds from the member's S9 family), insertion layer offsets, first-come dedup **in the member's order** (S1: canonical unless the optional axis is on) |
 | B2 | `descend` | influence areas layer by layer downward (slow, then fast, then the fallback), radius growth, foot growth near the bed |
-| B3 | `merge` | per-layer merging with the member's bucket rule (S2), destination by list order |
+| B3 | `merge` | per-layer merging with the member's T-class bucket rule (S2), destination by list order |
 | B4 | `place` | node positions bottom-up (lazy: nearest valid point to the child) |
 | B5 | `smooth` | organic smoothing: collision push-out plus Laplacian; anchored variant for O/R; B: keep-main pruning |
 | B6 | `draw` | branch discs per layer; root cap (hemisphere B/S, flat O/R); interface roles; bed clip in the object frame |
 | B7 | `base` | first layer: feet grown by the expansion in n steps, re-trimmed each step by the slicer's own layer-0 object area from A2 grown by the first-layer gap. Not the conservative `landing` kind: a larger trim mask would under-predict the base. |
 | B8 | `bands` | per-layer material into `base`, `support[k]` and `interface[k]` (line width included) |
 
-Rules: single-threaded inside a member; integer coordinates (1 nm grid, like upstream's
-scaling) for all polygon booleans and offsets, behind one facade `polygon_ops.rs` (backend
-choice: Q6); `libm` for tan, sin and sqrt; `Vec`/`BTreeMap` only, no hash-map iteration.
+Rules:
+- single-threaded inside a member; `libm` for tan, sin and sqrt; `Vec`/`BTreeMap` only, no
+  hash-map iteration.
+- **The integer grid is a flavour property** (02 §1.1): B uses 10 nm units with 32-bit
+  coordinates (1 mm = 10⁵, `libslic3r.h:40,58`); O/R/S use 1 nm with 64-bit coordinates. Every
+  mm → integer conversion truncates toward zero on the flavour's grid, so B's speeds, radii and cells
+  differ in the last unit (V_f = 27 999 units = 0.27999 mm; r_b = 99 999 units because 2.0/10⁻⁵
+  truncates to 199 999; tip seed circle 15-gon in B vs 45-gon in Orca; 01 §4, 02 §1.2).
+- **Polygon backend** (lead, 2026-11-02): pure Rust `i_overlay` behind the facade
+  `polygon_ops.rs`, which emulates Clipper-1 semantics wherever they change a discrete decision:
+  the miter-limit floor of 2 (a requested 1.2 acts as 2), the arc-tolerance rule
+  (τ' = min(τ, |d|/4), π/acos(1 − τ'/|d|) segments per turn, capped at π·|d|), the 0.005·|d| input
+  decimation of offsets, the strictly-simple union for B's simplification, and the flavour grid
+  and truncation. The facade stays swappable (a Clipper-1-compatible engine can replace
+  `i_overlay` without touching the stages). WP S4 reports whether backend differences, measured as
+  envelope differences between the two engines on the corpus inputs, dominate δ.
+- Unsupported settings return an explicit error before stage A (§5.7).
 
 ### 5.3 Flavours
 
@@ -265,48 +322,86 @@ plus the server's vanilla Orca, Q2).
 
 ### 5.4 Ensemble schedule (our own pseudo-code)
 
-```text
-members(flavour):
-  threads = flavour.fixed_bucket ? [4] : [1,2,4,6,8,10,12,14,16,20,24,32,64]
-  for t in threads:                       # S2 axis first: cheap, coarse variety
-      yield Member { threads: t, interleave: Ascending }
-  for t in threads:  yield Member { t, Descending }
-  for seed in 1..=MAX_SEEDS:              # S1 axis: fixed seeds, our PCG
-      for t in threads_subset(seed):  yield Member { t, Seeded(seed) }
+The core ensemble is an **exact, finite enumeration** of the known axes: every T-class (S2, 02 §4.7)
+for every connector-threshold family (S9, 01 §5.5.4). It needs no saturation rule. The tip-order axis
+(S1) is optional because the corpus has not shown that it produces realizations (§3.2).
 
-run(schedule):                            # deterministic for any core count
-  envelope = empty; quiet = 0
-  for batch in members.chunks(BATCH):     # BATCH fixed (e.g. 8), run in parallel
-      reals = batch.par_map(stage_b)      # collected in member order
-      for r in reals (in order):
-          if hash(r) seen: quiet += 1; continue
-          grown = envelope.add(r)         # per-band area added, mm²
-          quiet = grown < SATURATION_MM2 in every band ? quiet + 1 : 0
-      if quiet >= QUIET_MEMBERS or members_run >= MAX_MEMBERS: stop
+```text
+families(flavour) = flavour.static_arc_thresholds ? [Roof, Base] : [PerCall]     # S9; R: PerCall
+
+core_members(flavour):                     # one class walk per family; families run in parallel
+  for fam in families(flavour):
+      T = 1
+      loop:
+          r = stage_b(T, fam, Order::Canonical)      # canonical tip order = writers ascending
+          emit (T-class (a, b], fam, r)              # (a, b] from r's per-layer bucket counts
+          if flavour.fixed_bucket or b == ∞: break   # R: only T = 1
+          T = b + 1
+
+optional_members(flavour, k):              # S1, only with --tip-order-members k (default 0)
+  for seed in 1..=k:                       # our own PCG, fixed seeds
+      for (class, fam) in classes found by core_members:
+          emit stage_b(class.representative_T, fam, Order::Seeded(seed))
+
+run:                                       # deterministic for any core count
+  reals = core ∪ optional, collected in (family, T, seed) order, deduplicated by hash
+  envelope = union of reals per kind and band; then ⊕ δ (§5.5)
 ```
 
-The stop rule depends only on results, never on time, so the envelope is identical on every
-machine. Constants (BATCH 8, SATURATION_MM2 1, QUIET_MEMBERS 8, MAX_MEMBERS 96) are starting
-values with comments; the calibration campaign tunes them.
+- Cost: at most (distinct ⌊(n_L+2)/4⌋ + 1) runs per family, ≈ 11 for a goat, so ≈ 22 stage-B runs
+  per rotation class for B/O/S and 1 for R. Each (rotation class, family) walk is sequential, and the
+  walks are independent, so rayon runs them in parallel (4 walks for {0°, 180°}). The < 20 s cold
+  budget (§2) then holds at ≤ 1.5 s per stage-B run on 4 or more cores.
+- The optional S1 axis keeps a result-only stop rule (no new area ≥ `SATURATION_MM2` = 1 mm² in any
+  band for `QUIET_MEMBERS` = 8 members, cap `MAX_MEMBERS` = 96). The envelope is identical on every
+  machine because nothing depends on time.
+- `--slicer-threads T` may restrict the core to the class of a known slicing machine. Default: all
+  classes, because the printing machine's T is unknown (owner GUI 14, server unknown).
 
 ### 5.5 Envelope and margins
 
 - `SupportEnvelope` per rotation class: `base = (∪ base) ⊕ δ_L1`, `support[k] = (∪ support[k]) ⊕ δ_band`,
   and the same for `interface[k]`.
-- **δ is not the pair gap.** δ covers model uncertainty: numerical differences from upstream,
-  S3, S7, and realizations the ensemble missed. The pair gap g (support to foreign body,
+- **δ is not the pair gap.** δ covers model uncertainty: numerical differences from upstream
+  (backend, grid), S3, S7, S8, the unidentified B source SU, and every other realization the
+  ensemble missed. The pair gap g (support to foreign body,
   `SUPPORT_BODY_GAP_MM` = 0.5, renamed from `LAYER_ZONE_GAP_MM`) is the physical "never touch"
   clearance the owner asked for. Both apply.
 - δ is per flavour, kept as constants in `support_model/flavour.rs`, each with an evidence comment
   (like `SLICER_KEEPOUT_SAFETY_MM`). It is not in profiles, because it describes the slicer, not
   the printer.
-- Initial values until calibration: δ_L1 = 1.0 mm, δ_band = 1.5 mm (TSR §4.4: single-object
-  union vs plate 0.81 / 1.18 mm). **Goal after calibration: δ_L1 ≤ 0.3, δ_band ≤ 0.5.**
-  With g = 1.0 the counts drop to U1 52 / P1S 42 / A2L 69 (RP §5.3), so the initial δ alone
-  probably misses P1S and A2L. The acceptance gate (section 11) measures the counts at the
-  calibrated δ.
+- **Risk, restated from the corpus (M §2.3-§2.4, §5.2).** The earlier initial values (δ_L1 = 1.0,
+  δ_band = 1.5 mm) came from one plate lying 0.81 / 1.18 mm outside a 20-run union (TSR §4.4). The
+  corpus shows far more:
+
+  | flavour | what lies outside what | first layer | bands |
+  |---|---|---|---|
+  | B (P1S) | packer CLI plates and 3-object samples vs the 5-run single-object union, rotation 0 | up to 26.5 mm², **2.4 mm** | up to 189 mm², **4.4 mm** |
+  | B (P1S) | worst single plate (`goat_p1s/run2 final_first`) | 47 mm², **3.0 mm** | 146 mm², 3.7 mm |
+  | B (P1S) | owner GUI 40-goat plate vs the same union | 17.8 mm², 0.85 mm | 104.5 mm², 2.13 mm |
+  | S vs R (U1) | owner Snapmaker GUI plates vs the R CLI 5-run union | 17-55 mm², **0.7-4.1 mm** | 171-340 mm², **1.5-5.4 mm** |
+  | R (U1) | CLI plates vs the R 5-run union | 0.0 | ≤ 0.02 mm |
+
+  If the ensemble reproduces none of the extra realizations, δ must exceed these distances, and the
+  targets fail: P1S and A2L already miss at g + δ ≈ 1.5 mm (RP §5.3). The targets therefore depend on
+  the ensemble reproducing the corpus families (fidelity target, §0 decision 1), and on finding SU
+  (§3.2).
+- **Initial values until the first calibration** (cover the corpus distances above): B δ_L1 = 3.1 mm,
+  δ_band = 4.5 mm; S δ_L1 = 4.2 mm, δ_band = 5.5 mm (from the S-vs-R row, the only S data); R δ_L1 =
+  δ_band = 0.1 mm; O: as S until the O 2.4.2 support slices of §11 exist. They cover the corpus only if
+  the model envelope contains the 5-run unions; the first calibration against the model replaces them.
+  They are known to miss the targets. **Goal after calibration: δ_L1 ≤ 0.3, δ_band ≤ 0.5**, reachable
+  only if the exceedances measured against the *model* envelope (not the 5-run union) shrink
+  accordingly.
 - Calibration rule: δ = maximum observed exceedance of any recorded realization outside the
-  ensemble union, per kind, over the campaign, + 0.1 mm. The report publishes the sample size.
+  ensemble union, per kind and band, over the campaign, + 0.1 mm. Exceedance is measured on the
+  outer boundary of the footprint (`support_patch_polygon` per layer and per band, Hausdorff of the
+  boundary), not on line-level identity, so toolpath-only differences (S9 in the base fill, B's
+  lightning void fill) do not count. Every corpus realization takes part, full plates and GUI
+  exports included. The report publishes the sample size and the realization count per flavour.
+- The U1 target flavour S has no single-object calibration data (§11, item C1). Until it exists,
+  S's δ comes from the S-vs-R row above and the U1 envelope counts as unvalidated in the report
+  (`support_model.validated: false`).
 
 ### 5.6 Cache
 
@@ -316,31 +411,77 @@ setting (a fixed key list in `support_model/settings.rs`), flavour, rotation mat
 hashes, as JSON in `--cache-dir` (default: none, so CLI runs are pure). The webapp passes a
 persistent directory (Q9). A cache hit skips stages A and B.
 
+### 5.7 Unsupported settings (lead, 2026-11-02)
+
+The model specifies only what the parts describe. For anything else it returns
+`Unsupported { setting, value, reason }` before stage A; it never guesses. The pipeline then falls
+back to `--support-source slicer` when the job allows slicing (webapp default), or fails with the
+setting named in the error (`--support-source model` explicitly, or no slicer configured). The report
+records `support_source: "slicer"` and `unsupported: [<setting>, …]`.
+
+| setting / condition | why | spec |
+|---|---|---|
+| variable layer height (non-fixed layer profile), `precise_z_height = 1`, Z anti-aliasing (`zaa_enabled`) | B switches to Tree Hybrid, Orca refuses; slice planes change | 01 §1.2 |
+| S mixed-filament gradient / Z-dithering modes | rewrite the layer ranges | 01 §1.2.1 |
+| `raft_layers > 0` | other first-layer and z-gap rules | 01 §4, 03 §4 |
+| `support_on_build_plate_only = 0` (support on model) | to-model volumes and placement are unspecified | 01 §4, 02 §2.6, §5.3 |
+| support style or type other than organic tree (`normal`, `tree_hybrid`, `tree_slim`, `tree_strong`, snug, …) | different generators | 01 §1.2.1 |
+| soluble or zero-gap interfaces; `independent_support_layer_height = 1` | other roof and z-gap rules | 01 §4 |
+| honeycomb or lightning support base pattern | other tip-line generators | 01 §4 |
+| non-default `xy_contour_compensation`, `xy_hole_compensation`, B circle compensation, `make_overhang_printable` | change the section L_k | 01 §1.4, 05 §2.3 |
+| `slicing_mode ≠ regular` | other fill rule | 01 §1.3 |
+| objects whose parts have disjoint XY boxes on a layer | O/S/R fast-path behaviour unverified | 01 §1.4, Q5 |
+| support blockers (volumes or paint) in R | blocker obstacles are only sketched | 02 §2.3 |
+| `detect_thin_wall = 1` (classic walls), `fuzzy_skin` on layer 0 | landing overshoot unmeasured | 05 §2.3 |
+| support or interface filament ≠ 0 | the tower depends on the tree realization | 04 §7 N1 |
+| `skirt_loops > 0` | the skirt is not modelled (Q11) | §4.2 |
+| an overhang guard island count > 100 on some layer | S3 would become an ensemble axis that is not implemented yet | 01 §3.9 |
+
+`max_bridge_length > 0` is accepted and recorded in the report (bridge removal is not modelled;
+evidence of no effect on the goat: U1, 01 §3.7.1; general rule open, 01 Q6).
+
 ---
 
 ## 6. Landing, brim and tower models
 
-- `first_layer::landing(sections, settings, flavour)`: the layer-0 slice plus the thin-feature
-  overshoot (elephant-foot compensation ignored, see §4.2). The behaviour spec defines the overshoot
-  rule (Q4). Until it exists, the landing is the section grown by the flavour constant
-  `LANDING_TIP_RESERVE_MM` near convex features narrower than two line widths.
+- `first_layer::landing(sections, settings, flavour)` (behaviour spec 05): the union of the normal
+  parts' sections at z = h0/2, grown by ε_L = 0.05 mm for classic walls, or by
+  max(0.05, ½·(min_bead_width − min_feature_size)) for Arachne (unmeasured, reported). Elephant-foot
+  compensation is ignored: the slicer switches it off locally on narrow features, where the print
+  reaches the section (05 §2.1). Corpus: every printed first layer (3 printers × 8 rotations × 5 runs)
+  lies within 0.026 mm of the section, and 0.19 mm outside the nominally compensated outline at one
+  narrow corner (05 §3).
 - `first_layer::brim(landing, settings, flavour)`: `brim_type` (`auto_brim` uses the
-  volume-group width rule, identical in all four versions, §3.1; it is 0 for the goats),
-  `brim_width`, `brim_object_gap`, brim ears. Output is used for reports and the soft class only.
-- `tower_model::printed_tower(settings, plate, flavour) -> TowerPrint { body_size, height,
-  brim_l0_mm, chamfer: Vec<(z, width)>, gui_anchor_range }`. Inputs: prime tower width, rib
-  wall, rib width and extra length, infill gap, brim width (−1 = auto by height), filament prime
-  volumes or flush matrix, the per-layer filament changes (derived from mesh paint and layer
-  ranges), and the object height of all parts (41.45 → 44.74 mm on the goat, PM §0.5). It
-  replaces the probe-measured keepout.
-  - The behaviour spec must explain the observed growth with object count (P1S 18.5 → 23.2 mm,
-    `tower.rs:25`). That growth was measured with the arc-blind parser (PM §0.4), so it must be
-    re-measured first (Q3).
-  - Until then: size = max(settings estimate, planned depth) × (1 + `TOWER_GROWTH_RESERVE`), with
-    the current 0.3 kept and its comment.
-- `gui_anchor_range` stays `plate_centre::gui_tower_anchor_range` (margin from the flavour:
-  15 mm B, 1 mm O/R/S). The tower anchor is a packing variable (section 9.3), so the tower
-  contest and `clear_tower_of_patches` go away.
+  volume-group width rule; B multiplies the thermal term by 0, O/R/S use it; the thin-island extra
+  brim exists only in O/R/S; the no-brim set is closed by one spacing only in B and S; 03 §5.2-§5.3,
+  §3.1 rows), `brim_width`, `brim_object_gap`, brim ears. It is 0 for the goats in every flavour.
+  Output is used for reports and the soft class only.
+- `tower_model::printed_tower(settings, plate, flavour) -> TowerPrint { body: Vec<(z_range,
+  outline)>, brim_l0: outline, gui_anchor_range }` (behaviour spec 04). `body` holds the column
+  outline per layer range and the **chamfer rings of layers ≥ 1** (B always, ≤ 3 mm; S with
+  `prime_tower_brim_chamfer`, ≤ `prime_tower_brim_chamfer_max_width`), each with its own z-range;
+  they are tower *body* for the matrix. `brim_l0` is the first-layer brim only. Inputs: prime tower
+  width, rib wall, rib width and extra length, infill gap, brim width (−1 = auto by height), filament
+  prime volumes or flush matrix, the per-layer filament changes (derived from mesh paint and layer
+  ranges), and the tower top H_t. It replaces the probe-measured keepout. The tower does not grow
+  with object count (§14 Q3, 04 §8.2); the 0.3 `TOWER_GROWTH_RESERVE` is dropped once the model
+  matches the measured towers (04 §1: rectangles exact, Bambu rib towers within 0.093 mm).
+- `gui_anchor_range(flavour, tower)` (rewritten in WP I3 from 04 §6; it replaces the 1 mm Orca-family
+  margin of `src/plate_centre/gui_tower.rs:11-13` and `CLAUDE.md:36`):
+  - B: x ∈ [15, bed_x − Ŝx − 15], y ∈ [15, bed_y − Ŝy − 15], Ŝ = the GUI estimate (04 §6) with *n* =
+    the plate's filaments (counting all project filaments, as the repo does, errs safe). Applied by the
+    GUI when the project is opened; the CLI never moves the anchor.
+  - S: margin m = 1 + `prime_tower_brim_width` (U1: 6 mm). x ∈ [m, x_max − W0 − m], y ∈ [m, y_max −
+    max(D̂, D) − m], with D the **real** printed depth, because S re-clamps on every scene reload,
+    including after each slice; x_max/y_max = the bed-shape bbox maximum (U1 270.5 / 271, inferred,
+    04 Q2).
+  - R: margin 1 + b̂ (estimated real brim n_0·s_0, U1 4.91 mm) + cone bulge, applied by the CLI and the
+    GUI on every slice; an anchor within 5 mm of the range is snapped, one farther out is relocated
+    depending on object positions. The packer keeps anchors inside the range, so R never moves them.
+  - O: no clamp on open or CLI slice; the packer still keeps anchors inside [1 + brim, …] so that a
+    preset change does not move the tower.
+  The tower anchor is a packing variable (section 9.3), so the tower contest and
+  `clear_tower_of_patches` go away.
 
 ---
 
@@ -355,22 +496,31 @@ persistent directory (Q9). A cache hit skips stages A and B.
 | `soft` | only first-layer body (and the tower body's L0) may not cover it; brims and supports may | purge or prime lines (`erCustom`, no slicer check, ZR §0.5), X1 calibration strip |
 
 Plate-level kinds `tower_body` and `tower_brim` act as two more zones whose position is a packing
-variable.
+variable. `tower_body` is z-ranged: the column on every tower layer plus the chamfer rings on layers
+≥ 1 (each ring with its own layer interval). `tower_brim` is the L0 brim ring only, z ∈ (0, h0]
+(lead, 2026-11-02; 04 §9.2).
 
 ### 7.2 Kinds against plate zones (in code: `keepout/matrix.rs`)
 
 Every zone has a z-range (default: all z). A kind in band k is tested only against zones whose
-z-range meets band k. First-layer kinds are tested at layer 0.
+z-range overlaps band k (§4.1 band rule, the same positive-length overlap). First-layer kinds
+(`landing`, `support_base`) are tested against the zones whose z-range meets layer 0. The silhouette
+(all z) is tested against the union of a zone's z-ranges.
 
-| kind | printable boundary (hard) | hard zone | restricted | soft (z ≤ z_max) | tower body | tower brim / chamfer |
+| kind | printable boundary (hard) | hard zone | restricted | soft (z ≤ z_max) | tower body (column + chamfer rings, by z) | tower brim (L0 only) |
 |---|---|---|---|---|---|---|
-| body / silhouette | each part box inside the printable area (ε 1e-4) | **part hulls** must not overlap (touching allowed) | each part box at distance ≥ width from the edge (equality allowed) | allowed | forbidden, gap c | forbidden in bands below the chamfer top, gap c |
-| landing | (covered by the body rows) | (covered) | (covered) | **forbidden**, gap 0 (the overshoot is in the landing) | forbidden | forbidden |
+| body / silhouette | each part box inside the printable area (ε 1e-4) | **part hulls** must not overlap (touching allowed) | each part box at distance ≥ width from the edge (equality allowed) | allowed | forbidden, gap c (silhouette: against the column ∪ every chamfer ring; `body[k]`: the pieces in band k) | covered by the landing row |
+| landing | (covered by the body rows) | (covered) | (covered) | **forbidden**, gap 0 (the overshoot is in the landing) | forbidden (L0 column) | **forbidden** |
 | brim | — (the slicer clips) | — (clipped) | allowed | allowed | — (trimmed) | — (trimmed) |
-| support base | material inside the printable area inset by `print_edge_reserve_mm` | **forbidden** | allowed | allowed | forbidden, gap g | **allowed** (owner; GUI warning, CLI conflict without `--no-check`, ZR §0.7) |
-| support[k] / interface[k] | same as the base | forbidden | allowed | allowed | forbidden, gap g | allowed |
+| support base | material inside the printable area inset by `print_edge_reserve_mm` | **forbidden** | allowed | allowed | forbidden, gap g (L0 column) | **allowed** (owner; GUI warning, CLI conflict without `--no-check`, ZR §0.7) |
+| support[k] / interface[k] | same as the base | forbidden | allowed | allowed | **forbidden, gap g**, including the chamfer rings in every band they meet (B: band 0; S: bands 0-1) | allowed (only band 0 meets it, through the layer-0 base) |
 | tower body | inside the printable area | forbidden (validate error) | allowed | forbidden at L0 | — | — |
 | tower brim | inside the printable area (the GUI counts tower lines) | forbidden | allowed | allowed | — | — |
+
+Consequence of the band rule: `support[0]` contains the layer-0 base and is tested against the chamfer
+rings of band 0. So a support base may overlap only the part of the L0 tower brim that lies outside the
+layer-1 chamfer ring (P1S/B: the outer 2 of 7 loops, ≈ 0.9 mm; U1/S: the outer 3 of 11 loops, ≈ 1.4 mm).
+This is conservative. A per-layer test of support against the chamfer could recover the rest later.
 
 Where the slicer is looser, the rule follows the owner and the physics. Example: the CLI accepts a
 copy's support 2 mm off the bed, but copies are not clipped, so the GUI would refuse the plate.
@@ -538,12 +688,15 @@ src/pack/                 replaces packing.rs, packing_search.rs, grid.rs, layou
 
 ### 9.3 Tower anchor inside the search
 
-- Anchor candidates: the source anchor; positions flush with each side of the GUI anchor range,
-  every 2 mm; the four corners of the range. Candidates that put the tower body on a hard zone, the
-  tower body's L0 on a soft zone, or the tower outside the printable area are dropped. Tower size
-  comes from `TowerPrint` at the bound count (conservative).
+- Anchor candidates: the source anchor; positions flush with each side of the target flavour's GUI
+  anchor range (§6 `gui_anchor_range`: B 15 mm + GUI estimate; S 1 + `prime_tower_brim_width` against
+  the real depth; R 1 + estimated brim, so its CLI never snaps), every 2 mm; the four corners of the
+  range. Candidates that put the tower body on a hard zone, the tower body's L0 on a soft zone, or the
+  tower outside the printable area are dropped. Tower size and chamfer come from `TowerPrint`
+  (04, deterministic per flavour; it does not depend on object count).
 - For a lattice Λ with phase histogram H, the tower at anchor T removes the lattice points inside
-  its forbidden-origin region R_T (tower body against every kind, tower brim against body kinds).
+  its forbidden-origin region R_T (tower body, chamfer rings included, against every kind in the bands
+  its pieces meet; the L0 tower brim against landings).
   A coset r loses at most m_T points, where m_T bounds the points of one coset inside R_T
   (about area(R_T)/det + a boundary term, 5-10 here). So only phases with H[r] ≥ max H − m_T can
   win, each needs m_T point lookups, and a (lattice, anchor) score is exact and costs
@@ -587,8 +740,19 @@ Ranking key, compared lexicographically:
   copies of its class. Canonical clearance = distance from the copy's envelope to the printable
   boundary ∪ hard zones ∪ the tower body. Other copies keep the packing order, or the centre-out
   order on window plates.
-- Threshold per flavour: B = foot radius 3.75 + xy 0.75 + 1 mm (the bed-outside ring is an
-  obstacle in routing); O/R/S = 0 (clip only, and the hard rule already keeps envelopes inside).
+- Threshold per flavour, derived from 02 §2.2 and §2.8:
+  - **B**: the bed outside, the exclusion zones and the P1S cutter are one routing obstacle. A branch
+    of radius r keeps its *centre* at c(r) = q(r + 0.54) + 0.21 from it in regular mode (rounded
+    radius keys q, 02 §2.2: 6.06 mm for a full 3.73 mm foot, 2.81 mm for a 1 mm branch), q(r) + 0.21
+    in min-xy mode. The obstacle cannot change a realization whose drawn material stays at least
+    t_B = max over the radii of the band of (c(r) − r) away from it. For the goat radii (0.4-3.75 mm)
+    that is 2.70 mm (radii just above 3.36 mm, key 5.85), 2.33 mm for a full foot, 1.85 mm for a 1 mm
+    branch, ≤ 1.51 mm in min-xy mode. Measured from the un-expanded, unclipped canonical envelope per
+    band (the L0 flange expansion is not affected by the obstacle, 03 §6.2), plus that band's δ. The
+    old 5.5 mm rule was safe but over-strict. The threshold applies to the cutter as well as the edges.
+    The two 2 mm corridors through the bed centroid (02 §2.8) only weaken the obstacle there, so the
+    same threshold stays safe.
+  - **O/R/S**: 0 (clip only, and the hard rule already keeps envelopes inside).
   Below the threshold: `canonical_near_edge: true` in the report, and verification is recommended.
 - `assembly` asserts the shared-mesh default mode (no `duplicate_mesh_per_object`). Without it,
   every copy computes its own trees, and edge copies can bend inward (B), which the envelope does
@@ -605,6 +769,7 @@ Ranking key, compared lexicographically:
 ```text
 job      profile (+bed_rules), settings, extruder offset, flavour, mesh (all normal parts + paint),
          source item transform                                              (no stage)
+check    settings against §5.7; Unsupported → --support-source slicer (or fail)  (no stage)
 model    ObjectPrint per rotation class: mesh_section + first_layer + support_model (cache)
          TowerPrint from settings                                           stage "modelling"
 prepare  PlateRules = profile rules + flavour GUI band + tower; pack portfolio
@@ -625,9 +790,11 @@ sample. `plan.rs` loses `pack_at`'s double pack.
 
 1. Slice the assembled plate (`slicer_cli::slice_command`, `--arrange 0`, `--no-check` as today).
 2. Parser fixes, useful in every mode:
-   - Bambu single-object G-code has no object labels (PM §0.1). Accept `; OBJECT_ID: N`. When
-     a plate holds exactly one object, attribute every non-tower, non-custom extrusion to it, and
-     end a label at tower and custom sections.
+   - Bambu single-object G-code *does* carry `; OBJECT_ID: N` (M §1.3: found in the corpus'
+     single-object Bambu slices; PM §0.1 called it unlabelled, and the repo's
+     `layer_zones_from_sample` fails on it today). Accept `; OBJECT_ID:` as a label. As a fallback, when a plate holds exactly one object and no label
+     is found, attribute every non-tower, non-custom extrusion to it. End a label at tower and
+     custom sections.
    - `prime_tower.rs` reads G2/G3 (I/J, sampled), so Bambu rib-wall towers measure 24.9×24.0, not
      16.3×14.6 (PM §0.4).
 3. GUI-equivalent checks (`gcode_collisions/gui_checks.rs`, behaviour spec):
@@ -637,8 +804,8 @@ sample. `plan.rs` loses `pack_at`'s double pack.
      error);
    - ConflictChecker rule: centreline crossings more than 0.01 mm from segment ends, or collinear
      overlap > 0.01 mm, between different objects or an object and the tower walls/brim;
-     support×support exempt. Support × tower brim = reported, allowed (owner); everything else =
-     error;
+     support×support exempt. Support × L0 tower brim = reported, allowed (owner); support × chamfer
+     ring (layers ≥ 1) and everything else = error;
    - the S 3.5 mm part-bbox band, from the layout (no G-code needed);
    - today's material checks stay: coverage, off-plate with half width, support↔foreign-body
      distance per layer.
@@ -649,7 +816,9 @@ sample. `plan.rs` loses `pack_at`'s double pack.
    repacked **once**. Anything left over is fatal (as today). Nudge stays for now.
 6. The verifier's flavour may differ from the target flavour (U1: server O vs user S). The report
    names both. Containment is checked against the verifier-flavour envelope, which validates the
-   model; the layout's safety for the target relies on the target-flavour envelope.
+   model; the layout's safety for the target relies on the target-flavour envelope. The server's O
+   cannot see S-only conflicts: its tower is 9.5 mm deep against S's 16.1 mm (04 §1), and S's
+   supports lie up to 4-5 mm outside the CLI's (M §2.4).
 
 ### 10.3 Time window
 
@@ -698,8 +867,11 @@ STL path then runs the same default pipeline.
 These invariants change: the sample slice, `SUPPORT_SLICE_RUNS` (legacy mode only), the tower
 contest and free spot, `pack_at` packing under both bodies, the 4 mm exclusion blanket (after
 the audit), `support_edge_margin_mm` (renamed through `bed_rules`), and "a time window ignores
-`--no-final-slice`" (if Q5 is approved). Two invariants are added: canonical-first order and
-the clean-room rule.
+`--no-final-slice`" (if Q5 is approved), and the GUI tower clamp of `CLAUDE.md:36` (1 mm for every
+Orca-family slicer is wrong: S uses 1 + `prime_tower_brim_width` and re-clamps after slicing, R's CLI
+snaps, §6). `CLAUDE.md:79` ("vanilla Orca on the server matches the user's Snapmaker GUI") holds for the
+L1 patch bbox only (tower 9.5 vs 16.1 mm deep, supports up to 4-5 mm apart, 04 §1, M §2.4). Three
+invariants are added: canonical-first order, the clean-room rule and the band rule of §4.1.
 
 ---
 
@@ -710,9 +882,10 @@ the clean-room rule.
 | file | covers |
 |---|---|
 | `tests/mesh_section.rs` | all-parts slab projection on generated meshes; per-part hulls/boxes; the source rotation is kept |
-| `tests/support_model.rs` | generated meshes (table with a cantilever, bridge, L-shape, painted enforcer facets written by the test): feet trimmed by own landing ⊕ gap; expansion steps; flavour switches (flat foot vs hemisphere L1 area, bucket rule, critical-only differences); **determinism** (identical envelopes for `RAYON_NUM_THREADS` = 1 and 8, run twice); saturation rule |
-| `tests/support_fidelity.rs` | a small decimated goat fixture with paint (`tests/fixtures/support/goat_small.3mf`, copied deliberately, ≤ 300 KB) plus recorded single-object realizations per flavour (`*.realization.json`). Every recording must lie inside the envelope with 0 exceedance beyond δ. |
-| `tests/keepouts.rs` | the matrix as a table test; legacy-profile → `bed_rules` mapping; hull rule (touching allowed); soft strip blocks only the landing; restricted band uses part boxes with equality passing; tower brim allows support base |
+| `tests/support_model.rs` | generated meshes (table with a cantilever, bridge, L-shape, painted enforcer facets written by the test): feet trimmed by the own uncompensated L_0 ⊕□ gap; expansion steps; flavour switches (flat foot vs hemisphere L1 area, bucket rule, critical-only differences incl. sharp tails, 10 nm vs 1 nm grid constants of 01 §4); the exact T-class walk (classes cover T = 1..64 with no gap, every class re-run gives the same hash) and the two S9 families; the order test vectors of 02 §8 (AABB order, merge rounds, compaction, nearest boundary point); **determinism** (identical envelopes for `RAYON_NUM_THREADS` = 1 and 8, run twice); every §5.7 setting returns `Unsupported` with its name |
+| `tests/support_fidelity.rs` | a small decimated goat fixture with paint (`tests/fixtures/support/goat_small.3mf`, copied deliberately, ≤ 300 KB) plus recorded single-object realizations per flavour (`*.realization.json`), including at least one realization of each corpus L1 family of B. Every recording must lie inside the envelope with 0 exceedance beyond δ. |
+| `tests/keepouts.rs` | the matrix as a table test; legacy-profile → `bed_rules` mapping; hull rule (touching allowed); soft strip blocks only the landing; restricted band uses part boxes with equality passing; tower brim (L0) allows support base; chamfer rings are tower body and forbid `support[k]` in their bands; the band rule (a layer (1.88, 2.16] is in bands 0 and 1; a layer ending exactly at 2.0 only in band 0; layer 0 in band 0 and in the first-layer kinds), shared with `verify_outputs`' copy of the table |
+| `tests/first_layer.rs` | landing (05 §4): slice plane h0/2, multi-part union, ε_L per wall generator |
 | `tests/pack_portfolio.rs` | lattice enumeration and HNF residue counts against brute force on small no-fit sets; tower-anchor rescoring against a full recount; effort-prefix monotonicity; byte-identical results across thread counts |
 | `tests/clearance.rs` | property test with fixed-seed random polygons: raster-admissible ⇒ vector distance ≥ G; over-reserve ≤ √2·res |
 | `tests/validation.rs` | the vector check catches an injected violation that the raster check missed; zone caching gives the same result as uncached |
@@ -734,8 +907,27 @@ the clean-room rule.
   and envelope exceedance per object and band. Output goes to `docs/calibration/<flavour>.csv`.
   This campaign sets δ and gates removal of the 4 mm exclusion blanket.
 
+**Calibration data still missing** (review §5.2; all single-object and sequential unless noted, never
+full plates by agents):
+
+| # | data | why |
+|---|---|---|
+| C1 | **Owner Snapmaker Orca 2.4.0 GUI exports** of a single goat at 0° and 180°, ≥ 5 each; one batch right after a fresh GUI start and one after slicing another project first | the U1 target flavour S has no single-object data; S9 session effect (Q20) |
+| C2 | `goat-runner-orca:2.4.2` (O): 10 runs at 0° and 180° at a fixed cpuset, then cpusets {1, 2, 4, 14} | the server verifier's flavour is unvalidated; O is the only CLI proxy for S's S1/S2/S9 |
+| C3 | ≥ 40 more B runs at 0° and 180° for P1S and A2L (≈ 4 s each) | the B unions are not saturated (16 realizations in 53 observations) |
+| C4 | B and O on Linux with `taskset` T ∈ {1, 2, 4, 8, 14}, 5 runs each at 0° | T-classes beyond the owner's 14 |
+| C5 | discriminating run: O 2.4.2 ×10 at a fixed cpuset; B at cpuset 1 ×5 | if O varies, S1 or S9 is live (R has S1, so mainly S9); if not, SU is B-only and B's code outside 01-03 must be re-read |
+| C6 | owner GUI single-goat P1S/A2L exports at 0°, 5 each | "owner GUI ≡ CLI distribution" (02 Q1) is open; one GUI plate shows a family (L1 616.7) the CLI never produced |
+| C7 | an A2L full plate and one mixed 0/180 plate per printer, sliced off-peak by the owner, through `plate_audit` | S8 for A2L; the double-lattice member and canonical-first ordering with two classes |
+| C8 | B P1S single goat at a bed-edge midpoint, a corner and against the cutter, 3 runs each | S4 clip and the B corridor obstacle (02 §2.8, 03 Q2), the §9.7 threshold |
+| C9 | P1S 5° rotation sweep, 1 run each (72 slices) | the 225° anomaly (01 Q9); rotation classes beyond {0°, 180°} |
+| C10 | recount realizations and exceedances on outer boundaries (`support_patch_polygon` per layer and band) instead of line hashes; extend `derive.py` to body polygons per band | δ on footprints, not toolpaths; landing/body validation (05 L1) |
+| C11 | two-cube disjoint object (R and B); a painted synthetic with an enforcer patch | 01 Q5 fast path; paint projection |
+
 **Acceptance gate for switching the default to `--support-source model`:**
 - counts ≥ the targets at the calibrated δ;
+- per flavour: calibration data for the target flavour exists (U1: C1), and every corpus realization
+  of that flavour lies inside the model envelope ⊕ δ;
 - 0 support/body contacts on ≥ 5 audited full plates per printer;
 - byte-identical determinism;
 - packing < 5 s.
@@ -749,11 +941,11 @@ owns its files. Only WP0 touches `src/lib.rs` and `Cargo.toml`.
 
 | WP | owner | files (exclusive) | depends on | delivers |
 |---|---|---|---|---|
-| **0** types and stubs | P | `src/lib.rs`, `Cargo.toml` (`libm`, polygon backend per Q6), `src/object_print.rs`, `src/keepout/{mod,matrix,rules}.rs` (types and the matrix table), `src/footprint.rs` (legacy adapter), `src/options.rs` (`PlateRules` field + legacy conversion; P3 takes it over afterwards), `tests/footprint.rs`, empty module stubs for every new module below | — | `ObjectPrint`, `PrintKind`, `Realization`, `Keepout`, `PlateRules`, `pair_rules()`, legacy `Footprint` adapter; compiles; table test |
+| **0** types and stubs | P | `src/lib.rs`, `Cargo.toml` (`libm`, `i_overlay`, §5.2), `src/object_print.rs`, `src/keepout/{mod,matrix,rules}.rs` (types and the matrix table), `src/footprint.rs` (legacy adapter), `src/options.rs` (`PlateRules` field + legacy conversion; P3 takes it over afterwards), `tests/footprint.rs`, empty module stubs for every new module below | — | `ObjectPrint`, `PrintKind`, `Realization`, `Keepout`, `PlateRules`, `pair_rules()`, legacy `Footprint` adapter; compiles; table test |
 | S1 mesh and paint | S | `src/embedded_mesh.rs`, `src/mesh_section.rs`, `src/paint.rs`, `tests/mesh_section.rs` | 0 | all normal parts, source transform, slab bands, hulls/boxes, paint decode |
-| S2 support stage A | S | `src/support_model/{mod,settings,flavour,layers,sections,overhangs,clearance}.rs`, `src/polygon_ops.rs` | S1 | behaviour spec (support) for A1-A5; flavour switches |
-| S3 support stage B | S | `src/support_model/{tips,descend,merge,place,smooth,draw,base,bands}.rs` | S2 | realizations per member |
-| S4 ensemble and envelope | S | `src/support_model/{ensemble,envelope,cache}.rs`, `tests/support_model.rs`, `tests/support_fidelity.rs`, `tests/fixtures/support/` | S3 | envelope, saturation, cache, initial δ |
+| S2 support stage A | S | `src/support_model/{mod,settings,flavour,layers,sections,overhangs,clearance}.rs`, `src/polygon_ops.rs` | S1 | A1-A5 from 01 and 02 §2; flavour switches; flavour grid (B 10 nm / int32, O/R/S 1 nm); `polygon_ops` with the Clipper-1 emulation of §5.2; the `Unsupported` checks of §5.7 |
+| S3 support stage B | S | `src/support_model/{tips,descend,merge,place,smooth,draw,base,bands}.rs` | S2 | B1-B8 from 01 §5, 02 §3-§5 and 03; realizations per member (T-class, S9 family, optional tip order) |
+| S4 ensemble and envelope | S | `src/support_model/{ensemble,envelope,cache}.rs`, `tests/support_model.rs`, `tests/support_fidelity.rs`, `tests/fixtures/support/` | S3 | exact T-class × S9 enumeration, optional S1 axis with saturation, envelope, cache, initial δ; investigation of the unidentified B source SU (C5-C7); report on whether polygon-backend differences dominate δ |
 | P1 clearance and masks | P | `src/span_raster.rs`, `src/raster_mask.rs` → `src/kind_masks.rs`, `src/collision.rs`, `tests/clearance.rs`, `tests/raster.rs`, `tests/support_landing.rs`, `tests/support_overlap.rs` | 0 | Euclidean masks, matrix pairs, feasible map with zones |
 | P2 validation split | P | `src/validation.rs`, `src/validation_geometry.rs`, `src/bin/verify_outputs/*`, `tests/validation.rs` | P1 | raster/vector split, cached zones, parallel pairs |
 | P3 portfolio skeleton | P | `src/pack/{mod,context,no_fit,free_map,sweep,select}.rs`, `src/packing*.rs`, `src/grid.rs`, `src/layout.rs`, `src/frame.rs` (wrappers), `src/options.rs` (after WP0), `tests/packing.rs`, `tests/constraints.rs` | P1 | Ctx, FreeCounts, sweeps moved, ranking, wrappers |
@@ -762,7 +954,7 @@ owns its files. Only WP0 touches `src/lib.rs` and `Cargo.toml`.
 | P6 improve and robustness | P | `src/pack/improve.rs`, `src/pack/robustness.rs` | P4 | member E, δ*, effort prefix |
 | I1 verification fixes | I | `src/gcode_collisions/{parser,gui_checks}.rs`, `src/colored_packer/prime_tower.rs`, `src/gcode_footprint.rs` (`realization_from_gcode`), `tests/gui_checks.rs`, `tests/prime_tower.rs` | — (start now; WP0 only for the `Realization` type) | Bambu label fix, tower arcs, GUI-equivalent checks, G-code → `Realization` |
 | I2 profiles and catalog | I | `src/colored_packer/profile.rs`, `src/colored_packer/bed_rules.rs`, `src/bin/printer_catalog/{extract,qualify,annotate}.rs`, `src/purge_detect.rs`, `profiles/*.json`, `tests/colored_profile.rs`, `tests/keepouts.rs` | 0 | schema, legacy mapping, derivation, migration of U1/P1S/A2L, regenerated catalog |
-| I3 first layer, brim, tower | I | `src/first_layer.rs`, `src/tower_model.rs`, `src/plate_centre/gui_tower.rs` (clean-room review) | S1 | landing, brim, `TowerPrint` |
+| I3 first layer, brim, tower | I | `src/first_layer.rs`, `src/tower_model.rs`, `src/plate_centre/gui_tower.rs` (clean-room review) | S1 | landing (05), brim (03 §5), `TowerPrint` with chamfer rings as z-ranged body (04), per-flavour `gui_anchor_range` (§6) |
 | I4 pipeline | I | `src/bin/colored_3mf_packer/{main,args,job,model,prepare,plan,order,assembly,finish,verify,report,tower}.rs`, `src/progress.rs`, `webapp/backend/.../PackStage.kt`, frontend stage label, `CLAUDE.md`, `docs/packing-safety.md`, `docs/packing-search.md` | S4, P4, I2, I3 (P2 for timing) | default path, `--verify`, state v2, report, stages |
 | I5 time window | I | `src/bin/colored_3mf_packer/{time_window,time_report}.rs`, `src/print_time.rs` | I4 | small-slice line, `--window-exact` |
 | I6 harness | I | `examples/{support_corpus,goat_bench,plate_audit}.rs`, `docs/calibration/` | S4, I1 | corpus, bench, audit, δ calibration |
@@ -791,20 +983,27 @@ WP0 ─┬─ S1 ── S2 ──────── S3 ────────�
 
 | # | question | needed for |
 |---|---|---|
-| Q1 | Calibrated δ_L1 and δ_band per flavour, and whether P1S ≥ 43 and A2L ≥ 70 hold with them (they fail at g + δ ≈ 1.5 mm, RP §5.3). If not: 0/180 double lattices (P1S 47, A2L 79 with real realizations) become the default. | gate |
-| Q2 | U1: pack for Snapmaker Orca 2.4.0 (owner's GUI) only, or for the union with the server's vanilla Orca? The measured difference is 5.4 / 8 mm, but mixed with rotation. Needs a same-rotation comparison. | §5.3 |
+| Q1 | Calibrated δ_L1 and δ_band per flavour, and whether P1S ≥ 43 and A2L ≥ 70 hold with them (they fail at g + δ ≈ 1.5 mm, RP §5.3). The corpus exceedances (B up to 3.0 / 4.4 mm, S vs R up to 4.1 / 5.4 mm outside 5-run unions, §5.5) make this the binding question. If not: 0/180 double lattices (P1S 47, A2L 79 with real realizations) become the default. | gate |
+| Q2 | U1: pack for Snapmaker Orca 2.4.0 (owner's GUI) only, or for the union with the server's vanilla Orca? Same-rotation comparison now exists: S GUI plates lie 0.7-4.1 mm (L1) / 1.5-5.4 mm (bands) outside the R CLI union at 0° (M §2.4). | §5.3 |
 | Q3 | Tower growth with object count (P1S 18.5 → 23.2 mm) was measured with the arc-blind parser. Re-measure after I1, then model it or drop the 0.3 reserve. | I3 |
-| Q4 | Exact landing rule: elephant-foot compensation and thin-tip overshoot (≤ 1.66 mm measured). It binds the support-base pair. | I3 |
+| Q4 | Exact landing rule. **Answered by 05:** section at h0/2 ⊕ 0.05 mm (classic walls; corpus max excess 0.026 mm in 120 slices); Arachne bound ½·(min_bead_width − min_feature_size), unmeasured (05 L2). The old "≤ 1.66 mm" was patch-vs-silhouette growth, not a landing measurement. | I3 |
 | Q5 | May a time-window plate ship without a full slice (small-slice line T = a + bN)? Accuracy against past window plates is still to be measured. | I5 |
-| Q6 | Polygon backend: Clipper2 via FFI (closest to upstream offsets, adds C++ to the build) or pure Rust `i_overlay`/`geo` (no FFI, more deviation, so a larger δ). Integer coordinates either way. | WP0 |
+| Q6 | Polygon backend. **Decided** (§14): `i_overlay` behind `polygon_ops.rs` with Clipper-1 emulation where it changes discrete decisions; facade swappable; WP S4 reports whether backend differences dominate δ. | WP0 |
 | Q7 | U1 `PRINT_START` purges of other toolheads, and the A2L `G130` line geometry: are they real keepouts? | I2 |
 | Q8 | STL jobs: which GUI flavour the user will slice with (profile default, or ask in the UI). | I4 |
 | Q9 | Envelope cache in the webapp: persistent volume vs SeaweedFS/DB; who invalidates it on `MODEL_VERSION` changes. | I4 |
 | Q10 | Keep `--support-source slicer` long-term, or delete it after the gate? | after M3 |
 | Q11 | Skirt (`skirt_loops > 0`): model it as a plate-level ring or keep it as an explicit error. | I3 |
-| Q12 | S3 time trigger (30 s) on loaded user machines: is a "tripped at layer j" member needed for big meshes even when the island-count trigger does not fire? | S4 |
+| Q12 | S3 time trigger (30 s) on loaded user machines: is a "tripped at layer j" member needed for big meshes even when the island-count trigger does not fire? | WP S4 |
 | Q13 | Rotations beyond {0°, 180°}: each costs one more ensemble and one more draw on the plate. | P5 |
 | Q14 | Per-band body/body as the default? It is physically valid, but not binding for the goat (cell 834 vs 1072 mm², CM §0.5). | P1 |
+| Q15 | **Where does B's run-to-run spread come from (SU)?** S1 (unproven: R has the same race and is deterministic), S2 (constant per machine), S3 (ruled out) and S9 (two families) do not explain 7 L1 families in 53 P1S observations. The answer decides whether the ensemble can ever cover B without a large δ. Experiments C5-C7. | WP S4 |
+| Q16 | **U1 target data:** can the owner export single-goat S GUI slices (0°/180°, ≥ 5 runs each, C1)? Without them the U1 envelope is unvalidated. | gate |
+| Q17 | Fidelity target: reproduce upstream realizations, or a sound envelope with a calibrated δ? **Answered** (§14). | WP S2-S4 |
+| Q18 | Tower chamfer vs supports: does "supports may overlap the tower brim" mean L0 only? **Answered** (§14). | §7.2 |
+| Q19 | Band boundary rule shared by `validate_result` and `verify_outputs`. **Answered** (§4.1, §14). | P1, P2 |
+| Q20 | GUI session effect of S9 (01 Q2): should the owner restart the slicer before slicing a packed plate, which pins S9 to the CLI families? Needs C1's fresh-start batch. | WP S4 |
+| Q21 | Bambu adds supports at z 26-41.6 mm at 225° only (5 of 5 runs, P1S and A2L; M §2.2). Which rule fires (01 Q9)? Required before `--rotations` admits classes beyond {0°, 180°}. | P5 |
 
 ---
 
@@ -822,6 +1021,28 @@ WP0 ─┬─ S1 ── S2 ──────── S3 ────────�
 - Q7: keep today's conservative strips; Q8: profile `gui_flavour`; Q9: `--cache-dir`, webapp wiring later;
   Q10: keep `--support-source slicer` for calibration; Q11: skirt = explicit error; Q13: {0°, 180°} by
   default, `--rotations` for more; Q14: per-band body/body is an option, silhouette stays the default.
+
+Decisions after the spec review (`2026-11-02-organic-support-spec/00-review.md` §7; lead, 2026-11-02):
+
+- Q17 (fidelity target): a behaviourally faithful generator (same stages, formulas, constants and
+  grids per flavour: B 10 nm with int32-like truncation, O/R/S 1 nm), plus an ensemble over the known
+  axes (the exact T-classes of 02 §4.7, the two S9 connector families, S1 interleavings as an optional
+  axis), plus δ calibrated against the corpus. B's spread has an unidentified source, so δ must cover
+  the corpus realizations; WP S4 investigates the source (Q15).
+- Q6 (refined): `i_overlay` behind `polygon_ops.rs`, emulating Clipper-1 semantics where they change
+  discrete decisions (miter-limit floor 2, arc-tolerance rule, decimation, flavour grid). The facade
+  stays swappable; WP S4 reports whether backend differences dominate δ.
+- Q18 (tower): the chamfer rings on layers ≥ 1 belong to the tower **body** zone, z-ranged; only the
+  L0 tower brim is the `tower_brim` zone that supports may overlap. Clamps: Snapmaker GUI margin
+  1 + `prime_tower_brim_width`; Bambu 15 mm + GUI estimate; Orca 2.5 CLI snaps (§6).
+- Q19 (bands): a printed layer occupies (z_prev, z]; its material goes into every 2 mm band its
+  interval meets. Layer 0 material is in band 0 and in its own first-layer kinds (`landing`,
+  `support_base`). `validate_result` and `verify_outputs` share the rule (§4.1).
+- Unsupported settings: the model returns an explicit `Unsupported` error naming the setting; the
+  pipeline falls back to the slicer path or fails (§5.7).
+- Identifiers: the specs and the code use our names (`nearest_inside`, `radius_valid`, `step_down`,
+  `radius_key`, `try_merge`, `fill_notches`, …), never upstream names (§1, 02 §1.4).
+- Still open: Q15 (SU source), Q16 (owner S exports), Q20 (S9 session effect), Q21 (225° supports).
 
 ## Appendix A. Where the facts come from
 

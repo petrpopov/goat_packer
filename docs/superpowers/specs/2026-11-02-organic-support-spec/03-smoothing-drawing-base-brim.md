@@ -16,14 +16,17 @@ half: overhang detection, tip and roof placement, influence areas, merging and n
 |---|---|---|
 | B | `bambu_0208` (BambuStudio tag v02.08.02.61) | owner's P1S and A2L GUI, server P1S/A2L |
 | O | `orca_242` (OrcaSlicer v2.4.2) | server U1 |
-| O25 | `orca_250rc` (OrcaSlicer v2.5.0-rc) | local `/Applications/OrcaSlicer.app` |
+| R | `orca_250rc` (OrcaSlicer v2.5.0-rc) | local `/Applications/OrcaSlicer.app` |
 | S | `snaporca240` (Snapmaker Orca v2.4.0) | owner's U1 GUI |
 
 When a statement holds for all four, the citation is given for B and O only. Every difference is marked
-**[DIFF]**. Every source of run-to-run variation is marked **[NONDET]**.
+**[DIFF]**. Every source of run-to-run variation is marked **[NONDET]**. The tags B/O/R/S are the same in
+every part of this spec set; R alone is the flavour, R(e, f) with arguments is the radius function (§1.1).
+Operations carry our names (glossary 02 §1.4); upstream names appear only in citations.
 
 **Licensing.** All four slicers are AGPL-3.0. This document describes behaviour in our own words: prose,
-formulas, constants, step order and edge cases, plus pseudo-code written by us at the algorithm level.
+formulas, constants, order properties and edge cases. Where upstream iterates (smoothing, §2.4), the spec
+gives the update equations and the stop rule, not the loop.
 Nothing here is a translation of upstream code. The `file:line` references exist only so that an
 implementer can check the behaviour.
 
@@ -39,7 +42,7 @@ implementer can check the behaviour.
 
 **Goat-project values used in the examples** (from `/tmp/goat_research/cfg/*/Metadata/project_settings.config`):
 
-| | P1S (B) | A2L (B) | U1 (O / S / O25) |
+| | P1S (B) | A2L (B) | U1 (O / S / R) |
 |---|---|---|---|
 | first layer height h0, layer height h | 0.20, 0.28 | 0.20, 0.28 | 0.25, 0.28 |
 | z grid `z_l = h0 + l·h` | 0.20, 0.48, 0.76 … | same | 0.25, 0.53, 0.81 … |
@@ -97,7 +100,7 @@ Constants:
 | T | integer `max((r_branch − r_tip)/(w/3), r_branch/h)` | 4 layers |
 | Δr | `tan(branch_diameter_angle)·h` | tan 5°·0.28 = 0.0245 per layer |
 | Δr_foot | `min(tan(0.7 rad)·h, w/2)` | 0.21 per layer |
-| f | grows by at most 1 per layer near the bed, only while the result stays ≤ `recommendedMin(l) = r_branch + (l_bp − l)·Δr_foot` and the wider branch still fits | — |
+| f | grows by at most 1 per layer near the bed, only while the result stays ≤ `r_rec(l) = r_branch + (l_bp − l)·Δr_foot` and the wider branch still fits | — |
 | l_bp | `(r_bp − r_branch)/Δr_foot` | ≈ 13 layers |
 | r_bp | half of a hard-coded 7.5 mm "initial layer diameter" | 3.75 |
 
@@ -109,7 +112,7 @@ trunk has about 3.08.
 
 ## 2. Organic smoothing ("avoid collisions" pass)
 
-B `TreeSupport3D.cpp:3628-3836`, O `:3030-3291`, O25 `:3074-3335`, S `:3016-3228`. The pass is called
+B `TreeSupport3D.cpp:3628-3836`, O `:3030-3291`, R `:3074-3335`, S `:3016-3228`. The pass is called
 from the drawing routine before any geometry is generated (B `:4754`, O `:3734`). All four builds use the
 same "new" line-based variant (`TREE_SUPPORT_ORGANIC_NUDGE_NEW` is defined); the older OpenVDB variant is
 compiled out.
@@ -138,10 +141,11 @@ For each layer, the obstacle is the boundary of the object's **radius-0 collisio
 - `xy_min = min(xy, ½·external perimeter width)` = 0.21 mm (goats);
 - the `xy_min/2` term = the single top-z-gap layer;
 - one bottom-z-gap layer below (`L_{l−1}`);
-- miter offsets with limit 1.2.
+- miter offsets with requested limit 1.2, which the offset library raises to 2 (02 §1.1): corners with
+  an interior angle between 60° and ≈ 113° are mitred, not squared.
 
-Sources: B `TreeModelVolumes.cpp:452-560`; `getCollision` with min-xy flag `:313`; `ceilRadius` rule
-`TreeModelVolumes.hpp:148-154`.
+Sources: B `TreeModelVolumes.cpp:452-560`; the min-xy collision lookup `:313`; the radius-key rule (our
+`radius_key`, 02 §2.2) `TreeModelVolumes.hpp:148-154`.
 
 Note that it uses `xy_min`, not the 0.75 mm `support_object_xy_distance`. The full xy distance only acts
 through the influence areas of the middle stage.
@@ -175,35 +179,32 @@ A sphere only tests the layers its own tree occupies near it:
 Layer spacing in this test uses the nominal h, also for layer 0. The cross-section radius on layer k is
 `ρ_k = √(r² − ((k − l)·h)²)`; layers with `ρ_k² ≤ 0` are skipped.
 
-### 2.4 One iteration (Jacobi style)
+### 2.4 Update rule (Jacobi style)
 
+Let x_i⁽ⁿ⁾ be the XY of sphere i after iteration n, with x⁽⁰⁾ the placed node positions. Locked spheres keep
+x⁽⁰⁾. For every unlocked sphere i, iteration n ≥ 1 computes, from x = x_i⁽ⁿ⁻¹⁾ and the previous positions p_j =
+x_j⁽ⁿ⁻¹⁾ of its neighbours:
+
+```text
+collision depth   D  = max over the tested layers k (§2.3) of  ρ_k − |x − q_k|,
+                       q_k = the point of layer k's obstacle boundary (§2.2) nearest to x, within ρ_k
+push              y  = x + a² · (x − q)/|x − q|,   a = min(D + 0.1, 0.5),   if D > 0 (q = q_k of the max)
+                  y  = x                                                     otherwise
+target            t  = mean(p_parents)                              (no child)
+                  t  = ½·mean(p_parents) + ½·p_child                (with a child)
+smoothing         x_i⁽ⁿ⁾ = y + clamp_len(½·(t − y), 0.2)
 ```
-for iteration in 0 .. 99:
-    remember every sphere's position as prev (all spheres, before any update)
-    moved = 0
-    for every unlocked sphere S (in parallel; each S only writes itself):
-        # collision push
-        find, over the tested layers k, the obstacle boundary point q_k closest to S's XY
-            that lies within ρ_k; depth_k = ρ_k − |S − q_k|
-        take the layer with the largest depth; if that depth > 0:
-            if depth > 1e-4: moved += 1
-            a = clamp(depth + 0.1, 0, 0.5)
-            move S in XY away from q by a² (see note)        # [DIFF] Orca: then apply the anchor limit
-        # Laplacian step
-        target = mean of the parents' prev XY            (no child)
-               = ½·mean(parents' prev XY) + ½·(child's prev XY)   (with child)
-        step = ½·(target − S)                                # smoothing factor 0.5
-        move S by step, shortened to at most 0.2 in length   # [DIFF] Orca: then apply the anchor limit
-    if moved == 0: stop
-write every sphere's XY back to its node (rounded to the internal integer grid)
-```
+
+`clamp_len(v, c)` shortens v to length c if it is longer. **[DIFF]** In O and R, y and x_i⁽ⁿ⁾ are each passed
+through the anchor limit below. **Stop rule:** the last iteration is the first n ≥ 1 in which no sphere has
+D > 1e-4 mm, or n = 100. The final XY is written back rounded to the flavour grid.
 
 Constants: extra gap 0.1, push cap 0.5, smoothing cap 0.2, factor 0.5, at most 100 iterations
 (B `:3749-3752`, `:3811`; O `:3152-3155`, `:3262`).
 
-Details that matter for a faithful reproduction:
+Properties that matter for a faithful reproduction:
 
-- **The push is the square of the clamped value.** The code scales the unit direction by `a` twice, so
+- **The push is the square of the clamped value.** Upstream scales the unit direction by `a` twice, so
   the actual displacement is `a²`: between 0.01 mm (shallow touch) and 0.25 mm (depth ≥ 0.4) per
   iteration, not `a`. B `:3790-3793`; O builds the candidate the same way, `:3239-3241`.
 - **Weights:** each parent is weighted by the sphere's **own** radius, so all parents weigh the same. The
@@ -212,14 +213,13 @@ Details that matter for a faithful reproduction:
   is inside the collision area and nearer than ρ to its boundary is pushed *further in* (the direction is
   centre minus boundary point). A centre deeper than ρ inside is not detected at all. Node placement
   normally keeps centres outside, so this is an edge case.
-- The push uses the sphere's current position. The Laplacian uses the neighbours' `prev` positions and
-  the sphere's own position after this iteration's push. A sphere that does not collide still gets the
-  Laplacian step.
-- **Termination:** the loop always runs at least once, so every unlocked sphere gets ≥ 1 smoothing step.
-  It stops after the first iteration in which no sphere collides deeper than 1e-4 mm. If collisions
-  persist, it runs all 100 iterations.
+- The push uses the sphere's own previous position; the target uses the neighbours' previous positions;
+  the smoothing step starts from the pushed position y. A sphere that does not collide still gets the
+  smoothing step.
+- **Termination:** at least one iteration always runs, so every unlocked sphere gets ≥ 1 smoothing step.
+  If collisions persist, all 100 iterations run.
 
-**[DIFF] Orca 2.4.2 and 2.5-rc anchor limit** (O `:3157-3196`, O25 `:3201-3245`; absent in B and S). The
+**[DIFF] Orca 2.4.2 and 2.5-rc anchor limit** (O `:3157-3196`, R `:3201-3245`; absent in B and S). The
 push candidate and the smoothing candidate are each limited, in sequence:
 
 1. against the **child's prev position** with allowed distance
@@ -255,7 +255,7 @@ Smoothing ignores influence areas completely.
   bound exists yet (open question Q1).
 
 **Bound B, per iteration and node:** the displacement is at most 0.25 + 0.2 = 0.45 mm per iteration, so
-≤ 45 mm in total for B/S. For O/O25 a node additionally stays within
+≤ 45 mm in total for B/S. For O/R a node additionally stays within
 `max(current distance, radius difference + 0.131)` of each linked neighbour's previous position, per
 iteration.
 
@@ -270,7 +270,7 @@ a neighbour more than the push total.
 
 ## 3. Drawing branches into per-layer polygons
 
-B `organic_draw_branches` `TreeSupport3D.cpp:4692-5229`, O `:3673-4178`, O25 `:3769-4313`,
+B `organic_draw_branches` `TreeSupport3D.cpp:4692-5229`, O `:3673-4178`, R `:3769-4313`,
 S `:3596-4009`.
 
 ### 3.1 Trees and branches
@@ -280,9 +280,9 @@ S `:3596-4009`.
 3. Every unmarked element that has parents starts a new **tree**.
 4. From that element, walk up recursively. At each node with k parents, start k **branches**. Each
    branch is the chain of nodes from that node upwards while every node has exactly one parent. The
-   chain ends at a tip (no parents, `has_tip`) or at the next bifurcation node, which is included and
+   chain ends at a tip (no parents: a *tip branch*) or at the next bifurcation node, which is included and
    from which the walk continues.
-5. The first branch of a tree is the **root branch** (`has_root`).
+5. The first branch of a tree is the **root branch**.
 6. A bifurcation node is the last node of the incoming branch and the first node of every outgoing
    branch.
 7. Elements with neither parents nor a child (isolated single nodes) belong to no tree and are **never
@@ -313,15 +313,15 @@ For a branch with nodes `n_0 … n_m`, the positions are 3D: (smoothed XY, `z_la
 - **Caps:** both ends get a hemisphere of the end node's radius, built from `⌈π/(2·step)⌉` rings and
   closed with a fan. The bottom cap points along the reverse of the first segment, the top cap along the
   last segment.
-- **[DIFF] Flat foot (O, O25; not S 2.4.0, not B):** when a root branch starts on layer 0, the bottom
+- **[DIFF] Flat foot (O, R; not S 2.4.0, not B):** when a root branch starts on layer 0, the bottom
   hemisphere is replaced by a vertical cylinder of the root radius from z = 0 to `z_0`, with a flat
-  bottom disc (O `:2941-2957`, O25 `:2985-3001`). Snapmaker's main branch has the same change
+  bottom disc (O `:2941-2957`, R `:2985-3001`). Snapmaker's main branch has the same change
   ("Orca #14092"); its 2.4.0 tag does not.
 - **[DIFF] Self-folding split (B only)** (B `:3521-3624`). Bambu tests every consecutive pair of section
   discs for a true 3D intersection (both discs cross the other's plane and their chords on the common
   line overlap; near-parallel normals, |sin| < 1e-4, count as safe). At every unsafe pair it cuts the
   path. Maximal safe runs become separate tubes; each unsafe edge becomes its own two-node capsule with
-  hemispherical caps. Overlaps are resolved by the non-zero fill rule when slicing. O/O25/S emit one tube
+  hemispherical caps. Overlaps are resolved by the non-zero fill rule when slicing. O/R/S emit one tube
   per branch, so a self-folding strip can lose slice area there. That only removes area: an envelope
   that includes the full capsule is unaffected.
 
@@ -363,7 +363,7 @@ Layer 0 of a root branch:
 - B/S: the slice at ζ_0 cuts the bottom hemisphere just h0/2 below the root centre, giving a disc of
   radius ≈ `√(r_0² − (h0/2)²)` (≈ r_0 − 0.002 for r_0 = 3.75), plus the start of the tube. All of it
   lies inside `disc(root XY, r_0)`.
-- O/O25: exactly the flat-foot cylinder, `disc(root XY, r_0)`.
+- O/R: exactly the flat-foot cylinder, `disc(root XY, r_0)`.
 
 ### 3.4 Trims applied to every branch slice
 
@@ -373,12 +373,12 @@ For each sliced layer l of a branch, in this order:
    (`(L_{l−1} ∪ L_l) ⊕ 0.21 ∪ L_{l+1} ⊕ 0.105` for the goats). In Bambu `C_l` also contains the bed
    exterior pieces ⊕ 0.21 (§2.2).
 2. **Intersect with the bed polygon** of the computing object (§6).
-3. **[DIFF] Orca only (O, O25):**
+3. **[DIFF] Orca only (O, R):**
    - both operations use a 10 nm "safety offset";
    - slivers below 1e-6 mm² are dropped after each slice;
    - a branch whose slices are all empty is skipped.
 
-Sources: B `:4929-4930`; S `:3806-3807` (same as B); O `:3891-3895`; O25 `:3987-3990`.
+Sources: B `:4929-4930`; S `:3806-3807` (same as B); O `:3891-3895`; R `:3987-3990`.
 
 **Measured consequence:** on layers ≥ 1 the support may come as close as **0.21 mm** (material to
 material) to its **own** body, not 0.75. Minimum support-to-body centreline gaps in the single-object
@@ -413,7 +413,7 @@ widening.
 
 - **[DIFF]** How far it may drop:
   - Snapmaker 2.4.0, Orca 2.4.2 and 2.5-rc: at most `5·r_root/h` layers, unless the branch is flagged
-    "very lost", which drops it to layer 0 (S `:3830`, O `:3949`, O25 `:4058`);
+    "very lost", which drops it to layer 0 (S `:3830`, O `:3949`, R `:4058`);
   - **Bambu:** drops all the way to the model or the bed, with no layer budget ("nofloat", B
     `:4955-4975`).
 - Orca also keeps the lowest dropped slice as a bottom contact and has extra fallbacks (O `:3986-4019`).
@@ -427,7 +427,7 @@ needs `π·r_tip² > 1 mm²` (0.50 < 1) or a zero-gap interface.
 
 All branch slices of a tree are collected per layer and unioned where more than one branch contributes.
 
-**[DIFF] Bambu only, keep-main** (B `:5071-5160`; not in O/O25/S). For each tree:
+**[DIFF] Bambu only, keep-main** (B `:5071-5160`; not in O/R/S). For each tree:
 
 1. Split each layer's union into connected parts.
 2. Mark a part as kept if any node of that tree on that layer lies inside it, or within 0.025 mm of it.
@@ -441,11 +441,14 @@ that ignores it stays sound.
 ### 3.7 Global merge and clean-up per layer
 
 1. Gather all trees' slices per layer and union them.
-2. **`smooth_outward` with clip distance w (0.42):** fills sharp concave notches and cracks whose mouth
-   is narrower than w. It only adds area, and never outside the polygon's local convex hull (Cura-derived
+2. **Notch filling** (our `fill_notches`; upstream `smooth_outward`) with clip distance w (0.42): fills
+   sharp concave notches and cracks whose mouth is narrower than w. It only adds area, and never outside the polygon's local convex hull (Cura-derived
    routine, `MutablePolygon.cpp:257-330` in the `zones_bambu` checkout).
-3. **Simplify** with tolerance `min(0.03, resolution)` = 0.03 mm. Orca 2.4.2 and Snapmaker additionally
-   force strictly simple output.
+3. **Simplify** with tolerance `min(0.03, resolution)` = 0.03 mm (Douglas-Peucker, then a self-union, 02
+   §1.1 S(τ)). **[DIFF]** Only B's self-union is strictly simple (its two-argument simplify uses the
+   library's strictly-simple mode, B `:5201`, `Polygon.cpp:658-675`). O and S pass the constant `false`
+   (O `:4151`, `TreeSupportCommon.hpp:591`; S `:3981`), and R uses a plain union (R `Polygon.cpp:685-700`).
+   The difference is vertex-level only (touching vertices split or not); the area is the same.
 4. **Roles:**
    - subtract this layer's **top-contact** polygons (roofs) from base and from bottom contacts;
    - subtract bottom contacts from base;
@@ -470,7 +473,8 @@ placed as a roof:
 - **[NONDET]** The interface placer appends polygons from parallel tasks under a mutex, so their order
   varies between runs. The set is identical, and all of them are unioned later.
 
-**`generate_interface_layers`** (B `SupportCommon.cpp:59-297`, O `:59-242`) then takes, for every base
+**Interface re-labelling** (upstream `generate_interface_layers`, B `SupportCommon.cpp:59-297`, O `:59-242`)
+then takes, for every base
 layer:
 
 - the top-contact polygons that lie within the next N = 3 layers above it, and the bottom-contact
@@ -510,7 +514,7 @@ T_l = ∪ over branches, for each axis segment crossing ζ_l:
         ellipse(centre = axis point at ζ_l, minor = r(ζ_l), major = r(ζ_l)/cos φ, major along the tilt)
     ∪ end and bifurcation caps whose ball reaches ζ_l
     ∪ root disc(root XY, r_0)                       (layer 0 only)
-S_l = ((T_l ∖ C_l) ∩ Bed) ∪ Roof_l                  # smooth_outward/simplify add ≤ about w in notches
+S_l = ((T_l ∖ C_l) ∩ Bed) ∪ Roof_l                  # fill_notches/simplify add ≤ about w in notches
 ```
 
 **Sound model** (contains every drawn tube for the given smoothed nodes):
@@ -533,8 +537,9 @@ After drawing, layer 0 holds:
 - possibly a top contact or interface at layer 0, when a roof stack reaches the bed. Not the case for
   goats.
 
-Then `generate_raft_base` runs with `raft_layers = 0` (B `SupportCommon.cpp:299-469`, O `:244-414`,
-O25 `:404-575`, S `:315-480`).
+Then the first-layer base routine (upstream `generate_raft_base`) runs with `raft_layers = 0` (B
+`SupportCommon.cpp:299-469`, O `:244-414`,
+R `:404-575`, S `:315-480`).
 
 ### 4.2 Expansion of the base flange
 
@@ -559,6 +564,8 @@ Both subtract a negligible ε (scaled 1e-4 mm) before use. Bambu expands only if
   `PrintObjectSlice.cpp:1346-1363`, O `:1368-1386`): the slicer stores the uncompensated islands as
   layer 0's islands;
 - `g = support_object_first_layer_gap` (P1S 1.2; A2L, U1 0.75; B `:441`, O `:382`).
+- X is the slicer's own trim mask. It is **not** the packer's conservative `landing` kind (part 05, design
+  §4.2), which is the section ⊕ 0.05 mm; using the landing here would under-predict the base.
 
 **3. Step count and size:**
 
@@ -620,7 +627,7 @@ Foot shape: research `feet.py` measured feet of radius 5.3–5.6 at z = 0.2 on P
   (O `TreeSupport.cpp:2023`, `:2136`; S `TreeSupport.cpp:1981`, `:2092`).
 - Bambu's non-organic generator instead maps `raft_first_layer_expansion = −1` to a moment-based width
   (B `TreeSupport.cpp:2481`).
-- In the brim generator the "support brim" code is commented out in O/O25/S (O `Brim.cpp:592-603`,
+- In the brim generator the "support brim" code is commented out in O/R/S (O `Brim.cpp:592-603`,
   `:606-630`). Bambu has no support-brim area at all (B `Brim.cpp:1029-1049`).
 - Supports only act as **no-brim areas** for object brims (§5.4).
 - The wide first-layer patch is the flange of §4.2, printed with role *Support*.
@@ -685,7 +692,7 @@ W  = min(W, 18)
 - **Quantisation:** W is rounded down to an even number of brim line spacings: `⌊W/(2·s_b)⌋·2·s_b`,
   where `s_b` is the spacing of the brim flow (first-layer line width 0.5).
 - **Per island cap:** the width is reduced to the island's own larger bbox side, then quantised again.
-- **[DIFF] Extra brim for thin islands** (O `Brim.cpp:514-520`, O25 `:564-566`, S `:972-974`; disabled
+- **[DIFF] Extra brim for thin islands** (O `Brim.cpp:514-520`, R `:564-566`, S `:972-974`; disabled
   in Bambu by an always-false guard, B `:946`). Applies when all hold:
   - the group's W < 5 mm;
   - H > 10 mm;
@@ -737,7 +744,7 @@ S `:913-1124`). N contains:
    any object's first layer, including foreign ones;
 2. every object's **support layer-0 area**:
    - B: the union of all support polygons of support layer 0;
-   - O/O25/S: the area covered by the extruded support lines of layer 0 (width = spacing);
+   - O/R/S: the area covered by the extruded support lines of layer 0 (width = spacing);
 3. the prime tower's first-layer outer wall polygon, brim loops included (fake-tower outline at its
    position);
 4. `bed_exclude_area`:
@@ -768,7 +775,7 @@ Printed with role *Brim* on layer 0 only, at the first-layer width.
 
 ### 6.1 One computing object per identical group
 
-During `Print::process` (B `Print.cpp:1957-2043`, O `:2192-2270`, O25 `:3314-…`, S `:2366-2441`), objects
+During `Print::process` (B `Print.cpp:1957-2043`, O `:2192-2270`, R `:3314-…`, S `:2366-2441`), objects
 are scanned in **model order**. An object becomes a copy ("shared object") of an earlier computing object
 when all of these hold:
 
@@ -799,13 +806,13 @@ shifted by `(plate origin − first instance shift of the computing object)` int
 
 1. as a **clip** of every branch slice (§3.4);
 2. as a **clip of every final support layer**: base, contacts, interfaces and the expanded flange,
-   after the first-layer expansion (B `TreeSupport3D.cpp:4643-4646`, O `:3599-3602`, O25 `:3675-3678`,
+   after the first-layer expansion (B `TreeSupport3D.cpp:4643-4646`, O `:3599-3602`, R `:3675-3678`,
    S `:3547-3550`);
 3. **[DIFF] Bambu only:** as the source of the exterior **obstacle** with two 2 mm corridors (§2.2).
    It affects routing (avoidance), smoothing and the branch trim; it does not affect the flange
    expansion. Orca and Snapmaker only clip.
-4. **[DIFF] O25 only:** additionally trims all support layers by `bed_exclude_volumes`, Z-limited
-   tool-changer keep-outs (O25 `TreeSupport3D.cpp:3669-3671`). Not configured in any goat project.
+4. **[DIFF] R only:** additionally trims all support layers by `bed_exclude_volumes`, Z-limited
+   tool-changer keep-outs (R `TreeSupport3D.cpp:3669-3671`). Not configured in any goat project.
 
 **[NONDET] across plate layouts (S4).** Clipping and the Bambu obstacle are evaluated **once**, for the
 computing object in its own frame:
@@ -840,7 +847,7 @@ So per-object attribution of supports works in every version.
 | role | where (goat projects) | width | centreline relative to the role polygon P | material vs P |
 |---|---|---|---|---|
 | **Support**, layer 0 (flange) | base of layer 0 after §4.2 | w0 = 0.5 | outer loop on `P ⊖ 0.25`; 90 % rectilinear fill further inside | outer edge = P |
-| **Support**, layers ≥ 1 | base polygons (tube slices minus roles) | 0.42 | outer loop on `P ⊖ 0.21` (sheath); **[DIFF]** inside: B and S print the trunk **hollow** (B adds solid fill only to "newly opened voids", lightning pass `TreeSupport3D.cpp:4165-4405`); O/O25 print rectilinear fill at the base spacing (2.5 + s) because these projects set `support_base_pattern = rectilinear`, not none/default (O `SupportCommon.cpp:1791-1800`); a second inner wall only for large areas or wall count > 1 | outer edge = P (inner walls never change it) |
+| **Support**, layers ≥ 1 | base polygons (tube slices minus roles) | 0.42 | outer loop on `P ⊖ 0.21` (sheath); **[DIFF]** inside: B and S print the trunk **hollow** (B adds solid fill only to "newly opened voids", lightning pass `TreeSupport3D.cpp:4165-4405`); O/R print rectilinear fill at the base spacing (2.5 + s) because these projects set `support_base_pattern = rectilinear`, not none/default (O `SupportCommon.cpp:1791-1800`); a second inner wall only for large areas or wall count > 1 | outer edge = P (inner walls never change it) |
 | **Support interface** | top contacts, interfaces, (bottom contacts) | 0.42 (interface flow) | rectilinear lines at spacing `support_interface_spacing + s` (0.86, density 0.42) clipped to the polygon shrunk by ½·s (lines end ≈ 0.18 inside P; measured 0.18 at the U1 bed clip); linking moves may run along `P ⊖ 0.05·s`; if a region yields no fill line, one loop on `P ⊖ ½·s` | may exceed P by ≈ (w − s)/2 = 0.03, and by up to ≈ 0.19 on rare links |
 | **Support transition** | **not produced for these projects.** B emits it only for "base interface" layers, which exist for trees only when the interface filament differs from the support filament (B `SupportParameters.hpp:35-45`, `SupportCommon.cpp:1789-1805`); O/S organic never emit it | 0.42 | as Support | as Support |
 | **Brim** | none for goats (§5.2) | w0 = 0.5 | first loop on `area ⊖ ½·s_b`, then every s_b | edge ≈ area boundary + (w0 − s_b)/2 |
@@ -865,7 +872,7 @@ Other effects on the printed geometry:
 
 | id | source | where | effect | which realisations |
 |---|---|---|---|---|
-| (in) | input node positions, topology and list order | middle stage, S1/S2 | everything here inherits it | as many as upstream produces (P1S: ~8 states in 20 runs) |
+| (in) | input node positions, topology and list order | front and middle stages: S2 T-classes, S9 families, S1 (optional, unproven) | everything here inherits it | as many as upstream produces (B P1S: 16 line-level realizations in 7 L1 families in 53 observations, M §5.3; the source of most of them is unidentified, design §3.2 SU) |
 | N1 | order of roof polygons appended under a mutex; order of brim pieces retained in parallel (B) | `InterfacePlacer::add_roof`, B `Brim.cpp:1154-1166` | vertex order only; the unioned sets are identical | 1 geometric realisation |
 | N2 | smoothing in parallel | §2 | none: Jacobi update and a count-only stop test | 1 |
 | N3 | per-tree drawing in parallel | §3 | none: per-tree work is independent and the merge loop is sequential | 1 |
@@ -874,12 +881,20 @@ Other effects on the printed geometry:
 
 ## 9. Quantities an envelope predictor must reproduce
 
-The 2 mm bands follow the repo's convention (`src/gcode_collisions/learning.rs:24`, `:120`):
+**Band rule** (design §4.1; lead, 2026-11-02; one rule for supports, interfaces and bodies):
 
-- band `b` holds every line whose layer print height `z_l ∈ [2b, 2b + 2)`, about 7 layers;
-- support material of layer l occupies `z ∈ (z_{l−1}, z_l]`;
-- for the goats, band 0 contains layer 0 **and** layers 1–6 (P1S/A2L: z 0.20–1.88; U1: z 0.25–1.93).
-  The repo also keeps a separate first-layer patch.
+- the material of layer l occupies `z ∈ (z_{l−1}, z_l]` (z_{−1} = 0);
+- band `b` covers `[2b, 2b + 2)`. Layer l belongs to **every** band its interval overlaps with positive
+  length: z_{l−1} < 2b + 2 and z_l > 2b. A layer ending exactly on a band boundary belongs only to the lower
+  band;
+- layer 0 belongs to band 0 **and** to the first-layer kinds (`support_base`, `landing`, §9.1);
+- goats: band 0 = layers 0-7, band 1 = layers 7-14, …; the boundary layer 7 is (1.88, 2.16] for P1S/A2L and
+  (1.93, 2.21] for U1, and it is in both bands.
+
+This replaces the repo's present `floor(z_l / 2)` binning (`src/gcode_collisions/learning.rs:24`, `:120`,
+and the corpus' `derive.py`). That binning tests a support layer (1.88, 2.16] only against `body[1]` and
+misses a foreign body top at z = 1.95. Corpus band polygons are re-binned with this rule before
+calibration.
 
 ### 9.1 First layer (z ∈ (0, h0])
 
@@ -887,19 +902,19 @@ The 2 mm bands follow the repo's convention (`src/gcode_collisions/learning.rs:2
 |---|---|---|
 | F1 | XY of every root node after smoothing | §2 (roots are not locked); per rotation class |
 | F2 | radius r_0 of every root | §1.1; ≤ max(3.75, trunk radius) |
-| F3 | root cross-section at ζ_0 | disc(F1, r_0): exact for O/O25 (flat foot), within 0.002 for B/S (hemisphere) |
+| F3 | root cross-section at ζ_0 | disc(F1, r_0): exact for O/R (flat foot), within 0.002 for B/S (hemisphere) |
 | F4 | other tube parts reaching ζ_0 (low bifurcation caps, steep tubes) | §3.3; sound bound = capsule sections |
 | F5 | own-object trim before expansion | `(L_0 ⊕ 0.21) ∪ (L_1 ⊕ 0.105)` (plus the B exterior obstacle) |
 | F6 | flange expansion | e = 2.0, n = 5, δ = 0.4, geodesic in the free space `¬(L_0^uncomp ⊕□ g)`; g = 1.2 (P1S) or 0.75 (A2L, U1); square joins on the trim, miter joins on the growth |
 | F7 | layer-0 roofs or interfaces | none for goats; would print as interface, untrimmed by F6 |
 | F8 | bed clip | only the canonical copy, in its own frame; copies are unclipped |
-| F9 | smoothing of the polygon outline | `smooth_outward(w)` and simplify 0.03 (adds ≤ notches narrower than w) |
+| F9 | smoothing of the polygon outline | `fill_notches(w)` and simplify 0.03 (adds ≤ notches narrower than w) |
 | F10 | printed material vs polygon | edge = polygon; centreline 0.25 inside; arcs ±0.0375 |
 | F11 | object brim | none for goats; formula §5.2 if the model or settings change |
 | F12 | support brim | never (organic) |
-| F13 | uncertainty from upstream variation | δ_L1 from the probe ensemble; currently ≥ 0.81 mm, see research §3.2 |
+| F13 | uncertainty from upstream variation | δ_L1 from the calibration (design §5.5). Corpus: B plates up to 3.0 mm outside a 5-run single-object union; S GUI 0.7-4.1 mm outside the R union (M §2.3-§2.4) |
 
-### 9.2 Each 2 mm band b (layers l with `z_l ∈ [2b, 2b + 2)`, l ≥ 1)
+### 9.2 Each 2 mm band b (every layer l whose interval (z_{l−1}, z_l] overlaps [2b, 2b + 2); band 0 includes layer 0)
 
 | # | quantity | rule / value |
 |---|---|---|
@@ -910,11 +925,11 @@ The 2 mm bands follow the repo's convention (`src/gcode_collisions/learning.rs:2
 | B5 | roofs (top contact at insertion layer, interfaces 1–2 layers below) | overhang polygons from the front stage, ≥ 1 mm², reduced by the bed-avoidance of radius 0.4 on each lower layer; not trimmed by B4 |
 | B6 | lost-branch drop columns | §3.5; B: down to model or bed; O/S: ≤ 5·r/h layers unless very lost |
 | B7 | B-only pruning | can only remove; ignore for a sound envelope |
-| B8 | clean-up | `smooth_outward(w)`, simplify 0.03 |
+| B8 | clean-up | `fill_notches(w)`, simplify 0.03 |
 | B9 | bed clip | canonical copy only (§6) |
 | B10 | material vs polygon | Support: edge = polygon; Interface: ≤ +0.03 (hard bound +0.2); arcs ±0.0375 |
 | B11 | band union | ∪ over the layers of the band of (B3 ∖ B4 ∪ B5 ∪ B6), material-adjusted by B10 |
-| B12 | uncertainty from upstream variation | δ_band from the ensemble; currently ≥ 1.18 mm |
+| B12 | uncertainty from upstream variation | δ_band from the calibration (design §5.5). Corpus: B plates up to 4.4 mm outside a 5-run union; S GUI 1.5-5.4 mm outside the R union |
 
 ### 9.3 Sound fallback (no node-level port)
 
@@ -927,7 +942,7 @@ If only an influence-area bound is available, the per-band sound envelope is
 
 ## 10. Version differences at a glance
 
-| topic | B 2.8.2.61 | O 2.4.2 | O25 2.5.0-rc | S 2.4.0 |
+| topic | B 2.8.2.61 | O 2.4.2 | R 2.5.0-rc | S 2.4.0 |
 |---|---|---|---|---|
 | smoothing anchor limit | no | **yes** | **yes** | no |
 | exterior-of-bed obstacle (2 mm corridors) | **yes** | no | no | no |
@@ -947,9 +962,10 @@ If only an influence-area bound is available, the per-band sound envelope is
 ## 11. Open questions
 
 - **Q1. Smoothing displacement in practice.** How far, in mm, do smoothed nodes end up from the node
-  placement's output on the goats? This decides σ for any predictor that does not run §2 itself. It
-  needs an instrumented port: run the pass with and without smoothing on a reproduced P1S tree and
-  compare with the probe G-code.
+  placement's output on the goats? **Partly settled by the fidelity decision** (design §14 Q17): the
+  generator runs this pass (§2.4), so σ is needed only by the sound fallback of §9.3. Still worth measuring
+  with an instrumented port (pass on/off on a reproduced P1S tree vs the probe G-code) before WP S3 starts,
+  because it bounds how far a smoothing difference can move material.
 - **Q2. Bambu corridor obstacle.** The corridor finding rests on source plus one placement (`exp/outA`).
   It needs a single-object check with the canonical goat near an edge midpoint vs near a corner, and
   near the P1S cutter. It matters only for the canonical copy, which the packer should keep interior.

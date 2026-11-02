@@ -19,11 +19,13 @@ and the bed/exclusion rules are covered by parts 1-3 and by `/tmp/goat_research/
 |---|---|---|---|
 | B | `zones_bambu2861` (BambuStudio tag v02.08.02.61, same tag as `bambu_0208`, which lacks `GCode/`) | `WipeTower` (BBL, rib wall) | owner's P1S/A2L GUI, server P1S/A2L |
 | O | `orca_242` (OrcaSlicer v2.4.2) | `WipeTower2` ("Type 2") | server U1 (`deploy/slicers.env:8`) |
-| O25 | `orca_250rc` (OrcaSlicer v2.5.0-rc) | `WipeTower2` | local `/Applications/OrcaSlicer.app`, all local U1 slices |
+| R | `orca_250rc` (OrcaSlicer v2.5.0-rc) | `WipeTower2` | local `/Applications/OrcaSlicer.app`, all local U1 slices |
 | S | `snaporca240` (Snapmaker Orca v2.4.0) | `WipeTower2` (own fork) | owner's U1 GUI (the G-code that is printed) |
 
+The tags B/O/R/S are the same in every part of this spec set (R was "O25" in the first draft of this part).
+
 Orca picks its tower class from the printer: Bambu printers always get the BBL class ("Type 1"), every
-other printer gets `wipe_tower_type` (default Type 2) (O25 `Print.hpp:1347`, O `Print.hpp:1086`); S always
+other printer gets `wipe_tower_type` (default Type 2) (R `Print.hpp:1347`, O `Print.hpp:1086`); S always
 uses Type 2 for non-Bambu printers (S `Print.cpp:3162`). The owner slices P1S/A2L only in BambuStudio,
 so Orca's Type 1 port is out of scope (§10, Q6).
 
@@ -57,7 +59,7 @@ sampled every 0.05 mm, §8).
 |---|---|---|---|---|---|---|
 | P1S / B | 18.488 × 17.688 (rib wall, box 15 × 14) | 18.489 × 17.638 | 24.889 × 24.088 | 24.886 × 24.029 | 5 layers, 3 mm max | 62 |
 | A2L / B | 28.579 × 28.579 (rib wall, box 24.5 × 24.5) | 28.578 × 28.578 | 34.983 × 34.983 | 34.967 × 34.967 | 5 layers | 10 |
-| U1 / O25 | 20 × 14.9 | 20.000 × 14.900 | 29.820 × 24.720 | 29.820 × 24.720 | none | 71 |
+| U1 / R | 20 × 14.9 | 20.000 × 14.900 | 29.820 × 24.720 | 29.820 × 24.720 | none | 71 |
 | U1 / O (server) | 20 × 9.5 | 20.000 × 9.500 | 29.820 × 19.320 | 29.820 × 19.320 | none | 1 (docker) |
 | U1 / S (owner GUI), W0 = 20 | 20 × 16.1 | 20.000 × 16.100 | 29.820 × 25.920 | 29.820 × 25.920 | 8 layers, 4 mm max | 2 |
 | U1 / S (owner GUI), W0 = 16 | 16 × 19.7 | 16.000 × 19.700 | 25.820 × 29.520 | 25.820 × 29.520 | 8 layers | 2 |
@@ -87,17 +89,17 @@ Key behaviours, each verified on real G-code:
 
 From `project_settings.config` (names differ between Bambu and Orca; "B / Type 2" columns):
 
-| purpose | Bambu (B) | Type 2 (O, O25, S) |
+| purpose | Bambu (B) | Type 2 (O, R, S) |
 |---|---|---|
 | enable | `enable_prime_tower` | same |
 | anchor per plate | `wipe_tower_x/y[plate]` | same |
 | rotation | `wipe_tower_rotation_angle` | same |
 | width | `prime_tower_width` (rib: start value only, §4.3) | `prime_tower_width` |
-| purge per change | `filament_prime_volume[new filament]`; 15 for every filament when `prime_volume_mode = Saving` (B `Print.cpp:3819-3824`) | `prime_volume` (global). With `purge_in_prime_tower` and `single_extruder_multi_material` both on: `flush_volumes_matrix` · `flush_multiplier`, minus what is wiped into objects (O25 `Print.cpp:5504-5550`) |
-| floor of the saved change | n/a | `filament_minimal_purge_on_wipe_tower` (O, O25 only) |
+| purge per change | `filament_prime_volume[new filament]`; 15 for every filament when `prime_volume_mode = Saving` (B `Print.cpp:3819-3824`) | `prime_volume` (global). With `purge_in_prime_tower` and `single_extruder_multi_material` both on: `flush_volumes_matrix` · `flush_multiplier`, minus what is wiped into objects (R `Print.cpp:5504-5550`) |
+| floor of the saved change | n/a | `filament_minimal_purge_on_wipe_tower` (O, R only) |
 | row spacing | `prime_tower_infill_gap` (%) | `wipe_tower_extra_spacing` (%), `wipe_tower_extra_flow` (%) |
 | wall shape | `prime_tower_rib_wall`, `prime_tower_rib_width`, `prime_tower_extra_rib_length`, `prime_tower_fillet_wall` | `wipe_tower_wall_type` (rectangle/cone/rib), `wipe_tower_rib_width`, `wipe_tower_extra_rib_length`, `wipe_tower_fillet_wall`, `wipe_tower_cone_angle` |
-| wall gaps | `prime_tower_skip_points` | `prime_tower_skip_points` (O25 only uses it for planning, §4.4) |
+| wall gaps | `prime_tower_skip_points` | `prime_tower_skip_points` (R only uses it for planning, §4.4) |
 | brim | `prime_tower_brim_width` (−1 = auto) | same; S has no auto (minimum 0, S `PrintConfig.cpp:6089-6095`) |
 | chamfer | always on, 3 mm (B `GCode/WipeTower.cpp:3706-3739`) | S only: `prime_tower_brim_chamfer` (default on), `prime_tower_brim_chamfer_max_width` (default 4); both hidden "develop" options (S `PrintConfig.cpp:6097-6110`) |
 | multi-tool ramming | n/a | `filament_multitool_ramming`, `_volume`, `_flow`; `enable_filament_ramming` (O gates the reserved depth on it, §4.4) |
@@ -172,7 +174,7 @@ painted features. That errs on the safe side.
 Per layer the slicer orders `S_l` so that the filament left loaded by the previous layer normally goes
 first when it is present (Bambu: flush-minimising order over the layer's filaments, B
 `GCode/ToolOrdering.cpp:2714-2829`; S: explicit rotation to start with the current filament, S
-`Print.cpp:3379`; O/O25: same ToolOrdering heritage). Hence
+`Print.cpp:3379`; O/R: same ToolOrdering heritage). Hence
 
 ```
 k_l = |S_l| − 1   if the previous layer's last filament is in S_l, or l is the first layer
@@ -201,7 +203,7 @@ print only the wall and sparse infill. Exceptions:
   footprint is unchanged, the z-schedule is not. Off in all three projects.
 - **O only:** when the tower ends below the last print layer, a "final purge" is still printed at the
   last print layer's z (measured: a 18.5 × 1.2 mm patch at z = 44.77 inside the body rectangle, mid-air).
-  O25 skips it (O25 `Print.cpp:5590-5597`). S emits the final change there with travel only and no
+  R skips it (R `Print.cpp:5590-5597`). S emits the final change there with travel only and no
   extrusion (measured). B prints nothing there (measured).
 
 ### 4.3 C/D. Depth: Bambu 2.8.2.61 (rib wall, single nozzle)
@@ -234,7 +236,7 @@ Width and depth (B `GCode/WipeTower.cpp:4520-4609`):
 3. Recompute every change's depth with the new `W` and get `B = Σ blocks`.
 4. `D = B + pw`. Every layer's own depth `D_l = (its non-increasing block sum) + pw`. A layer whose
    block sum is below `pw` is not printed (B `GCode/WipeTower.cpp:4694`).
-5. **Rib length:** `R = max(diag, rib extension) + extra_rib_length`, never below `diag = sqrt(W² + D²)`.
+5. **Rib length:** `L_r = max(diag, rib extension) + extra_rib_length`, never below `diag = sqrt(W² + D²)`.
    If `B < minD(H_t)`, the ribs (not the box) grow to at least `minD(H_t)·√2`.
 6. **Rib width:** `r = min(prime_tower_rib_width, min(W, D)/2)`.
 
@@ -256,13 +258,13 @@ depth (B `GCode/WipeTower.cpp:2949-2958`). Without the rib wall the tower keeps 
 `B < minD(H_t)` it spreads the rows by `minD/B` instead of growing ribs. `prime_tower_enable_framework`
 freezes every layer at layer-0 depth.
 
-### 4.4 C/D. Depth: Type 2 (O, O25, S)
+### 4.4 C/D. Depth: Type 2 (O, R, S)
 
 Common to all three: a non-SEMM multi-tool printer purges `V = prime_volume` per change. Every non-zero
-flush entry is replaced by `prime_volume` (O25 `Print.cpp:5504-5513`; S, O alike). The planned depth of
+flush entry is replaced by `prime_volume` (R `Print.cpp:5504-5513`; S, O alike). The planned depth of
 one change is a **ramming band** plus a **wipe band**, and the layer's depth is the sum over its changes.
 The tower depth is `D = max_l(depth_l) + pw`, where the per-layer depths are made non-increasing with
-height (each layer takes at least the depth of the layers above it; O25 `GCode/WipeTower2.cpp:2316-2339`).
+height (each layer takes at least the depth of the layers above it; R `GCode/WipeTower2.cpp:2316-2339`).
 `W = W0` for rectangle and cone walls.
 
 Notation: ramming line width `rlw = 2·pw` (multi-tool), ramming step 1, ramming spacing
@@ -271,7 +273,7 @@ Notation: ramming line width `rlw = 2·pw` (multi-tool), ramming step 1, ramming
 A wipe band of volume `V'` across draw width `w` takes `rows_w = floor( (V'/A(h)) / ef / w ) + 1` rows at
 pitch `pw · spacing`.
 
-| step | O25 (2.5.0-rc) | O (2.4.2, server) | S (Snapmaker 2.4.0, owner) |
+| step | R (2.5.0-rc) | O (2.4.2, server) | S (Snapmaker 2.4.0, owner) |
 |---|---|---|---|
 | draw width `w` | `W − 3·pw` | `W − 3·pw` | `W − pw − 2·rlw` for ramming *and* wipe planning |
 | ramming volume | `multitool_ramming_volume` | `0.25 s · multitool_ramming_flow` (6.25 mm³ for 25 mm³/s) | `multitool_ramming_volume` |
@@ -285,14 +287,14 @@ pitch `pw · spacing`.
 | sources | `GCode/WipeTower2.cpp:2251-2313, 2341-2395, 2470-2509`; `.hpp:323-327` | `GCode/WipeTower2.cpp:2203-2251, 2279-2325, 2364-2380` | `GCode/WipeTower2.cpp:2427-2470, 2928-2951, 2713-2735` |
 
 In practice the finish-layer volume always exceeds `V − minimal_purge` (5 mm³ here, about 40 mm of
-wall), so for O/O25 the first wall-filament change of each layer is planned with exactly
+wall), so for O/R the first wall-filament change of each layer is planned with exactly
 `minimal_purge`.
 
 U1 worked numbers (h = 0.28, `W0` = 20, V = 20, minimal purge 15):
 
 | | change 1 | change 2 | `k_max`=2 → D |
 |---|---|---|---|
-| O25 | ram 2.4 + wipe 7 rows·0.6 = 6.6 | ram 2.4 + 9 rows·0.6 = 7.8 | 14.4 + 0.5 = **14.9** |
+| R | ram 2.4 + wipe 7 rows·0.6 = 6.6 | ram 2.4 + 9 rows·0.6 = 7.8 | 14.4 + 0.5 = **14.9** |
 | O | ram 0 + 6 rows·0.6 = 3.6 | 9 rows·0.6 = 5.4 | 9.0 + 0.5 = **9.5** |
 | S | ram 2.4 + 9 rows·0.6 = 7.8 | 7.8 | 15.6 + 0.5 = **16.1** |
 | S, `W0` = 16 | 2.4 + 12·0.6 = 9.6 | 9.6 | 19.2 + 0.5 = **19.7** |
@@ -301,7 +303,7 @@ Growth with `k_max` at `W0` = 20 (first layer 0.25 mm with one change included):
 
 | | k=1 | 2 | 3 |
 |---|---|---|---|
-| O25 | 7.1 | 14.9 | 22.7 |
+| R | 7.1 | 14.9 | 22.7 |
 | O | 4.1 | 9.5 | 14.9 |
 | S | 8.9 (first layer dominates) | 16.1 | 23.9 |
 
@@ -317,7 +319,7 @@ when any `flush_into_*` is on.
 
 **Type 2 rectangle** (U1): the wall centre line of layer `l` is the axis-aligned rectangle
 `[0, W] × [y_l, y_l + D_l]` in tower-local coordinates, with `D_l = depth_l + pw` and
-`y_l = (D − D_l)/2` (centred once the layer is shallower than the tower; O25
+`y_l = (D − D_l)/2` (centred once the layer is shallower than the tower; R
 `GCode/WipeTower2.cpp:2545-2546`). The content rotates 180° every layer
 (`m_internal_rotation += 180`), but the outline does not move.
 
@@ -330,7 +332,7 @@ changes; 10.1 deep and centred from z = 30.21 to `H_t` = 41.69.
    rounded to multiples of `pw`, `:4695-4700`).
 2. Two strips of half-width `r/2` along the full-tower diagonals (0,0)→(W,D) and (W,0)→(0,D), with
    square ends. They stay on the full `W × D` tower even when the box is shallower. Each strip is
-   lengthened at both ends by `e(z) = max(0, R − diag)/2 · (H_t − z)/H_t`: the rib extension shrinks
+   lengthened at both ends by `e(z) = max(0, L_r − diag)/2 · (H_t − z)/H_t`: the rib extension shrinks
    linearly to zero at the tower top.
 3. Outline = union of box and strips.
 4. With `prime_tower_fillet_wall`, every outline corner whose turn angle lies between 30° and 150° is
@@ -339,7 +341,7 @@ changes; 10.1 deep and centred from z = 30.21 to `H_t` = 41.69.
 5. That polygon is the wall centre line. With `prime_tower_skip_points` the wall is cut open at each
    tool change's entry point (gaps of 2.5·`pw`). The gaps do not change the union footprint.
 
-For the P1S/A2L goats `R = diag` (no extension), so the outline is the same on every layer at full
+For the P1S/A2L goats `L_r = diag` (no extension), so the outline is the same on every layer at full
 depth. The wall then sticks out of the box by about 1.74-1.84 mm (P1S) or 2.04 mm (A2L) per side at the
 rounded rib ends.
 
@@ -347,13 +349,13 @@ Arc fitting (P1S on, A2L off) re-emits the outline as G2/G3 within 0.1 mm (B `GC
 1030-1040, 1272-1295`). The measured residual is ≤ 0.06 mm. **The repo's G1-only tower parser sees
 16.3 × 14.6 of this 24.9 × 24.0 first layer** (`/tmp/goat_research/pipeline-map.md` §4).
 
-**Type 2 rib wall** (not used here): same construction as Bambu. O25 squares the tower and applies the
+**Type 2 rib wall** (not used here): same construction as Bambu. R squares the tower and applies the
 rib offset (below). S squares it but applies no rib offset. O neither squares nor offsets, so its ribs
 reach into negative local coordinates, i.e. left of and below `(X, Y)`.
 
 **Type 2 cone** (`wipe_tower_wall_type = cone` only, in all three builds): the first layer's outline is
 the box united with an ellipse centred on the box. Its y-radius is `Rc = tan(θ/2)·H_t`; its x-radius is
-`Rc/σ`, where `σ ≥ 1` widens a too-narrow base (O25 `GCode/WipeTower2.cpp:2153-2185`). On layer `l` the
+`Rc/σ`, where `σ ≥ 1` widens a too-narrow base (R `GCode/WipeTower2.cpp:2153-2185`). On layer `l` the
 radius is `tan(θ/2)·(H_t − z_l)`.
 
 ### 4.6 F. Brim and chamfer
@@ -362,7 +364,7 @@ Brim loops are successive outward offsets of the layer-0 wall outline by `s_0`, 
 (mitre limit 3). Rectangles stay rectangles; rib outlines keep their notches.
 
 ```
-B      = prime_tower_brim_width, or if −1 (B, O, O25): min(8, 8·H_t/100)   (B GCode/WipeTower.cpp:1627-1630)
+B      = prime_tower_brim_width, or if −1 (B, O, R): min(8, 8·H_t/100)   (B GCode/WipeTower.cpp:1627-1630)
 n_0    = floor( (B + s_0/2) / s_0 )          loops on the first layer
 reach  = n_0 · s_0                           outermost loop centre line beyond the wall centre line
 ```
@@ -382,7 +384,7 @@ n_j = max(0, min( floor((B + s_j/2)/s_j), floor(C / s_j) ) − j)
 - S: only if `prime_tower_brim_chamfer`, `C = prime_tower_brim_chamfer_max_width` (U1: 4). At 0.28 mm:
   8 … 1 loops on layers 1-8 (z 0.53-2.49), nothing from layer 9 (S `GCode/WipeTower2.cpp:2303-2338`).
   S prints no brim at all when the width is 0. Its auto value is impossible (minimum 0).
-- O, O25: no chamfer; brim on the first layer only (O25 `GCode/WipeTower2.cpp:2102-2131`, O `:2112-2140`).
+- O, R: no chamfer; brim on the first layer only (R `GCode/WipeTower2.cpp:2102-2131`, O `:2112-2140`).
 
 ### 4.7 G. Placement
 
@@ -391,7 +393,7 @@ Tower-local point `p` → plate:
 | build | transform | layer-0 anchoring |
 |---|---|---|
 | B | `Rot(α)·p + (X, Y) + o`, with `o = −min(bbox of the layer-0 wall polyline)` taken unrotated (B `GCode.cpp:740-746`, `GCode/WipeTower.cpp:5117-5120`) | at α = 0 the wall bbox min corner lands on `(X, Y)`. Rectangle walls: `o` = 0 |
-| O25 | `Rot(α)·(p + o) + (X, Y)`; `o` only for rib walls (O25 `GCode.cpp:1006`, `GCode/WipeTower2.cpp:2680-2686`) | rectangle: box corner at `(X, Y)` |
+| R | `Rot(α)·(p + o) + (X, Y)`; `o` only for rib walls (R `GCode.cpp:1006`, `GCode/WipeTower2.cpp:2680-2686`) | rectangle: box corner at `(X, Y)` |
 | O, S | `Rot(α)·p + (X, Y)`, no `o` (O `GCode.cpp:1132-1136`, S `GCode.cpp:444-448`) | box corner at `(X, Y)` |
 
 `(X, Y)` is the value *after* slicer-side clamps (§6), which can differ from the 3MF.
@@ -415,7 +417,7 @@ rings on their layers.
 
 ## 5. Differences between builds (summary)
 
-| behaviour | B | O | O25 | S |
+| behaviour | B | O | R | S |
 |---|---|---|---|---|
 | tower class / wall | BBL, rib (P1S/A2L) | Type 2 | Type 2 | Type 2 |
 | purge sizing | prime volume per new filament, chute takes flush | `prime_volume` | `prime_volume` | `prime_volume` |
@@ -479,16 +481,16 @@ Dragging is clamped at 1 mm sliced / `brim + 0.5` unsliced (`Selection.cpp:1278`
 keeps the stored position; measured: 244.5 stays 244.5. Arrange paths clamp, but the packer always
 passes `--arrange 0`.
 
-**O25 (Orca 2.5.0-rc, local).** GUI and **CLI** clamp on every slice (CLI: `OrcaSlicer.cpp:6479-6512`,
+**R (Orca 2.5.0-rc, local).** GUI and **CLI** clamp on every slice (CLI: `OrcaSlicer.cpp:6479-6512`,
 GUI: `PartPlate.cpp:4057-4110`). The margin is `1 + b̂ + cone bulge`, with `b̂` = estimated real brim
 `n_0·s_0` (4.91 for U1) and plate width 270 in local coordinates. Within 5 mm of the valid range it
 **snaps**; farther out it is re-placed with a 15 mm comfort margin and a search for the nearest spot clear
 of objects. Measured: every local U1 slice of an anchor stored at x = 244.5 printed at 244.09
 (= 270 − 20 − 5.91), consistently over 69 slices. The owner's S keeps 244.5. The far-out "relocation"
-depends on object positions, so a far-out anchor is not a stable input for O25.
+depends on object positions, so a far-out anchor is not a stable input for R.
 
 **Between slices of one project and plate**, the tower footprint is identical (§8.2). It moves only
-through the clamps above: once on open (B), on every slice (O25, deterministic snap), or after the
+through the clamps above: once on open (B), on every slice (R, deterministic snap), or after the
 first slice (S, when the real depth exceeds the estimate near the top/right edge).
 
 ## 7. Determinism and nondeterminism
@@ -496,11 +498,11 @@ first slice (S, when the real depth exceeds the estimate near the top/right edge
 | # | source | affects the tower? | realizations |
 |---|---|---|---|
 | N1 | Tree-support realization (part 1 S1-S7) | only if supports or interfaces use their own filament: a layer's set `S_l` then depends on whether a branch exists there, which changes `k_l`, `H_t` and therefore D, the ribs and the auto brim | with filament 0 (all owner projects): none. Otherwise any `k_l` from "support absent" to "support present"; reserve with "present on every layer that can carry support" |
-| N2 | Tool-order heuristic (flush-minimising order, Bambu) | which filament ends a layer, so `k_l` = `|S_l|` or `|S_l| − 1` at layers whose set changes | deterministic for a given project; our model brackets it (§4.2) |
+| N2 | Tool-order heuristic (flush-minimising order, Bambu) | which filament ends a layer, so `k_l` = #S_l or #S_l − 1 (#: number of filaments) at layers whose set changes | deterministic for a given project; our model brackets it (§4.2) |
 | N3 | MMU segmentation (paint projected into the volume) | ±1 layer on where a colour band starts or ends | deterministic in the slicer; our mesh rule is off by ±1 layer at band edges, hence the dilation |
-| N4 | Skip-point gaps (B, O25) | where the wall is cut and so the Bambu rib offset (≤ 0.052 mm) | deterministic |
+| N4 | Skip-point gaps (B, R) | where the wall is cut and so the Bambu rib offset (≤ 0.052 mm) | deterministic |
 | N5 | Arc fitting (B with `enable_arc_fitting`) | ≤ 0.1 mm re-emission of the outline | deterministic |
-| N6 | Slicer build (O vs O25 vs S on U1) | depth 9.5 / 14.9 / 16.1; brim chamfer; anchor snap | deterministic per build, but the builds differ: the predictor must target the build that produces the printed G-code |
+| N6 | Slicer build (O vs R vs S on U1) | depth 9.5 / 14.9 / 16.1; brim chamfer; anchor snap | deterministic per build, but the builds differ: the predictor must target the build that produces the printed G-code |
 | N7 | GUI clamps (§6) | anchor | deterministic; S is two-stage (estimate, then real depth) |
 | N8 | SEMM purge-in-tower with `flush_into_*` | depth depends on object count and infill | deterministic; not used here |
 
@@ -531,7 +533,7 @@ every build.
 |---|---|---|---|---|
 | B P1S | 62 (probe ×3, sample ×3, finals of 40-43 goats, server probe) | (221, 207.25), (223.841, 223.841), (228.866, 228.866) | 18.484-18.489 × 17.580-17.638, identical per layer in every file | 24.885 × 24.029 everywhere |
 | B A2L | 10 | (287.385, 15) | 28.550 × 28.573 (layer 10) | 34.967² |
-| O25 U1 | 69 (+2 from 2.5-alpha) | stored 244.5 → printed 244.09; (17.77, 17.86); (17.77, 230.654) | 20 × 14.9 | 29.82 × 24.72 |
+| R U1 | 69 (+2 from 2.5-alpha) | stored 244.5 → printed 244.09; (17.77, 17.86); (17.77, 230.654) | 20 × 14.9 | 29.82 × 24.72 |
 | S U1 | 4 owner plates (40 and 48 goats; two realizations each) | (244.5, 243.3), (248.5, 245) | as §1 | as §1 |
 
 Within one build and project the tower does not depend on object count, support realization or anchor.
@@ -571,7 +573,7 @@ chamfers match to 0.001 mm (S chamfer: layer `j` reach measured 3.519, 3.079, �
 
 | project | real `k_max` / `H_t` | mesh rule `k_max` / `H_t` (dilated) | per-layer agreement |
 |---|---|---|---|
-| U1 (O25) | 2 / 41.41 | 2 / 41.97 | undilated rule: all two-change bands found, edges off by ≤ 1 layer except single boundary layers (real 2 changes at 41.41 where the rule says 1) |
+| U1 (R) | 2 / 41.41 | 2 / 41.97 | undilated rule: all two-change bands found, edges off by ≤ 1 layer except single boundary layers (real 2 changes at 41.41 where the rule says 1) |
 | P1S (B) | 2 / 41.36 | 2 / 41.92 | same; real 2 at the single layers 33.24 and 41.36 (ordering at band edges) |
 | A2L (B) | 2 / 41.36 | 2 / 41.92 | same as P1S |
 
@@ -583,17 +585,27 @@ which adds no width. The mesh pass takes about 4 s in Python on the 150k-triangl
 1. **Target build per printer:** B for P1S/A2L. For U1, S, because the owner prints the GUI's G-code.
    If the server's O G-code is ever printed directly, reserve the union of S and O; S is larger in every
    direction here (16.1 vs 9.5 deep, same 20 width, plus the chamfer).
-2. **Zones, per §4.8**, with material edge = centre line + `pw/2` + 0.1 mm tolerance:
-   - tower body, all `z ≤ H_t`: hard for every foreign body and every support layer;
-   - L0 ring (brim): hard for bodies' first layers. Support bases and object brims may overlap it (owner
-     rule; GUI warns, CLI needs `--no-check`, zones-research §9);
-   - chamfer rings, layers 1..5 (B) or 1..8 (S): hard for supports and bodies on those layers. They are
-     solid printed loops, not first-layer brim.
+2. **Zones, per §4.8**, with material edge = centre line + `pw/2` + 0.1 mm tolerance (lead decision,
+   2026-11-02; design §4.2, §7.2):
+   - **tower body** (`tower_body`), z-ranged: the column on every layer up to `H_t`, **plus the chamfer rings
+     of layers 1..5 (B, z ≤ 1.88 at 0.28 mm) or 1..8 (S, z ≤ 2.49)**, each ring with its own layer interval.
+     Hard for every foreign body and every support layer in every 2 mm band its pieces meet. The chamfer
+     rings are solid printed loops above the first layer, so they belong to the body, not to the brim;
+   - **tower brim** (`tower_brim`): the L0 ring only, z ∈ (0, h0]. Hard for bodies' first layers (landing).
+     Support bases and object brims may overlap it (owner rule; GUI warns, CLI needs `--no-check`,
+     zones-research §9). Because band 0 also contains the support base (design §4.1), the base can in
+     practice overlap only the part of the L0 ring outside the layer-1 chamfer ring (B P1S: 2 of 7 loops;
+     S U1: 3 of 11).
 3. **Anchor feasibility** before packing, using the target build's clamp (§6): for S,
-   `6 ≤ x ≤ 270.5 − W0 − 6` and `6 ≤ y ≤ 271 − max(D̂, D) − 6`; for B, the repo's existing 15 mm rule
-   with `n` = the plate's used filaments.
-4. Tower contest corners and free-spot search should sweep candidate anchors with the predicted
-   footprint, not a probe measurement. The probe's tower is the O25 tower on U1, not the owner's.
+   `6 ≤ x ≤ 270.5 − W0 − 6` and `6 ≤ y ≤ 271 − max(D̂, D) − 6` (margin 1 + `prime_tower_brim_width`, with the
+   real depth D because S re-clamps after every slice); for B, the 15 mm rule plus the GUI estimate Ŝ with
+   `n` = the plate's used filaments; for R, inside `1 + b̂` (+ cone bulge) so that its CLI never snaps
+   (`x ≤ 270 − W0 − 1 − b̂` for U1); for O, inside `1 + brim` (no clamp on open).
+4. **Input to `tower_scan`** (design §9.3, which replaces the tower contest and the free-spot search): this
+   part supplies, per target flavour, the anchor range of item 3 and the per-layer footprint of §4.8 (body
+   with chamfer rings, L0 brim). `tower_scan` sweeps anchor candidates over that range (flush with each side
+   every 2 mm, plus the corners and the source anchor) and scores them with this predicted footprint, never
+   with a probe measurement. The probe's tower is the R tower on U1, not the owner's.
 
 ## 10. Open questions
 
@@ -616,23 +628,23 @@ which adds no width. The mesh pass takes about 4 s in Python on the 150k-triangl
    that part 1 marks as possibly supported.
 6. **Orca Type 1** (Bambu printers sliced in Orca) and **Type 2 rib/cone walls** are described from
    code only; no G-code was measured.
-7. **O25 relocation** for anchors more than 5 mm out of range searches for a spot clear of objects. If
-   O25 stays in local use, keep anchors inside its range (`x ≤ 270 − W0 − 1 − b̂` for U1) so it only snaps.
+7. **R relocation** for anchors more than 5 mm out of range searches for a spot clear of objects. If
+   R stays in local use, keep anchors inside its range (`x ≤ 270 − W0 − 1 − b̂` for U1) so it only snaps.
 
 ## Appendix A. Constants
 
 | constant | value | where |
 |---|---|---|
-| tower line width ratio | 1.25 × nozzle | B `GCode/WipeTower.hpp:420`, S/O/O25 same |
+| tower line width ratio | 1.25 × nozzle | B `GCode/WipeTower.hpp:420`, S/O/R same |
 | min depth by height table | 5→5, 100→20, 250→40, 350→60 mm | B `GCode/WipeTower.cpp:1586-1588` |
 | auto brim | `min(8, 8·H/100)` | B `:1627-1630` |
 | Bambu chamfer max | 3 mm | B `:3710` |
 | S chamfer max (default) | 4 mm | S `PrintConfig.cpp:6105-6110` |
 | fillet | 2 mm tangent, turn 30-150°, 20 points | B `:128-186`, `:22` |
 | Bambu arc-fit tolerance | 0.1 mm | B `:20-23` |
-| skip-point gap | 2.5·`pw` | B `:5110`, O25 `GCode/WipeTower2.cpp:2673` |
-| GUI margin | B 15 (0.2 when dragging a sliced tower); O/O25/S 1 (+ brim in the S/O/O25 clamps) | B `libslic3r.h:77-78`, O `:90`, O25 `:100-103`, S `:93` |
-| O25 comfort margin / snap tolerance | 15 mm / 5 mm | O25 `libslic3r.h:103`, GUI `PartPlate.cpp:4090` |
+| skip-point gap | 2.5·`pw` | B `:5110`, R `GCode/WipeTower2.cpp:2673` |
+| GUI margin | B 15 (0.2 when dragging a sliced tower); O/R/S 1 (+ brim in the S/O/R clamps) | B `libslic3r.h:77-78`, O `:90`, R `:100-103`, S `:93` |
+| R comfort margin / snap tolerance | 15 mm / 5 mm | R `libslic3r.h:103`, GUI `PartPlate.cpp:4090` |
 
 ## Appendix B. Pseudo-code (ours)
 
@@ -641,7 +653,7 @@ predict_tower(project, build):
     S_l  := filament sets per layer from paint + parts + layer ranges, dilated ±1 layer      (§4.1)
     k_l  := |S_l| − 1 if S_{l−1} ⊆ S_l or l = 0, else |S_l|                                  (§4.2)
     H_t  := top z of last layer with k_l > 0
-    if build = B:   (W, D, R, r, D_l) := bambu_depth(k_l, h_l, prime volumes, W0, gap)        (§4.3)
+    if build = B:   (W, D, L_r, r, D_l) := bambu_depth(k_l, h_l, prime volumes, W0, gap)        (§4.3)
     else:           (W, D, D_l)       := type2_depth(build, k_l, h_l, V, minimal purge, W0)  (§4.4)
     for each tower layer l:
         outline_l := wall outline (rectangle | rib with taper | cone)                       (§4.5)
