@@ -1,6 +1,6 @@
 use goat_packer::{
-    Footprint, PackOptions, PackResult, PackedPlacement, Point, Rect, grid_layout, masks_overlap,
-    pack_footprint, rasterize_footprint, validate_result,
+    Footprint, PackOptions, PackResult, PackedPlacement, Point, PrintKind, Rect, grid_layout,
+    masks_overlap, pack_footprint, rasterize_footprint, validate_result,
 };
 
 fn polygon(points: &[(f64, f64)]) -> Footprint {
@@ -36,15 +36,10 @@ fn concave_shapes_can_interlock_while_bounding_boxes_overlap() {
     ]);
     let first = rasterize_footprint(&l, 0.0, 0.25, 0.0);
     let second = rasterize_footprint(&l, 180.0, 0.25, 0.0);
-    assert!(!masks_overlap(
-        &first.physical,
-        0,
-        0,
-        &second.physical,
-        12,
-        12
-    ));
-    assert!(first.physical.width > 0 && second.physical.width > 0);
+    let first = first.mask(PrintKind::Silhouette, 0).unwrap();
+    let second = second.mask(PrintKind::Silhouette, 0).unwrap();
+    assert!(!masks_overlap(first, 0, 0, second, 12, 12));
+    assert!(first.width > 0 && second.width > 0);
 }
 
 #[test]
@@ -305,7 +300,8 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         body_exclusions: Vec::new(),
         bed: Rect::new(0.0, 0.0, 40.0, 40.0),
         exclusions: vec![],
-        resolution: 0.5,
+        // The gaps meet on grid lines at 0.25 mm, so the raster adds no boundary pixel.
+        resolution: 0.25,
         clearance: 0.0,
         angle_step_deg: 90.0,
         attempts: 1,
@@ -318,11 +314,12 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         plate_rules: None,
     };
 
-    // dy = 2.0 mm: the slabs overlap (each 3 mm tall), the bodies (1 mm tall) do not — the
-    // full-patch rule would reject this, the two-zone rule must accept it.
+    // dy = 2.5 mm: the slabs overlap (each 3 mm tall), the bodies (1 mm tall) do not, and
+    // each slab keeps the 0.5 mm support gap (`SUPPORT_BODY_GAP_MM`, whatever the clearance)
+    // from the other's body — the full-patch rule would reject this, the pair rules accept it.
     let slabs_overlap = PackResult {
-        placements: vec![close(0.0), close(2.0)],
-        resolution_mm: 0.5,
+        placements: vec![close(0.0), close(2.5)],
+        resolution_mm: 0.25,
         requested_clearance_mm: 0.0,
         angle_step_deg: 90.0,
         attempts: 1,
@@ -499,8 +496,8 @@ fn bed_extent_includes_patch_and_silhouette_even_when_patch_is_smaller() {
     let mut fp = polygon(&[(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]);
     fp.bed_loops = Some(polygon(&[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]).loops);
     let mask = rasterize_footprint(&fp, 0., 0.5, 0.);
-    assert_eq!(mask.bed_physical_bounds.min_x, -2.);
-    assert_eq!(mask.bed_physical_bounds.max_y, 2.);
+    assert_eq!(mask.extent_bounds.min_x, -2.);
+    assert_eq!(mask.extent_bounds.max_y, 2.);
 }
 
 #[test]

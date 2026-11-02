@@ -69,6 +69,13 @@ pub struct Margins {
 }
 
 /// One object at one rotation class, in the footprint frame.
+///
+/// Frame convention: every loop is already in the plate-aligned frame of `rotation_deg`, the
+/// mesh turned by that angle about the frame centre (the origin). Supports are not
+/// rotation-equivariant (the slicer grows trees in table coordinates), so they are computed
+/// in that frame, not turned with the model. Placing a print on the plate is therefore a
+/// pure translation of its frame origin; another rotation class is another `ObjectPrint`.
+/// Only a legacy `Footprint` (`from_legacy`, rigid with the model) may be turned.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub struct ObjectPrint {

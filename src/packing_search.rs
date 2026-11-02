@@ -1,66 +1,16 @@
 //! Deterministic packing in a geometry-derived frame. No-fit rasters describe every
 //! forbidden relative integer translation, so a search scans free *bits*, not collisions.
-use crate::collision::{origin_range, zone_pairs};
+use crate::collision::no_fit;
 use crate::footprint::Footprint;
 use crate::frame::Frame;
 use crate::grid::grid_layout_inner;
+use crate::kind_masks::FeasibleOrigins;
 use crate::layout::{PixelPlacement, better_layout, cap_reached, layout_bbox_area};
 use crate::options::{PackOptions, PackResult, PackedPlacement};
 use crate::pixel_mask::set_bit_range;
-use crate::raster_mask::{RasterMask, rasterize_footprint_with_support};
-use crate::span_raster::{SpanRaster, merge_spans};
+use crate::raster_mask::{LegacyPrint, RasterMask};
+use crate::span_raster::SpanRaster;
 use rayon::prelude::*;
-
-/// All integer translations of B relative to A that overlap at least one occupied pixel.
-/// Span difference: [a,b) - [c,d) = [a-d+1,b-c). Holes remain holes.
-/// The pairs are `zone_pairs` plus the support cores, which exist only with
-/// `support_overlap_mm`; a side without a core has no support zone, and the zone pairs
-/// already cover it.
-fn no_fit(a: &RasterMask, b: &RasterMask) -> SpanRaster {
-    let mut pairs = zone_pairs(a, b);
-    if let (Some(core_a), Some(core_b)) = (&a.support_core, &b.support_core) {
-        pairs.push((core_a, core_b));
-    }
-    let min_y = pairs
-        .iter()
-        .map(|(a, b)| a.min_y - b.min_y - b.height as i32 + 1)
-        .min()
-        .unwrap();
-    let max_y = pairs
-        .iter()
-        .map(|(a, b)| a.min_y + a.height as i32 - b.min_y)
-        .max()
-        .unwrap();
-    let mut rows = vec![Vec::new(); (max_y - min_y) as usize];
-    for (index, &(a, b)) in pairs.iter().enumerate() {
-        if index == 1
-            && pairs[0].0.min_x == a.min_x
-            && pairs[0].0.min_y == a.min_y
-            && pairs[0].1.min_x == b.min_x
-            && pairs[0].1.min_y == b.min_y
-            && pairs[0].0.rows == a.rows
-            && pairs[0].1.rows == b.rows
-        {
-            continue;
-        }
-        let ar: Vec<_> = (0..a.height).map(|y| a.row_spans(y)).collect();
-        let br: Vec<_> = (0..b.height).map(|y| b.row_spans(y)).collect();
-        for (ay, spans_a) in ar.iter().enumerate() {
-            for (by, spans_b) in br.iter().enumerate() {
-                let row = &mut rows[(a.min_y + ay as i32 - b.min_y - by as i32 - min_y) as usize];
-                for &(a0, a1) in spans_a {
-                    for &(b0, b1) in spans_b {
-                        row.push((a.min_x + a0 - b.min_x - b1 + 1, a.min_x + a1 - b.min_x - b0));
-                    }
-                }
-            }
-        }
-    }
-    for row in &mut rows {
-        merge_spans(row);
-    }
-    SpanRaster { min_y, rows }
-}
 
 #[derive(Clone)]
 struct FreeCenters {
@@ -71,45 +21,29 @@ struct FreeCenters {
 }
 
 impl FreeCenters {
-    fn new(mask: &RasterMask, options: &PackOptions) -> Self {
-        let r = options.resolution;
-        let b = mask.bed_physical_bounds;
-        let (min_x, min_y, max_x, max_y) = origin_range(options, mask);
-        let width = (max_x - min_x + 1).max(0) as usize;
-        let height = (max_y - min_y + 1).max(0) as usize;
-        let mut this = Self {
+    /// The base map: every origin the plate zones allow (`kind_masks::feasible_origins`).
+    fn new(origins: &FeasibleOrigins) -> Self {
+        let Some((min_x, min_y, max_x, max_y)) = origins.bounds() else {
+            return Self {
+                min_x: 0,
+                min_y: 0,
+                width: 0,
+                rows: Vec::new(),
+            };
+        };
+        let width = (max_x - min_x + 1) as usize;
+        let mut rows = vec![vec![0; width.div_ceil(64)]; (max_y - min_y + 1) as usize];
+        for (index, row) in rows.iter_mut().enumerate() {
+            for &(start, end) in origins.allowed.row(min_y + index as i32) {
+                set_bit_range(row, (start - min_x) as usize, (end - min_x) as usize);
+            }
+        }
+        Self {
             min_x,
             min_y,
             width,
-            rows: vec![vec![0; width.div_ceil(64)]; height],
-        };
-        for row in &mut this.rows {
-            set_bit_range(row, 0, width);
+            rows,
         }
-        // Full-extent exclusions against the patch ∪ silhouette bbox, body exclusions (the
-        // tower) against the body bbox only — see `PackOptions::body_exclusions`.
-        let zones = [
-            (&options.exclusions, b),
-            (&options.body_exclusions, mask.body_bounds),
-        ];
-        for (exclusions, b) in zones {
-            for exclusion in exclusions {
-                let lo_x = ((exclusion.min_x - options.bed.min_x - b.max_x - options.clearance) / r)
-                    .floor() as i32
-                    + 1;
-                let hi_x = ((exclusion.max_x - options.bed.min_x - b.min_x + options.clearance) / r)
-                    .ceil() as i32;
-                let lo_y = ((exclusion.min_y - options.bed.min_y - b.max_y - options.clearance) / r)
-                    .floor() as i32
-                    + 1;
-                let hi_y = ((exclusion.max_y - options.bed.min_y - b.min_y + options.clearance) / r)
-                    .ceil() as i32;
-                for y in lo_y.max(min_y)..hi_y.min(max_y + 1) {
-                    this.clear(y, lo_x, hi_x);
-                }
-            }
-        }
-        this
     }
 
     fn clear(&mut self, y: i32, start: i32, end: i32) {
@@ -246,7 +180,7 @@ fn next_placement(
     };
     let candidates = free.iter().enumerate().filter_map(|(i, f)| {
         let (x, y) = f.first(reverse_x, reverse_y, phase)?;
-        let b = masks[i].bed_physical_bounds;
+        let b = masks[i].extent_bounds;
         let top = if reverse_y {
             -f64::from(y) - b.min_y / options.resolution
         } else {
@@ -278,6 +212,7 @@ fn next_placement(
 /// sweep's (count, bbox area) as the family's baseline.
 fn pair_search(
     masks: &[RasterMask],
+    print: &LegacyPrint,
     options: &PackOptions,
     variants: usize,
 ) -> (Vec<PixelPlacement>, (usize, f64)) {
@@ -285,7 +220,10 @@ fn pair_search(
         .par_iter()
         .map(|a| masks.iter().map(|b| no_fit(a, b)).collect())
         .collect();
-    let initial: Vec<_> = masks.iter().map(|m| FreeCenters::new(m, options)).collect();
+    let initial: Vec<_> = masks
+        .iter()
+        .map(|m| FreeCenters::new(&print.origins(m)))
+        .collect();
     let mut best = Vec::new();
     let mut baseline = (0, f64::INFINITY);
     for variant in 0..variants {
@@ -315,7 +253,7 @@ fn pack_layout(
 ) -> Vec<PackedPlacement> {
     layout
         .iter()
-        .map(|p| p.to_packed(masks[p.mask].angle_deg, options))
+        .map(|p| p.to_packed(masks[p.mask].rotation_deg, options))
         .collect()
 }
 
@@ -328,21 +266,17 @@ struct Family {
     baseline: (usize, f64),
 }
 
-fn search_family(frame: &Frame, angle: f64, options: &PackOptions, variants: usize) -> Family {
-    let rasterize = |angle: f64| {
-        rasterize_footprint_with_support(
-            &frame.footprint,
-            angle,
-            options.resolution,
-            options.clearance,
-            options.support_overlap_mm,
-        )
-    };
-    let mut masks = vec![rasterize(angle)];
+fn search_family(
+    print: &LegacyPrint,
+    angle: f64,
+    options: &PackOptions,
+    variants: usize,
+) -> Family {
+    let mut masks = vec![print.masks_at(angle)];
     if !options.lock_orientation {
-        masks.push(rasterize(angle + 180.0));
+        masks.push(print.masks_at(angle + 180.0));
     }
-    let (best, baseline) = pair_search(&masks, options, variants);
+    let (best, baseline) = pair_search(&masks, print, options, variants);
     Family {
         area: layout_bbox_area(&best, &masks),
         placements: pack_layout(&best, &masks, options),
@@ -399,6 +333,7 @@ fn mixed_palette(shortlist: &[usize], options: &PackOptions) -> Vec<f64> {
 
 pub(crate) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
     let frame = Frame::new(fp, options.lock_orientation);
+    let print = LegacyPrint::new(&frame.footprint, options).expect("invalid packing input");
     let count = if options.lock_orientation {
         1
     } else {
@@ -411,32 +346,21 @@ pub(crate) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
         .clamp(1, MAX_SWEEP_VARIANTS);
     let families: Vec<Family> = (0..count)
         .into_par_iter()
-        .map(|i| search_family(&frame, i as f64 * options.angle_step_deg, options, variants))
+        .map(|i| search_family(&print, i as f64 * options.angle_step_deg, options, variants))
         .collect();
     let mut placements = best_family(&families).placements.clone();
     let mut attempts_run = count * variants;
     if !options.lock_orientation && options.attempts > count {
         let angles = mixed_palette(&shortlist(&families), options);
-        let masks: Vec<_> = angles
-            .iter()
-            .map(|&a| {
-                rasterize_footprint_with_support(
-                    &frame.footprint,
-                    a,
-                    options.resolution,
-                    options.clearance,
-                    options.support_overlap_mm,
-                )
-            })
-            .collect();
+        let masks: Vec<_> = angles.par_iter().map(|&a| print.masks_at(a)).collect();
         let mixed_variants = (options.attempts - count).min(MIXED_VARIANTS_PER_ANGLE * masks.len());
-        let (mixed, _) = pair_search(&masks, options, mixed_variants);
+        let (mixed, _) = pair_search(&masks, &print, options, mixed_variants);
         attempts_run += mixed_variants;
         if mixed.len() > placements.len() {
             placements = pack_layout(&mixed, &masks, options);
         }
     }
-    let grid = grid_layout_inner(&frame.footprint, options);
+    let grid = grid_layout_inner(&frame.footprint, &print, options);
     if grid.placements.len() > placements.len() {
         placements = grid.placements;
     }
@@ -457,150 +381,34 @@ pub(crate) fn search(fp: &Footprint, options: &PackOptions) -> PackResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::collision::placements_collide;
-    use crate::footprint::LayerZone;
     use crate::geometry::{Point, point_in_loops, rotate_point};
     use crate::pixel_mask::{PixelMask, masks_overlap};
-    use crate::raster_mask::rasterize_footprint;
+    use crate::span_raster::SpanRaster;
     use std::collections::HashSet;
 
-    fn shape() -> Footprint {
+    fn shape() -> Vec<Vec<Point>> {
         let ring = |points: &[(f64, f64)]| {
             let mut ring: Vec<_> = points.iter().map(|&(x, y)| Point { x, y }).collect();
             ring.push(ring[0]);
             ring
         };
-        Footprint {
-            support_landing_loops: Vec::new(),
-            layer_zones: Vec::new(),
-            loops: vec![
-                ring(&[
-                    (-3., -2.),
-                    (3., -2.),
-                    (3., -1.),
-                    (0., -1.),
-                    (0., 2.),
-                    (-3., 2.),
-                ]),
-                ring(&[(-2.5, -0.5), (-1., -0.5), (-1., 1.), (-2.5, 1.)]),
-            ],
-            body_loops: vec![ring(&[(-3., -2.), (3., -2.), (3., -1.5), (-3., -1.5)])],
-            bed_loops: None,
-            width: 6.,
-            height: 4.,
-            min_z: 0.,
-            max_z: 1.,
-            triangle_count: 2,
-        }
+        vec![
+            ring(&[
+                (-3., -2.),
+                (3., -2.),
+                (3., -1.),
+                (0., -1.),
+                (0., 2.),
+                (-3., 2.),
+            ]),
+            ring(&[(-2.5, -0.5), (-1., -0.5), (-1., 1.), (-2.5, 1.)]),
+        ]
     }
 
     #[test]
-    fn no_fit_matches_brute_force_two_zone_collisions_at_every_shift() {
-        let fp = shape();
-        for angle in [0., 13., 90., 180.] {
-            let a = rasterize_footprint(&fp, 0., 0.5, 0.5);
-            let b = rasterize_footprint(&fp, angle, 0.5, 0.5);
-            let nfp = no_fit(&a, &b);
-            for y in -24..=24 {
-                for x in -24..=24 {
-                    let expected = masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
-                        || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y);
-                    let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
-                    assert_eq!(actual, expected, "angle={angle}, shift={x},{y}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn no_fit_matches_brute_force_layer_zone_collisions_at_every_shift() {
-        // A band whose support reaches 3 mm right of the patch (an interface under an ear)
-        // and whose body is the patch's left half: the no-fit raster must forbid exactly the
-        // shifts where that support meets the other's band body, on top of the zone pairs.
-        let mut fp = shape();
-        let rect = |x0: f64, y0: f64, x1: f64, y1: f64| {
-            vec![
-                Point { x: x0, y: y0 },
-                Point { x: x1, y: y0 },
-                Point { x: x1, y: y1 },
-                Point { x: x0, y: y1 },
-                Point { x: x0, y: y0 },
-            ]
-        };
-        fp.layer_zones = vec![LayerZone {
-            support_loops: vec![rect(3.5, 0.0, 6.0, 1.0)],
-            body_loops: vec![rect(-3.0, -2.0, 0.0, 2.0)],
-        }];
-        let a = rasterize_footprint(&fp, 0., 0.5, 0.5);
-        let b = rasterize_footprint(&fp, 0., 0.5, 0.5);
-        assert_eq!(a.layer_zones.len(), 1);
-        let nfp = no_fit(&a, &b);
-        let (support, body) = (&a.layer_zones[0].0, &b.layer_zones[0].1);
-        let mut differs_from_zones = false;
-        for y in -30..=30 {
-            for x in -30..=30 {
-                let zones = masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
-                    || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y);
-                let layer = masks_overlap(support, 0, 0, body, x, y)
-                    || masks_overlap(&a.layer_zones[0].1, 0, 0, &b.layer_zones[0].0, x, y);
-                let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
-                assert_eq!(actual, zones || layer, "shift={x},{y}");
-                assert_eq!(actual, placements_collide(&a, &b, x, y));
-                differs_from_zones |= actual != zones;
-            }
-        }
-        assert!(differs_from_zones, "the layer zone changed nothing");
-        // B 8 mm to the right (16 px): its band body (x 5..8) meets A's support (x 3.5..6).
-        assert!(placements_collide(&a, &b, 16, 0));
-    }
-
-    #[test]
-    fn no_fit_matches_brute_force_landing_collisions_at_every_shift() {
-        // The body loop as the silhouette, a narrower strip of it as the landing zone: the
-        // no-fit raster must forbid exactly the shifts where a patch meets a landing zone or
-        // two silhouettes meet.
-        let mut fp = shape();
-        let landing = vec![
-            Point { x: -2., y: -2. },
-            Point { x: 2., y: -2. },
-            Point { x: 2., y: -1.5 },
-            Point { x: -2., y: -1.5 },
-            Point { x: -2., y: -2. },
-        ];
-        fp.support_landing_loops = vec![landing];
-        for angle in [0., 13., 90., 180.] {
-            let a = rasterize_footprint(&fp, 0., 0.5, 0.5);
-            let b = rasterize_footprint(&fp, angle, 0.5, 0.5);
-            assert!(!a.landing_is_body);
-            let nfp = no_fit(&a, &b);
-            let mut differs_from_two_zone = false;
-            for y in -24..=24 {
-                for x in -24..=24 {
-                    let expected = masks_overlap(&a.clearance, 0, 0, &b.landing_clearance, x, y)
-                        || masks_overlap(&a.landing_clearance, 0, 0, &b.clearance, x, y)
-                        || masks_overlap(&a.body_clearance, 0, 0, &b.body_clearance, x, y);
-                    let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
-                    assert_eq!(actual, expected, "angle={angle}, shift={x},{y}");
-                    assert_eq!(actual, placements_collide(&a, &b, x, y));
-                    differs_from_two_zone |= actual
-                        != (masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
-                            || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y));
-                }
-            }
-            assert!(
-                differs_from_two_zone,
-                "angle={angle}: landing changed nothing"
-            );
-        }
-    }
-
-    #[test]
-    fn scanline_and_dilation_match_original_point_sampler() {
-        let fp = shape();
+    fn scanline_matches_original_point_sampler() {
         for angle in [0., 2., 13., 45., 90., 137., 180.] {
-            let loops: Vec<Vec<_>> = fp
-                .loops
+            let loops: Vec<Vec<_>> = shape()
                 .iter()
                 .map(|l| l.iter().map(|&p| rotate_point(p, angle)).collect())
                 .collect();
@@ -624,117 +432,6 @@ mod tests {
                         .collect::<HashSet<_>>(),
                     pixels
                 );
-                for radius in [0i32, 1, 2, 3] {
-                    let mut grown = HashSet::new();
-                    for &(x, y) in &pixels {
-                        for dy in -radius..=radius {
-                            for dx in -radius..=radius {
-                                if dx * dx + dy * dy <= radius * radius {
-                                    grown.insert((x + dx, y + dy));
-                                }
-                            }
-                        }
-                    }
-                    assert_eq!(
-                        PixelMask::from_spans(&spans.dilate(radius))
-                            .pixels()
-                            .collect::<HashSet<_>>(),
-                        grown
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn no_fit_with_support_cores_matches_brute_force_three_pair_collisions() {
-        let fp = shape();
-        for overlap in [0.0, 0.5, 1.5] {
-            for angle in [0., 13., 90., 180.] {
-                let a = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(overlap));
-                let b = rasterize_footprint_with_support(&fp, angle, 0.5, 0.5, Some(overlap));
-                assert!(a.support_core.is_some() && b.support_core.is_some());
-                let nfp = no_fit(&a, &b);
-                for y in -24..=24 {
-                    for x in -24..=24 {
-                        let expected = masks_overlap(&a.clearance, 0, 0, &b.body_clearance, x, y)
-                            || masks_overlap(&a.body_clearance, 0, 0, &b.clearance, x, y)
-                            || masks_overlap(
-                                a.support_core.as_ref().unwrap(),
-                                0,
-                                0,
-                                b.support_core.as_ref().unwrap(),
-                                x,
-                                y,
-                            );
-                        let actual = nfp.row(y).iter().any(|&(lo, hi)| lo <= x && x < hi);
-                        assert_eq!(actual, expected, "X={overlap} angle={angle} shift={x},{y}");
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn support_core_is_absent_without_the_option_or_a_support_zone() {
-        let fp = shape();
-        assert!(
-            rasterize_footprint(&fp, 0., 0.5, 0.5)
-                .support_core
-                .is_none()
-        );
-        let mut bodyless = fp.clone();
-        bodyless.body_loops.clear();
-        assert!(
-            rasterize_footprint_with_support(&bodyless, 0., 0.5, 0.5, Some(0.0))
-                .support_core
-                .is_none()
-        );
-        // X = 0: the core is exactly the printed patch (supports may touch, not overlap).
-        let mask = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(0.0));
-        let core = mask.support_core.unwrap();
-        assert_eq!(
-            core.pixels().collect::<HashSet<_>>(),
-            mask.physical.pixels().collect::<HashSet<_>>()
-        );
-        // X = 1 at 0.5 mm pixels: eroded by exactly one pixel.
-        let eroded = rasterize_footprint_with_support(&fp, 0., 0.5, 0.5, Some(1.0));
-        assert!(eroded.support_core.unwrap().pixel_count < mask.physical.pixel_count);
-    }
-
-    #[test]
-    fn erosion_matches_pixel_oracle() {
-        let fp = shape();
-        for angle in [0., 13., 45., 137.] {
-            let loops: Vec<Vec<_>> = fp
-                .loops
-                .iter()
-                .map(|l| l.iter().map(|&p| rotate_point(p, angle)).collect())
-                .collect();
-            for resolution in [0.125, 0.25] {
-                let spans = SpanRaster::scanline(&loops, resolution, (-64, 63, -64, 63));
-                let pixels: HashSet<_> = PixelMask::from_spans(&spans).pixels().collect();
-                for radius in [0i32, 1, 2, 3, 5] {
-                    let eroded: HashSet<_> = pixels
-                        .iter()
-                        .copied()
-                        .filter(|&(x, y)| {
-                            (-radius..=radius).all(|dy| {
-                                (-radius..=radius).all(|dx| {
-                                    dx * dx + dy * dy > radius * radius
-                                        || pixels.contains(&(x + dx, y + dy))
-                                })
-                            })
-                        })
-                        .collect();
-                    assert_eq!(
-                        PixelMask::from_spans(&spans.erode(radius))
-                            .pixels()
-                            .collect::<HashSet<_>>(),
-                        eroded,
-                        "angle={angle} resolution={resolution} radius={radius}"
-                    );
-                }
             }
         }
     }

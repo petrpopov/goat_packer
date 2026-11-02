@@ -1,44 +1,123 @@
-//! A footprint rasterized at one rotation: the pixel masks the collision rules compare.
+//! Today's `Footprint` + `PackOptions` as the slicer-free core sees them: the footprint
+//! becomes an `ObjectPrint` (`ObjectPrint::from_legacy`), the bed fields become plate zones
+//! (`PackOptions::effective_plate_rules`), and the masks come from `kind_masks`. The search,
+//! the grid and `validate_result` all go through `LegacyPrint`, so the three keep one rule.
 
-use crate::footprint::{Footprint, LAYER_ZONE_GAP_MM};
-use crate::geometry::{Point, Rect, rotate_loops};
-use crate::pixel_mask::PixelMask;
-use crate::span_raster::SpanRaster;
+use crate::footprint::Footprint;
+use crate::geometry::{Point, rotate_point};
+use crate::keepout::BodyRule;
+use crate::kind_masks::{
+    FeasibleOrigins, KindMasks, KindShapes, MaskRules, OriginGrid, PlateZone, feasible_origins,
+    plate_zones,
+};
+use crate::object_print::{Loops, ObjectPrint};
+use crate::options::PackOptions;
+use geo::{ConvexHull, MultiPoint};
 
-#[derive(Clone, Debug)]
-pub struct RasterMask {
-    pub angle_deg: f64,
-    pub resolution: f64,
-    pub physical: PixelMask,
-    pub clearance: PixelMask,
-    /// The body subset of the patch, dilated by the same half-clearance as `clearance`.
-    /// Two-zone packing rule: a body keeps clearance from anything foreign, while support
-    /// structures may touch other supports. Equals `clearance` when the footprint carries no
-    /// separate body loops (mesh projection, or a support-free first layer).
-    pub body_clearance: PixelMask,
-    /// `Footprint::support_landing_loops`, dilated like the other zones: a foreign full
-    /// patch must not touch it. Equals `body_clearance` (and `landing_is_body` is set) when
-    /// the footprint carries no landing loops.
-    pub landing_clearance: PixelMask,
-    pub landing_is_body: bool,
-    /// Bed/exclusion variant of the patch (patch + model silhouette when overhangs extend
-    /// past the first layer). Collisions between objects still use the patch above.
-    pub bed_physical: PixelMask,
-    pub bed_clearance: PixelMask,
-    pub bed_physical_bounds: Rect,
-    pub physical_bounds: Rect,
-    /// Rotated bbox of the body loops (`bed_physical_bounds` when the footprint has no
-    /// separate body): what `PackOptions::body_exclusions` are checked against.
-    pub body_bounds: Rect,
-    /// Support-overlap rule (`PackOptions::support_overlap_mm = Some(X)`): the printed patch
-    /// eroded by X/2 per side. Two cores must not overlap, so printed supports of two objects
-    /// overlap by at most X (X = 0: they may touch). `None` without the option, and when the
-    /// footprint carries no support zone (body == full): the two-zone rule then already
-    /// forbids any overlap of the clearance zones, which contain the cores.
-    pub support_core: Option<PixelMask>,
-    /// `Footprint::layer_zones` as (support, body) masks, each dilated by half of
-    /// `LAYER_ZONE_GAP_MM`.
-    pub layer_zones: Vec<(PixelMask, PixelMask)>,
+/// The masks of one legacy footprint at one angle (the name the public API has always used).
+pub type RasterMask = KindMasks;
+
+/// A legacy footprint prepared once per packing run: kinds grown in the footprint frame,
+/// turned rigidly for each angle the search tries. Rigid turning is the legacy contract (a
+/// rotatable footprint is a mesh silhouette; locked footprints stay at 0°).
+pub(crate) struct LegacyPrint {
+    shapes: KindShapes,
+    pub(crate) zones: Vec<PlateZone>,
+    pub(crate) grid: OriginGrid,
+    resolution: f64,
+}
+
+impl LegacyPrint {
+    pub(crate) fn new(footprint: &Footprint, options: &PackOptions) -> Result<Self, String> {
+        let rules = options.effective_plate_rules();
+        let zones = plate_zones(&rules, None)?;
+        let mask_rules = MaskRules {
+            clearance_mm: options.clearance,
+            body_rule: rules.body_rule,
+            support_overlap_mm: options.support_overlap_mm,
+        };
+        // Legacy rules keep the legacy bed rule: everything printed, `bed_loops` included,
+        // stays on the bed. Explicit plate rules say it themselves (`print_edge_reserve_mm`).
+        let legacy_bed = options.plate_rules.is_none();
+        Ok(LegacyPrint {
+            shapes: legacy_shapes(footprint, mask_rules, legacy_bed),
+            zones,
+            grid: OriginGrid {
+                origin: Point {
+                    x: options.bed.min_x,
+                    y: options.bed.min_y,
+                },
+                resolution: options.resolution,
+            },
+            resolution: options.resolution,
+        })
+    }
+
+    /// The masks at `angle_deg`, shifted by `offset` mm after turning (a placement off the
+    /// pixel grid keeps its sub-pixel phase).
+    pub(crate) fn masks(&self, angle_deg: f64, offset: Point) -> KindMasks {
+        moved(&self.shapes, angle_deg, offset).rasterize(self.resolution)
+    }
+
+    pub(crate) fn masks_at(&self, angle_deg: f64) -> KindMasks {
+        self.masks(angle_deg, Point { x: 0.0, y: 0.0 })
+    }
+
+    pub(crate) fn origins(&self, masks: &KindMasks) -> FeasibleOrigins {
+        feasible_origins(masks, &self.zones, &self.grid)
+    }
+}
+
+/// `footprint` as kind shapes in its own frame. `legacy_bed` adds the convex hull of every
+/// loop as the bed extent: only its bounding box is ever tested, at any angle.
+fn legacy_shapes(footprint: &Footprint, rules: MaskRules, legacy_bed: bool) -> KindShapes {
+    let mut shapes = KindShapes::new(&ObjectPrint::from_legacy(footprint), rules);
+    if legacy_bed {
+        shapes.bed_extent = extent_hull(footprint);
+    }
+    shapes
+}
+
+fn extent_hull(footprint: &Footprint) -> Loops {
+    let points: Vec<(f64, f64)> = footprint
+        .loops
+        .iter()
+        .chain(&footprint.body_loops)
+        .chain(&footprint.support_landing_loops)
+        .chain(footprint.bed_loops.iter().flatten())
+        .chain(
+            footprint
+                .layer_zones
+                .iter()
+                .flat_map(|zone| zone.support_loops.iter().chain(&zone.body_loops)),
+        )
+        .flatten()
+        .map(|p| (p.x, p.y))
+        .collect();
+    let hull = MultiPoint::from(points).convex_hull();
+    let ring: Vec<Point> = hull
+        .exterior()
+        .coords()
+        .map(|c| Point { x: c.x, y: c.y })
+        .collect();
+    if ring.is_empty() {
+        Loops::new()
+    } else {
+        vec![ring]
+    }
+}
+
+/// `shapes` turned by `angle_deg` about the footprint origin, then shifted by `offset`.
+fn moved(shapes: &KindShapes, angle_deg: f64, offset: Point) -> KindShapes {
+    let mut moved = shapes.mapped(|p| {
+        let q = rotate_point(p, angle_deg);
+        Point {
+            x: q.x + offset.x,
+            y: q.y + offset.y,
+        }
+    });
+    moved.print.rotation_deg = shapes.print.rotation_deg + angle_deg;
+    moved
 }
 
 pub fn rasterize_footprint(
@@ -50,126 +129,8 @@ pub fn rasterize_footprint(
     rasterize_footprint_with_support(footprint, angle_deg, resolution, clearance, None)
 }
 
-/// Pixel radius of the support core: `ceil(-X / 2 / resolution)`, an erosion of the printed
-/// patch by X/2 per side (negative = erosion). Rounding toward zero erodes sparingly, so the
-/// raster never allows more than X of physical overlap; at X = 0 the core is the patch itself
-/// (neighbouring supports may touch, not overlap). Clearance deliberately plays no part: the
-/// user's tolerance is "supports may overlap each other, never the model", and the body keeps
-/// its clearance through the two-zone pairs.
-fn support_core_radius(support_overlap_mm: f64, resolution: f64) -> i32 {
-    (-support_overlap_mm * 0.5 / resolution).ceil() as i32
-}
-
-/// The rasterization settings of one footprint at one angle.
-struct Rasterizer {
-    angle_deg: f64,
-    resolution: f64,
-    /// Dilation radius (pixels) for half of the requested clearance.
-    clearance_radius: i32,
-}
-
-impl Rasterizer {
-    /// Inclusive pixel ranges `(min_ix, max_ix, min_iy, max_iy)` covering `bounds`.
-    fn pixel_range(&self, bounds: &Rect) -> (i32, i32, i32, i32) {
-        let r = self.resolution;
-        (
-            (bounds.min_x / r - 0.5).floor() as i32,
-            (bounds.max_x / r - 0.5).ceil() as i32,
-            (bounds.min_y / r - 0.5).floor() as i32,
-            (bounds.max_y / r - 0.5).ceil() as i32,
-        )
-    }
-
-    /// The patch pixels. A patch thinner than a pixel rasterizes to nothing: it then falls
-    /// back to its whole bounding box so it still collides with something.
-    fn patch_pixels(&self, rotated: &[Vec<Point>], bounds: &Rect) -> SpanRaster {
-        let pixels = SpanRaster::cover(rotated, self.resolution, self.pixel_range(bounds));
-        if !pixels.is_empty() {
-            return pixels;
-        }
-        let r = self.resolution;
-        let min_x = (bounds.min_x / r).floor() as i32;
-        let max_x = (bounds.max_x / r).ceil() as i32;
-        let min_y = (bounds.min_y / r).floor() as i32;
-        let max_y = (bounds.max_y / r).ceil() as i32;
-        SpanRaster {
-            min_y,
-            rows: vec![vec![(min_x, max_x.max(min_x + 1))]; (max_y - min_y).max(1) as usize],
-        }
-    }
-
-    /// Every zone has its own extent: the body and upper supports need not be contained
-    /// in the first-layer patch. Empty zones stay empty (especially in height bands).
-    fn zone(&self, loops: &[Vec<Point>]) -> SpanRaster {
-        if loops.is_empty() {
-            return SpanRaster::default();
-        }
-        let rotated = rotate_loops(loops, self.angle_deg);
-        let bounds = Rect::of_points(rotated.iter().flatten());
-        self.patch_pixels(&rotated, &bounds)
-    }
-
-    fn dilated_zone(&self, loops: &[Vec<Point>]) -> Option<SpanRaster> {
-        (!loops.is_empty()).then(|| self.zone(loops).dilate_clearance(self.clearance_radius))
-    }
-
-    /// The physical bed extent includes every known structure, at every height. Keep the
-    /// sets separate before union: concatenating overlapping rings would apply XOR fill.
-    fn bed_variant(
-        &self,
-        footprint: &Footprint,
-        patch: &SpanRaster,
-        patch_bounds: Rect,
-    ) -> (SpanRaster, Rect) {
-        let mut pixels = patch.clone();
-        let mut bounds = patch_bounds;
-        let zones = std::iter::once(&footprint.body_loops)
-            .chain(std::iter::once(&footprint.support_landing_loops))
-            .chain(footprint.bed_loops.iter())
-            .chain(
-                footprint
-                    .layer_zones
-                    .iter()
-                    .flat_map(|z| [&z.support_loops, &z.body_loops]),
-            );
-        for loops in zones.filter(|l| !l.is_empty()) {
-            pixels = pixels.union(&self.zone(loops));
-            bounds = bounds.union(Rect::of_points(
-                rotate_loops(loops, self.angle_deg).iter().flatten(),
-            ));
-        }
-        (pixels, bounds)
-    }
-
-    fn layer_zone_masks(&self, footprint: &Footprint) -> Vec<(PixelMask, PixelMask)> {
-        let radius = (LAYER_ZONE_GAP_MM * 0.5 / self.resolution).ceil() as i32;
-        let mask = |loops: &[Vec<Point>]| {
-            PixelMask::from_spans(&self.zone(loops).dilate_clearance(radius))
-        };
-        // Never filter bands: rotations may rasterize thin zones differently. Removing a
-        // band changes its Z identity and compares supports against the wrong height.
-        footprint
-            .layer_zones
-            .iter()
-            .map(|z| (mask(&z.support_loops), mask(&z.body_loops)))
-            .collect()
-    }
-
-    /// The support core of `PackOptions::support_overlap_mm`: the patch eroded (or, for a
-    /// negative erosion radius, dilated) by half the allowed overlap.
-    fn support_core(&self, patch: &SpanRaster, overlap_mm: f64) -> PixelMask {
-        assert!(overlap_mm.is_finite() && overlap_mm >= 0.0);
-        let core_radius = support_core_radius(overlap_mm, self.resolution);
-        let core = if core_radius >= 0 {
-            patch.dilate(core_radius)
-        } else {
-            patch.erode(-core_radius)
-        };
-        PixelMask::from_spans(&core)
-    }
-}
-
-/// `rasterize_footprint` plus the support core for `PackOptions::support_overlap_mm`.
+/// The masks of `footprint` at `angle_deg` under the legacy bed rule and the silhouette body
+/// rule, with the support core of `support_overlap_mm`.
 pub fn rasterize_footprint_with_support(
     footprint: &Footprint,
     angle_deg: f64,
@@ -179,56 +140,11 @@ pub fn rasterize_footprint_with_support(
 ) -> RasterMask {
     assert!(resolution.is_finite() && resolution > 0.0);
     assert!(angle_deg.is_finite());
-    assert!(clearance.is_finite() && clearance >= 0.0);
-    let rasterizer = Rasterizer {
-        angle_deg,
-        resolution,
-        clearance_radius: (clearance * 0.5 / resolution).ceil() as i32,
+    let rules = MaskRules {
+        clearance_mm: clearance,
+        body_rule: BodyRule::Silhouette,
+        support_overlap_mm,
     };
-    let rotated = rotate_loops(&footprint.loops, angle_deg);
-    let bounds = Rect::of_points(rotated.iter().flatten());
-
-    let physical_pixels = rasterizer.patch_pixels(&rotated, &bounds);
-    let clearance_pixels = physical_pixels.dilate_clearance(rasterizer.clearance_radius);
-    let body_clearance_pixels = rasterizer
-        .dilated_zone(&footprint.body_loops)
-        .unwrap_or_else(|| clearance_pixels.clone());
-    let landing_clearance_pixels = rasterizer.dilated_zone(&footprint.support_landing_loops);
-    let landing_is_body = landing_clearance_pixels.is_none();
-    let landing_clearance_pixels =
-        landing_clearance_pixels.unwrap_or_else(|| body_clearance_pixels.clone());
-
-    let (bed_physical_pixels, bed_physical_bounds) =
-        rasterizer.bed_variant(footprint, &physical_pixels, bounds);
-    let bed_clearance_pixels = bed_physical_pixels.dilate_clearance(rasterizer.clearance_radius);
-    let body_bounds = if footprint.body_loops.is_empty() {
-        bed_physical_bounds
-    } else {
-        Rect::of_points(
-            rotate_loops(&footprint.body_loops, angle_deg)
-                .iter()
-                .flatten(),
-        )
-    };
-
-    let support_core = support_overlap_mm
-        .filter(|_| body_clearance_pixels != clearance_pixels)
-        .map(|overlap| rasterizer.support_core(&physical_pixels, overlap));
-
-    RasterMask {
-        angle_deg,
-        resolution,
-        physical: PixelMask::from_spans(&physical_pixels),
-        clearance: PixelMask::from_spans(&clearance_pixels),
-        body_clearance: PixelMask::from_spans(&body_clearance_pixels),
-        landing_clearance: PixelMask::from_spans(&landing_clearance_pixels),
-        landing_is_body,
-        bed_physical: PixelMask::from_spans(&bed_physical_pixels),
-        bed_clearance: PixelMask::from_spans(&bed_clearance_pixels),
-        bed_physical_bounds,
-        physical_bounds: bounds,
-        body_bounds,
-        support_core,
-        layer_zones: rasterizer.layer_zone_masks(footprint),
-    }
+    let shapes = legacy_shapes(footprint, rules, true);
+    moved(&shapes, angle_deg, Point { x: 0.0, y: 0.0 }).rasterize(resolution)
 }

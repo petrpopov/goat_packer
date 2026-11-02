@@ -2,15 +2,14 @@
 //! reusing the search's no-fit maps, then checks original-coordinate vector geometry via
 //! `validation_geometry`. Neither a no-fit bug nor a raster omission can vouch for itself.
 
-use crate::collision::{bounds_hit_exclusion, support_cores_overlap, zones_collide};
+use crate::collision::{support_cores_overlap, zones_collide};
 use crate::footprint::Footprint;
 use crate::frame::Frame;
 use crate::geometry::Point;
+use crate::kind_masks::{KindMasks, ZoneChecker};
 use crate::options::{PackOptions, PackResult, PackedPlacement, check_pack_input};
-use crate::raster_mask::{RasterMask, rasterize_footprint_with_support};
+use crate::raster_mask::LegacyPrint;
 
-/// Slack when comparing placed bounds with the bed, mm.
-const BOUNDS_SLACK_MM: f64 = 1e-6;
 /// A placement this close to a pixel center (mm) is rasterized as is, without shifting.
 const ON_GRID_TOLERANCE_MM: f64 = 1e-7;
 /// A placement that turns the object by more than this (degrees) is not at 0°.
@@ -24,6 +23,7 @@ pub fn validate_result(
     check_pack_input(footprint, options)?;
     check_placement_values(options, result)?;
     let frame = Frame::new(footprint, options.lock_orientation);
+    let print = LegacyPrint::new(&frame.footprint, options)?;
     let canonical: Vec<PackedPlacement> = result
         .placements
         .iter()
@@ -40,22 +40,63 @@ pub fn validate_result(
             )
         })
         .collect();
-    let masks: Vec<RasterMask> = canonical
+    let mut cache = MaskCache::default();
+    let masks: Vec<usize> = canonical
         .iter()
         .zip(&centers)
-        .map(|(p, &center)| placement_mask(&frame.footprint, options, p, center))
+        .map(|(p, &center)| cache.index_of(&print, options, p, center))
         .collect();
-    for (index, mask) in masks.iter().enumerate() {
-        check_bed_and_exclusions(options, mask, centers[index], index)?;
-        for (previous, previous_mask) in masks.iter().enumerate().take(index) {
+    let checkers: Vec<ZoneChecker> = cache
+        .masks
+        .iter()
+        .map(|(_, mask)| ZoneChecker::new(mask, &print.zones, &print.grid))
+        .collect();
+    for (index, &mask) in masks.iter().enumerate() {
+        let (x, y) = centers[index];
+        if let Some(conflict) = checkers[mask].conflict(x, y) {
+            return Err(format!("placement {index}: {conflict}"));
+        }
+        for (previous, &previous_mask) in masks.iter().enumerate().take(index) {
             check_pair(
                 options,
-                (previous, previous_mask, centers[previous]),
-                (index, mask, centers[index]),
+                (previous, &cache.masks[previous_mask].1, centers[previous]),
+                (index, &cache.masks[mask].1, centers[index]),
             )?;
         }
     }
     crate::validation_geometry::validate_geometry(footprint, options, result)
+}
+
+/// Masks per distinct (angle, sub-pixel offset): copies on the pixel grid share one.
+#[derive(Default)]
+struct MaskCache {
+    masks: Vec<((u64, u64, u64), KindMasks)>,
+}
+
+impl MaskCache {
+    /// The mask of one placement, whose rounded pixel center is `(x, y)`. A placement off the
+    /// pixel grid is rasterized moved by the leftover offset, so imported or manual layouts
+    /// keep their sub-pixel phase.
+    fn index_of(
+        &mut self,
+        print: &LegacyPrint,
+        options: &PackOptions,
+        placement: &PackedPlacement,
+        (x, y): (i32, i32),
+    ) -> usize {
+        let mut dx = placement.x_mm - options.bed.min_x - f64::from(x) * options.resolution;
+        let mut dy = placement.y_mm - options.bed.min_y - f64::from(y) * options.resolution;
+        if dx.abs() < ON_GRID_TOLERANCE_MM && dy.abs() < ON_GRID_TOLERANCE_MM {
+            (dx, dy) = (0.0, 0.0);
+        }
+        let key = (placement.angle_deg.to_bits(), dx.to_bits(), dy.to_bits());
+        if let Some(index) = self.masks.iter().position(|(known, _)| *known == key) {
+            return index;
+        }
+        let mask = print.masks(placement.angle_deg, Point { x: dx, y: dy });
+        self.masks.push((key, mask));
+        self.masks.len() - 1
+    }
 }
 
 /// Checks that need no geometry: object cap, finite numbers, locked orientation.
@@ -81,108 +122,16 @@ fn check_placement_values(options: &PackOptions, result: &PackResult) -> Result<
     Ok(())
 }
 
-/// The mask of one placement, whose rounded pixel center is `center`. A placement off the
-/// pixel grid is rasterized from the footprint moved by the leftover offset, so imported or
-/// manual layouts keep their sub-pixel phase.
-fn placement_mask(
-    footprint: &Footprint,
-    options: &PackOptions,
-    placement: &PackedPlacement,
-    (x, y): (i32, i32),
-) -> RasterMask {
-    let dx = placement.x_mm - options.bed.min_x - f64::from(x) * options.resolution;
-    let dy = placement.y_mm - options.bed.min_y - f64::from(y) * options.resolution;
-    let rasterize = |footprint: &Footprint| {
-        rasterize_footprint_with_support(
-            footprint,
-            placement.angle_deg,
-            options.resolution,
-            options.clearance,
-            options.support_overlap_mm,
-        )
-    };
-    if dx.abs() < ON_GRID_TOLERANCE_MM && dy.abs() < ON_GRID_TOLERANCE_MM {
-        return rasterize(footprint);
-    }
-    let (s, c) = placement.angle_deg.to_radians().sin_cos();
-    let offset = Point {
-        x: dx * c + dy * s,
-        y: -dx * s + dy * c,
-    };
-    let shift = |loops: &[Vec<Point>]| -> Vec<Vec<Point>> {
-        loops
-            .iter()
-            .map(|l| {
-                l.iter()
-                    .map(|p| Point {
-                        x: p.x + offset.x,
-                        y: p.y + offset.y,
-                    })
-                    .collect()
-            })
-            .collect()
-    };
-    rasterize(&footprint.map_loops(shift))
-}
-
-/// One placement stays on the bed (and the body on the body bed) and clear of exclusions.
-fn check_bed_and_exclusions(
-    options: &PackOptions,
-    mask: &RasterMask,
-    (px, py): (i32, i32),
-    index: usize,
-) -> Result<(), String> {
-    let x_mm = options.bed.min_x + f64::from(px) * options.resolution;
-    let y_mm = options.bed.min_y + f64::from(py) * options.resolution;
-    let translated_bounds = mask.bed_physical_bounds.translated(x_mm, y_mm);
-    if translated_bounds.sticks_out_of(options.bed, BOUNDS_SLACK_MM) {
-        return Err(format!(
-            "placement {index} leaves bed: {translated_bounds:?}"
-        ));
-    }
-    if let Some(body_bed) = options.body_bed {
-        let body = mask.body_bounds.translated(x_mm, y_mm);
-        if body.sticks_out_of(body_bed, BOUNDS_SLACK_MM) {
-            return Err(format!(
-                "placement {index} body leaves the body bed: {body:?}"
-            ));
-        }
-    }
-    // Exclusion feasibility follows the placement's bbox — the semantics BambuStudio's
-    // own validation uses (see aabb_hits_exclusion).
-    if bounds_hit_exclusion(
-        mask.bed_physical_bounds,
-        x_mm,
-        y_mm,
-        options.clearance,
-        &options.exclusions,
-    ) {
-        return Err(format!("placement {index} intersects exclusion (bbox)"));
-    }
-    if bounds_hit_exclusion(
-        mask.body_bounds,
-        x_mm,
-        y_mm,
-        options.clearance,
-        &options.body_exclusions,
-    ) {
-        return Err(format!(
-            "placement {index} body intersects a body exclusion (bbox)"
-        ));
-    }
-    Ok(())
-}
-
 /// Two placements (index, mask, pixel center) do not collide.
 fn check_pair(
     options: &PackOptions,
-    (previous, previous_mask, (previous_px, previous_py)): (usize, &RasterMask, (i32, i32)),
-    (index, mask, (px, py)): (usize, &RasterMask, (i32, i32)),
+    (previous, previous_mask, (previous_px, previous_py)): (usize, &KindMasks, (i32, i32)),
+    (index, mask, (px, py)): (usize, &KindMasks, (i32, i32)),
 ) -> Result<(), String> {
     let (dx, dy) = (px - previous_px, py - previous_py);
-    // Zone rule: a patch must not land on a foreign landing zone (body when the footprint has
-    // none), silhouettes keep clearance, supports may touch other supports — the same
-    // predicate the packing strategies enforce.
+    // Pair rules (`keepout::pair_rules`): silhouettes keep clearance, a support base keeps
+    // its gap from a foreign landing, supports keep theirs from foreign bodies band by band,
+    // supports may touch other supports: the same predicate the packing strategies enforce.
     if zones_collide(previous_mask, mask, dx, dy) {
         return Err(format!(
             "placements {previous} and {index} overlap: a body touches a foreign structure"

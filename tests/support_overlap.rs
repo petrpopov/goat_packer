@@ -4,8 +4,8 @@
 //! The footprint is an 8x8 mm support skirt (the full first-layer patch) around a 4x4 mm body,
 //! packed at a locked 0° so every geometric distance below is an exact axis-aligned formula.
 use goat_packer::{
-    Footprint, PackOptions, PackResult, PackedPlacement, Point, Rect, grid_layout,
-    pack_footprint, validate_result,
+    Footprint, PackOptions, PackResult, PackedPlacement, Point, Rect, grid_layout, pack_footprint,
+    validate_result,
 };
 
 const FULL_HALF: f64 = 4.0;
@@ -137,7 +137,10 @@ fn unlimited_lets_supports_overlap() {
             min_support_gap(&result) < 0.0,
             "default packing should nest support skirts: {result:#?}"
         );
-        assert!(min_body_gap(&result) >= CLEARANCE - TOLERANCE, "{result:#?}");
+        assert!(
+            min_body_gap(&result) >= CLEARANCE - TOLERANCE,
+            "{result:#?}"
+        );
     }
 }
 
@@ -151,7 +154,10 @@ fn zero_forbids_support_overlap_but_lets_supports_touch() {
         assert!(gap >= -TOLERANCE, "gap {gap}: {result:#?}");
         // ...but neighbours may touch: no clearance is added between supports.
         assert!(gap <= TOLERANCE, "gap {gap}: {result:#?}");
-        assert!(min_body_gap(&result) >= CLEARANCE - TOLERANCE, "{result:#?}");
+        assert!(
+            min_body_gap(&result) >= CLEARANCE - TOLERANCE,
+            "{result:#?}"
+        );
         // 8 mm pitch instead of 6.5 mm: the rule costs an object on this row.
         assert!(result.placements.len() < unlimited.placements.len());
     }
@@ -168,7 +174,10 @@ fn x_bounds_support_overlap_depth() {
             // ...and the rule binds: neighbours pack right up to the allowance (X <= 1.5 mm,
             // the most the bodies' clearance leaves on this skirt).
             assert!(-gap >= overlap - TOLERANCE, "X={overlap} overlap {}", -gap);
-            assert!(min_body_gap(&result) >= CLEARANCE - TOLERANCE, "X={overlap}");
+            assert!(
+                min_body_gap(&result) >= CLEARANCE - TOLERANCE,
+                "X={overlap}"
+            );
         }
     }
 }
@@ -177,7 +186,10 @@ fn x_bounds_support_overlap_depth() {
 fn bodies_never_overlap_even_with_a_huge_allowance() {
     // X far beyond the skirt width: the support cores erode to nothing, the body rule remains.
     for result in layouts(&options(Some(50.0))) {
-        assert!(min_body_gap(&result) >= CLEARANCE - TOLERANCE, "{result:#?}");
+        assert!(
+            min_body_gap(&result) >= CLEARANCE - TOLERANCE,
+            "{result:#?}"
+        );
         assert_eq!(
             result.placements.len(),
             pack_footprint(&skirted(), &options(None)).placements.len()
@@ -234,4 +246,38 @@ fn negative_or_non_finite_overlap_is_rejected() {
     for bad in [-0.1, f64::NAN, f64::INFINITY] {
         assert!(validate_result(&fp, &options(Some(bad)), &result).is_err());
     }
+}
+
+/// The core is the support base (patch minus body, a ring from 2 to 4 mm) shrunk by half the
+/// allowance on both sides as a vector, then covered: X = 1 leaves the ring 2.5..3.5.
+#[test]
+fn the_core_is_the_support_base_shrunk_by_half_the_allowance() {
+    let mask = goat_packer::rasterize_footprint_with_support(
+        &skirted(),
+        0.0,
+        RESOLUTION,
+        CLEARANCE,
+        Some(1.0),
+    );
+    let core = mask.support_core.expect("a support base gives a core");
+    let px = |mm: f64| (mm / RESOLUTION) as i32;
+    assert!(core.contains_local(px(2.5), 0) && core.contains_local(px(3.25), 0));
+    assert!(!core.contains_local(px(2.25), 0) && !core.contains_local(px(3.5), 0));
+    assert!(!core.contains_local(0, 0), "the body is no support");
+    // Without the option, or without a support base, there is no core.
+    assert!(
+        goat_packer::rasterize_footprint(&skirted(), 0.0, RESOLUTION, CLEARANCE)
+            .support_core
+            .is_none()
+    );
+    let mut bodyless = skirted();
+    bodyless.body_loops.clear();
+    let bare = goat_packer::rasterize_footprint_with_support(
+        &bodyless,
+        0.0,
+        RESOLUTION,
+        CLEARANCE,
+        Some(0.0),
+    );
+    assert!(bare.support_core.is_none());
 }

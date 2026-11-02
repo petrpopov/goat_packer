@@ -5,8 +5,8 @@
 //! first layer prints only a 4x4 mm landing zone, packed at a locked 0°, so every pitch below
 //! is an exact axis-aligned sum of half sizes plus the clearance.
 use goat_packer::{
-    Footprint, PackOptions, PackResult, PackedPlacement, Point, Rect, grid_layout,
-    pack_footprint, validate_result,
+    Footprint, PackOptions, PackResult, PackedPlacement, Point, Rect, grid_layout, pack_footprint,
+    validate_result,
 };
 
 const FULL_HALF: f64 = 4.0;
@@ -118,16 +118,22 @@ fn search_and_grid_pack_the_denser_landing_pitch() {
         let grid = grid_layout(&fp, &options);
         validate_result(&fp, &options, &searched).unwrap();
         validate_result(&fp, &options, &grid).unwrap();
-        assert_eq!(searched.placements.len(), expected, "search, landing={landing}");
+        assert_eq!(
+            searched.placements.len(),
+            expected,
+            "search, landing={landing}"
+        );
         assert_eq!(grid.placements.len(), expected, "grid, landing={landing}");
     }
 }
 
+/// A body exclusion (the tower keepout) is a restricted zone: the part box may not overlap
+/// it, touching passes, and supports may enter.
 #[test]
 fn body_exclusions_admit_supports_but_not_the_body() {
     let fp = footprint(3.0, true);
     let zone = Rect::new(12.0, 0.0, 14.0, 9.0);
-    // Body reaches 8.25 + 3 + 0.5 = 11.75 < 12; the patch reaches 12.25 + 0.5.
+    // Body reaches 8.25 + 3 = 11.25 < 12; the support base reaches 12.25.
     let near = layout(&[8.25]);
     let mut body_only = options();
     body_only.body_exclusions = vec![zone];
@@ -135,8 +141,9 @@ fn body_exclusions_admit_supports_but_not_the_body() {
     let mut full = options();
     full.exclusions = vec![zone];
     assert!(validate_result(&fp, &full, &near).is_err());
-    // The body itself may not enter: 9 + 3 + 0.5 = 12.5 > 12.
-    assert!(validate_result(&fp, &body_only, &layout(&[9.0])).is_err());
+    // The body box touching the zone passes; entering it does not.
+    assert!(validate_result(&fp, &body_only, &layout(&[9.0])).is_ok());
+    assert!(validate_result(&fp, &body_only, &layout(&[9.25])).is_err());
 }
 
 #[test]
@@ -151,16 +158,21 @@ fn search_respects_body_exclusions() {
 }
 
 /// Rule 3: a body bed (`PackOptions::body_bed`, the profile's edge margin) binds the model,
-/// while the supports may print up to the wider `bed` (the printable area).
+/// while the supports may print up to the wider `bed` (the printable area). The legacy body
+/// bed becomes one restricted band as wide as its widest inset, so the insets here are even.
 fn edge_options(bed: Rect, body_bed: Option<Rect>) -> PackOptions {
-    PackOptions { bed, body_bed, ..options() }
+    PackOptions {
+        bed,
+        body_bed,
+        ..options()
+    }
 }
 
 #[test]
 fn supports_may_enter_the_edge_margin_the_body_may_not() {
     let fp = footprint(3.0, true);
     let margin = Rect::new(0.0, 0.0, 32.5, 9.0);
-    let options = edge_options(Rect::new(-2.0, 0.0, 34.5, 9.0), Some(margin));
+    let options = edge_options(Rect::new(-2.0, -2.0, 34.5, 11.0), Some(margin));
     // Patch -1..7 inside the bed, body 0..6 inside the margin.
     assert!(validate_result(&fp, &options, &layout(&[3.0])).is_ok());
     // The body leaves the margin by 0.25 mm while the patch is still on the bed.
@@ -177,14 +189,27 @@ fn search_and_grid_use_the_edge_margin_for_the_supports() {
     // Patch-bound: centres 4..28.5 at a 6.5 pitch hold 4; body-bound: 3..29.5 hold 5.
     for (options, expected) in [
         (edge_options(margin, None), 4),
-        (edge_options(Rect::new(-1.0, 0.0, 33.5, 9.0), Some(margin)), 5),
+        (
+            edge_options(Rect::new(-1.0, -1.0, 33.5, 10.0), Some(margin)),
+            5,
+        ),
     ] {
         let searched = pack_footprint(&fp, &options);
         let grid = grid_layout(&fp, &options);
         validate_result(&fp, &options, &searched).unwrap();
         validate_result(&fp, &options, &grid).unwrap();
-        assert_eq!(searched.placements.len(), expected, "search, {:?}", options.body_bed);
-        assert_eq!(grid.placements.len(), expected, "grid, {:?}", options.body_bed);
+        assert_eq!(
+            searched.placements.len(),
+            expected,
+            "search, {:?}",
+            options.body_bed
+        );
+        assert_eq!(
+            grid.placements.len(),
+            expected,
+            "grid, {:?}",
+            options.body_bed
+        );
     }
     // A body bed equal to the bed changes nothing.
     let plain = pack_footprint(&fp, &edge_options(margin, None));

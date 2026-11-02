@@ -57,16 +57,16 @@ pub(crate) fn layout_bbox_area(layout: &[PixelPlacement], masks: &[RasterMask]) 
         let mask = &masks[p.mask];
         bounds.min_x = bounds
             .min_x
-            .min(f64::from(p.x) + mask.physical_bounds.min_x / mask.resolution);
+            .min(f64::from(p.x) + mask.extent_bounds.min_x / mask.resolution);
         bounds.min_y = bounds
             .min_y
-            .min(f64::from(p.y) + mask.physical_bounds.min_y / mask.resolution);
+            .min(f64::from(p.y) + mask.extent_bounds.min_y / mask.resolution);
         bounds.max_x = bounds
             .max_x
-            .max(f64::from(p.x) + mask.physical_bounds.max_x / mask.resolution);
+            .max(f64::from(p.x) + mask.extent_bounds.max_x / mask.resolution);
         bounds.max_y = bounds
             .max_y
-            .max(f64::from(p.y) + mask.physical_bounds.max_y / mask.resolution);
+            .max(f64::from(p.y) + mask.extent_bounds.max_y / mask.resolution);
     }
     (bounds.max_x - bounds.min_x) * (bounds.max_y - bounds.min_y)
 }
