@@ -10,25 +10,36 @@
 //! closer than the sum of their half widths (they touch or overlap).
 //!
 //! Both dialects: BambuStudio labels objects with `; start printing object, unique label id:
-//! N` / `; stop printing object, unique label id: N`, OrcaSlicer with `; printing object NAME
-//! id:N copy M` / `; stop printing object ...` (plus Klipper `EXCLUDE_OBJECT_START NAME=...`
-//! / `EXCLUDE_OBJECT_END`). Layers: `; CHANGE_LAYER` / `;LAYER_CHANGE`; features: `; FEATURE:`
-//! / `;TYPE:`; widths: `; LINE_WIDTH:` / `;WIDTH:`. Lines outside any object (prime tower,
-//! purge, skirt) are ignored.
+//! N` / `; stop printing object, unique label id: N` (a single object only with `; OBJECT_ID:
+//! N`), OrcaSlicer with `; printing object NAME id:N copy M` / `; stop printing object ...`
+//! (plus Klipper `EXCLUDE_OBJECT_START NAME=...` / `EXCLUDE_OBJECT_END`); `reader` explains
+//! which one a plate is read by. Layers: `; CHANGE_LAYER` / `;LAYER_CHANGE`; features:
+//! `; FEATURE:` / `;TYPE:`; widths: `; LINE_WIDTH:` / `;WIDTH:`. Lines outside any object
+//! (prime tower, purge, skirt) are ignored.
 //!
-//! Modules: `parser` (reads the G-code), `touching` (the per-layer geometry), `types` (the
-//! report), `learning` (what a sample slice teaches the packer), `nudge` (moving contacts apart).
+//! Modules: `reader` (walks the G-code; `labels` names the objects), `parser` (every object's
+//! lines), `touching` (the per-layer geometry), `types` (the report), `learning` (what a sample
+//! slice teaches the packer), `nudge` (moving contacts apart), `gui_checks` (what the slicer
+//! GUI would refuse, with `conflicts`, `part_edges` and `plane`).
 
+mod conflicts;
 pub mod gui_checks;
+mod labels;
 mod learning;
 mod nudge;
 mod parser;
+mod part_edges;
+mod plane;
+mod reader;
 #[cfg(test)]
 mod tests;
 mod touching;
 mod types;
 
 use parser::{extents_of, parse};
+
+pub use conflicts::ConflictKind;
+pub(crate) use parser::{KeptLine, object_lines};
 
 pub use learning::{LAYER_BAND_MM, layer_zones_from_sample, learn_support_patch, match_placements};
 pub use nudge::{NUDGE_MARGIN_MM, nudge_apart};

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::gcode_text::axis_value;
+use crate::gcode_text::{MoveCommand, arc_of, axis_value, move_command};
 use crate::geometry::Rect;
 
 /// The tower bounds are re-measured from the final slice and a repack is forced when they
@@ -94,15 +94,21 @@ impl TowerScan {
             self.active = true;
         } else if let Some(wipe) = nozzle_wipe_marker(line) {
             self.nozzle_wipe = wipe;
-        } else if line.starts_with("G0") || line.starts_with("G1") {
-            self.read_move(line);
+        } else if let Some(command) = move_command(line) {
+            self.read_move(line, command);
         }
     }
 
-    fn read_move(&mut self, line: &str) {
+    /// BambuStudio draws its rib-wall tower with G2/G3 fillet arcs (2 901 extruding arcs in one
+    /// P1S probe tower). Reading G0/G1 only froze the head at each arc's start and missed every
+    /// bulge: the P1S tower measured 16.3x14.6 mm while it prints 24.9x24.0 (brim included),
+    /// and the real tower stuck out of the reserved keepout by 1.9-3.2 mm per side. Arcs count
+    /// with their exact extent, in the I/J and in the R form.
+    fn read_move(&mut self, line: &str, command: MoveCommand) {
         let extrudes = self.extrudes(line);
         let parsed_x = axis_value(line, 'X');
         let parsed_y = axis_value(line, 'Y');
+        let from = (self.x, self.y);
         if self.absolute_mode {
             self.x = parsed_x.unwrap_or(self.x);
             self.y = parsed_y.unwrap_or(self.y);
@@ -110,15 +116,21 @@ impl TowerScan {
             self.x += parsed_x.unwrap_or(0.0);
             self.y += parsed_y.unwrap_or(0.0);
         }
-        if self.active
-            && !self.nozzle_wipe
-            && (parsed_x.is_some() || parsed_y.is_some())
-            && extrudes
+        if !self.active
+            || self.nozzle_wipe
+            || (parsed_x.is_none() && parsed_y.is_none())
+            || !extrudes
         {
-            let point = Rect::new(self.x, self.y, self.x, self.y);
-            self.bounds = Some(self.bounds.map_or(point, |bounds| bounds.union(point)));
-            self.max_width = self.max_width.max(self.line_width);
+            return;
         }
+        let to = (self.x, self.y);
+        let arc = match command {
+            MoveCommand::Arc { clockwise } => arc_of(line, from, to, clockwise),
+            MoveCommand::Linear => None,
+        };
+        let reach = arc.map_or(Rect::new(to.0, to.1, to.0, to.1), |arc| arc.extent());
+        self.bounds = Some(self.bounds.map_or(reach, |bounds| bounds.union(reach)));
+        self.max_width = self.max_width.max(self.line_width);
     }
 
     /// Only a move that really lays down filament is tower. Bambu retract-wipes at the object

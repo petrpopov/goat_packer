@@ -1,7 +1,9 @@
-//! The G-code vocabulary shared by the two readers of sliced plates (`gcode_footprint` for the
+//! The G-code vocabulary shared by the readers of sliced plates (`gcode_footprint` for the
 //! probe's first layer, `gcode_collisions` for a whole plate). Both slicer dialects are
 //! understood: OrcaSlicer marks layers with `;LAYER_CHANGE`, features with `;TYPE:` and widths
 //! with `;WIDTH:`; Bambu Studio uses `; CHANGE_LAYER`, `; FEATURE:` and `; LINE_WIDTH:`.
+
+use crate::geometry::{Point, Rect};
 
 /// Moves shorter than this are judged by their flow density (`MIN_FLOW_PER_MM`) against
 /// un-retractions smeared over a travel; below it a move cannot be told apart from noise.
@@ -43,6 +45,43 @@ pub(crate) fn axis_value(line: &str, axis: char) -> Option<f64> {
     code.split_whitespace()
         .skip(1)
         .find_map(|token| token.strip_prefix(axis).and_then(|v| v.parse::<f64>().ok()))
+}
+
+/// The kind of move a G-code line commands, judged by its first word (so `G17` or `G28` never
+/// pass for `G1`/`G2`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MoveCommand {
+    Linear,
+    /// G2 (`clockwise`) or G3.
+    Arc {
+        clockwise: bool,
+    },
+}
+
+pub(crate) fn move_command(line: &str) -> Option<MoveCommand> {
+    match line.split_whitespace().next()? {
+        "G0" | "G1" | "G00" | "G01" => Some(MoveCommand::Linear),
+        "G2" | "G02" => Some(MoveCommand::Arc { clockwise: true }),
+        "G3" | "G03" => Some(MoveCommand::Arc { clockwise: false }),
+        _ => None,
+    }
+}
+
+/// The arc a G2/G3 line sweeps from `from` to `to`: centre form (`I`/`J` offsets from the start;
+/// a missing one is 0) or radius form (`R`). `None` when the line names neither or the arc is
+/// degenerate; callers then treat the move as its chord.
+pub(crate) fn arc_of(
+    line: &str,
+    from: (f64, f64),
+    to: (f64, f64),
+    clockwise: bool,
+) -> Option<ArcSweep> {
+    let (i, j) = (axis_value(line, 'I'), axis_value(line, 'J'));
+    if i.is_some() || j.is_some() {
+        let offset = (i.unwrap_or(0.0), j.unwrap_or(0.0));
+        return ArcSweep::new(from, to, offset, clockwise);
+    }
+    ArcSweep::from_radius(from, to, axis_value(line, 'R')?, clockwise)
 }
 
 /// Shortest radius of an arc worth following, mm.
@@ -90,8 +129,73 @@ impl ArcSweep {
         })
     }
 
+    /// Radius form: the circle of radius |`radius`| through both ends. A positive radius takes
+    /// the arc of at most half a turn, a negative one the longer arc (the usual firmware
+    /// reading). Moving clockwise along the shorter arc keeps the centre on the right of the
+    /// chord, so the centre sits on that side for G2 with R > 0 and on the other side for the
+    /// three other combinations. A radius shorter than half the chord cannot reach both ends;
+    /// it is read as a half circle, the closest arc that does.
+    pub(crate) fn from_radius(
+        from: (f64, f64),
+        to: (f64, f64),
+        radius: f64,
+        clockwise: bool,
+    ) -> Option<Self> {
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let chord = dx.hypot(dy);
+        if chord <= MIN_ARC_RADIUS_MM || radius.abs() <= MIN_ARC_RADIUS_MM {
+            return None;
+        }
+        let half = chord * 0.5;
+        let rise = (radius * radius - half * half).max(0.0).sqrt();
+        // Unit normal to the right of the chord direction.
+        let right = (dy / chord, -dx / chord);
+        let side = if clockwise == (radius > 0.0) {
+            1.0
+        } else {
+            -1.0
+        };
+        let centre = (
+            from.0 + dx * 0.5 + side * rise * right.0,
+            from.1 + dy * 0.5 + side * rise * right.1,
+        );
+        Self::new(from, to, (centre.0 - from.0, centre.1 - from.1), clockwise)
+    }
+
     pub(crate) fn length(&self) -> f64 {
         self.radius * self.sweep.abs()
+    }
+
+    /// The exact bounding box of the swept centre line: both ends plus every axis extreme
+    /// (a multiple of a quarter turn) the sweep passes. Chord samples cut the bulge short by up
+    /// to the sagitta; the extremes do not.
+    pub(crate) fn extent(&self) -> Rect {
+        let end_angle = self.start_angle + self.sweep;
+        let point = |angle: f64| Point {
+            x: self.centre.0 + self.radius * angle.cos(),
+            y: self.centre.1 + self.radius * angle.sin(),
+        };
+        let (low, high) = if self.sweep < 0.0 {
+            (end_angle, self.start_angle)
+        } else {
+            (self.start_angle, end_angle)
+        };
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let first = (low / quarter).ceil() as i64;
+        let last = (high / quarter).floor() as i64;
+        let extremes = (first..=last).map(|k| point(k as f64 * quarter));
+        let points: Vec<Point> = [point(self.start_angle), point(end_angle)]
+            .into_iter()
+            .chain(extremes)
+            .collect();
+        Rect::of_points(points.iter())
+    }
+
+    /// The arc as chords no longer than `step_mm` (at least one): the chord end points after
+    /// the start, in order.
+    pub(crate) fn chord_points(&self, step_mm: f64) -> impl Iterator<Item = (f64, f64)> + '_ {
+        let steps = ((self.length() / step_mm).ceil() as usize).max(1);
+        self.points(steps)
     }
 
     /// The arc cut into `steps` chords: the chord end points after the start, in order.

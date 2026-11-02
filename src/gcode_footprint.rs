@@ -1,13 +1,17 @@
 //! The footprint a probe slice really printed: first-layer walls, supports and brim, and the
 //! support interfaces above them, read from G-code as swept strips and unioned into loops.
 
+mod realization;
+
 use crate::footprint::Footprint;
 use crate::gcode_text::{
-    ArcSweep, DENSITY_CHECK_MIN_LENGTH_MM, MIN_FLOW_PER_MM, axis_value, feature_label,
-    is_layer_change, line_width_comment,
+    DENSITY_CHECK_MIN_LENGTH_MM, MIN_FLOW_PER_MM, MoveCommand, arc_of, axis_value, feature_label,
+    is_layer_change, line_width_comment, move_command,
 };
 use crate::geometry::{Point, closed_loop, drop_specks, sort_largest_first, strip_polygon};
 use geo::{Polygon, algorithm::bool_ops::unary_union};
+
+pub use realization::{SlicedObject, realization_from_gcode, realizations_from_gcode};
 
 /// Line width assumed until the G-code names one, mm.
 const DEFAULT_LINE_WIDTH_MM: f64 = 0.5;
@@ -258,20 +262,24 @@ impl<Keep: Fn(usize, &str) -> Option<bool>> StripReader<Keep> {
             self.feature = kind.to_lowercase();
         } else if let Some(width) = line_width_comment(line) {
             self.line_width = width.unwrap_or(self.line_width);
-        } else if line.starts_with("G2") || line.starts_with("G3") {
-            self.read_arc(line);
-        } else if line.starts_with("G0") || line.starts_with("G1") {
-            self.read_straight_move(line);
+        } else {
+            match move_command(line) {
+                Some(MoveCommand::Arc { clockwise }) => self.read_arc(line, clockwise),
+                Some(MoveCommand::Linear) => self.read_straight_move(line),
+                None => {}
+            }
         }
         true
     }
 
     /// Whether a move that names X or Y lays down object material in the current state: not
-    /// before the first layer marker, not in the prime tower.
+    /// before the first layer marker, not in the prime tower, not machine G-code (`Custom`,
+    /// e.g. a purge in a filament-change block).
     fn prints_object_line(&self, line: &str) -> bool {
         self.layer >= 1
             && !self.in_tower_section
             && !self.feature.contains("tower")
+            && self.feature != "custom"
             && (axis_value(line, 'X').is_some() || axis_value(line, 'Y').is_some())
     }
 
@@ -307,16 +315,15 @@ impl<Keep: Fn(usize, &str) -> Option<bool>> StripReader<Keep> {
     /// pixel past the mesh silhouette, `patch_within_silhouette` failed, and a bed that packs
     /// 18 rotated objects locked to one orientation (15). Follow the arc: track its endpoint
     /// and ink the sweep.
-    fn read_arc(&mut self, line: &str) {
+    fn read_arc(&mut self, line: &str, clockwise: bool) {
         let next = self.target(line);
         let filament = axis_value(line, 'E').unwrap_or(0.0);
         if filament > 0.0
             && self.prints_object_line(line)
             && let Some(is_body) = (self.keep)(self.layer, &self.feature)
-            // Arcs without an I/J centre (R-form) carry no centre to rebuild the sweep
-            // from; slicer output does not use them, so they only move the head.
-            && let (Some(i), Some(j)) = (axis_value(line, 'I'), axis_value(line, 'J'))
-            && let Some(arc) = ArcSweep::new((self.x, self.y), next, (i, j), line.starts_with("G2"))
+            // An arc without a centre (I/J) or a radius (R) cannot be rebuilt; slicer output
+            // always names one, so such a line only moves the head.
+            && let Some(arc) = arc_of(line, (self.x, self.y), next, clockwise)
         {
             let length = arc.length();
             // Same density cut as straight moves, judged over the whole sweep: Arachne

@@ -169,3 +169,81 @@ G1 X60 Y60 E0.8
     assert_eq!(bounds.centerline.max_x, 190.0);
     assert_eq!(bounds.centerline.max_y, 199.0);
 }
+
+/// BambuStudio draws its rib-wall tower with G2/G3 fillet arcs. Reading G0/G1 only kept the
+/// head at each arc's start and missed every bulge (a real P1S tower measured 16.3x14.6 mm
+/// instead of 24.9x24.0). Here the tower is two half circles of radius 5 around (20, 15): one
+/// in the I/J form, one in the R form; their ends sit at x = 20, their bulges reach 15 and 25.
+#[test]
+fn tower_arcs_count_with_their_bulges_in_both_forms() {
+    let gcode = b"
+G90
+M83
+G1 X20 Y10 F30000
+; WIPE_TOWER_START
+G3 X20 Y20 I0 J5 E0.5
+G3 X20 Y10 R5 E0.5
+; WIPE_TOWER_END
+";
+    let bounds = parse_prime_tower_bounds(gcode, 0.5, 0.7).unwrap();
+    let centre = bounds.centerline;
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(
+        near(centre.min_x, 15.0) && near(centre.max_x, 25.0),
+        "{centre:?}"
+    );
+    assert!(
+        near(centre.min_y, 10.0) && near(centre.max_y, 20.0),
+        "{centre:?}"
+    );
+}
+
+/// The R form picks the side of the centre from the direction and the sign: a clockwise arc
+/// from (0, 0) to (10, 0) with R = 5 is the upper half circle (centre on the chord); with
+/// R = -10 it is the long way round a centre above the chord.
+#[test]
+fn radius_form_arcs_take_the_side_their_direction_and_sign_give() {
+    let tower = |arc: &str| {
+        let gcode = format!("G90\nM83\nG1 X0 Y0\n; WIPE_TOWER_START\n{arc}\n; WIPE_TOWER_END\n");
+        parse_prime_tower_bounds(gcode.as_bytes(), 0.5, 0.7)
+            .unwrap()
+            .centerline
+    };
+    let short = tower("G2 X10 Y0 R5 E1");
+    assert!(
+        (short.max_y - 5.0).abs() < 1e-9 && short.min_y.abs() < 1e-9,
+        "{short:?}"
+    );
+    // Long clockwise arc, radius 10: the centre sits left of the travel direction at
+    // (5, 8.66), and the 300-degree sweep passes the circle's left, top and right extremes.
+    let long = tower("G2 X10 Y0 R-10 E1");
+    assert!((long.max_y - 10.0 - 75f64.sqrt()).abs() < 1e-9, "{long:?}");
+    assert!(
+        (long.min_x + 5.0).abs() < 1e-9 && (long.max_x - 15.0).abs() < 1e-9,
+        "{long:?}"
+    );
+    assert!(long.min_y.abs() < 1e-9, "{long:?}");
+}
+
+/// Relative positioning moves an arc's end like any other move; I/J stay relative to the start.
+#[test]
+fn relative_arcs_end_where_the_offsets_say() {
+    let gcode = b"
+G90
+M83
+G1 X30 Y30
+G91
+; WIPE_TOWER_START
+G2 X10 Y0 I5 J0 E1
+G1 X0 Y5 E1
+; WIPE_TOWER_END
+";
+    let centre = parse_prime_tower_bounds(gcode, 0.5, 0.7)
+        .unwrap()
+        .centerline;
+    // Clockwise from (30, 30) to (40, 30) around (35, 30): over the top to y = 35, then the
+    // straight move to (40, 35).
+    assert!((centre.max_y - 35.0).abs() < 1e-9, "{centre:?}");
+    assert!((centre.min_x - 30.0).abs() < 1e-9 && (centre.max_x - 40.0).abs() < 1e-9);
+    assert!((centre.min_y - 30.0).abs() < 1e-9, "{centre:?}");
+}
