@@ -41,7 +41,6 @@ class PackJobFlowTest(
         fun properties(registry: DynamicPropertyRegistry) {
             registry.add("app.packer-bin") { FakeBins.install(tmpRoot, "fake-packer.sh") }
             registry.add("app.scheduler-bin") { FakeBins.install(tmpRoot, "fake-scheduler.sh") }
-            registry.add("app.profiles-dir") { "../../profiles" }
             registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
         }
     }
@@ -51,8 +50,8 @@ class PackJobFlowTest(
     private fun uploadGoat(): String {
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
-                .param("profileId", "bambu_a2l"),
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
+                .param("profileId", "test_wide_bed"),
         )
             .andExpect(status().isAccepted)
             .andReturn()
@@ -97,7 +96,7 @@ class PackJobFlowTest(
     @Test
     fun `свой стол — ровно один источник стола и границы размеров`() {
         packCustom(miniProject3mf("Acme Unknown 3000")).andExpect(status().isBadRequest)
-        packCustom(miniProject3mf("Acme Unknown 3000"), "profileId" to "bambu_p1s", "customWidth" to "250", "customDepth" to "210", "customHeight" to "220")
+        packCustom(miniProject3mf("Acme Unknown 3000"), "profileId" to "test_corner_bed", "customWidth" to "250", "customDepth" to "210", "customHeight" to "220")
             .andExpect(status().isBadRequest)
         packCustom(miniProject3mf("Acme Unknown 3000"), "customWidth" to "250", "customDepth" to "210").andExpect(status().isBadRequest)
         packCustom(miniProject3mf("Acme Unknown 3000"), "customWidth" to "40", "customDepth" to "210", "customHeight" to "220").andExpect(status().isBadRequest)
@@ -107,18 +106,18 @@ class PackJobFlowTest(
 
     @Test
     fun `статус pack-джоба несёт имя файла, профиль и настройки, вход скачивается теми же байтами`() {
-        val data = miniProject3mf("Bambu Lab A2L")
+        val data = miniProject3mf("Test Wide Bed")
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, data))
-                .param("profileId", "bambu_a2l").param("clearance", "1.2").param("finalSlice", "false"),
+                .param("profileId", "test_wide_bed").param("clearance", "1.2").param("finalSlice", "false"),
         ).andExpect(status().isAccepted).andReturn()
         val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
         val body = mockMvc.awaitJobCompletion(jobId)
         assertEquals("goat.3mf", body["originalName"].asText())
-        assertEquals("bambu_a2l", body["profile"]["id"].asText())
+        assertEquals("test_wide_bed", body["profile"]["id"].asText())
         val catalog = json.readTree(mockMvc.perform(get("/api/profiles")).andReturn().response.contentAsString)
-        assertEquals(catalog.first { it["id"].asText() == "bambu_a2l" }, body["profile"])
+        assertEquals(catalog.first { it["id"].asText() == "test_wide_bed" }, body["profile"])
         assertEquals(1.2, body["params"]["clearance"].asDouble(), 1e-9)
         assertEquals(false, body["params"]["finalSlice"].asBoolean())
         assertEquals("search", body["params"]["layout"].asText())
@@ -140,7 +139,7 @@ class PackJobFlowTest(
         assertEquals("SUCCEEDED", body["status"].asText())
         assertEquals(100, body["progressPercent"].asInt())
         assertEquals(30, body["pack"]["objectCount"].asInt())
-        assertEquals("bambu_a2l", body["pack"]["profileId"].asText())
+        assertEquals("test_wide_bed", body["pack"]["profileId"].asText())
         assertEquals(0.7, body["pack"]["clearanceMm"].asDouble(), 1e-9)
         // Без окна: время записанного стола есть, окна нет, флаги времени не передаются.
         // null-поля Jackson не пишет (non_null): «нет окна» = поле отсутствует.
@@ -190,13 +189,13 @@ class PackJobFlowTest(
     }
 
     @Test
-    fun `профиль с id не совпадающим с именем файла (bambu_p1s в p1s json) проходит весь цикл`() {
-        // Регрессия: разрешение профиля по пути {id}.json ломалось на bambu_p1s —
+    fun `профиль с id не совпадающим с именем файла (test_corner_bed в corner_bed json) проходит весь цикл`() {
+        // Регрессия: разрешение профиля по пути {id}.json ломалось на профиле, чей файл назван не по id, —
         // «Неизвестный профиль принтера». Идентификатор живёт внутри json, а не в имени файла.
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab P1S")))
-                .param("profileId", "bambu_p1s"),
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Corner Bed")))
+                .param("profileId", "test_corner_bed"),
         )
             .andExpect(status().isAccepted)
             .andReturn()
@@ -204,7 +203,7 @@ class PackJobFlowTest(
         val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
         val body = mockMvc.awaitJobCompletion(jobId)
         assertEquals("SUCCEEDED", body["status"].asText())
-        assertEquals("bambu_p1s", body["pack"]["profileId"].asText())
+        assertEquals("test_corner_bed", body["pack"]["profileId"].asText())
     }
 
     private fun packerArgs(jobId: String): List<String> =
@@ -214,8 +213,8 @@ class PackJobFlowTest(
     fun `окно печати и коррекция AMS доходят до CLI, итог стола — в результате`() {
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
-                .param("profileId", "bambu_a2l")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
+                .param("profileId", "test_wide_bed")
                 .param("timeWindowHours", "12")
                 .param("amsCorrection", "true")
                 .param("changeSeconds", "80")
@@ -249,8 +248,8 @@ class PackJobFlowTest(
         for (overlap in listOf("0", "2.5")) {
             val create = mockMvc.perform(
                 multipart("/api/pack/jobs")
-                    .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
-                    .param("profileId", "bambu_a2l")
+                    .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
+                    .param("profileId", "test_wide_bed")
                     .param("supportOverlapMm", overlap),
             )
                 .andExpect(status().isAccepted)
@@ -268,8 +267,8 @@ class PackJobFlowTest(
     fun `упаковка без полной нарезки и доводка «Нарезать стол»`() {
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
-                .param("profileId", "bambu_a2l")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
+                .param("profileId", "test_wide_bed")
                 .param("finalSlice", "false"),
         )
             .andExpect(status().isAccepted)
@@ -318,8 +317,8 @@ class PackJobFlowTest(
     fun `длительность смены без галочки коррекции не включает её молча`() {
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
-                .param("profileId", "bambu_a2l")
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
+                .param("profileId", "test_wide_bed")
                 .param("changeSeconds", "80"),
         )
             .andExpect(status().isAccepted)
@@ -341,7 +340,7 @@ class PackJobFlowTest(
         mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, "не архив".toByteArray()))
-                .param("profileId", "bambu_p1s"),
+                .param("profileId", "test_corner_bed"),
         )
             .andExpect(status().isBadRequest)
     }
@@ -351,7 +350,7 @@ class PackJobFlowTest(
         val response = mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Acme Unknown 3000")))
-                .param("profileId", "bambu_p1s"),
+                .param("profileId", "test_corner_bed"),
         )
             .andExpect(status().isBadRequest)
             .andReturn()
@@ -362,19 +361,19 @@ class PackJobFlowTest(
     @Test
     fun `несовпадение профиля и принтера файла отклоняется до постановки джобы`() {
         // Регрессия: раньше это доходило до бинарника и падало сырой строкой
-        // "source printer 'Bambu Lab P1S' does not match profile 'Snapmaker U1'".
+        // "source printer 'Test Corner Bed' does not match profile 'Test Margin Bed'".
         mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab P1S")))
-                .param("profileId", "snapmaker_u1"),
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Corner Bed")))
+                .param("profileId", "test_margin_bed"),
         )
             .andExpect(status().isBadRequest)
     }
     @Test
     fun `pack accepts descriptor archive and exposes actual work placements`() {
         val response = mockMvc.perform(multipart("/api/pack/jobs")
-            .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", descriptorProject3mf("Bambu Lab P1S")))
-            .param("profileId", "bambu_p1s").param("nozzleClean", "global,every=1"))
+            .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", descriptorProject3mf("Test Corner Bed")))
+            .param("profileId", "test_corner_bed").param("nozzleClean", "global,every=1"))
             .andExpect(status().isAccepted).andReturn().response
         val id = json.readTree(response.contentAsString)["jobId"].asText()
         val result = mockMvc.awaitJobCompletion(id)
@@ -386,8 +385,8 @@ class PackJobFlowTest(
     fun `duplicate every and invalid height are rejected before packing`() {
         for (spec in listOf("global,every=2,every=3", "global,every=0", "from-z=0", "from-z=1e999", "global,every=999999999999999999999999")) {
             val response = mockMvc.perform(multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", miniProject3mf("Bambu Lab P1S")))
-                .param("profileId", "bambu_p1s").param("nozzleClean", spec))
+                .file(MockMultipartFile("file", "valid.3mf", "application/octet-stream", miniProject3mf("Test Corner Bed")))
+                .param("profileId", "test_corner_bed").param("nozzleClean", spec))
                 .andExpect(status().isBadRequest).andReturn().response
             assertTrue(response.contentAsString.contains("nozzleClean"), response.contentAsString)
         }

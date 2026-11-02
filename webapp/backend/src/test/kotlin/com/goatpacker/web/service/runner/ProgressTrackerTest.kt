@@ -14,7 +14,7 @@ class ProgressTrackerTest {
     fun `планировщик probe — N objects в конце строки`() {
         assertEquals(
             JobPhase.PROBE to 5,
-            ProgressRules.parse(JobKind.SCHEDULE, "Bambu Lab A2L: 30 objects"),
+            ProgressRules.parse(JobKind.SCHEDULE, "Test Wide Bed: 30 objects"),
         )
     }
 
@@ -22,11 +22,11 @@ class ProgressTrackerTest {
     fun `планировщик slicing sample — 10 плюс 65 умножить на i делить на j`() {
         assertEquals(
             JobPhase.BENCHMARK to 23, // 10 + 65 * 1 / 5
-            ProgressRules.parse(JobKind.SCHEDULE, "[Bambu Lab A2L] slicing sample 1/5: batch 8/30"),
+            ProgressRules.parse(JobKind.SCHEDULE, "[Test Wide Bed] slicing sample 1/5: batch 8/30"),
         )
         assertEquals(
             JobPhase.BENCHMARK to 75, // 10 + 65 * 5 / 5
-            ProgressRules.parse(JobKind.SCHEDULE, "[Bambu Lab A2L] slicing sample 5/5: batch 30/30"),
+            ProgressRules.parse(JobKind.SCHEDULE, "[Test Wide Bed] slicing sample 5/5: batch 30/30"),
         )
     }
 
@@ -34,7 +34,7 @@ class ProgressTrackerTest {
     fun `планировщик refining — небольшое продвижение от последнего j`() {
         assertEquals(
             JobPhase.BENCHMARK to 88, // 10 + 65 * (5+1) / 5
-            ProgressRules.parse(JobKind.SCHEDULE, "[Bambu Lab A2L] refining: slicing batch 15 (2.1% curvature)", lastSampleTotal = 5),
+            ProgressRules.parse(JobKind.SCHEDULE, "[Test Wide Bed] refining: slicing batch 15 (2.1% curvature)", lastSampleTotal = 5),
         )
     }
 
@@ -42,7 +42,7 @@ class ProgressTrackerTest {
     fun `планировщик measured sizes — optimizing 78`() {
         assertEquals(
             JobPhase.OPTIMIZING to 78,
-            ProgressRules.parse(JobKind.SCHEDULE, "[Bambu Lab A2L] 5 measured sizes cover batches 1..=30 (83% fewer slices than a full sweep)"),
+            ProgressRules.parse(JobKind.SCHEDULE, "[Test Wide Bed] 5 measured sizes cover batches 1..=30 (83% fewer slices than a full sweep)"),
         )
     }
 
@@ -50,7 +50,7 @@ class ProgressTrackerTest {
     fun `планировщик writing plate(s) — 90`() {
         assertEquals(
             JobPhase.WRITING to 90,
-            ProgressRules.parse(JobKind.SCHEDULE, "Bambu Lab A2L: writing 4 plate(s) to plates.3mf"),
+            ProgressRules.parse(JobKind.SCHEDULE, "Test Wide Bed: writing 4 plate(s) to plates.3mf"),
         )
     }
 
@@ -60,7 +60,7 @@ class ProgressTrackerTest {
             JobPhase.OPTIMIZING to 95,
             ProgressRules.parse(
                 JobKind.SCHEDULE,
-                "Bambu Lab A2L: 63 objects, 8 jobs [7@10:00, 5@17:48], gain vs full plates: +12",
+                "Test Wide Bed: 63 objects, 8 jobs [7@10:00, 5@17:48], gain vs full plates: +12",
             ),
         )
     }
@@ -70,8 +70,8 @@ class ProgressTrackerTest {
     @Test
     fun `планировщик запоминает последний j для refining`() {
         val tracker = ProgressTracker(JobKind.SCHEDULE)
-        tracker.onLine("[Bambu Lab A2L] slicing sample 5/5: batch 30/30") // 75
-        val event = tracker.onLine("[Bambu Lab A2L] refining: slicing batch 15 (2.1% curvature)")
+        tracker.onLine("[Test Wide Bed] slicing sample 5/5: batch 30/30") // 75
+        val event = tracker.onLine("[Test Wide Bed] refining: slicing batch 15 (2.1% curvature)")
 
         assertEquals(JobPhase.BENCHMARK, event.phase)
         assertEquals(88, event.progressPercent)
@@ -80,16 +80,16 @@ class ProgressTrackerTest {
     @Test
     fun `последовательность планировщика — без откатов`() {
         val tracker = ProgressTracker(JobKind.SCHEDULE)
-        assertEquals(JobPhase.PROBE, tracker.onLine("Bambu Lab A2L: 30 objects").phase)
-        assertEquals(JobPhase.BENCHMARK, tracker.onLine("[Bambu Lab A2L] slicing sample 1/5: batch 8/30").phase)
-        assertEquals(JobPhase.OPTIMIZING, tracker.onLine("[Bambu Lab A2L] 5 measured sizes cover batches 1..=30").phase)
+        assertEquals(JobPhase.PROBE, tracker.onLine("Test Wide Bed: 30 objects").phase)
+        assertEquals(JobPhase.BENCHMARK, tracker.onLine("[Test Wide Bed] slicing sample 1/5: batch 8/30").phase)
+        assertEquals(JobPhase.OPTIMIZING, tracker.onLine("[Test Wide Bed] 5 measured sizes cover batches 1..=30").phase)
         // Откат от 78 к bench-фазе отбрасывается.
-        val rejected = tracker.onLine("[Bambu Lab A2L] slicing sample 2/5: batch 20/30")
+        val rejected = tracker.onLine("[Test Wide Bed] slicing sample 2/5: batch 20/30")
         assertEquals(JobPhase.OPTIMIZING, rejected.phase)
         assertEquals(78, rejected.progressPercent)
-        val writing = tracker.onLine("Bambu Lab A2L: writing 4 plate(s) to plates.3mf")
+        val writing = tracker.onLine("Test Wide Bed: writing 4 plate(s) to plates.3mf")
         assertEquals(JobPhase.WRITING to 90, writing.phase to writing.progressPercent)
-        val summary = tracker.onLine("Bambu Lab A2L: 63 objects, 8 jobs [7@10:00], gain vs full plates: +12")
+        val summary = tracker.onLine("Test Wide Bed: 63 objects, 8 jobs [7@10:00], gain vs full plates: +12")
         assertEquals(JobPhase.OPTIMIZING to 95, summary.phase to summary.progressPercent)
     }
 

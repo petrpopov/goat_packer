@@ -16,10 +16,10 @@ class CustomProfileTest {
 
     @Test
     fun `шаблон своего стола — формат PrinterProfile с выключенным неизвестным`() {
-        val built = CustomProfile.build(mapper, CustomBed(220.0, 230.0, 250.0, 6.0), null, "Prusa MK4") { "/opt/$it" }
+        val built = CustomProfile.build(mapper, CustomBed(220.0, 230.0, 250.0, 6.0), null, "Acme Custom 220") { "/opt/$it" }
         val profile = mapper.readTree(built.json)
         assertEquals("custom", profile["id"].asText())
-        assertEquals("Prusa MK4", profile["printer_name"].asText())
+        assertEquals("Acme Custom 220", profile["printer_name"].asText())
         assertEquals("orca", profile["slicer_kind"].asText())
         assertEquals("/opt/orca", profile["slicer_path"].asText())
         assertEquals(listOf(0.0, 0.0, 220.0, 230.0), profile["printable_area"].map { it.asDouble() })
@@ -57,8 +57,9 @@ class CustomProfileTest {
     @Test
     fun `имя — printer_model проекта (пакер сверяет), слайсер — по модели как в Rust`() {
         val bed = CustomBed(256.0, 256.0, 256.0)
-        val bambu = mapper.readTree(CustomProfile.build(mapper, bed, null, "Bambu Lab X1 Carbon") { "/opt/$it" }.json)
-        assertEquals("Bambu Lab X1 Carbon", bambu["printer_name"].asText())
+        // Не принтер, а подпись производителя в printer_model (CustomProfile.BAMBU_MODEL_MARKER) выбирает слайсер.
+        val bambu = mapper.readTree(CustomProfile.build(mapper, bed, null, "Bambu Lab Test Custom") { "/opt/$it" }.json)
+        assertEquals("Bambu Lab Test Custom", bambu["printer_name"].asText())
         assertEquals("bambu", bambu["slicer_kind"].asText())
         assertEquals("/opt/bambu", bambu["slicer_path"].asText())
         val none = mapper.readTree(CustomProfile.build(mapper, bed, null, null) { "/opt/$it" }.json)

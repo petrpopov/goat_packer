@@ -26,12 +26,12 @@ class ProfileVendorTest {
 
     @Test
     fun `без поля vendor берётся printer_name без последнего слова, явное поле побеждает`(@TempDir dir: Path) {
-        write(dir, "a", "Creality K1 Max", null)
-        write(dir, "b", "Voron 2.4 R2", "Voron Design")
+        write(dir, "a", "Alpha Forge AF1 Max", null)
+        write(dir, "b", "Beta 2.4 R2", "Beta Design")
         write(dir, "c", "Solo", null)
         // Каталог: vendor — папка пресетов OrcaSlicer, в выборе принтера — vendor_display.
-        write(dir, "d", "Bambu Lab H2D", "BBL", "Bambu Lab")
+        write(dir, "d", "Gamma Labs G2", "GLB", "Gamma Labs")
         val vendors = service(dir).list().associate { it.id to it.vendor }
-        assertEquals(mapOf("a" to "Creality K1", "b" to "Voron Design", "c" to "Solo", "d" to "Bambu Lab"), vendors)
+        assertEquals(mapOf("a" to "Alpha Forge AF1", "b" to "Beta Design", "c" to "Solo", "d" to "Gamma Labs"), vendors)
     }
 }

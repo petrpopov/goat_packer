@@ -78,7 +78,7 @@ class QueueConsistencyIntegrationTest : ServerIntegrationTestBase() {
         val id = c.job(c.upload())["jobId"].asText()
         nodes.save(worker("publisher", memoryMib = 4096))
         val claim = execution.claim("publisher")!!
-        val artifact = ArtifactEntity(jobId = id, name = "packed.3mf", downloadName = "cat_p1s_1_packed.3mf", objectKey = "test/staged", sizeBytes = 10)
+        val artifact = ArtifactEntity(jobId = id, name = "packed.3mf", downloadName = "cat_test_1_packed.3mf", objectKey = "test/staged", sizeBytes = 10)
         gc.stage(artifact.objectKey, 10)
         jdbc.update("update object_gc set deleting=true where object_key=?", artifact.objectKey)
         assertThrows(IllegalStateException::class.java) { execution.complete(id, claim.fence, "{}", listOf(artifact), null) }

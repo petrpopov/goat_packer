@@ -92,9 +92,9 @@ describe('HTTP contracts', () => {
       expect(init?.body).toBeInstanceOf(FormData);
       expect(new Headers(init?.headers).has('content-type')).toBe(false);
       expect(init?.signal).toBe(controller.signal);
-      return Response.json({ profileId: 'bambu_p1s', printerModel: 'Bambu Lab P1S' });
+      return Response.json({ profileId: 'test_corner_bed', printerModel: 'Test Corner Bed' });
     }) as typeof fetch;
-    expect((await detectProfile(new File(['zip'], 'model.3mf'), controller.signal)).profileId).toBe('bambu_p1s');
+    expect((await detectProfile(new File(['zip'], 'model.3mf'), controller.signal)).profileId).toBe('test_corner_bed');
   });
   test('old omitted nullable fields cannot become an undefined profile selection', async () => {
     globalThis.fetch = (async () => Response.json({})) as typeof fetch;

@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.mock.web.MockMultipartFile
-import org.springframework.test.context.TestPropertySource
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -26,7 +25,6 @@ import java.util.zip.ZipOutputStream
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@TestPropertySource(properties = ["app.profiles-dir=../../profiles"])
 class DetectProfileTest(
     @Autowired private val mockMvc: MockMvc,
 ) {
@@ -59,16 +57,16 @@ class DetectProfileTest(
             .contentAsString
 
     @Test
-    fun `точное имя принтера из 3mf даёт профиль u1`() {
-        val response = json.readTree(detect(mini3mf("Snapmaker U1")))
-        assertEquals("snapmaker_u1", response["profileId"].asText())
-        assertEquals("Snapmaker U1", response["printerModel"].asText())
+    fun `точное имя принтера из 3mf даёт профиль стола с кромкой`() {
+        val response = json.readTree(detect(mini3mf("Test Margin Bed")))
+        assertEquals("test_margin_bed", response["profileId"].asText())
+        assertEquals("Test Margin Bed", response["printerModel"].asText())
     }
 
     @Test
     fun `имя с дополнением всё равно матчится вхождением`() {
-        val response = json.readTree(detect(mini3mf("Bambu Lab P1S 0.4 nozzle")))
-        assertEquals("bambu_p1s", response["profileId"].asText())
+        val response = json.readTree(detect(mini3mf("Test Corner Bed 0.4 nozzle")))
+        assertEquals("test_corner_bed", response["profileId"].asText())
     }
 
     @Test
@@ -94,13 +92,13 @@ class DetectProfileTest(
     }
     @Test
     fun `slicer stored previews with descriptors do not hide printer settings`() {
-        val bytes = descriptorProject3mf("Bambu Lab P1S")
+        val bytes = descriptorProject3mf("Test Corner Bed")
         assertThrows<ZipException> {
             ZipInputStream(bytes.inputStream()).use { it.nextEntry }
         }
         val response = json.readTree(detect(bytes))
-        assertEquals("bambu_p1s", response["profileId"].asText())
-        assertEquals("Bambu Lab P1S", response["printerModel"].asText())
+        assertEquals("test_corner_bed", response["profileId"].asText())
+        assertEquals("Test Corner Bed", response["printerModel"].asText())
     }
 
     @Test
@@ -129,7 +127,7 @@ class DetectProfileTest(
         assertEquals(listOf(0.0, 0.0, 250.0, 210.0), bed["printableArea"].map { it.asDouble() })
         assertTrue(bed["exclusionRectangles"].isEmpty)
         assertEquals(220.0, bed["printableHeight"].asDouble(), 1e-9)
-        assertTrue(json.readTree(detect(mini3mf("Snapmaker U1")))["projectBed"].isNull)
+        assertTrue(json.readTree(detect(mini3mf("Test Margin Bed")))["projectBed"].isNull)
     }
 
     @Test
@@ -137,7 +135,7 @@ class DetectProfileTest(
         val response = json.readTree(detect("solid cat\nfacet normal 0 0 1\n".toByteArray(), "cat.STL"))
         assertEquals("stl", response["kind"].asText())
         assertTrue(response["profileId"].isNull && response["printerModel"].isNull, response.toString())
-        assertEquals("3mf", json.readTree(detect(mini3mf("Snapmaker U1")))["kind"].asText())
+        assertEquals("3mf", json.readTree(detect(mini3mf("Test Margin Bed")))["kind"].asText())
     }
 
     @Test
@@ -149,7 +147,7 @@ class DetectProfileTest(
 
     @Test
     fun `short generic names cannot silently select a different printer`() {
-        assertTrue(json.readTree(detect(mini3mf("Bambu Lab P1")))["profileId"].isNull)
+        assertTrue(json.readTree(detect(mini3mf("Test Corner")))["profileId"].isNull)
     }
 
 }

@@ -1,0 +1,5 @@
+# Тесты не читают каталог profiles/ репозитория: только выдуманные generic-принтеры из
+# src/test/resources/profiles (путь — от рабочего каталога webapp/backend, как и дефолт
+# ../../profiles). Весь настоящий каталог загружает одна проверка, CatalogProfilesLoadTest.
+app:
+  profiles-dir: src/test/resources/profiles

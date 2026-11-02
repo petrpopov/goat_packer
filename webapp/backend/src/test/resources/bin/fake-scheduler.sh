@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-printer_name="Bambu Lab A2L"
+printer_name="Test Wide Bed"
 plates_3mf="plates.3mf"
 # spec приходит одной строкой: profile=...,source=...,prep-min=10,plates-3mf=plates.3mf
 IFS=',' read -ra spec_parts <<< "$printer_spec"
@@ -52,14 +52,14 @@ echo "[$printer_name] 5 measured sizes cover batches 1..=30 (83% fewer slices th
 
 cat > "$output_schedule" <<'CSV'
 printer,sequence,batch_size,start_seconds,end_seconds,start_clock,end_clock,slicer_seconds,preparation_seconds,filament_grams,cumulative_objects,overnight
-Bambu Lab A2L,1,7,36000,44760,10:00,12:26,41160,600,210.5000,7,false
-Bambu Lab A2L,2,7,45360,54120,12:36,15:02,41160,600,210.5000,14,false
-Bambu Lab A2L,3,7,54720,63480,15:12,17:38,41160,600,210.5000,21,false
-Bambu Lab A2L,4,5,64100,70000,17:48,19:26,34000,600,150.2500,26,false
-Bambu Lab A2L,5,5,70600,76500,19:36,21:15,34000,600,150.2500,31,false
-Bambu Lab A2L,6,10,77100,87900,21:25,D+1 00:25,49200,600,300.7500,41,true
-Bambu Lab A2L,7,10,88500,99300,D+1 00:35,D+1 03:35,49200,600,300.7500,51,true
-Bambu Lab A2L,8,12,99900,112500,D+1 03:45,D+1 07:15,60000,600,360.0000,63,true
+Test Wide Bed,1,7,36000,44760,10:00,12:26,41160,600,210.5000,7,false
+Test Wide Bed,2,7,45360,54120,12:36,15:02,41160,600,210.5000,14,false
+Test Wide Bed,3,7,54720,63480,15:12,17:38,41160,600,210.5000,21,false
+Test Wide Bed,4,5,64100,70000,17:48,19:26,34000,600,150.2500,26,false
+Test Wide Bed,5,5,70600,76500,19:36,21:15,34000,600,150.2500,31,false
+Test Wide Bed,6,10,77100,87900,21:25,D+1 00:25,49200,600,300.7500,41,true
+Test Wide Bed,7,10,88500,99300,D+1 00:35,D+1 03:35,49200,600,300.7500,51,true
+Test Wide Bed,8,12,99900,112500,D+1 03:45,D+1 07:15,60000,600,360.0000,63,true
 CSV
 
 cat > "$output_report" <<'JSON'
@@ -67,10 +67,10 @@ cat > "$output_report" <<'JSON'
   "combined_objects_per_day": 63,
   "printers": [
     {
-      "printer": "Bambu Lab A2L",
+      "printer": "Test Wide Bed",
       "gain_vs_full_plate_only": 12,
       "variable_batch_schedule": {
-        "printer": "Bambu Lab A2L",
+        "printer": "Test Wide Bed",
         "total_objects": 63,
         "total_filament_grams": 1893.5,
         "completion_seconds": 112500,
@@ -86,7 +86,7 @@ cat > "$output_report" <<'JSON'
         ]
       },
       "full_plate_only_schedule": {
-        "printer": "Bambu Lab A2L",
+        "printer": "Test Wide Bed",
         "total_objects": 30,
         "total_filament_grams": 900.0,
         "completion_seconds": 100000,

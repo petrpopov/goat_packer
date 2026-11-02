@@ -119,10 +119,10 @@ describe('stored correction', () => {
   test('per-profile change seconds survive a reload and ignore garbage', () => {
     const storage = new MemoryStorage();
     expect(readStoredChangeSeconds(storage)).toEqual({});
-    storeChangeSeconds('bambu_p1s', 104, storage);
-    storeChangeSeconds('bambu_a2l', 88, storage);
-    storeChangeSeconds('bambu_p1s', 110, storage);
-    expect(readStoredChangeSeconds(storage)).toEqual({ bambu_p1s: 110, bambu_a2l: 88 });
+    storeChangeSeconds('test_corner_bed', 104, storage);
+    storeChangeSeconds('test_wide_bed', 88, storage);
+    storeChangeSeconds('test_corner_bed', 110, storage);
+    expect(readStoredChangeSeconds(storage)).toEqual({ test_corner_bed: 110, test_wide_bed: 88 });
     storage.setItem(CHANGE_SECONDS_KEY, JSON.stringify({ a: 'x', b: -5, c: 700, d: 50 }));
     expect(readStoredChangeSeconds(storage)).toEqual({ d: 50 });
     storage.setItem(CHANGE_SECONDS_KEY, '{broken');
@@ -132,12 +132,12 @@ describe('stored correction', () => {
 
   test('last calibration values are kept per profile for a later visit', () => {
     const storage = new MemoryStorage();
-    expect(readStoredCalibration('bambu_p1s', storage)).toBeNull();
-    storeCalibration('bambu_p1s', values, storage);
-    expect(readStoredCalibration('bambu_p1s', storage)).toEqual(values);
-    expect(readStoredCalibration('bambu_a2l', storage)).toBeNull();
-    storage.setItem(CALIBRATION_VALUES_KEY, JSON.stringify({ bambu_p1s: { estimateASeconds: 'x' } }));
-    expect(readStoredCalibration('bambu_p1s', storage)).toBeNull();
+    expect(readStoredCalibration('test_corner_bed', storage)).toBeNull();
+    storeCalibration('test_corner_bed', values, storage);
+    expect(readStoredCalibration('test_corner_bed', storage)).toEqual(values);
+    expect(readStoredCalibration('test_wide_bed', storage)).toBeNull();
+    storage.setItem(CALIBRATION_VALUES_KEY, JSON.stringify({ test_corner_bed: { estimateASeconds: 'x' } }));
+    expect(readStoredCalibration('test_corner_bed', storage)).toBeNull();
   });
 
   test('AMS seconds field: stored calibration first, then the profile value; tool changer stays empty', () => {
@@ -193,11 +193,11 @@ describe('calibration job HTTP contract', () => {
         expect(init?.method).toBe('POST');
         const body = init?.body as FormData;
         expect(body.get('variant')).toBe('perfectionist');
-        expect(body.get('profileId')).toBe('bambu_p1s');
+        expect(body.get('profileId')).toBe('test_corner_bed');
         return Response.json({ jobId: 'job-1' }, { status: 202 });
       }) as typeof fetch;
       const form = new FormData();
-      form.append('profileId', 'bambu_p1s');
+      form.append('profileId', 'test_corner_bed');
       form.append('variant', 'perfectionist');
       expect((await startCalibrationJob(form)).jobId).toBe('job-1');
     } finally {

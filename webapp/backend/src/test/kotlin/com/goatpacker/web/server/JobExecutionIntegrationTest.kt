@@ -29,10 +29,10 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
         assertEquals("stl", stl["kind"].asText())
         assertTrue(stl["profileId"].isNull, stl.toString())
         val file = stl["fileId"].asText()
-        val calibrationOfStl = c.send(mapOf("fileId" to file, "profileId" to "bambu_p1s", "kind" to "CALIBRATION"), 400)
+        val calibrationOfStl = c.send(mapOf("fileId" to file, "profileId" to "test_corner_bed", "kind" to "CALIBRATION"), 400)
         assertEquals("STL можно только упаковать: для расписания и калибровки нужен проект .3mf", calibrationOfStl["message"].asText())
         // Локальный раннер сервера без GOAT_SLICER_PRESETS: отказ при постановке, а не в воркере.
-        assertEquals(StlInputs.LOCAL_PRESETS_MISSING, c.send(mapOf("fileId" to file, "profileId" to "prusa_mk4s"), 400)["message"].asText())
+        assertEquals(StlInputs.LOCAL_PRESETS_MISSING, c.send(mapOf("fileId" to file, "profileId" to "test_catalog_bed"), 400)["message"].asText())
 
         val presets = Files.createDirectories(sharedRoot().resolve("orca-profiles"))
         val saved = listOf(app.slicerPresets, app.sourceProjectBin, app.orcaSlicer)
@@ -42,7 +42,7 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
         app.resolveAbsolutePaths()
         try {
             withWorker { worker ->
-                val catalog = c.send(mapOf("fileId" to file, "profileId" to "prusa_mk4s"), 200)["jobId"].asText()
+                val catalog = c.send(mapOf("fileId" to file, "profileId" to "test_catalog_bed"), 200)["jobId"].asText()
                 val bed = mapOf("width" to 220, "depth" to 220, "height" to 250)
                 val custom = c.send(mapOf("fileId" to file, "customBed" to bed), 200)["jobId"].asText()
                 assertEquals("Custom Printer", json.readTree(jobs.findById(custom).orElseThrow().profileJson)["printer_name"].asText())
@@ -55,13 +55,13 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
                 // «В расписание» после упаковки STL: источник — packed.3mf, т. е. проект. Имя становится .3mf, и
                 // воркер кладёт его как input.3mf (раньше — input.stl, и daily_scheduler не находил вход).
                 // Профиль каталога несёт слайсер образа: локальный раннер подменяет его (иначе фейк отказывает).
-                val schedule = c.send(mapOf("kind" to "SCHEDULE", "packJobId" to catalog, "profileId" to "prusa_mk4s"), 200)["jobId"].asText()
+                val schedule = c.send(mapOf("kind" to "SCHEDULE", "packJobId" to catalog, "profileId" to "test_catalog_bed"), 200)["jobId"].asText()
                 assertEquals("cat.3mf", jobs.findById(schedule).orElseThrow().originalName)
                 worker.runUntilSettled(schedule)
                 val response = c.call("GET", "/api/v2/jobs/$schedule")
                 assertEquals("SUCCEEDED", response["status"].asText(), response.toString())
                 assertTrue(
-                    response["artifacts"].any { it["name"].asText().startsWith("cat_prusa_mk4s_") && it["name"].asText().endsWith("_schedule.3mf") },
+                    response["artifacts"].any { it["name"].asText().startsWith("cat_test_catalog_bed_") && it["name"].asText().endsWith("_schedule.3mf") },
                     response.toString(),
                 )
             }
@@ -83,7 +83,7 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
         )
         val file = c.uploadRaw("cat.3mf", descriptorProject3mf("Acme Unknown 3000", settings))["fileId"].asText()
         val bed = mapOf("width" to 250, "depth" to 210, "height" to 220)
-        c.send(mapOf("fileId" to file, "profileId" to "bambu_p1s", "customBed" to bed), 400)
+        c.send(mapOf("fileId" to file, "profileId" to "test_corner_bed", "customBed" to bed), 400)
         c.send(mapOf("fileId" to file), 400)
         c.send(mapOf("fileId" to file, "kind" to "SCHEDULE", "customBed" to bed), 400)
         c.send(mapOf("fileId" to file, "customBed" to bed + ("height" to 1001)), 400)
@@ -92,8 +92,8 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
         val resized = c.send(mapOf("fileId" to file, "customBed" to bed + ("width" to 300)), 400)
         assertEquals(CustomProfile.BED_FROM_PROJECT, resized["message"].asText())
         // Распознанный принтер — только своим профилем каталога.
-        val p1s = c.uploadRaw("p1s.3mf", descriptorProject3mf("Bambu Lab P1S"))["fileId"].asText()
-        val recognised = c.send(mapOf("fileId" to p1s, "customBed" to mapOf("width" to 256, "depth" to 256, "height" to 250)), 400)
+        val recognisedFile = c.uploadRaw("corner.3mf", descriptorProject3mf("Test Corner Bed"))["fileId"].asText()
+        val recognised = c.send(mapOf("fileId" to recognisedFile, "customBed" to mapOf("width" to 256, "depth" to 256, "height" to 250)), 400)
         assertEquals(CustomProfile.RECOGNISED_PRINTER, recognised["message"].asText())
 
         val id = c.send(mapOf("fileId" to file, "customBed" to bed + ("margin" to 7)), 200)["jobId"].asText()

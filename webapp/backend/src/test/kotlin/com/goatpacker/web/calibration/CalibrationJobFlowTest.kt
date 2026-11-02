@@ -38,7 +38,6 @@ class CalibrationJobFlowTest(
             registry.add("app.packer-bin") { FakeBins.install(tmpRoot, "fake-packer.sh") }
             registry.add("app.scheduler-bin") { FakeBins.install(tmpRoot, "fake-scheduler.sh") }
             registry.add("app.calibration-bin") { FakeBins.install(tmpRoot, "fake-calibration.sh") }
-            registry.add("app.profiles-dir") { "../../profiles" }
             registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
         }
     }
@@ -60,7 +59,7 @@ class CalibrationJobFlowTest(
 
     @Test
     fun `калибровка — аргументы CLI, значения calibration json, инструкция и артефакты без черновиков`() {
-        val jobId = start(miniProject3mf("Bambu Lab P1S"), "bambu_p1s", "perfectionist")
+        val jobId = start(miniProject3mf("Test Corner Bed"), "test_corner_bed", "perfectionist")
         val body = mockMvc.awaitJobCompletion(jobId)
 
         assertEquals("calibration", body["kind"].asText())
@@ -68,12 +67,12 @@ class CalibrationJobFlowTest(
         val args = cliArgs(jobId)
         fun valueOf(flag: String) = args.getOrNull(args.indexOf(flag) + 1)
         assertEquals("input.3mf", valueOf("--template"))
-        assertTrue(valueOf("--profile")!!.endsWith("p1s.json"), args.toString())
+        assertTrue(valueOf("--profile")!!.endsWith("corner_bed.json"), args.toString())
         assertEquals("perfectionist", valueOf("--variant"))
         assertEquals("out", valueOf("--out-dir"))
 
         val calibration = body["calibration"]
-        assertEquals("bambu_p1s", calibration["profileId"].asText())
+        assertEquals("test_corner_bed", calibration["profileId"].asText())
         assertEquals("perfectionist", calibration["variant"].asText())
         assertEquals(30, calibration["changesExpected"].asInt())
         assertEquals(30, calibration["changesSliced"].asInt())
@@ -98,7 +97,7 @@ class CalibrationJobFlowTest(
 
     @Test
     fun `вариант по умолчанию — обычный`() {
-        val jobId = start(miniProject3mf("Bambu Lab A2L"), "bambu_a2l", null)
+        val jobId = start(miniProject3mf("Test Wide Bed"), "test_wide_bed", null)
         val body = mockMvc.awaitJobCompletion(jobId)
         assertEquals("normal", cliArgs(jobId)[cliArgs(jobId).indexOf("--variant") + 1])
         assertEquals(10, body["calibration"]["changesExpected"].asInt())
@@ -106,8 +105,8 @@ class CalibrationJobFlowTest(
 
     @Test
     fun `проект с одним филаментом — ошибка бинарника без перевода`() {
-        val single = descriptorProject3mf("Bambu Lab P1S", mapOf("filament_colour" to listOf("#FFFFFF")))
-        val body = mockMvc.awaitJobTerminal(start(single, "bambu_p1s", "normal"))
+        val single = descriptorProject3mf("Test Corner Bed", mapOf("filament_colour" to listOf("#FFFFFF")))
+        val body = mockMvc.awaitJobTerminal(start(single, "test_corner_bed", "normal"))
         assertEquals("FAILED", body["status"].asText())
         assertTrue(
             body["error"].asText().startsWith("для теста нужен проект минимум с двумя филаментами"),
@@ -117,9 +116,9 @@ class CalibrationJobFlowTest(
     }
 
     @Test
-    fun `принтер без смены AMS (U1) — 400 калибровка не нужна`() {
+    fun `принтер без смены AMS (тулчейнджер) — 400 калибровка не нужна`() {
         val response = mockMvc.perform(
-            multipart("/api/calibration/jobs").file(project(miniProject3mf("Snapmaker U1"))).param("profileId", "snapmaker_u1"),
+            multipart("/api/calibration/jobs").file(project(miniProject3mf("Test Margin Bed"))).param("profileId", "test_margin_bed"),
         ).andExpect(status().isBadRequest).andReturn().response
         assertTrue(response.contentAsString.contains("для этого принтера калибровка не нужна"), response.contentAsString)
     }
@@ -127,13 +126,13 @@ class CalibrationJobFlowTest(
     @Test
     fun `неверный вариант, чужой принтер и отсутствие файла — 400`() {
         mockMvc.perform(
-            multipart("/api/calibration/jobs").file(project(miniProject3mf("Bambu Lab P1S")))
-                .param("profileId", "bambu_p1s").param("variant", "extreme"),
+            multipart("/api/calibration/jobs").file(project(miniProject3mf("Test Corner Bed")))
+                .param("profileId", "test_corner_bed").param("variant", "extreme"),
         ).andExpect(status().isBadRequest)
         mockMvc.perform(
-            multipart("/api/calibration/jobs").file(project(miniProject3mf("Bambu Lab P1S"))).param("profileId", "bambu_a2l"),
+            multipart("/api/calibration/jobs").file(project(miniProject3mf("Test Corner Bed"))).param("profileId", "test_wide_bed"),
         ).andExpect(status().isBadRequest)
-        mockMvc.perform(multipart("/api/calibration/jobs").param("profileId", "bambu_p1s"))
+        mockMvc.perform(multipart("/api/calibration/jobs").param("profileId", "test_corner_bed"))
             .andExpect(status().isBadRequest)
     }
 }

@@ -37,7 +37,6 @@ class ScheduleJobFlowTest(
         fun properties(registry: DynamicPropertyRegistry) {
             registry.add("app.packer-bin") { FakeBins.install(tmpRoot, "fake-packer.sh") }
             registry.add("app.scheduler-bin") { FakeBins.install(tmpRoot, "fake-scheduler.sh") }
-            registry.add("app.profiles-dir") { "../../profiles" }
             registry.add("app.jobs-root") { tmpRoot.resolve("jobs").toString() }
             registry.add("app.orca-slicer") { "/local/orca" }
         }
@@ -46,14 +45,14 @@ class ScheduleJobFlowTest(
     private val json = ObjectMapper()
 
     private fun uploadFile(): MockMultipartFile =
-        MockMultipartFile("file", "packed.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L"))
+        MockMultipartFile("file", "packed.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed"))
 
     @Test
     fun `расписание из загруженного файла — статус, работы, пластины, xlsx`() {
         val create = mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .file(uploadFile())
-                .param("profileId", "bambu_a2l"),
+                .param("profileId", "test_wide_bed"),
         )
             .andExpect(status().isAccepted)
             .andReturn()
@@ -67,7 +66,7 @@ class ScheduleJobFlowTest(
 
         val schedule = body["schedule"]
         assertTrue(schedule != null && schedule.isObject, "schedule-джоба обязана отдать schedule-сводку")
-        assertEquals("Bambu Lab A2L", schedule["printer"].asText())
+        assertEquals("Test Wide Bed", schedule["printer"].asText())
         assertEquals(63, schedule["totalObjects"].asInt())
         assertEquals(1893.5, schedule["totalFilamentGrams"].asDouble(), 1e-9)
         assertEquals("D+1 07:15", schedule["completionClock"].asText())
@@ -117,7 +116,7 @@ class ScheduleJobFlowTest(
             val header = workbook.getSheetAt(0).getRow(0)
             assertEquals("printer", header.getCell(0).stringCellValue)
             assertEquals("overnight", header.getCell(11).stringCellValue)
-            assertEquals("Bambu Lab A2L", workbook.getSheetAt(0).getRow(1).getCell(0).stringCellValue)
+            assertEquals("Test Wide Bed", workbook.getSheetAt(0).getRow(1).getCell(0).stringCellValue)
         }
     }
 
@@ -126,8 +125,8 @@ class ScheduleJobFlowTest(
         // 1. Сначала прогоняем pack-джобу.
         val packCreate = mockMvc.perform(
             multipart("/api/pack/jobs")
-                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Bambu Lab A2L")))
-                .param("profileId", "bambu_a2l"),
+                .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
+                .param("profileId", "test_wide_bed"),
         )
             .andExpect(status().isAccepted)
             .andReturn()
@@ -138,7 +137,7 @@ class ScheduleJobFlowTest(
         val create = mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .param("packJobId", packJobId)
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("benchMode", "full"),
         )
             .andExpect(status().isAccepted)
@@ -160,7 +159,7 @@ class ScheduleJobFlowTest(
         val create = mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .file(uploadFile())
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("amsCorrection", "true")
                 .param("changeSeconds", "95"),
         )
@@ -181,7 +180,7 @@ class ScheduleJobFlowTest(
         val create = mockMvc.perform(
             multipart("/api/schedule/jobs")
                 .file(uploadFile())
-                .param("profileId", "bambu_a2l")
+                .param("profileId", "test_wide_bed")
                 .param("changeSeconds", "95"),
         )
             .andExpect(status().isAccepted)
@@ -196,8 +195,8 @@ class ScheduleJobFlowTest(
 
     @Test
     fun `каталожный профиль локально — копия профиля с локальным слайсером, не путь образа`() {
-        val project = MockMultipartFile("file", "mk4s.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Prusa MK4S"))
-        val create = mockMvc.perform(multipart("/api/schedule/jobs").file(project).param("profileId", "prusa_mk4s"))
+        val project = MockMultipartFile("file", "catalog.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Catalog Bed"))
+        val create = mockMvc.perform(multipart("/api/schedule/jobs").file(project).param("profileId", "test_catalog_bed"))
             .andExpect(status().isAccepted)
             .andReturn()
         val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
@@ -209,6 +208,6 @@ class ScheduleJobFlowTest(
         assertEquals(tmpRoot.resolve("jobs").resolve(jobId).resolve("profile.json").toAbsolutePath(), profilePath.toAbsolutePath())
         val profile = json.readTree(profilePath.toFile())
         assertEquals("/local/orca", profile["slicer_path"].asText())
-        assertEquals("prusa_mk4s", profile["id"].asText())
+        assertEquals("test_catalog_bed", profile["id"].asText())
     }
 }

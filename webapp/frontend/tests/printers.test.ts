@@ -2,27 +2,27 @@ import { describe, expect, test } from 'bun:test';
 import { customPrinterProfile, filterPrinters, foundPrintersMessage, groupPrinters, vendorOf } from '../src/utils/printers';
 
 const p = (id: string, name: string, vendor: string) => ({ id, name, vendor });
-const list = [p('b', 'Prusa MK4S', 'Prusa'), p('a', 'Bambu Lab P1S', 'Bambu Lab'), p('c', 'Prusa CORE One', 'Prusa'), p('d', 'Ender-3 V3 SE', 'Creality')];
+const list = [p('b', 'Gamma Works GW4', 'Gamma Works'), p('a', 'Alpha Labs A100', 'Alpha Labs'), p('c', 'Gamma Works CORE', 'Gamma Works'), p('d', 'Zed-3 V3 SE', 'Beta Forge')];
 
 describe('printers', () => {
   test('vendors A→Z, models A→Z inside', () => {
     expect(groupPrinters(list).map((g) => [g.vendor, g.items.map((i) => i.name)])).toEqual([
-      ['Bambu Lab', ['Bambu Lab P1S']],
-      ['Creality', ['Ender-3 V3 SE']],
-      ['Prusa', ['Prusa CORE One', 'Prusa MK4S']],
+      ['Alpha Labs', ['Alpha Labs A100']],
+      ['Beta Forge', ['Zed-3 V3 SE']],
+      ['Gamma Works', ['Gamma Works CORE', 'Gamma Works GW4']],
     ]);
   });
   test('search matches vendor or model, case/space-insensitive, keeps grouping', () => {
-    expect(groupPrinters(filterPrinters(list, 'prusa mk')).flatMap((g) => g.items.map((i) => i.id))).toEqual(['b']);
-    expect(groupPrinters(filterPrinters(list, 'creal')).map((g) => g.vendor)).toEqual(['Creality']);
+    expect(groupPrinters(filterPrinters(list, 'gamma works gw')).flatMap((g) => g.items.map((i) => i.id))).toEqual(['b']);
+    expect(groupPrinters(filterPrinters(list, 'beta f')).map((g) => g.vendor)).toEqual(['Beta Forge']);
     expect(filterPrinters(list, '').length).toBe(4);
   });
   test('vendor falls back to the name minus its last word until the API sends it', () => {
-    expect(vendorOf({ name: 'Bambu Lab P1S' })).toBe('Bambu Lab');
-    expect(vendorOf({ name: 'Snapmaker U1', vendor: 'Snapmaker' })).toBe('Snapmaker');
-    expect(vendorOf({ name: 'Voron' })).toBe('Voron');
-    expect(groupPrinters([{ id: 'y', name: 'Bambu Lab P1S' }, { id: 'x', name: 'Bambu Lab A2L' }]).map((g) => [g.vendor, g.items.map((i) => i.id)])).toEqual([
-      ['Bambu Lab', ['x', 'y']],
+    expect(vendorOf({ name: 'Alpha Labs A100' })).toBe('Alpha Labs');
+    expect(vendorOf({ name: 'Delta D1', vendor: 'Delta Tools' })).toBe('Delta Tools');
+    expect(vendorOf({ name: 'Solo' })).toBe('Solo');
+    expect(groupPrinters([{ id: 'y', name: 'Alpha Labs A200' }, { id: 'x', name: 'Alpha Labs A100' }]).map((g) => [g.vendor, g.items.map((i) => i.id)])).toEqual([
+      ['Alpha Labs', ['x', 'y']],
     ]);
   });
   test('found-printers announcement uses Russian plural forms', () => {

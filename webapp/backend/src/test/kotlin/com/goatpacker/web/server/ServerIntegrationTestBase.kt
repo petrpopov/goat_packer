@@ -92,7 +92,6 @@ abstract class ServerIntegrationTestBase {
             registry.add("app.scheduler-bin") { FakeBins.install(root, "fake-scheduler.sh") }
             registry.add("app.calibration-bin") { FakeBins.install(root, "fake-calibration.sh") }
             registry.add("app.jobs-root") { root.resolve("work").toString() }
-            registry.add("app.profiles-dir") { "../../profiles" }
         }
 
         /** Каталог, общий для всех тестов: туда складываются фейковые бинарники и пресеты. */
@@ -163,7 +162,7 @@ abstract class ServerIntegrationTestBase {
             call("POST", "/api/v2/auth/login", mapOf("login" to name, "password" to pass), expected)
 
         /** Загружает проект принтера [printer] и проверяет, что он распознан как [profile]; возвращает id файла. */
-        fun upload(printer: String = "Bambu Lab P1S", profile: String = "bambu_p1s"): String {
+        fun upload(printer: String = "Test Corner Bed", profile: String = "test_corner_bed"): String {
             val data = descriptorProject3mf(printer)
             val id = call("POST", "/api/v2/uploads", mapOf("name" to "cat.3mf", "sizeBytes" to data.size))["fileId"].asText()
             val uploaded = call("PUT", "/api/v2/uploads/$id/content", data, headers = mapOf("Origin" to ORIGIN))
@@ -184,7 +183,7 @@ abstract class ServerIntegrationTestBase {
         ): JsonNode = call(
             "POST",
             "/api/v2/jobs",
-            mapOf("fileId" to file, "profileId" to "bambu_p1s") + extra,
+            mapOf("fileId" to file, "profileId" to "test_corner_bed") + extra,
             expected,
             headers = mapOf("Idempotency-Key" to key),
         )

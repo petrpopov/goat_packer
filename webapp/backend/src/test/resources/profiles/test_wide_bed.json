@@ -1,0 +1,22 @@
+{
+  "id": "test_wide_bed",
+  "printer_name": "Test Wide Bed",
+  "vendor": "TSTV",
+  "vendor_display": "Test Vendor",
+  "orca_machine": "Test Wide Bed 0.4 nozzle",
+  "slicer_kind": "bambu",
+  "slicer_path": "/test/slicers/bambu",
+  "blank_start_gcode_for_cli": false,
+  "no_check_for_final_tower_probe": true,
+  "printable_area": [0.0, 0.0, 330.0, 320.0],
+  "edge_margin_mm": 0.0,
+  "exclusion_rectangles": [],
+  "purge_lines": [[105.0, 1.0, 185.0, 1.0, 2.0]],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5,
+  "filament_change_seconds": 95,
+  "heat_zones": [
+    { "name": "inner", "rect": [102, 93.4, 228, 226.6] },
+    { "name": "full", "rect": [0, 0, 330, 320] }
+  ]
+}
