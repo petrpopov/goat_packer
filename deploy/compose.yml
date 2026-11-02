@@ -54,7 +54,9 @@ services:
       REQUIRE_CHALLENGE: ${REQUIRE_CHALLENGE:-true}
       # false — без лимитов частоты, активных задач, бюджета и личной квоты (сайт закрыт SSO, чужих нет); общий потолок диска остаётся.
       ADMISSION_LIMITS: ${ADMISSION_LIMITS:-true}
-      WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-4096}
+      # Память одной задачи: полная нарезка 49-козьего стола U1 в Orca пикует 5.1 GiB, плюс ~0.5 GiB файлов
+      # задачи в её tmpfs (считаются в тот же лимит); при 4 GiB слайсер убивало (exit 137).
+      WORKER_MEMORY_MIB: ${WORKER_MEMORY_MIB:-8192}
       JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-1800}
       GLOBAL_COMPUTE_SECONDS: ${GLOBAL_COMPUTE_SECONDS:-72000}
       MAX_QUEUE: ${MAX_QUEUE:-20}
@@ -86,7 +88,7 @@ services:
       WORKER_ID: ${WORKER_ID:-node-1}
       WORKER_ENABLED: 'true'
       EXECUTION_CPU_BUDGET: ${EXECUTION_CPU_BUDGET:-2}
-      EXECUTION_MEMORY_MIB: ${EXECUTION_MEMORY_MIB:-4096}
+      EXECUTION_MEMORY_MIB: ${EXECUTION_MEMORY_MIB:-8192}
       WORKER_CPUS: ${WORKER_CPUS:-2}
       # WORKER_MEMORY_MIB — из app-env (api проверяет по нему запас под tmpfs задачи).
       # Runner той же версии, что и приложение: в нём бинарники упаковщика этого релиза.

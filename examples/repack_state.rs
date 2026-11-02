@@ -36,6 +36,7 @@ fn run() -> Result<(), String> {
     let mut placements_path: Option<PathBuf> = None;
     let mut check_path: Option<PathBuf> = None;
     let mut silhouette_from: Option<PathBuf> = None;
+    let mut support_drift = 0.0;
     let mut clearance = 0.7;
     let mut resolution = 0.25;
     let mut edge_reserve = DEFAULT_EDGE_RESERVE_MM;
@@ -49,6 +50,7 @@ fn run() -> Result<(), String> {
             "--placements" => placements_path = Some(value()?.into()),
             "--check" => check_path = Some(value()?.into()),
             "--silhouette-from" => silhouette_from = Some(value()?.into()),
+            "--support-drift" => support_drift = number(value()?)?,
             "--clearance" => clearance = number(value()?)?,
             "--resolution" => resolution = number(value()?)?,
             "--edge-reserve" => edge_reserve = number(value()?)?,
@@ -73,6 +75,11 @@ fn run() -> Result<(), String> {
         let triangles = goat_packer::embedded_mesh::embedded_mesh_triangles(&source).map_err(|e| e.to_string())?;
         goat_packer::embedded_mesh::write_binary_stl(&stl, &triangles).map_err(|e| e.to_string())?;
         footprint.body_loops = goat_packer::extract_footprint(&stl).map_err(|e| e.to_string())?.loops;
+    }
+    if support_drift > 0.0 {
+        // Experiment: the patch's support part grown for neighbour collisions too.
+        let body = footprint.body_loops.clone();
+        footprint.loops = grow_beyond(&footprint.loops, &body, support_drift);
     }
     if plan["rule"].as_str() == Some("silhouette") {
         footprint.support_landing_loops.clear();
