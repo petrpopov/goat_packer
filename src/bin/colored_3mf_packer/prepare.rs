@@ -65,6 +65,7 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
             SupportRule::Silhouette
         },
         patch_learned: false,
+        mesh_silhouette: if lock_orientation { silhouette.loops.clone() } else { Vec::new() },
     };
     progress::stage(
         Stage::Packing,

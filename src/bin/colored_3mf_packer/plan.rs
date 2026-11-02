@@ -1,7 +1,7 @@
 //! The plan a layout is packed against, and one packing pass.
 
 use goat_packer::{
-    Footprint, PackOptions, PackResult, Rect, colored_packer::{PrimeTowerBounds, PrinterProfile},
+    Footprint, PackOptions, PackResult, Point, Rect, colored_packer::{PrimeTowerBounds, PrinterProfile},
     grid_layout, grow_beyond, pack_footprint, plate_centre::RelocatedTower, print_time::TimeSample,
     validate_result,
 };
@@ -56,6 +56,15 @@ pub struct PackPlan {
     pub relocation: Option<RelocatedTower>,
     pub rule: SupportRule,
     pub patch_learned: bool,
+    /// The bare mesh outline of a support-carrying (locked) footprint. Until a sample slice
+    /// measures supports by height, the body zone also carries the probe's support interfaces
+    /// (they print ~2 mm past the overhangs, at the overhang's height). Once `layer_zones`
+    /// check supports against foreign bodies band by band, the rule's body zone is this
+    /// outline (`rule_footprint`): interfaces in it also kept neighbours' INTERFACES apart
+    /// (supports may touch supports), which rejected a hand-made U1 brick plate (40 mm pitch,
+    /// 48 goats) that printed with no support touching a foreign body. Empty = keep the body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mesh_silhouette: Vec<Vec<Point>>,
 }
 
 /// How much farther than the learned patch a later slice may print a support, at the bed
@@ -74,6 +83,16 @@ impl PackPlan {
     /// learning a patch unions `bed_loops` into the collision patch, and a grown bed zone must
     /// not leak into object-vs-object clearance.
     pub fn rule_footprint(&self) -> Footprint {
+        let mut footprint = self.interface_body_footprint();
+        if self.body_is_bare_outline() {
+            footprint.body_loops = self.mesh_silhouette.clone();
+        }
+        footprint
+    }
+
+    /// `rule_footprint` with the probe's interfaces kept in the body zone: a stricter rule, so
+    /// its layouts are valid under `rule_footprint` too.
+    fn interface_body_footprint(&self) -> Footprint {
         let mut footprint = self.footprint.clone();
         if self.rule == SupportRule::Silhouette {
             footprint.support_landing_loops.clear();
@@ -86,20 +105,55 @@ impl PackPlan {
         footprint
     }
 
+    /// Supports are checked by height, so the rule's body zone is the bare mesh outline.
+    fn body_is_bare_outline(&self) -> bool {
+        !self.footprint.layer_zones.is_empty() && !self.mesh_silhouette.is_empty()
+    }
+
     fn keepouts(&self) -> Vec<Rect> {
         self.fixed_keepouts.iter().copied().chain(self.tower_keepout).collect()
     }
 
+    /// Packs under the rule, and — when its body zone is the bare outline — also under the
+    /// stricter interface body, keeping whichever places more. The search is a heuristic, not
+    /// monotone in the rule: on the same learned plan the looser rule packed a P1S goat plate
+    /// 42 instead of 43 and a U1 plate 47 instead of 49, and another U1 plan 48 instead of 47.
+    /// The stricter layouts are valid under the rule, so the better of the two never loses.
     pub fn pack(&self, job: &Job) -> AppResult<PackResult> {
-        pack(
+        let rule = self.rule_footprint();
+        let pack_with = |footprint: &Footprint, verbose: bool| {
+            pack(
+                &job.args,
+                &job.profile,
+                footprint,
+                self.lock_orientation,
+                &self.fixed_keepouts,
+                self.tower_keepout,
+                verbose,
+            )
+        };
+        let packed = pack_with(&rule, true)?;
+        if !self.body_is_bare_outline() {
+            return Ok(packed);
+        }
+        let strict = pack_with(&self.interface_body_footprint(), false)?;
+        if strict.placements.len() <= packed.placements.len() {
+            return Ok(packed);
+        }
+        let options = pack_options(
             &job.args,
             &job.profile,
-            &self.rule_footprint(),
             self.lock_orientation,
             &self.fixed_keepouts,
             self.tower_keepout,
-            true,
-        )
+        )?;
+        validate_result(&rule, &options, &strict)?;
+        eprintln!(
+            "layout: {} objects with the support interfaces in the body zone (bare outline: {})",
+            strict.placements.len(),
+            packed.placements.len()
+        );
+        Ok(strict)
     }
 
     /// Writes the 3MF for `packed` to the job's output path.

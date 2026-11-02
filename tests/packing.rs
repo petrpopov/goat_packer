@@ -569,3 +569,35 @@ fn grid_checks_distant_islands_not_just_immediate_neighbours() {
     let result = grid_layout(&fp, &opts);
     validate_result(&fp, &opts, &result).unwrap();
 }
+
+#[test]
+fn grid_nests_shaped_rows_by_shifting_every_other_row() {
+    // A rhombus 20 x 10 mm: on a rectangular grid each copy needs a 20 x 10 cell; in brick
+    // rows shifted by half a pitch the next row sinks into the notches — nearly twice the
+    // count (the U1 goat case: 37 on the plain grid, 48 in hand-made brick rows).
+    let rhombus = polygon(&[(-10., 0.), (0., -5.), (10., 0.), (0., 5.)]);
+    let options = PackOptions {
+        body_bed: None,
+        body_exclusions: Vec::new(),
+        bed: Rect::new(0.0, 0.0, 100.0, 100.0),
+        exclusions: vec![],
+        resolution: 0.25,
+        clearance: 0.5,
+        angle_step_deg: 90.0,
+        attempts: 1,
+        candidates_per_step: 1,
+        max_objects: 0,
+        lock_orientation: true,
+        stall_attempts: 0,
+        seed: 7,
+        support_overlap_mm: None,
+    };
+    let rectangular_cells = (100.0 / 21.0f64).floor() * (100.0 / 11.0f64).floor();
+    let result = grid_layout(&rhombus, &options);
+    validate_result(&rhombus, &options, &result).unwrap();
+    assert!(
+        result.placements.len() as f64 >= 1.6 * rectangular_cells,
+        "{} placements, rectangular grid ~{rectangular_cells}",
+        result.placements.len()
+    );
+}
