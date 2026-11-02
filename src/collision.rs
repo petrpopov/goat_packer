@@ -1,160 +1,177 @@
-//! When placements conflict: two rasters overlapping under the zone rules, or one running into
-//! the bed edge or an exclusion.
+//! When two placements conflict: two prints' kind masks overlapping under the pair rules of
+//! `keepout::pair_rules`, or their support cores overlapping. Masks are already grown by half
+//! of their rule's gap (`kind_masks`), so a pixel overlap is a broken rule.
 
-use crate::geometry::Rect;
-use crate::options::PackOptions;
+use crate::geometry::{Point, Rect};
+use crate::keepout::PlateRules;
+use crate::kind_masks::{KindMasks, OriginGrid, plate_zones, zone_conflict};
 use crate::pixel_mask::{PixelMask, masks_overlap};
-use crate::raster_mask::RasterMask;
 
 /// The mask pairs whose overlap makes two placements collide (`b` shifted relative to `a`):
-/// a full patch against the other's landing zone both ways, and silhouette against
-/// silhouette (the patch need not contain the body's overhangs, so that pair is mandatory). Layer zones (`Footprint::layer_zones`) add support-vs-body pairs per
-/// height band. Support cores (`support_overlap_mm`) are a separate pair, see
+/// one per pair rule (and band) and direction, as laid out in `KindMasks::slots`. Pairs with
+/// an empty side cannot overlap and are left out. Support cores are a separate pair, see
 /// `support_cores_overlap`.
 pub(crate) fn zone_pairs<'a>(
-    a: &'a RasterMask,
-    b: &'a RasterMask,
+    a: &'a KindMasks,
+    b: &'a KindMasks,
 ) -> Vec<(&'a PixelMask, &'a PixelMask)> {
-    let mut pairs = vec![
-        (&a.clearance, &b.landing_clearance),
-        (&a.landing_clearance, &b.clearance),
-    ];
-    // Bodies may extend past the first-layer patch; neither patch/body pair implies this.
-    pairs.push((&a.body_clearance, &b.body_clearance));
-    // Same height band: supports of one against the body of the other, both ways.
-    for ((support_a, body_a), (support_b, body_b)) in a.layer_zones.iter().zip(&b.layer_zones) {
-        if support_a.pixel_count > 0 && body_b.pixel_count > 0 {
-            pairs.push((support_a, body_b));
-        }
-        if body_a.pixel_count > 0 && support_b.pixel_count > 0 {
-            pairs.push((body_a, support_b));
-        }
-    }
-    pairs
+    a.slots
+        .iter()
+        .filter_map(|&(own, other)| {
+            let key = a.keys[other];
+            // Prints of one job share the layout; another layout is matched by key.
+            let index = if b.keys.get(other) == Some(&key) {
+                Some(other)
+            } else {
+                b.keys.iter().position(|known| *known == key)
+            }?;
+            let pair = (&a.masks[own], &b.masks[index]);
+            (pair.0.pixel_count > 0 && pair.1.pixel_count > 0).then_some(pair)
+        })
+        .collect()
 }
 
-/// `b` at pixel offset `(dx, dy)` from `a` breaks the zone rule (`zone_pairs`).
-pub(crate) fn zones_collide(a: &RasterMask, b: &RasterMask, dx: i32, dy: i32) -> bool {
+/// `b` at pixel offset `(dx, dy)` from `a` breaks a pair rule (`zone_pairs`).
+pub(crate) fn zones_collide(a: &KindMasks, b: &KindMasks, dx: i32, dy: i32) -> bool {
     zone_pairs(a, b)
         .into_iter()
         .any(|(za, zb)| masks_overlap(za, 0, 0, zb, dx, dy))
 }
 
-/// `b` at pixel offset `(dx, dy)` from `a` collides: the zone rule or the support cores.
-pub fn placements_collide(a: &RasterMask, b: &RasterMask, dx: i32, dy: i32) -> bool {
+/// `b` at pixel offset `(dx, dy)` from `a` collides: a pair rule or the support cores.
+pub fn placements_collide(a: &KindMasks, b: &KindMasks, dx: i32, dy: i32) -> bool {
     zones_collide(a, b, dx, dy) || support_cores_overlap(a, b, dx, dy)
 }
 
 /// Support-overlap pair: the support cores of two placements (shifted by `(dx, dy)` pixels
 /// of `b` relative to `a`) overlap. Never true when either side carries no core.
-pub(crate) fn support_cores_overlap(a: &RasterMask, b: &RasterMask, dx: i32, dy: i32) -> bool {
+pub(crate) fn support_cores_overlap(a: &KindMasks, b: &KindMasks, dx: i32, dy: i32) -> bool {
     match (&a.support_core, &b.support_core) {
         (Some(core_a), Some(core_b)) => masks_overlap(core_a, 0, 0, core_b, dx, dy),
         _ => false,
     }
 }
 
+/// Whether `mask` may sit with its origin at pixel `(center_x_pixels, center_y_pixels)` of a
+/// grid anchored at the plate origin, on `bed` with hard `exclusions`: the production zone
+/// predicate (`kind_masks::zone_conflict`) on the legacy fields, so a test of this checks
+/// what the search enforces.
 pub fn placement_is_allowed(
-    mask: &RasterMask,
+    mask: &KindMasks,
     center_x_pixels: i32,
     center_y_pixels: i32,
     bed: Rect,
     exclusions: &[Rect],
 ) -> bool {
-    let center_x = f64::from(center_x_pixels) * mask.resolution;
-    let center_y = f64::from(center_y_pixels) * mask.resolution;
-    let bounds = mask.bed_physical_bounds;
-    if bounds
-        .translated(center_x, center_y)
-        .sticks_out_of(bed, 0.0)
-    {
-        return false;
-    }
-    !bounds_hit_exclusion(bounds, center_x, center_y, 0.0, exclusions)
-        && !mask.bed_clearance.pixels().any(|(x, y)| {
-            let wx = center_x + (f64::from(x) + 0.5) * mask.resolution;
-            let wy = center_y + (f64::from(y) + 0.5) * mask.resolution;
-            exclusions
-                .iter()
-                .any(|r| wx >= r.min_x && wx <= r.max_x && wy >= r.min_y && wy <= r.max_y)
-        })
-}
-
-/// BambuStudio's plate validation rejects an object whose AXIS-ALIGNED bounding box comes
-/// near a bed exclusion area — the silhouette is irrelevant there. A rotated goat can hold
-/// its silhouette 6 mm off the exclusion corner while its bbox still covers the zone, and
-/// the final slice then dies with "too close to exclusion area" after minutes of packing
-/// (a real 17-object P1S magnet plate, twice). Exclusion feasibility therefore measures the
-/// placement's rotated bbox — the patch ∪ silhouette extent, `bed_physical_bounds` — padded
-/// by the same clearance the pixel-based check used. Bed bounds stay silhouette-accurate;
-/// only exclusion checks take the bbox semantics. `x_px`/`y_px` are bed pixel coordinates
-/// (origin at `bed.min`, the coordinate space of the packing loops).
-pub(crate) fn aabb_hits_exclusion(
-    options: &PackOptions,
-    mask: &RasterMask,
-    x_px: i32,
-    y_px: i32,
-) -> bool {
-    let origin_x = options.bed.min_x + f64::from(x_px) * options.resolution;
-    let origin_y = options.bed.min_y + f64::from(y_px) * options.resolution;
-    bounds_hit_exclusion(
-        mask.bed_physical_bounds,
-        origin_x,
-        origin_y,
-        options.clearance,
-        &options.exclusions,
-    ) || bounds_hit_exclusion(
-        mask.body_bounds,
-        origin_x,
-        origin_y,
-        options.clearance,
-        &options.body_exclusions,
-    )
-}
-
-/// Float noise absorbed when turning bed distances into whole pixels: a mask that touches the
-/// edge exactly (up to rounding of the raster bounds) still fits.
-const ORIGIN_SLACK_PX: f64 = 1e-9;
-
-/// Placement origins (pixels from `options.bed.min`) that keep a mask on the bed: the whole
-/// printed extent inside `bed`, the body inside `body_bed` (see `PackOptions::body_bed`).
-/// Inclusive `(min_x, min_y, max_x, max_y)`; empty when a min exceeds its max.
-pub(crate) fn origin_range(options: &PackOptions, mask: &RasterMask) -> (i32, i32, i32, i32) {
-    let r = options.resolution;
-    let within = |bounds: Rect, area: Rect| {
-        (
-            ((area.min_x - options.bed.min_x - bounds.min_x) / r - ORIGIN_SLACK_PX).ceil() as i32,
-            ((area.min_y - options.bed.min_y - bounds.min_y) / r - ORIGIN_SLACK_PX).ceil() as i32,
-            ((area.max_x - options.bed.min_x - bounds.max_x) / r + ORIGIN_SLACK_PX).floor() as i32,
-            ((area.max_y - options.bed.min_y - bounds.max_y) / r + ORIGIN_SLACK_PX).floor() as i32,
-        )
+    let rules = PlateRules::from_legacy(bed, None, exclusions, &[]);
+    let zones = plate_zones(&rules, None).expect("legacy rules are in the plate frame");
+    let grid = OriginGrid {
+        origin: Point { x: 0.0, y: 0.0 },
+        resolution: mask.resolution,
     };
-    let full = within(mask.bed_physical_bounds, options.bed);
-    match options.body_bed {
-        None => full,
-        Some(area) => {
-            let body = within(mask.body_bounds, area);
-            (
-                full.0.max(body.0),
-                full.1.max(body.1),
-                full.2.min(body.2),
-                full.3.min(body.3),
-            )
+    zone_conflict(mask, &zones, &grid, center_x_pixels, center_y_pixels).is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keepout::BodyRule;
+    use crate::kind_masks::{KindShapes, MaskRules};
+    use crate::object_print::{ObjectPrint, PrintKind};
+    use crate::pack::no_fit::no_fit;
+
+    fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Point> {
+        [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+            .iter()
+            .map(|&(x, y)| Point { x, y })
+            .collect()
+    }
+
+    /// An L-shaped body on a wider support base with a narrow landing and two bands: every
+    /// pair rule has something to bite on.
+    fn print() -> ObjectPrint {
+        ObjectPrint {
+            silhouette: vec![rect(-3.0, -2.0, 3.0, -1.0), rect(-3.0, -1.0, -2.0, 2.0)],
+            landing: vec![rect(-2.0, -2.0, 2.0, -1.5)],
+            support_base: vec![rect(-4.0, -3.0, 4.0, -2.0)],
+            part_hulls: vec![rect(-3.0, -2.0, 3.0, 2.0)],
+            part_boxes: vec![Rect::new(-3.0, -2.0, 3.0, 2.0)],
+            body: vec![vec![rect(-3.0, -2.0, 0.0, 2.0)], vec![]],
+            support: vec![vec![], vec![rect(3.5, 0.0, 6.0, 1.0)]],
+            interface: vec![vec![], vec![]],
+            ..ObjectPrint::default()
         }
     }
-}
 
-pub(crate) fn bounds_hit_exclusion(
-    bounds: Rect,
-    x: f64,
-    y: f64,
-    pad: f64,
-    exclusions: &[Rect],
-) -> bool {
-    exclusions.iter().any(|r| {
-        x + bounds.min_x - pad < r.max_x
-            && x + bounds.max_x + pad > r.min_x
-            && y + bounds.min_y - pad < r.max_y
-            && y + bounds.max_y + pad > r.min_y
-    })
+    fn rules(body_rule: BodyRule, overlap: Option<f64>) -> MaskRules {
+        MaskRules {
+            clearance_mm: 0.7,
+            body_rule,
+            support_overlap_mm: overlap,
+        }
+    }
+
+    fn masks(body_rule: BodyRule, overlap: Option<f64>, angle: f64) -> KindMasks {
+        let (sin, cos) = f64::to_radians(angle).sin_cos();
+        KindShapes::new(&print(), rules(body_rule, overlap))
+            .mapped(|p| Point {
+                x: p.x * cos - p.y * sin,
+                y: p.x * sin + p.y * cos,
+            })
+            .rasterize(0.5)
+    }
+
+    #[test]
+    fn no_fit_matches_brute_force_collisions_at_every_shift() {
+        for body_rule in [BodyRule::Silhouette, BodyRule::Bands] {
+            for overlap in [None, Some(0.0), Some(1.0)] {
+                for angle in [0.0, 13.0, 90.0] {
+                    let a = masks(body_rule, overlap, 0.0);
+                    let b = masks(body_rule, overlap, angle);
+                    let nfp = no_fit(&a, &b);
+                    for y in -30..=30 {
+                        for x in -30..=30 {
+                            assert_eq!(
+                                nfp.contains(x, y),
+                                placements_collide(&a, &b, x, y),
+                                "{body_rule:?} {overlap:?} {angle} shift {x},{y}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pairs_follow_the_pair_rules_both_ways() {
+        let a = masks(BodyRule::Silhouette, None, 0.0);
+        // The silhouette once, base against landing both ways; the bands pair support with
+        // body only within one band, and no band has both.
+        let pairs = zone_pairs(&a, &a);
+        let silhouette = a.mask(PrintKind::Silhouette, 0).unwrap();
+        assert!(
+            pairs
+                .iter()
+                .any(|(x, y)| std::ptr::eq(*x, silhouette) && std::ptr::eq(*y, silhouette))
+        );
+        assert_eq!(pairs.len(), 3, "silhouette, base->landing, landing->base");
+        // Body bands replace the silhouette.
+        let bands = masks(BodyRule::Bands, None, 0.0);
+        assert!(bands.mask(PrintKind::Silhouette, 0).is_none());
+        assert_eq!(zone_pairs(&bands, &bands).len(), 3);
+    }
+
+    #[test]
+    fn a_support_band_meets_a_foreign_body_band_only_in_its_band() {
+        let mut other = print();
+        other.body[1] = vec![rect(-3.0, -2.0, 0.0, 2.0)];
+        let rules = rules(BodyRule::Silhouette, None);
+        let a = KindShapes::new(&print(), rules).rasterize(0.5);
+        let b = KindShapes::new(&other, rules).rasterize(0.5);
+        // B 8 mm right: its band-1 body (x 5..8) meets A's band-1 support (x 3.5..6).
+        assert!(placements_collide(&a, &b, 16, 0));
+        // The same B without that band body: silhouettes and bases are clear at 8 mm.
+        assert!(!placements_collide(&a, &a, 16, 0));
+    }
 }

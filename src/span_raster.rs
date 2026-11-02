@@ -1,4 +1,7 @@
-//! Rasters as sorted pixel spans per row: scanline fill, dilation and erosion of loops.
+//! Rasters as sorted pixel spans per row: scanline fill, conservative coverage and the set
+//! operations the origin maps need. Clearance is not a raster operation any more: kinds are
+//! buffered as vectors first (`kind_masks::buffer`), so the raster only adds its own
+//! boundary cells.
 
 use crate::geometry::Point;
 
@@ -105,30 +108,6 @@ impl SpanRaster {
         raster
     }
 
-    /// Square dilation encloses the continuous clearance disc. A discrete disc can leave
-    /// diagonal gaps smaller than the requested physical clearance between occupied cells.
-    pub(crate) fn dilate_clearance(&self, radius: i32) -> Self {
-        if radius <= 0 || self.rows.is_empty() {
-            return self.clone();
-        }
-        let min_y = self.min_y - radius;
-        let rows = (min_y..self.max_y() + radius)
-            .map(|y| {
-                let mut spans = Vec::new();
-                for dy in -radius..=radius {
-                    spans.extend(
-                        self.row(y + dy)
-                            .iter()
-                            .map(|&(a, b)| (a - radius, b + radius)),
-                    );
-                }
-                merge_spans(&mut spans);
-                spans
-            })
-            .collect();
-        Self { min_y, rows }
-    }
-
     /// No pixel set.
     pub(crate) fn is_empty(&self) -> bool {
         self.rows.iter().all(Vec::is_empty)
@@ -167,94 +146,68 @@ impl SpanRaster {
         SpanRaster { min_y, rows }
     }
 
-    /// Dilation by the discrete disc `dx² + dy² <= radius²` — the structuring element the
-    /// per-pixel dilation used: row `y` of the result is the union over `dy` of row `y + dy`
-    /// widened by `isqrt(radius² - dy²)` on both sides.
-    pub(crate) fn dilate(&self, radius: i32) -> SpanRaster {
-        if radius <= 0 || self.rows.is_empty() {
-            return self.clone();
+    /// Every pixel of the inclusive rectangle `[min_x, max_x] x [min_y, max_y]`; empty when a
+    /// min exceeds its max.
+    pub(crate) fn rect(min_x: i32, min_y: i32, max_x: i32, max_y: i32) -> SpanRaster {
+        if min_x > max_x || min_y > max_y {
+            return SpanRaster::default();
         }
-        let widths: Vec<i32> = (-radius..=radius)
-            .map(|dy| disc_half_width(radius, dy))
-            .collect();
-        let min_y = self.min_y - radius;
-        let max_y = self.max_y() + radius;
-        let rows = (min_y..max_y)
-            .map(|y| {
-                let mut spans: Vec<(i32, i32)> = Vec::new();
-                for (offset, &w) in widths.iter().enumerate() {
-                    let dy = offset as i32 - radius;
-                    spans.extend(self.row(y + dy).iter().map(|&(a, b)| (a - w, b + w)));
-                }
-                merge_spans(&mut spans);
-                spans
-            })
-            .collect();
-        SpanRaster { min_y, rows }
+        SpanRaster {
+            min_y,
+            rows: vec![vec![(min_x, max_x + 1)]; (max_y - min_y + 1) as usize],
+        }
     }
 
-    /// Erosion by the same discrete disc `dilate` uses: a pixel survives iff the whole disc
-    /// around it is set. Row `y` is the intersection over `dy` of row `y + dy` narrowed by
-    /// `isqrt(radius² - dy²)` on both sides (spans are merged, so a run of set pixels always
-    /// lies inside a single span).
-    pub(crate) fn erode(&self, radius: i32) -> SpanRaster {
-        if radius <= 0 || self.rows.is_empty() {
-            return self.clone();
-        }
-        let min_y = self.min_y + radius;
-        let max_y = self.max_y() - radius;
-        let rows = (min_y..max_y.max(min_y))
-            .map(|y| {
-                let mut acc: Option<Vec<(i32, i32)>> = None;
-                for dy in -radius..=radius {
-                    let w = disc_half_width(radius, dy);
-                    let narrowed: Vec<(i32, i32)> = self
-                        .row(y + dy)
-                        .iter()
-                        .map(|&(a, b)| (a + w, b - w))
-                        .filter(|&(a, b)| a < b)
-                        .collect();
-                    acc = Some(match acc {
-                        None => narrowed,
-                        Some(previous) => intersect_spans(&previous, &narrowed),
-                    });
-                    if acc.as_ref().is_some_and(Vec::is_empty) {
-                        break;
-                    }
-                }
-                acc.unwrap_or_default()
-            })
+    /// The pixels of `self` that `other` does not have.
+    pub(crate) fn difference(&self, other: &SpanRaster) -> SpanRaster {
+        let rows = (self.min_y..self.max_y())
+            .map(|y| subtract_spans(self.row(y), other.row(y)))
             .collect();
-        SpanRaster { min_y, rows }
+        SpanRaster {
+            min_y: self.min_y,
+            rows,
+        }
+    }
+
+    pub(crate) fn contains(&self, x: i32, y: i32) -> bool {
+        let row = self.row(y);
+        let after = row.partition_point(|&(start, _)| start <= x);
+        after > 0 && x < row[after - 1].1
+    }
+
+    pub(crate) fn pixel_count(&self) -> usize {
+        self.rows
+            .iter()
+            .flatten()
+            .map(|&(start, end)| (end - start) as usize)
+            .sum()
     }
 }
 
-/// `isqrt(radius² - dy²)`: half-width of row `dy` of the discrete disc `dx² + dy² <= radius²`.
-fn disc_half_width(radius: i32, dy: i32) -> i32 {
-    let mut w = (f64::from(radius * radius - dy * dy)).sqrt() as i32;
-    while w * w + dy * dy > radius * radius {
-        w -= 1;
-    }
-    while (w + 1) * (w + 1) + dy * dy <= radius * radius {
-        w += 1;
-    }
-    w
-}
-
-/// Intersection of two sorted, disjoint span lists.
-fn intersect_spans(a: &[(i32, i32)], b: &[(i32, i32)]) -> Vec<(i32, i32)> {
-    let (mut i, mut j) = (0, 0);
-    let mut out = Vec::new();
-    while i < a.len() && j < b.len() {
-        let start = a[i].0.max(b[j].0);
-        let end = a[i].1.min(b[j].1);
+/// `a` minus `b`, both sorted and disjoint.
+fn subtract_spans(a: &[(i32, i32)], b: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let mut out = Vec::with_capacity(a.len());
+    let mut cut = b.iter().peekable();
+    for &(mut start, end) in a {
+        while let Some(&&(cut_start, cut_end)) = cut.peek() {
+            if cut_end <= start {
+                cut.next();
+                continue;
+            }
+            if cut_start >= end {
+                break;
+            }
+            if cut_start > start {
+                out.push((start, cut_start));
+            }
+            start = start.max(cut_end);
+            if cut_end >= end {
+                break;
+            }
+            cut.next();
+        }
         if start < end {
             out.push((start, end));
-        }
-        if a[i].1 < b[j].1 {
-            i += 1;
-        } else {
-            j += 1;
         }
     }
     out
