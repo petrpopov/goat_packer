@@ -29,7 +29,7 @@ export default function BrandMark({ size = 26 }: { size?: number }) {
         <circle cx="25.6" cy="13.4" r="1.7" fill="var(--accent)" />
         <path d="M24.6 21.8 24 25.2" fill="none" {...stroke} />
       </g>
-      <path d={cube} fill="var(--bg-chrome)" />
+      <path d={cube} fill="var(--chrome)" />
       <path d={cube} fill="var(--accent-soft)" {...stroke} />
       <path d="M3.5 13.5l8 4.5 8-4.5M11.5 18v9" fill="none" {...stroke} />
     </svg>

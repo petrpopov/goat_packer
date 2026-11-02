@@ -37,7 +37,7 @@ export default function StatusStrip({ title, detail, line, lineLabel, actions, l
         aria-valuenow={percent !== null ? Math.round(percent) : undefined}
         aria-valuetext={lineLabel}
       >
-        <i style={percent !== null ? { ['--p' as string]: `${percent}%` } : undefined} />
+        <i style={percent !== null ? { ['--p' as string]: percent / 100 } : undefined} />
       </div>
     </div>
   );

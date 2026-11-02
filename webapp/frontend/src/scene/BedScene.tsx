@@ -154,7 +154,7 @@ export default function BedScene(props: BedSceneProps) {
     const paint = () => {
       paintTokens(bedGroup);
       if (towerMesh) (towerMesh.material as THREE.MeshBasicMaterial).color.copy(cssColor('--accent-2'));
-      objectMaterial.color.copy(cssColor('--object'));
+      objectMaterial.color.copy(cssColor('--scene-object'));
       capMaterial.color.copy(cssColor('--signal'));
       sliceMaterial.color.copy(cssColor('--signal'));
     };

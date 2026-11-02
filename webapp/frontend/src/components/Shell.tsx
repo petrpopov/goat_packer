@@ -51,7 +51,7 @@ export default function Shell({ user, children }: { user?: Session; children: Re
               }
             : onLink
         }
-        data-tip={rail ? item.label : undefined}
+        data-tip={item.label}
         data-tip-pos="right"
         className={`nav-item${active ? ' active' : ''}`}
         aria-current={active ? 'page' : undefined}

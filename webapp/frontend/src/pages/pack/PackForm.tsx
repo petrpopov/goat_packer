@@ -173,7 +173,7 @@ function FileProgress({
     return (
       <div className="file-progress">
         <div className="track">
-          <i style={{ ['--p' as string]: `${(upload.sent / Math.max(1, upload.total)) * 100}%` }} />
+          <i style={{ ['--p' as string]: upload.sent / Math.max(1, upload.total) }} />
         </div>
         <span>
           Загрузка <span className="num">{formatBytes(upload.sent)}</span> из{' '}

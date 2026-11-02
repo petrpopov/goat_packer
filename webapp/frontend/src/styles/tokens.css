@@ -1,172 +1,129 @@
-/* Палитра «Камень» (светлая) и тёплый уголь (тёмная) — см. DESIGN.md.
-   Оранжевый — основной (действия и прогресс машины), зелёный — точечный акцент
-   (контур проекции, башня, «готово»). Не кремовый фон и не глиняный оранжевый — намеренно. */
+/* Палитра «Бумага и искра» — см. DESIGN.md (frontmatter: ключ = светлая тема, ключ-dark = тёмная).
+   Нейтрали — Parallel Web Systems (бумага, волосяные линии) и Brex (ночь Abyss/Carbon); оранжевый —
+   свой, не менять. Чертёжный синий (accent-2) — только измеренная геометрия: контур, башня.
+   Имён-синонимов нет: компоненты и сцена (cssValue в scene/three.ts) читают ровно эти ключи. */
 :root {
-  font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  color-scheme: light;
   --font-ui: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
 
-  --bg: #ebe7e2;
-  --bg-chrome: #e3ded8;
-  --panel: #f8f6f3;
-  --panel-2: #e0dbd5;
-  --row: #f8f6f3;
-  --row-alt: #f1eee9;
-  --row-hover: #d9d3cc;
-  --border: #cdc6be;
-  --border-strong: #aba299;
+  --bg: #f5f4f1;
+  --chrome: #eeedea;
+  --panel: #ffffff;
+  --panel-2: #eeeeee;
+  --hover: #e5e5e5;
+  --border: #e2e1de;
+  --border-strong: #858483;
+  --text: #181818;
+  --muted: #434343;
+  --dim: #5c5c5c;
+  --placeholder: #6e6e6e;
 
-  --fg: #1b1916;
-  --fg-muted: #5a5249;
-  --fg-dim: #5a5249;
-  --fg-placeholder: #6b635a;
-
-  /* Оранжевый текст/иконки — только #9c3d00 (5.5:1 на фоне); #ff7a1a — только заливка. */
+  /* Оранжевый текст/иконки на светлом — только #9c3d00; #ff7a1a — только заливка. */
   --accent: #9c3d00;
   --accent-fill: #ff7a1a;
   --accent-ink: #1a0d00;
   --accent-soft: #ff7a1a26;
   --signal: #ff7a1a;
-  --accent-2: #006b4a;
-  --accent-2-soft: #006b4a1f;
+  --accent-2: #0d6ea5;
+  --accent-2-soft: #0d6ea51f;
 
-  --ok: #1f7a3a;
-  --ok-soft: #1f7a3a1f;
-  --warn: #9a5b00;
-  --warn-soft: #9a5b001f;
-  --crit: #c42847;
-  --crit-soft: #c428471a;
+  --ok: #176b3d;
+  --ok-soft: #176b3d1f;
+  --warn: #875000;
+  --warn-soft: #8750001f;
+  --crit: #ad2840;
+  --crit-soft: #ad28401a;
+  --crit-ink: #ffffff;
+  /* Тост и подсказка — инверсия страницы. */
+  --inverse: #181818;
+  --inverse-ink: #f5f4f1;
+  --shadow-ink: rgb(24 24 24 / 0.12);
+  --shadow-ink-near: rgb(24 24 24 / 0.08);
 
-  --shadow-lg: 0 16px 48px rgb(40 30 20 / 0.14), 0 2px 8px rgb(40 30 20 / 0.08);
-  --shadow-sm: 0 1px 2px rgb(40 30 20 / 0.08);
+  --scene-bg: #eeeeee;
+  --scene-plate: #2a2b2d;
+  --scene-plate-top: #fbfbfa;
+  --scene-plate-grid: #e6e5e2;
+  --scene-keepout: #8a8987;
+  --scene-object: #a9a8a5;
+
+  --shadow-float: 0 16px 48px var(--shadow-ink), 0 2px 8px var(--shadow-ink-near);
+  --shadow-lift: 0 1px 2px var(--shadow-ink-near);
+  --ring: 0 0 0 3px var(--accent-soft);
 
   --radius-sm: 4px;
   --radius: 6px;
   --radius-lg: 10px;
+  --radius-pill: 999px;
 
-  /* Сцена стола (план 2) */
-  --scene-bg: #e4dfd9;
-  --plate: #2b2724;
-  --plate-top: #faf8f5;
-  --plate-grid: #e2dcd4;
-  --keepout: #8f877e;
-  --object: #aea69c;
+  --space-2xs: 4px;
+  --space-xs: 6px;
+  --space-sm: 10px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 18px;
+  --space-2xl: 24px;
 
-  /* Legacy aliases — core.css и компоненты используют эти имена */
-  --bg-page: var(--bg);
-  --bg-card: var(--panel);
-  --bg-elev: var(--panel-2);
-  --bg-hover: var(--row-hover);
-  --bg-muted: var(--panel-2);
-  --surface-alt: var(--panel-2);
-  --text: var(--fg);
-  --text-muted: var(--fg-muted);
-  --text-placeholder: var(--fg-placeholder);
-  --primary: var(--accent);
-  --primary-contrast: var(--accent-ink);
-  --danger: var(--crit);
-  --danger-contrast: #ffffff;
-  --color-success: var(--ok);
-  --color-success-bg: var(--ok-soft);
-  --color-warning: var(--warn);
-  --color-warning-bg: var(--warn-soft);
-  --color-danger: var(--crit);
-  --color-danger-bg: var(--crit-soft);
-  --color-muted: var(--fg-muted);
-  --overlay-bg: rgb(0 0 0 / 0.5);
-  --border-subtle: var(--border);
-  --separator-bg: var(--border);
-  --shadow-border: 0 0 0 1px var(--border);
-  --shadow-border-light: 0 0 0 1px var(--row-hover);
-  --shadow-card: 0 0 0 1px var(--border), 0 1px 2px rgb(40 30 20 / 0.05);
-  --shadow-modal: var(--shadow-lg);
-  --shadow-focus: 0 0 0 3px var(--accent-soft);
-  --accent-hi: var(--accent-fill);
-  --accent-lo: var(--accent-fill);
-  --accent-edge-hi: transparent;
-  --accent-glow: var(--accent-soft);
-  --toast-fg: #ffffff;
-  --toast-info-bg: #1b1916;
-  --toast-error-bg: var(--crit);
-  --toast-error-fg: #ffffff;
-  --shadow-toast: 0 0 0 1px rgb(0 0 0 / 0.08), 0 8px 16px rgb(40 30 20 / 0.18);
+  --dur: 160ms;
+  --dur-slow: 800ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --tip-delay: 800ms;
 
+  --topbar-h: 52px;
   --row-h: 44px;
+  --z-raised: 5;
+  --z-pop: 15;
+  --z-sticky: 30;
+  --z-menu: 40;
+  --z-list: 50;
+  --z-tip: 100;
   --z-toast: 1200;
-  color: var(--text);
+
+  /* Шеврон вниз штрихом 1.5 px, тем же цветом, что иконка (currentColor элемента). Для select и раскрывашек. */
+  --chevron:
+    linear-gradient(45deg, transparent calc(50% - 0.75px), currentColor calc(50% - 0.75px), currentColor calc(50% + 0.75px), transparent calc(50% + 0.75px)),
+    linear-gradient(-45deg, transparent calc(50% - 0.75px), currentColor calc(50% - 0.75px), currentColor calc(50% + 0.75px), transparent calc(50% + 0.75px));
 }
 
 :root[data-theme='dark'] {
-  --bg: #121110;
-  --bg-chrome: #0f0e0d;
-  --panel: #1b1918;
-  --panel-2: #23201e;
-  --row: #1b1918;
-  --row-alt: #1f1d1b;
-  --row-hover: #2a2724;
-  --border: #34302c;
-  --border-strong: #45403a;
-
-  --fg: #ece8e3;
-  --fg-muted: #a49d95;
-  --fg-dim: #958e86;
-  --fg-placeholder: #a49d95;
+  color-scheme: dark;
+  --bg: #0f1215;
+  --chrome: #0b0e11;
+  --panel: #15191e;
+  --panel-2: #1c2127;
+  --hover: #232931;
+  --border: #2c333b;
+  --border-strong: #66707b;
+  --text: #eef0f2;
+  --muted: #9aa3ad;
+  --dim: #8b95a0;
+  --placeholder: #8b95a0;
 
   --accent: #ff9640;
   --accent-fill: #ff9640;
   --accent-ink: #1a0d00;
   --accent-soft: #ff964024;
   --signal: #ff9640;
-  --accent-2: #3ddc91;
-  --accent-2-soft: #3ddc9124;
+  --accent-2: #5cb3e6;
+  --accent-2-soft: #5cb3e624;
 
-  --ok: #3ddc91;
-  --ok-soft: #3ddc911f;
+  --ok: #45d483;
+  --ok-soft: #45d4831f;
   --warn: #ffcd48;
   --warn-soft: #ffcd4824;
-  --crit: #ff6285;
-  --crit-soft: #ff628524;
+  --crit: #ff6b81;
+  --crit-soft: #ff6b8124;
+  --crit-ink: #2a0610;
+  --inverse: #eef0f2;
+  --inverse-ink: #0f1215;
+  --shadow-ink: rgb(0 0 0 / 0.5);
+  --shadow-ink-near: rgb(0 0 0 / 0.3);
 
-  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-card: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.3);
-
-  --scene-bg: #161413;
-  --plate: #070606;
-  --plate-top: #221f1c;
-  --plate-grid: #302c28;
-  --keepout: #ece8e3;
-  --object: #c2bbb3;
-
-  --toast-fg: var(--fg);
-  --toast-info-bg: #23201e;
-  --toast-error-bg: #8f1d36;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-input::placeholder,
-textarea::placeholder {
-  color: var(--fg-placeholder);
-  opacity: 1;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  color: var(--text);
-  background: var(--bg-page);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  letter-spacing: -0.005em;
-  font-feature-settings: 'cv11', 'ss01', 'ss03';
-  -webkit-font-smoothing: antialiased;
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-feature-settings: 'liga' 1;
-  font-variant-numeric: tabular-nums;
+  --scene-bg: #12161a;
+  --scene-plate: #07090b;
+  --scene-plate-top: #1a1f25;
+  --scene-plate-grid: #262d35;
+  --scene-keepout: #c9cfd6;
+  --scene-object: #b9c0c8;
 }

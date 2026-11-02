@@ -1,0 +1,16 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: restyle
+ * paper: oklch(96.7% 0.004 91) · accent: oklch(72.4% 0.187 49) · display: IBM Plex Sans · body: IBM Plex Sans
+ * nav: kept (topbar + sidebar, rail at 1024 and under) · signature: kept (the build-plate scene) · states: draft, upload, running, done, error, empty
+ * axes: light/grotesk-sans/warm · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, the layout is kept by request (restyle); the system moved off beige stone to Parallel/Brex paper and Abyss with the project's own orange */
+/* Hallmark · waive 24b · every off-4px step is a DESIGN.md spec value (14px groups and cells, 9px heads, 5px label gap, 22px drop zone) · DESIGN.md locks this tool on a 4/6/10/12/16/18/24 spacing scale and the restyle keeps it */
+/* Hallmark · waive 39b · the 26px buttons are segmented options inside a 30px track and the 116px block is the file drop zone · DESIGN.md sizes the segmented control and the drop zone for the dense form column */
+/* Hallmark · dismissed 41 · .card, .panel and .panel-2 inherit --text from body, and both themes redefine --text with the surfaces */
+/* Hallmark · dropped button[type=button] · in #schedule-form only: the lone "Файл .3mf" toggle had no second option; the source switch now shows only when a pack result offers one */
+
+/* Порядок важен: токены, база, затем компоненты и экраны. */
+@import url('./tokens.css');
+@import url('./base.css');
+@import url('./core.css');
+@import url('./shell.css');
+@import url('./workspace.css');

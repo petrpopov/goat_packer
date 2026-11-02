@@ -1,188 +1,213 @@
 /* Рабочее пространство упаковки/расписания: форма слева, действие, прогресс и сцена справа. */
-.work { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: calc(100vh - 52px); }
+.work { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: calc(100dvh - var(--topbar-h)); }
 .work.with-side { grid-template-columns: 320px minmax(0, 1fr) 340px; }
-.form-col { display: grid; gap: 16px; align-content: start; padding: 18px 18px 28px; border-right: 1px solid var(--border); }
-.form-group { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form-col { display: grid; gap: var(--space-lg); align-content: start; padding: var(--space-xl) var(--space-xl) 28px; border-right: 1px solid var(--border); }
+.form-group { display: grid; gap: var(--space-md); padding-top: 14px; border-top: 1px solid var(--border); }
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-sm); }
 .check-text { display: grid; gap: 2px; }
 /* Профиль только для чтения (определяется по файлу): <output> внутри label поля — подпись связана
    с ним без id; в облике поля, текст по центру высоты. */
-output.input { display: flex; align-items: center; color: var(--fg-muted); }
-.nested { display: grid; gap: 12px; margin: 2px 0 0 24px; }
-.main-col { display: grid; gap: 16px; align-content: start; min-width: 0; padding: 18px 24px 28px; }
-.side-col { display: grid; gap: 16px; align-content: start; padding: 18px; border-left: 1px solid var(--border); }
+output.input { display: flex; align-items: center; color: var(--muted); }
+.nested { display: grid; gap: var(--space-md); margin: 2px 0 0 var(--space-2xl); }
+.main-col { display: grid; gap: var(--space-lg); align-content: start; min-width: 0; padding: var(--space-xl) var(--space-2xl) 28px; }
+.side-col { display: grid; gap: var(--space-lg); align-content: start; padding: var(--space-xl); border-left: 1px solid var(--border); }
 /* Панель калибровки скрыта, а не размонтирована (задача калибровки не теряется): колонку не занимает. */
 .side-col[hidden] { display: none; }
 .side-head { display: flex; align-items: center; justify-content: space-between; }
 .side-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.action-bar { display: flex; align-items: center; gap: 16px; }
+.action-bar { display: flex; align-items: center; gap: var(--space-lg); }
 .action-bar .title { flex: 1; min-width: 0; }
 .action-bar h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.action-bar p { margin: 2px 0 0; color: var(--fg-dim); }
-.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); }
-.seg button { height: 26px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); font: 500 12.5px var(--font-ui); cursor: pointer; }
-.seg button[aria-pressed='true'] { background: var(--panel); color: var(--fg); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+.action-bar p { margin: 2px 0 0; color: var(--dim); }
+
+/* Сегментированный выбор: дорожка panel-2, выбранный — panel + подъём + волосяное кольцо. */
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: 2px; background: var(--panel-2); border-radius: var(--radius); }
+.seg button {
+  height: 26px; padding: 0 var(--space-sm); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted);
+  font: 500 12.5px var(--font-ui); white-space: nowrap; cursor: pointer;
+  transition: background-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+.seg button:hover:not(:disabled) { color: var(--text); }
+.seg button:active:not(:disabled) { background: var(--hover); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+.seg button[aria-pressed='true'] { background: var(--panel); color: var(--text); box-shadow: var(--shadow-lift), 0 0 0 1px var(--border); }
 
 /* Сцена */
 .scene { position: relative; aspect-ratio: 16 / 9.4; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--scene-bg); }
 /* Заглушка вместо сцены (нет WebGL / не загрузился чанк): тот же блок, текст по центру. */
-.scene-fallback { display: grid; place-items: center; padding: 24px; color: var(--fg-muted); font-size: 13px; text-align: center; }
+.scene-fallback { display: grid; place-items: center; padding: var(--space-2xl); color: var(--muted); font-size: 13px; text-align: center; }
 .scene canvas { display: block; width: 100% !important; height: 100% !important; }
 .scene-labels { position: absolute; inset: 0; pointer-events: none; }
-.scene-dim { position: absolute; transform: translate(-50%, -50%); padding: 1px 5px; border-radius: 3px; background: var(--scene-bg); color: var(--fg-muted); font: 500 11.5px var(--font-mono); white-space: nowrap; }
-.scene-legend { position: absolute; top: 12px; right: 14px; display: grid; gap: 4px; color: var(--fg-dim); font-size: 12px; pointer-events: none; }
-.scene-legend span { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
-.scene-count { justify-self: end; margin-top: 4px; color: var(--fg); font: 600 22px var(--font-mono); line-height: 1; }
+.scene-dim { position: absolute; transform: translate(-50%, -50%); padding: 1px var(--space-2xs); border-radius: var(--radius-sm); background: var(--scene-bg); color: var(--muted); font: 500 11.5px var(--font-mono); white-space: nowrap; }
+.scene-legend { position: absolute; top: var(--space-md); right: 14px; display: grid; gap: var(--space-2xs); color: var(--dim); font-size: 12px; pointer-events: none; }
+.scene-legend span { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.scene-count { justify-self: end; margin-top: var(--space-2xs); color: var(--text); font: 600 22px var(--font-mono); line-height: 1; }
 .swatch { width: 12px; height: 9px; border-radius: 2px; }
-.swatch-keepout { background: var(--keepout); opacity: 0.8; }
+.swatch-keepout { background: var(--scene-keepout); opacity: 0.8; }
 .swatch-footprint { border: 2px solid var(--accent-2); }
 .swatch-tower { background: var(--accent-2-soft); border: 1px dashed var(--accent-2); }
-.scene-tag { position: absolute; color: var(--fg-dim); font-size: 12px; pointer-events: none; }
-.scene-tag-bl { left: 14px; bottom: 12px; }
-.scene-tag-br { right: 14px; bottom: 12px; text-align: right; }
+.scene-tag { position: absolute; color: var(--dim); font-size: 12px; pointer-events: none; }
+.scene-tag-bl { left: 14px; bottom: var(--space-md); }
+.scene-tag-br { right: 14px; bottom: var(--space-md); text-align: right; }
 
 /* Выбор принтера (PrinterPicker): поле-поиск и всплывающий список, сгруппированный по производителю. */
 .printer-picker { position: relative; }
-.printer-picker-input { padding-right: 34px; text-overflow: ellipsis; }
-.printer-picker-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; display: grid; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 0 var(--radius) var(--radius) 0; background: transparent; color: var(--fg-muted); cursor: pointer; }
-.printer-picker-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
-.printer-picker-toggle .ic { transition: transform 0.15s ease-out; }
+.printer-picker-input { padding-right: 32px; text-overflow: ellipsis; }
+.printer-picker-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; display: grid; place-items: center; width: 30px; padding: 0; border: 0; border-radius: 0 var(--radius) var(--radius) 0; background: transparent; color: var(--muted); cursor: pointer; }
+.printer-picker-toggle:hover:not(:disabled) { color: var(--text); }
+.printer-picker-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.printer-picker-toggle:disabled { cursor: not-allowed; opacity: 0.45; }
+.printer-picker-toggle .ic { transition: transform var(--dur) var(--ease-out); }
 .printer-picker.open .printer-picker-toggle .ic { transform: rotate(180deg); }
-.printer-picker-locked { gap: 10px; justify-content: space-between; }
-.printer-picker-value { min-width: 0; overflow: hidden; color: var(--fg); white-space: nowrap; text-overflow: ellipsis; }
-.printer-picker-note { flex-shrink: 0; color: var(--fg-dim); font-size: 12px; }
-.printer-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; padding: 0 6px 6px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-lg); }
-/* Липкий заголовок производителя: следующий группы выталкивает предыдущий (sticky внутри своей группы). */
-.printer-group-head { position: sticky; top: 0; z-index: 1; margin: 0 -6px; padding: 8px 16px 4px; background: var(--panel); color: var(--fg-dim); font-size: 12px; font-weight: 500; }
-.printer-option { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border-radius: var(--radius-sm); color: var(--fg); cursor: pointer; }
-.printer-option.active { background: var(--row-hover); }
+.printer-picker-locked { gap: var(--space-sm); justify-content: space-between; }
+.printer-picker-value { min-width: 0; overflow: hidden; color: var(--text); white-space: nowrap; text-overflow: ellipsis; }
+.printer-picker-note { flex-shrink: 0; color: var(--dim); font-size: 12px; }
+.printer-list { position: absolute; top: calc(100% + var(--space-2xs)); left: 0; right: 0; z-index: var(--z-list); max-height: 360px; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-xs) var(--space-xs); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-float); }
+/* Липкий заголовок производителя — внутри прокручиваемого списка, а не страницы: со строкой меню
+   (.topbar) он не пересекается, top: 0 — край списка. */
+.printer-group-head { position: sticky; top: 0; z-index: 1; margin: 0 calc(var(--space-xs) * -1); padding: 8px var(--space-lg) var(--space-2xs); background: var(--panel); color: var(--dim); font-size: 12px; font-weight: 500; }
+.printer-option { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: var(--space-2xs) var(--space-sm); border-radius: var(--radius-sm); color: var(--text); cursor: pointer; }
+.printer-option.active { background: var(--hover); }
 .printer-option[aria-selected='true'] { font-weight: 500; }
 .printer-option .ic { flex-shrink: 0; margin-left: auto; color: var(--accent); }
 .printer-option-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.printer-option.custom { margin-top: 2px; color: var(--fg-muted); }
-.printer-option.custom.active { color: var(--fg); }
-.printer-list-sep { height: 1px; margin: 6px 4px 4px; background: var(--border); }
-.printer-list-empty { padding: 10px 10px 4px; color: var(--fg-dim); }
+.printer-option.custom { margin-top: 2px; color: var(--muted); }
+.printer-option.custom.active { color: var(--text); }
+.printer-list-sep { height: 1px; margin: var(--space-xs) var(--space-2xs) var(--space-2xs); background: var(--border); }
+.printer-list-empty { padding: var(--space-sm) var(--space-sm) var(--space-2xs); color: var(--dim); }
 
 @media (max-width: 1180px) {
   .work, .work.with-side { grid-template-columns: 300px minmax(0, 1fr); }
   .side-col { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
 }
 @media (max-width: 760px) {
-  .work, .work.with-side { grid-template-columns: 1fr; }
+  .work, .work.with-side { grid-template-columns: minmax(0, 1fr); }
   .form-col { border-right: 0; border-bottom: 1px solid var(--border); }
+  .main-col { padding: var(--space-lg); }
+  .btn-main { min-width: 0; }
 }
 /* Свой стол: три размера в строку (узкая колонка формы — по 90 px на поле). */
 .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 
 /* Строка статуса над сценой: одна, фиксированной высоты, тексты в одну строку с многоточием —
    сцена всегда начинается на одной высоте (раньше карточка задачи сдвигала её до 460 px). */
-.status-strip { position: relative; display: flex; align-items: center; gap: 12px; height: 59px; padding-bottom: 3px; }
+.status-strip { position: relative; display: flex; align-items: center; gap: var(--space-md); height: 60px; padding-bottom: var(--space-2xs); }
 .status-strip .lines { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .status-strip .l1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.status-strip .l2 { margin: 0; font-size: 13px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-strip .l2 { margin: 0; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-strip .num { font-family: var(--font-mono); font-size: 12.5px; }
 .status-strip .err { color: var(--crit); }
-.status-strip .ok { color: var(--accent-2); }
+.status-strip .ok { color: var(--ok); }
 /* Заголовок задачи: имя файла сокращается многоточием, номер задачи виден всегда. */
 .status-strip .l1 { display: flex; align-items: baseline; min-width: 0; }
 .status-strip .l1 .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status-strip .l1 .job-id { flex: none; margin-left: 8px; color: var(--fg-dim); font: 400 13px var(--font-mono); letter-spacing: 0; }
-/* «Инфо» слева от текста: место одно и то же во всех состояниях (у черновика — пустое той же ширины). */
-.info-btn { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 11px; border: 1px solid var(--border); border-radius: var(--radius); background: none; color: var(--fg-muted); font: 500 13px var(--font-ui); cursor: pointer; }
-.info-btn:hover { color: var(--fg); border-color: var(--border-strong); }
-.info-btn[aria-expanded='true'] { color: var(--fg); background: var(--accent-soft); border-color: transparent; }
+.status-strip .l1 .job-id { flex: none; margin-left: 8px; color: var(--dim); font: 400 13px var(--font-mono); letter-spacing: 0; }
+/* «Инфо» слева от текста: место одно и то же во всех состояниях (у черновика — та же кнопка, недоступная). */
+.info-btn {
+  flex: none; display: inline-flex; align-items: center; gap: var(--space-xs); height: 36px; padding: 0 var(--space-md);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--panel); color: var(--muted); font: 500 13px var(--font-ui); cursor: pointer;
+  transition: background-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+.info-btn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.info-btn:active:not(:disabled) { background: var(--border); }
+.info-btn[aria-expanded='true'] { color: var(--text); background: var(--accent-soft); border-color: transparent; }
 .info-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.info-slot { flex: none; width: 78px; }
-.copy-quiet { color: var(--fg-dim); }
-.copy-quiet:hover { color: var(--fg); }
-.linkish { font: inherit; color: var(--fg-muted); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
-.linkish:hover { color: var(--fg); }
-.linkish[aria-expanded='true'] { color: var(--fg); text-decoration-style: solid; }
-/* Полоса по низу строки: только растёт, незаполненное всегда одного цвета. */
-.strip-line { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; overflow: hidden; border-radius: 2px; background: color-mix(in oklab, var(--border-strong) 45%, transparent); }
-.strip-line i { position: absolute; inset: 0 auto 0 0; width: var(--p, 0%); border-radius: 2px; background: var(--signal); transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.strip-line.waiting i { width: 28%; background: color-mix(in oklab, var(--signal) 55%, transparent); animation: strip-wait 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.strip-line.ok i { width: 100%; background: var(--accent-2); }
-.strip-line.fail i { width: 100%; background: var(--crit); }
+.info-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.copy-quiet { color: var(--dim); }
+.copy-quiet:hover { color: var(--text); }
+.linkish { font: inherit; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.linkish:hover { color: var(--text); }
+.linkish[aria-expanded='true'] { color: var(--text); text-decoration-style: solid; }
+/* Полоса по низу строки: только растёт (--p — доля 0..1, масштабом, не шириной), незаполненное всегда одного цвета. */
+.strip-line { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; overflow: hidden; border-radius: 2px; background: var(--panel-2); }
+.strip-line i { position: absolute; inset: 0; background: var(--signal); transform-origin: left; transform: scaleX(var(--p, 0)); transition: transform var(--dur-slow) var(--ease-out); }
+.strip-line.waiting i { right: auto; width: 28%; background: color-mix(in oklab, var(--signal) 55%, transparent); transform: none; animation: strip-wait 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.strip-line.ok i { transform: none; background: var(--ok); }
+.strip-line.fail i { transform: none; background: var(--crit); }
 .strip-line.off { visibility: hidden; }
 @keyframes strip-wait { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
 @media (prefers-reduced-motion: reduce) { .strip-line.waiting i { animation: none; width: 100%; opacity: 0.35; } }
-.strip-actions { position: relative; display: flex; align-items: center; gap: 6px; flex: none; }
+.strip-actions { position: relative; display: flex; align-items: center; gap: var(--space-xs); flex: none; }
 .strip-actions .btn-lg { min-height: 36px; }
 .btn-main { min-width: 148px; }
 .btn .ic { flex: none; }
 .btn-cancel:hover:not(:disabled) { color: var(--crit); border-color: var(--crit); background: var(--crit-soft); }
-.icon-btn.bordered { width: 36px; height: 36px; border: 1px solid var(--border); }
-.icon-btn.bordered:hover { border-color: var(--border-strong); }
+.icon-btn.bordered { width: 36px; height: 36px; border: 1px solid var(--border-strong); background: var(--panel); }
+.icon-btn.bordered:hover:not(:disabled) { background: var(--hover); }
 /* Кнопка со стрелкой меню: главное действие + «ещё». */
 .split { display: inline-flex; }
 .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.split > .btn + .btn { min-width: 0; padding: 0 9px; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid color-mix(in oklab, var(--accent-ink) 22%, transparent); }
-.menu { position: absolute; top: calc(100% + 6px); right: 42px; z-index: 30; min-width: 250px; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.5); }
-.menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--radius); background: none; color: var(--fg); font: 13px var(--font-ui); text-align: left; cursor: pointer; }
-.menu button:hover, .menu button:focus-visible { background: var(--row-hover); outline: none; }
-.menu button:disabled { opacity: 0.5; cursor: not-allowed; }
-.menu small { margin-left: auto; color: var(--fg-dim); font: 11.5px var(--font-mono); }
-.menu hr { margin: 4px 6px; border: 0; border-top: 1px solid var(--border); }
+.split > .btn + .btn { min-width: 0; padding: 0 var(--space-sm); border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid color-mix(in oklab, var(--accent-ink) 22%, transparent); }
+/* Меню действий задачи (и меню аккаунта: тот же класс) — парит над сценой: тень без рамки. */
+.menu { position: absolute; top: calc(100% + var(--space-xs)); right: 42px; z-index: var(--z-sticky); min-width: 250px; padding: var(--space-2xs); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-float); }
+.menu button { display: flex; align-items: center; gap: var(--space-sm); width: 100%; padding: 8px var(--space-sm); border: 0; border-radius: var(--radius); background: none; color: var(--text); font: 13px var(--font-ui); text-align: left; cursor: pointer; }
+.menu button:hover:not(:disabled) { background: var(--hover); }
+.menu button:focus-visible { background: var(--hover); outline: 2px solid var(--accent); outline-offset: -2px; }
+.menu button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* Размер файла и время — числа (Tabular Rule), поэтому моноширинные. */
+.menu small { margin-left: auto; color: var(--dim); font: 11.5px var(--font-mono); }
+.menu hr { margin: var(--space-2xs) var(--space-xs); border: 0; border-top: 1px solid var(--border); }
 
 /* Панели поверх сцены (этапы, файлы, ошибка): в потоке страницы их нет — сцена не двигается. */
 .scene-wrap { position: relative; }
-.scene-pop { position: absolute; z-index: 15; top: 10px; left: 10px; width: min(360px, calc(100% - 20px)); max-height: calc(100% - 20px); overflow: auto; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: color-mix(in oklab, var(--panel) 95%, transparent); box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.55); }
+.scene-pop { position: absolute; z-index: var(--z-pop); top: var(--space-sm); left: var(--space-sm); width: min(360px, calc(100% - 20px)); max-height: calc(100% - 20px); overflow: auto; padding: var(--space-md) var(--space-lg); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-float); }
 .scene-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .scene-pop h3 { margin: 0; font-size: 13px; font-weight: 600; }
 .scene-pop .icon-btn { width: 26px; height: 26px; }
-.stage-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
-.stage-list li { display: flex; align-items: center; gap: 9px; color: var(--fg-muted); }
+.stage-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.stage-list li { display: flex; align-items: center; gap: var(--space-sm); color: var(--muted); }
 .stage-list i { flex: none; width: 8px; height: 8px; border: 1.5px solid var(--border-strong); border-radius: 50%; }
 .stage-list .done i { border-color: var(--signal); background: var(--signal); }
-.stage-list .current { color: var(--fg); font-weight: 500; }
+.stage-list .current { color: var(--text); font-weight: 500; }
 .stage-list .current i { border-color: var(--signal); box-shadow: 0 0 0 3px var(--accent-soft); }
-.stage-list .t { margin-left: auto; color: var(--fg-dim); font: 12px var(--font-mono); white-space: nowrap; }
+.stage-list .t { margin-left: auto; color: var(--dim); font: 12px var(--font-mono); white-space: nowrap; }
 .stage-list .failed { color: var(--crit); }
 .stage-list .failed i { border-color: var(--crit); background: var(--crit); }
 .stage-list .spin { flex: none; width: 8px; height: 8px; border: 1.5px solid var(--signal); border-right-color: transparent; border-radius: 50%; animation: stage-spin 0.9s linear infinite; }
 @keyframes stage-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .stage-list .spin { animation: none; border-right-color: var(--signal); } }
-.scene-pop .group-title { margin: 12px 0 6px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: 12px; }
+.scene-pop .group-title { margin: var(--space-md) 0 var(--space-xs); padding-top: var(--space-sm); border-top: 1px solid var(--border); color: var(--dim); font-size: 12px; }
 .scene-pop .info-note { margin: 0 0 8px; }
 .scene-pop .error-block { margin-top: 8px; }
 .file-list { display: grid; gap: 2px; }
-.file-list a { display: flex; align-items: flex-start; gap: 9px; padding: 7px 6px; border-radius: var(--radius); color: var(--fg); font-size: 13px; text-decoration: none; }
-.file-list a:hover, .file-list a:focus-visible { background: var(--row-hover); outline: none; }
-.file-list small { flex: none; margin-left: auto; padding-top: 1px; color: var(--fg-dim); font: 11.5px var(--font-mono); }
+.file-list a { display: flex; align-items: flex-start; gap: var(--space-sm); padding: 8px var(--space-xs); border-radius: var(--radius); color: var(--text); font-size: 13px; text-decoration: none; }
+.file-list a:hover { background: var(--hover); }
+.file-list a:focus-visible { background: var(--hover); outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Размер файла — число (Tabular Rule). */
+.file-list small { flex: none; margin-left: auto; padding-top: 1px; color: var(--dim); font: 11.5px var(--font-mono); }
 /* Длинные имена переносятся, а не прокручиваются вбок. */
 .file-list .name { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
 .file-list .ic { flex: none; margin-top: 1px; }
-.repack { display: grid; gap: 6px; }
-.scene-pop .hint { margin: 8px 0 0; color: var(--fg-dim); font-size: 12px; }
+.repack { display: grid; gap: var(--space-xs); }
+.scene-pop .hint { margin: 8px 0 0; color: var(--dim); font-size: 12px; }
 .scene-pop .error-details { max-height: 260px; }
 
 /* Заглушки сцены: та же высота, что у стола, — ничего не «выпрыгивает» после выбора файла. */
-.scene-empty { display: grid; place-items: center; padding: 24px; color: var(--fg-dim); font-size: 13px; text-align: center; }
-.scene-busy { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: color-mix(in oklab, var(--scene-bg) 60%, transparent); }
-.scene-busy > span { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 99px; background: var(--panel); font-size: 13px; }
-.scene-reset { position: absolute; z-index: 4; left: 10px; top: 10px; background: var(--panel); }
+.scene-empty { display: grid; place-items: center; padding: var(--space-2xl); color: var(--dim); font-size: 13px; text-align: center; }
+.scene-busy { position: absolute; inset: 0; z-index: var(--z-raised); display: grid; place-items: center; background: color-mix(in oklab, var(--scene-bg) 60%, transparent); }
+.scene-busy > span { display: flex; align-items: center; gap: var(--space-sm); padding: 8px var(--space-lg); border-radius: var(--radius-pill); background: var(--panel); box-shadow: var(--shadow-lift), 0 0 0 1px var(--border); font-size: 13px; }
+.scene-reset { position: absolute; z-index: 4; left: var(--space-sm); top: var(--space-sm); background: var(--panel); }
 
 /* Загрузка файла под полем: полоса и «1,4 из 2,6 МБ», затем «Определяю принтер…». */
-.file-progress { display: grid; gap: 5px; margin-top: -8px; }
-.file-progress .track { height: 3px; overflow: hidden; border-radius: 2px; background: color-mix(in oklab, var(--border-strong) 45%, transparent); }
-.file-progress .track i { display: block; height: 100%; width: var(--p, 0%); background: var(--signal); transition: width 0.2s linear; }
-.file-progress .track.waiting i { width: 28%; animation: strip-wait 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.file-progress span { color: var(--fg-dim); font-size: 12px; }
+.file-progress { display: grid; gap: var(--space-2xs); margin-top: -8px; }
+.file-progress .track { position: relative; height: 3px; overflow: hidden; border-radius: 2px; background: var(--panel-2); }
+.file-progress .track i { position: absolute; inset: 0; background: var(--signal); transform-origin: left; transform: scaleX(var(--p, 0)); transition: transform 0.2s linear; }
+.file-progress .track.waiting i { right: auto; width: 28%; transform: none; animation: strip-wait 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.file-progress span { color: var(--dim); font-size: 12px; }
 .file-progress .num { font-family: var(--font-mono); }
-fieldset.form-lock { display: grid; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
+fieldset.form-lock { display: grid; gap: var(--space-lg); min-width: 0; margin: 0; padding: 0; border: 0; }
 .file-drop .file-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Список задач: вся строка — ссылка. */
 .table tr.row-link { cursor: pointer; }
-.table tr.row-link:hover td { background: var(--row-hover); }
-.row-sub { margin-top: 2px; color: var(--fg-dim); font-size: 12px; }
+.table tr.row-link:hover td { background: var(--hover); }
+.row-sub { margin-top: 2px; color: var(--dim); font-size: 12px; }
 .row-actions { width: 1%; text-align: right; }
 /* «Мои задачи»: таблицы прямо на странице — без карточки-обёртки и без своей прокрутки (страница прокручивается
    сама; overflow-x у обёртки давал и вертикальную полосу даже при одной строке). Имя файла переносится. */
-.page-section { display: grid; gap: 10px; align-content: start; }
-.page-section h2 { margin: 0; font-size: 14px; font-weight: 600; }
-.page-section > p { margin: 0; color: var(--fg-muted); }
+.page-section { display: grid; gap: var(--space-sm); align-content: start; }
+.page-section h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.page-section > p { margin: 0; color: var(--muted); }
 .table-plain { width: 100%; min-width: 0; }
 .table-plain td:first-child { white-space: normal; overflow-wrap: anywhere; }
