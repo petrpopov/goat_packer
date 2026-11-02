@@ -1,5 +1,6 @@
 //! An independent re-check of a finished layout: it re-rasterizes every placement instead of
-//! reusing the search's no-fit maps, so a bug in the search cannot vouch for itself.
+//! reusing the search's no-fit maps, then checks original-coordinate vector geometry via
+//! `validation_geometry`. Neither a no-fit bug nor a raster omission can vouch for itself.
 
 use crate::collision::{bounds_hit_exclusion, support_cores_overlap, zones_collide};
 use crate::footprint::Footprint;
@@ -54,7 +55,7 @@ pub fn validate_result(
             )?;
         }
     }
-    Ok(())
+    crate::validation_geometry::validate_geometry(footprint, options, result)
 }
 
 /// Checks that need no geometry: object cap, finite numbers, locked orientation.

@@ -41,7 +41,7 @@ pub fn first_layer_footprint(gcode: &[u8], model_center: Option<(f64, f64)>) -> 
 /// BambuStudio builds tree supports in parallel and they differ between runs: five slices of
 /// one P1S goat printed first-layer supports of 43.8x43.4 mm four times and 43.8x39.6 mm once
 /// (a whole support foot missing); one core makes them identical, but the user's slicer GUI
-/// slices on all cores again. The union of a few runs is what any later slice may print.
+/// slices on all cores again. The union covers the observed runs, not every possible future slice.
 pub fn first_layer_footprint_of(
     gcodes: &[&[u8]],
     model_center: Option<(f64, f64)>,

@@ -47,6 +47,7 @@ pub struct Footprint {
     /// what this object prints as support and as body. A neighbour's body must keep
     /// `LAYER_ZONE_GAP_MM` from these supports in the same band and vice versa — the slicer's
     /// real 3D supports (interfaces under the ears, trunks) instead of their first-layer shadow.
+    /// Indices are absolute height bands: empty and one-sided bands must NOT be removed.
     /// Empty = no such pairs (the zone rule as before).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layer_zones: Vec<LayerZone>,
@@ -58,6 +59,43 @@ pub struct Footprint {
 }
 
 impl Footprint {
+    /// All known printed geometry projected onto XY, for bed/exclusion reservations only.
+    /// Different height bands must be unioned, never even-odd concatenated.
+    pub fn printed_extent_loops(&self) -> Vec<Vec<Point>> {
+        let polygons = self
+            .loops
+            .iter()
+            .chain(&self.body_loops)
+            .chain(&self.support_landing_loops)
+            .chain(self.bed_loops.iter().flatten())
+            .chain(
+                self.layer_zones
+                    .iter()
+                    .flat_map(|z| z.support_loops.iter().chain(&z.body_loops)),
+            )
+            .map(|ring| crate::geometry::polygon_from_loop(ring))
+            .collect::<Vec<_>>();
+        crate::geometry::union_exterior_loops(&polygons)
+    }
+
+    /// Retain the union of probe AND sample realizations at each absolute height band.
+    pub fn merge_layer_zones(&mut self, zones: &[LayerZone]) {
+        self.layer_zones
+            .resize_with(self.layer_zones.len().max(zones.len()), LayerZone::default);
+        let union = |a: &[Vec<Point>], b: &[Vec<Point>]| {
+            let polygons = a
+                .iter()
+                .chain(b)
+                .map(|ring| crate::geometry::polygon_from_loop(ring))
+                .collect::<Vec<_>>();
+            crate::geometry::union_exterior_loops(&polygons)
+        };
+        for (existing, added) in self.layer_zones.iter_mut().zip(zones) {
+            existing.support_loops = union(&existing.support_loops, &added.support_loops);
+            existing.body_loops = union(&existing.body_loops, &added.body_loops);
+        }
+    }
+
     /// A copy with every set of loops (patch, body, landing, bed, layer zones) passed through
     /// `transform`; sizes and heights are kept as they are.
     pub(crate) fn map_loops(
@@ -123,6 +161,21 @@ impl<'a> ComparisonGrid<'a> {
                 let x = (f64::from(ix) + 0.5) * self.resolution;
                 if point_in_loops(Point { x, y }, loops) {
                     pixels.insert((ix, iy));
+                }
+            }
+        }
+        // A valid sub-pixel silhouette may contain no cell centre. Returning an empty
+        // set makes patch_overshoot_mm grow an empty set forever. Preserve its boundary
+        // cells rather than silently erasing the model from this comparison.
+        if pixels.is_empty() && !loops.is_empty() {
+            let raster = crate::span_raster::SpanRaster::cover(
+                loops,
+                self.resolution,
+                (min_ix, max_ix, min_iy, max_iy),
+            );
+            for (row, spans) in raster.rows.iter().enumerate() {
+                for &(start, end) in spans {
+                    pixels.extend((start..end).map(|x| (x, raster.min_y + row as i32)));
                 }
             }
         }
@@ -192,6 +245,10 @@ const NEIGHBOURS: [(i32, i32); 8] = [
 pub fn patch_overshoot_mm(patch: &Footprint, silhouette: &Footprint, resolution: f64) -> f64 {
     let grid = ComparisonGrid::new(patch, silhouette, resolution);
     let silhouette_pixels = grid.silhouette_pixels();
+    assert!(
+        !silhouette_pixels.is_empty(),
+        "silhouette must have nonzero area"
+    );
     // Ring-grow the silhouette one Chebyshev pixel at a time until it covers every patch
     // pixel: the ring count at which the last spike is swallowed is the overshoot.
     let mut uncovered: HashSet<(i32, i32)> = grid

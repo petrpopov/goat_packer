@@ -37,12 +37,25 @@ pub fn layer_zones_from_sample(
     // Several slices of the same sample: tree supports differ between runs (see
     // `crate::first_layer_footprint_of`), so every run's supports join the bands and the
     // analysis carries every run's first layer for `learn_support_patch`.
+    if gcodes.is_empty() || placements.is_empty() {
+        return Err("support learning requires slices and placements".into());
+    }
     let mut runs = Vec::with_capacity(gcodes.len());
     for gcode in gcodes {
         let parser = parse(gcode, true);
         let matched = match_placements(footprint, placements, &parser.first_layer)?;
-        if matched.is_empty() {
-            return Err("no sample object matches a placement".into());
+        let unique: std::collections::HashSet<_> = matched.values().copied().collect();
+        if matched.len() != placements.len()
+            || unique.len() != placements.len()
+            || parser
+                .extents
+                .iter()
+                .filter(|extent| extent.is_some())
+                .count()
+                != placements.len()
+            || parser.layer == 0
+        {
+            return Err("incomplete or ambiguous sample object coverage".into());
         }
         let index_of: HashMap<usize, usize> = parser
             .labels
@@ -84,8 +97,7 @@ fn merged_analysis(runs: &[SampleRun]) -> PlateAnalysis {
 }
 
 /// The height bands: supports from every matched object of every run, the body from one object
-/// of the first run (bodies don't vary), each band's strips unioned. A band without both a
-/// support and a body is dropped.
+/// of the first run (bodies don't vary), each band's strips unioned. Empty bands retain their Z index; one-sided bands retain their geometry.
 fn band_zones(runs: &[SampleRun], placements: &[PackedPlacement]) -> Vec<LayerZone> {
     let mut bands: BTreeMap<usize, (Vec<Polygon>, Vec<Polygon>)> = BTreeMap::new();
     for (run_index, run) in runs.iter().enumerate() {
@@ -114,12 +126,18 @@ fn band_zones(runs: &[SampleRun], placements: &[PackedPlacement]) -> Vec<LayerZo
             }
         }
     }
-    bands
-        .into_values()
-        .filter(|(support, body)| !support.is_empty() && !body.is_empty())
-        .map(|(support, body)| LayerZone {
-            support_loops: union_exterior_loops(&support),
-            body_loops: union_exterior_loops(&body),
+    // Preserve absolute band indices, including empty/body-only/support-only bands. Upper
+    // supports still matter to the bed envelope even when no body exists at that height.
+    let Some(&last) = bands.keys().next_back() else {
+        return Vec::new();
+    };
+    (0..=last)
+        .map(|index| {
+            let (support, body) = bands.remove(&index).unwrap_or_default();
+            LayerZone {
+                support_loops: union_exterior_loops(&support),
+                body_loops: union_exterior_loops(&body),
+            }
         })
         .collect()
 }

@@ -2,12 +2,14 @@
 //! the time of a single object and the footprint the object really prints.
 
 use goat_packer::{
-    Footprint, first_layer_footprint_of, patch_overshoot_mm, patch_within_silhouette,
-    support_interface_loops_of, union_loops,
+    Footprint,
     colored_packer::PrimeTowerBounds,
+    first_layer_footprint_of,
     nozzle_clean::inject_nozzle_clean,
+    patch_overshoot_mm, patch_within_silhouette,
     print_time::TimeSample,
     progress::{self, Stage},
+    support_interface_loops_of, union_loops,
 };
 
 use crate::AppResult;
@@ -83,7 +85,12 @@ pub fn probe_source(job: &Job) -> AppResult<Probe> {
              without a tower keepout"
         ),
     }
-    Ok(Probe { runs, seconds, tower, sample })
+    Ok(Probe {
+        runs,
+        seconds,
+        tower,
+        sample,
+    })
 }
 
 /// Spec step 1: with a window, a single object that already overruns it fails here, before
@@ -129,34 +136,34 @@ pub fn footprint_from_probe(
     probe: &Probe,
     silhouette: &Footprint,
     model_center: Option<(f64, f64)>,
-) -> ProbeFootprint {
+) -> AppResult<ProbeFootprint> {
     let gcodes = probe.gcodes();
-    let Some(patch) = first_layer_footprint_of(&gcodes, model_center) else {
-        eprintln!(
-            "probe slice's first layer has no object extrusions; packing against the mesh \
-             silhouette ({:.1}x{:.1} mm)",
-            silhouette.width, silhouette.height
-        );
-        // No probe data to measure the tip overshoot from; the base 0.5 mm purge safety
-        // applies, as it always did in this degraded path.
-        return ProbeFootprint {
-            footprint: silhouette.clone(),
-            lock_orientation: false,
-            purge_tip_overshoot: 0.0,
-        };
-    };
+    let center =
+        model_center.ok_or("cannot establish probe geometry frame; refusing unverified packing")?;
+    let patch = first_layer_footprint_of(&gcodes, Some(center))
+        .ok_or("probe has no object extrusions; refusing mesh-only fallback")?;
     report_patch(&patch, silhouette, &probe.runs[0].gcode);
-    // A patch that stays inside the mesh outline carries no supports or brim beyond the model,
-    // so the silhouette is the honest footprint — and it unlocks rotations, which tile much
-    // denser than one locked orientation (a flat goat plate: 31 with rotations, 28 locked).
-    // Supports past the outline keep the patch and the lock: the slicer rebuilds them in table
-    // coordinates.
+    // First-layer containment does NOT prove absence of upper supports. Learn every height
+    // before choosing rotation freedom, even when the optional multi-object sample is off.
+    let placement = goat_packer::PackedPlacement {
+        x_mm: center.0,
+        y_mm: center.1,
+        angle_deg: 0.0,
+    };
+    let (zones, _) =
+        goat_packer::gcode_collisions::layer_zones_from_sample(&gcodes, &patch, &[placement])
+            .map_err(|e| format!("probe support geometry: {e}"))?;
+    let has_supports = zones.iter().any(|z| !z.support_loops.is_empty());
     let resolution = job.args.resolution;
-    if patch_within_silhouette(&patch, silhouette, resolution, SILHOUETTE_TOLERANCE_MM) {
+    let mut found = if !has_supports
+        && patch_within_silhouette(&patch, silhouette, resolution, SILHOUETTE_TOLERANCE_MM)
+    {
         silhouette_footprint(&patch, silhouette, resolution)
     } else {
-        patch_footprint(&patch, silhouette, &gcodes, model_center, resolution)
-    }
+        patch_footprint(&patch, silhouette, &gcodes, Some(center), resolution)
+    };
+    found.footprint.merge_layer_zones(&zones);
+    Ok(found)
 }
 
 fn report_patch(patch: &Footprint, silhouette: &Footprint, probe_gcode: &[u8]) {
@@ -188,7 +195,11 @@ fn report_patch(patch: &Footprint, silhouette: &Footprint, probe_gcode: &[u8]) {
 }
 
 /// The patch stays inside the silhouette: pack the silhouette, rotations allowed.
-fn silhouette_footprint(patch: &Footprint, silhouette: &Footprint, resolution: f64) -> ProbeFootprint {
+fn silhouette_footprint(
+    patch: &Footprint,
+    silhouette: &Footprint,
+    resolution: f64,
+) -> ProbeFootprint {
     eprintln!(
         "patch fits inside the mesh silhouette (+{SILHOUETTE_TOLERANCE_MM:.1} mm) — no supports \
          or brim reach past the model; packing the silhouette with rotations allowed"
@@ -210,8 +221,15 @@ fn silhouette_footprint(patch: &Footprint, silhouette: &Footprint, resolution: f
     // the silhouette, and a silhouette that clears the bed edge can print outside it (see the
     // bed_loops note in `prepare::prepare_plate`).
     let mut footprint = silhouette.clone();
-    footprint.bed_loops = Some(union_loops(patch, silhouette));
-    ProbeFootprint { footprint, lock_orientation: false, purge_tip_overshoot: overshoot }
+    // Measured wall/bead overshoot also matters between objects, not only at bed edges.
+    footprint.loops = union_loops(patch, silhouette);
+    footprint.body_loops = footprint.loops.clone();
+    footprint.bed_loops = Some(footprint.loops.clone());
+    ProbeFootprint {
+        footprint,
+        lock_orientation: false,
+        purge_tip_overshoot: overshoot,
+    }
 }
 
 /// The patch reaches past the silhouette (supports/brim): pack patch ∪ silhouette with the
@@ -264,5 +282,33 @@ fn patch_footprint(
     combined.support_landing_loops = patch.body_loops.clone();
     // The patch is the measured print (tips included), so purge checks run against its real
     // extent already — no extra overshoot.
-    ProbeFootprint { footprint: combined, lock_orientation: true, purge_tip_overshoot: 0.0 }
+    ProbeFootprint {
+        footprint: combined,
+        lock_orientation: true,
+        purge_tip_overshoot: 0.0,
+    }
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    use crate::test_support::test_job;
+
+    #[test]
+    fn unreadable_probe_does_not_silently_fall_back_to_mesh_packing() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let silhouette = goat_packer::extract_footprint(&job.footprint_stl).unwrap();
+        let probe = Probe {
+            runs: vec![SliceOutput {
+                gcode: vec![],
+                estimate: Err("empty".into()),
+            }],
+            seconds: 0.0,
+            tower: None,
+            sample: None,
+        };
+        assert!(footprint_from_probe(&job, &probe, &silhouette, Some((5.0, 5.0))).is_err());
+        assert!(footprint_from_probe(&job, &probe, &silhouette, None).is_err());
+    }
 }

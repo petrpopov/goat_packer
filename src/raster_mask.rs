@@ -83,7 +83,7 @@ impl Rasterizer {
     /// The patch pixels. A patch thinner than a pixel rasterizes to nothing: it then falls
     /// back to its whole bounding box so it still collides with something.
     fn patch_pixels(&self, rotated: &[Vec<Point>], bounds: &Rect) -> SpanRaster {
-        let pixels = SpanRaster::scanline(rotated, self.resolution, self.pixel_range(bounds));
+        let pixels = SpanRaster::cover(rotated, self.resolution, self.pixel_range(bounds));
         if !pixels.is_empty() {
             return pixels;
         }
@@ -98,58 +98,60 @@ impl Rasterizer {
         }
     }
 
-    /// A sub-zone of the footprint (body, landing) dilated like the full patch, in the range
-    /// of the patch; `None` when the footprint has no such loops or they rasterize to nothing.
-    fn dilated_zone(
-        &self,
-        loops: &[Vec<Point>],
-        range: (i32, i32, i32, i32),
-    ) -> Option<SpanRaster> {
+    /// Every zone has its own extent: the body and upper supports need not be contained
+    /// in the first-layer patch. Empty zones stay empty (especially in height bands).
+    fn zone(&self, loops: &[Vec<Point>]) -> SpanRaster {
         if loops.is_empty() {
-            return None;
+            return SpanRaster::default();
         }
-        let zone =
-            SpanRaster::scanline(&rotate_loops(loops, self.angle_deg), self.resolution, range);
-        (!zone.is_empty()).then(|| zone.dilate(self.clearance_radius))
+        let rotated = rotate_loops(loops, self.angle_deg);
+        let bounds = Rect::of_points(rotated.iter().flatten());
+        self.patch_pixels(&rotated, &bounds)
     }
 
-    /// Patch ∪ whole-model silhouette (`Footprint::bed_loops`) with its bounds; the patch
-    /// itself when the footprint carries no bed loops.
+    fn dilated_zone(&self, loops: &[Vec<Point>]) -> Option<SpanRaster> {
+        (!loops.is_empty()).then(|| self.zone(loops).dilate_clearance(self.clearance_radius))
+    }
+
+    /// The physical bed extent includes every known structure, at every height. Keep the
+    /// sets separate before union: concatenating overlapping rings would apply XOR fill.
     fn bed_variant(
         &self,
         footprint: &Footprint,
         patch: &SpanRaster,
         patch_bounds: Rect,
     ) -> (SpanRaster, Rect) {
-        let Some(bed_loops) = &footprint.bed_loops else {
-            return (patch.clone(), patch_bounds);
-        };
-        let rotated = rotate_loops(bed_loops, self.angle_deg);
-        let bed_bounds = Rect::of_points(rotated.iter().flatten());
-        let bed_only =
-            SpanRaster::scanline(&rotated, self.resolution, self.pixel_range(&bed_bounds));
-        (patch.union(&bed_only), bed_bounds.union(patch_bounds))
+        let mut pixels = patch.clone();
+        let mut bounds = patch_bounds;
+        let zones = std::iter::once(&footprint.body_loops)
+            .chain(std::iter::once(&footprint.support_landing_loops))
+            .chain(footprint.bed_loops.iter())
+            .chain(
+                footprint
+                    .layer_zones
+                    .iter()
+                    .flat_map(|z| [&z.support_loops, &z.body_loops]),
+            );
+        for loops in zones.filter(|l| !l.is_empty()) {
+            pixels = pixels.union(&self.zone(loops));
+            bounds = bounds.union(Rect::of_points(
+                rotate_loops(loops, self.angle_deg).iter().flatten(),
+            ));
+        }
+        (pixels, bounds)
     }
 
-    /// `Footprint::layer_zones` as (support, body) masks. Layer zones keep their own pixel
-    /// range: trunks and interfaces may reach past the first-layer patch the other zones are
-    /// sized by.
     fn layer_zone_masks(&self, footprint: &Footprint) -> Vec<(PixelMask, PixelMask)> {
-        let layer_radius = (LAYER_ZONE_GAP_MM * 0.5 / self.resolution).ceil() as i32;
-        let mask = |loops: &[Vec<Point>]| -> Option<PixelMask> {
-            let rotated = rotate_loops(loops, self.angle_deg);
-            let zone_bounds = Rect::of_points(rotated.iter().flatten());
-            if !zone_bounds.min_x.is_finite() {
-                return None;
-            }
-            let zone =
-                SpanRaster::scanline(&rotated, self.resolution, self.pixel_range(&zone_bounds));
-            (!zone.is_empty()).then(|| PixelMask::from_spans(&zone.dilate(layer_radius)))
+        let radius = (LAYER_ZONE_GAP_MM * 0.5 / self.resolution).ceil() as i32;
+        let mask = |loops: &[Vec<Point>]| {
+            PixelMask::from_spans(&self.zone(loops).dilate_clearance(radius))
         };
+        // Never filter bands: rotations may rasterize thin zones differently. Removing a
+        // band changes its Z identity and compares supports against the wrong height.
         footprint
             .layer_zones
             .iter()
-            .filter_map(|zone| Some((mask(&zone.support_loops)?, mask(&zone.body_loops)?)))
+            .map(|z| (mask(&z.support_loops), mask(&z.body_loops)))
             .collect()
     }
 
@@ -185,21 +187,20 @@ pub fn rasterize_footprint_with_support(
     };
     let rotated = rotate_loops(&footprint.loops, angle_deg);
     let bounds = Rect::of_points(rotated.iter().flatten());
-    let range = rasterizer.pixel_range(&bounds);
 
     let physical_pixels = rasterizer.patch_pixels(&rotated, &bounds);
-    let clearance_pixels = physical_pixels.dilate(rasterizer.clearance_radius);
+    let clearance_pixels = physical_pixels.dilate_clearance(rasterizer.clearance_radius);
     let body_clearance_pixels = rasterizer
-        .dilated_zone(&footprint.body_loops, range)
+        .dilated_zone(&footprint.body_loops)
         .unwrap_or_else(|| clearance_pixels.clone());
-    let landing_clearance_pixels = rasterizer.dilated_zone(&footprint.support_landing_loops, range);
+    let landing_clearance_pixels = rasterizer.dilated_zone(&footprint.support_landing_loops);
     let landing_is_body = landing_clearance_pixels.is_none();
     let landing_clearance_pixels =
         landing_clearance_pixels.unwrap_or_else(|| body_clearance_pixels.clone());
 
     let (bed_physical_pixels, bed_physical_bounds) =
         rasterizer.bed_variant(footprint, &physical_pixels, bounds);
-    let bed_clearance_pixels = bed_physical_pixels.dilate(rasterizer.clearance_radius);
+    let bed_clearance_pixels = bed_physical_pixels.dilate_clearance(rasterizer.clearance_radius);
     let body_bounds = if footprint.body_loops.is_empty() {
         bed_physical_bounds
     } else {

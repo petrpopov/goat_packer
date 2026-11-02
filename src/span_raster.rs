@@ -54,6 +54,81 @@ impl SpanRaster {
         }
     }
 
+    /// Conservative coverage: centre fill plus every cell crossed by a boundary.
+    /// Centre sampling alone loses thin tips/islands and can accept real intersections.
+    /// Grid-aligned edges need no extra cells: touching alone is not positive-area overlap.
+    pub(crate) fn cover(
+        loops: &[Vec<Point>],
+        resolution: f64,
+        range: (i32, i32, i32, i32),
+    ) -> Self {
+        let mut raster = Self::scanline(loops, resolution, range);
+        // Suppress floating-point noise at grid lines (not geometric features).
+        let snap = |x: f64| {
+            let q = x / resolution;
+            if (q - q.round()).abs() < 1e-10 {
+                q.round()
+            } else {
+                q
+            }
+        };
+        for ring in loops {
+            for edge in ring.windows(2) {
+                let (ax, ay) = (snap(edge[0].x), snap(edge[0].y));
+                let (bx, by) = (snap(edge[1].x), snap(edge[1].y));
+                let mut add = |y: i32, left: f64, right: f64| {
+                    let start = (left.floor() as i32).max(range.0);
+                    let end = (right.ceil() as i32).min(range.1 + 1);
+                    if y >= range.2 && y <= range.3 && start < end {
+                        raster.rows[(y - range.2) as usize].push((start, end));
+                    }
+                };
+                if ay == by {
+                    if ay != ay.floor() {
+                        add(ay.floor() as i32, ax.min(bx), ax.max(bx));
+                    }
+                    continue;
+                }
+                let lo = ay.min(by);
+                let hi = ay.max(by);
+                for y in (lo.floor() as i32).max(range.2)..(hi.ceil() as i32).min(range.3 + 1) {
+                    let x_at = |v: f64| ax + (bx - ax) * (v - ay) / (by - ay);
+                    let x0 = x_at(lo.max(f64::from(y)));
+                    let x1 = x_at(hi.min(f64::from(y + 1)));
+                    add(y, x0.min(x1), x0.max(x1));
+                }
+            }
+        }
+        for row in &mut raster.rows {
+            merge_spans(row);
+        }
+        raster
+    }
+
+    /// Square dilation encloses the continuous clearance disc. A discrete disc can leave
+    /// diagonal gaps smaller than the requested physical clearance between occupied cells.
+    pub(crate) fn dilate_clearance(&self, radius: i32) -> Self {
+        if radius <= 0 || self.rows.is_empty() {
+            return self.clone();
+        }
+        let min_y = self.min_y - radius;
+        let rows = (min_y..self.max_y() + radius)
+            .map(|y| {
+                let mut spans = Vec::new();
+                for dy in -radius..=radius {
+                    spans.extend(
+                        self.row(y + dy)
+                            .iter()
+                            .map(|&(a, b)| (a - radius, b + radius)),
+                    );
+                }
+                merge_spans(&mut spans);
+                spans
+            })
+            .collect();
+        Self { min_y, rows }
+    }
+
     /// No pixel set.
     pub(crate) fn is_empty(&self) -> bool {
         self.rows.iter().all(Vec::is_empty)

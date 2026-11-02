@@ -1,8 +1,11 @@
 //! The plan a layout is packed against, and one packing pass.
 
 use goat_packer::{
-    Footprint, PackOptions, PackResult, Point, Rect, colored_packer::{PrimeTowerBounds, PrinterProfile},
-    grid_layout, grow_beyond, pack_footprint, plate_centre::RelocatedTower, print_time::TimeSample,
+    Footprint, PackOptions, PackResult, Point, Rect,
+    colored_packer::{PrimeTowerBounds, PrinterProfile},
+    grid_layout, grow_beyond, pack_footprint,
+    plate_centre::RelocatedTower,
+    print_time::TimeSample,
     validate_result,
 };
 use serde::{Deserialize, Serialize};
@@ -81,7 +84,11 @@ fn default_support_edge_reserve() -> f64 {
 /// patch at the bed edges, unlike BambuStudio's 0.5 mm drift), so no drift reserve is added on
 /// top; without one the default reserve applies.
 pub fn support_edge_reserve_mm(profile: &PrinterProfile) -> f64 {
-    if profile.support_edge_margin_mm.is_some() { 0.0 } else { SUPPORT_EDGE_RESERVE_MM }
+    if profile.support_edge_margin_mm.is_some() {
+        0.0
+    } else {
+        SUPPORT_EDGE_RESERVE_MM
+    }
 }
 
 /// How much farther than the learned patch a later slice may print a support, at the bed
@@ -116,9 +123,12 @@ impl PackPlan {
             footprint.support_landing_loops.clear();
         }
         if self.lock_orientation && !footprint.body_loops.is_empty() {
-            let bed = footprint.bed_loops.clone().unwrap_or_else(|| footprint.loops.clone());
-            footprint.bed_loops =
-                Some(grow_beyond(&bed, &footprint.body_loops, self.support_edge_reserve_mm));
+            let bed = footprint.printed_extent_loops();
+            footprint.bed_loops = Some(grow_beyond(
+                &bed,
+                &footprint.body_loops,
+                self.support_edge_reserve_mm,
+            ));
         }
         footprint
     }
@@ -129,7 +139,11 @@ impl PackPlan {
     }
 
     fn keepouts(&self) -> Vec<Rect> {
-        self.fixed_keepouts.iter().copied().chain(self.tower_keepout).collect()
+        self.fixed_keepouts
+            .iter()
+            .copied()
+            .chain(self.tower_keepout)
+            .collect()
     }
 
     pub fn pack(&self, job: &Job) -> AppResult<PackResult> {
@@ -142,7 +156,12 @@ impl PackPlan {
     /// plan the looser rule packed a P1S goat plate 41 instead of 43 and a U1 plate 47 instead
     /// of 49, and another U1 plan 48 instead of 47. The stricter layouts are valid under the
     /// rule, so the better of the two never loses.
-    pub fn pack_at(&self, job: &Job, tower_keepout: Option<Rect>, verbose: bool) -> AppResult<PackResult> {
+    pub fn pack_at(
+        &self,
+        job: &Job,
+        tower_keepout: Option<Rect>,
+        verbose: bool,
+    ) -> AppResult<PackResult> {
         let rule = self.rule_footprint();
         let pack_with = |footprint: &Footprint, verbose: bool| {
             pack(
@@ -183,6 +202,16 @@ impl PackPlan {
 
     /// Writes the 3MF for `packed` to the job's output path.
     pub fn build(&self, job: &Job, packed: &PackResult) -> AppResult<()> {
+        // Final publication gate, including resumed/manual states and tower relocations.
+        // Search-time validation alone does not cover changes made after packing.
+        let options = pack_options(
+            &job.args,
+            &job.profile,
+            self.lock_orientation,
+            &self.fixed_keepouts,
+            self.tower_keepout,
+        )?;
+        validate_result(&self.rule_footprint(), &options, packed)?;
         build_colored_project(
             job,
             &self.footprint,
@@ -241,7 +270,13 @@ pub fn pack(
     tower_keepout: Option<Rect>,
     verbose: bool,
 ) -> AppResult<PackResult> {
-    let options = pack_options(args, profile, lock_orientation, fixed_keepouts, tower_keepout)?;
+    let options = pack_options(
+        args,
+        profile,
+        lock_orientation,
+        fixed_keepouts,
+        tower_keepout,
+    )?;
     // The deterministic grid runs first as a floor score: small models tile as densely as
     // their bounding boxes allow, and the deterministic search only wins when it beats that.
     // Taking the grid on a tie keeps the layout reproducible. `--layout grid` stops right
@@ -302,6 +337,18 @@ mod tests {
     use super::*;
     use crate::test_support::{test_args, test_profile};
     use goat_packer::extract_footprint;
+
+    #[test]
+    fn build_validates_modified_layout_before_writing_any_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = crate::test_support::test_job(dir.path());
+        let plan = crate::test_support::test_plan(&job);
+        let mut packed = plan.pack(&job).unwrap();
+        packed.placements.push(packed.placements[0].clone());
+        let error = plan.build(&job, &packed).unwrap_err().to_string();
+        assert!(error.contains("overlap"), "{error}");
+        assert!(!job.args.output.exists());
+    }
 
     #[test]
     fn pack_returns_a_layout_that_independently_passes_validate_result() {

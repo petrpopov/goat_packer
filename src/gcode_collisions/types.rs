@@ -57,13 +57,58 @@ pub struct PlateAnalysis {
     /// Printed lines attributed to an object; 0 means no object labels were found, so the
     /// check proved nothing.
     pub labelled_lines: usize,
-    /// Every object's printed extent over all layers: line centres, arcs sampled along the
-    /// sweep — what BambuStudio's G-code viewer measures (`all_paths_inside`: the paths' bbox,
-    /// arc interpolation points included, line widths not).
+    /// Every object's material envelope over all layers: sampled arc/line centres plus
+    /// half the extrusion width. Checking centre lines alone lets beads leave the bed.
     pub extents: Vec<(String, Rect)>,
 }
 
 impl PlateAnalysis {
+    /// Fail closed when a final/prefix slice cannot be certified. Repairing callers may
+    /// inspect these conditions separately, but publication must not downgrade them.
+    pub fn require_safe(&self, expected: usize, bed: Rect) -> Result<(), String> {
+        self.require_object_coverage(expected)?;
+        let outside = self.off_plate(bed);
+        if !outside.is_empty() {
+            return Err(format!(
+                "{} object(s) print past the plate boundary",
+                outside.len()
+            ));
+        }
+        if !self.collisions.is_empty() {
+            return Err(format!(
+                "{} support/body collision(s) remain in the slice",
+                self.collisions.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// A partial/unlabelled slice cannot certify a full plate. This checks coverage, not
+    /// collision freedom; callers must still inspect collisions and bed extents.
+    pub fn require_object_coverage(&self, expected: usize) -> Result<(), String> {
+        let labels: std::collections::HashSet<_> =
+            self.extents.iter().map(|(label, _)| label).collect();
+        let first: std::collections::HashSet<_> = self
+            .first_layer
+            .iter()
+            .filter(|o| !o.strips.is_empty())
+            .map(|o| &o.label)
+            .collect();
+        if expected == 0
+            || self.layers == 0
+            || self.labelled_lines == 0
+            || labels.len() != expected
+            || first != labels
+        {
+            return Err(format!(
+                "cannot verify slice: expected {expected} labelled objects, found {} with {} layers",
+                labels.len(),
+                self.layers
+            ));
+        }
+        Ok(())
+    }
+
     /// Objects whose printed lines leave `area` (the printable area), with their extent. The
     /// slicer GUI refuses to export such a plate ("G-code path goes beyond plate
     /// boundaries"); its CLI writes it without a word.

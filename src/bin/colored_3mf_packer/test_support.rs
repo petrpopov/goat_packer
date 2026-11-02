@@ -83,3 +83,33 @@ pub fn test_args(work_dir: &Path) -> Args {
         finish_state: None,
     }
 }
+
+pub fn test_job(dir: &Path) -> crate::job::Job {
+    let mut args = test_args(dir);
+    args.output = dir.join("packed.3mf");
+    let profile = test_profile();
+    let correction = args.time.correction(&profile);
+    crate::job::Job {
+        args,
+        profile,
+        footprint_stl: square_stl(dir),
+        gui_tower: None,
+        window_s: None,
+        slicer_change_s: 0.0,
+        correction,
+    }
+}
+
+pub fn test_plan(job: &crate::job::Job) -> crate::plan::PackPlan {
+    crate::plan::PackPlan {
+        footprint: goat_packer::extract_footprint(&job.footprint_stl).unwrap(),
+        lock_orientation: false,
+        fixed_keepouts: vec![],
+        tower_keepout: None,
+        relocation: None,
+        rule: crate::plan::SupportRule::Silhouette,
+        patch_learned: false,
+        mesh_silhouette: vec![],
+        support_edge_reserve_mm: 0.0,
+    }
+}

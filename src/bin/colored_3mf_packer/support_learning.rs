@@ -2,11 +2,12 @@
 //! the sample slice, nudging touching objects apart, widening the reserved patch.
 
 use goat_packer::{
-    Footprint, PackResult, PackedPlacement, validate_result,
+    Footprint, PackResult, PackedPlacement,
     gcode_collisions::{
         PlateAnalysis, SupportCollision, layer_zones_from_sample, match_placements, nudge_apart,
     },
     progress::{self, Stage},
+    validate_result,
 };
 
 use crate::AppResult;
@@ -29,7 +30,10 @@ pub fn sample_supports(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> A
     let sample = sample_indices(job, packed)?;
     progress::stage(
         Stage::SampleSlice,
-        &format!("slicing a sample of {} objects of the layout...", sample.len()),
+        &format!(
+            "slicing a sample of {} objects of the layout...",
+            sample.len()
+        ),
         None,
         Some(sample.len()),
     );
@@ -37,13 +41,24 @@ pub fn sample_supports(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> A
     let sample_project = args.work_dir.join("sample.3mf");
     goat_packer::scheduler::subset_3mf_items(&args.output, &sample_project, &sample, false)
         .map_err(|error| format!("sample subset: {error}"))?;
-    let slices = slice_runs(&job.profile, &sample_project, sample.len(), &args.work_dir, "sample")?;
+    let slices = slice_runs(
+        &job.profile,
+        &sample_project,
+        sample.len(),
+        &args.work_dir,
+        "sample",
+    )?;
     let gcodes: Vec<&[u8]> = slices.iter().map(|run| run.gcode.as_slice()).collect();
-    let sampled: Vec<PackedPlacement> =
-        sample.iter().map(|&index| packed.placements[index].clone()).collect();
+    let sampled: Vec<PackedPlacement> = sample
+        .iter()
+        .map(|&index| packed.placements[index].clone())
+        .collect();
     let (zones, analysis) = layer_zones_from_sample(&gcodes, &plan.footprint, &sampled)
         .map_err(|error| format!("sample slice: {error}"))?;
-    let sampled_layout = PackResult { placements: sampled, ..packed.clone() };
+    let sampled_layout = PackResult {
+        placements: sampled,
+        ..packed.clone()
+    };
     let mut learned = learn_support_patch(&plan.footprint, &sampled_layout, &analysis)?;
     println!(
         "sample slice: {} height bands of supports; first-layer patch {:.1}x{:.1} mm (probe \
@@ -54,7 +69,7 @@ pub fn sample_supports(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> A
         plan.footprint.width,
         plan.footprint.height
     );
-    learned.layer_zones = zones;
+    learned.merge_layer_zones(&zones);
     plan.footprint = learned;
     Ok(())
 }
@@ -91,7 +106,10 @@ pub fn nudge_touching(
         .map_err(|error| format!("support check: {error}"))?;
     let mut contacts = Vec::new();
     for collision in &analysis.collisions {
-        match (matched.get(&collision.support_object), matched.get(&collision.body_object)) {
+        match (
+            matched.get(&collision.support_object),
+            matched.get(&collision.body_object),
+        ) {
             (Some(&a), Some(&b)) => contacts.push((a, b, collision.min_gap_mm)),
             _ => return Ok(None),
         }

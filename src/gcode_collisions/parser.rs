@@ -69,10 +69,10 @@ impl Parser {
         self.labelled_lines += 1;
         let extent = self.extents[object].get_or_insert(Rect::new(from.0, from.1, from.0, from.1));
         for (x, y) in [from, to] {
-            extent.min_x = extent.min_x.min(x);
-            extent.min_y = extent.min_y.min(y);
-            extent.max_x = extent.max_x.max(x);
-            extent.max_y = extent.max_y.max(y);
+            extent.min_x = extent.min_x.min(x - width * 0.5);
+            extent.min_y = extent.min_y.min(y - width * 0.5);
+            extent.max_x = extent.max_x.max(x + width * 0.5);
+            extent.max_y = extent.max_y.max(y + width * 0.5);
         }
         if self.keep_lines {
             self.kept.push(KeptLine {

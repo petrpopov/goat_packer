@@ -2,8 +2,9 @@
 //! and the support sample.
 
 use goat_packer::{
-    PackResult, Rect, extract_footprint,
+    PackResult, Rect,
     colored_packer::PrimeTowerBounds,
+    extract_footprint,
     plate_centre::{RelocatedTower, ensure_relocated_tower_clear, plate_centre, relocate_keepout},
     progress::{self, Stage},
 };
@@ -23,7 +24,7 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
     let probe = probe_source(job)?;
     let silhouette = extract_footprint(&job.footprint_stl)?;
     let model_world_center = model_center_on_bed(&args.source_3mf, &job.footprint_stl);
-    let found = footprint_from_probe(job, &probe, &silhouette, model_world_center);
+    let found = footprint_from_probe(job, &probe, &silhouette, model_world_center)?;
     // Centre-out time-window plate (spec 2026-10-26-centre-out-zones-tower-design): the kept
     // objects gather around the smallest heat zone's centre, and the tower moves there too so
     // every colour change travels a short way. The tower's size does not depend on its
@@ -65,17 +66,24 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
             SupportRule::Silhouette
         },
         patch_learned: false,
-        mesh_silhouette: if lock_orientation { silhouette.loops.clone() } else { Vec::new() },
+        mesh_silhouette: if lock_orientation {
+            silhouette.loops.clone()
+        } else {
+            Vec::new()
+        },
         support_edge_reserve_mm: support_edge_reserve_mm(profile),
     };
     progress::stage(
         Stage::Packing,
-        &format!("packing ({} attempts, seed {})...", args.attempts, args.seed),
+        &format!(
+            "packing ({} attempts, seed {})...",
+            args.attempts, args.seed
+        ),
         None,
         None,
     );
     let (mut packed, mut tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
-    if sample_learned(job, &mut plan, &packed) {
+    if sample_learned(job, &mut plan, &packed)? {
         (packed, tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
     }
     Ok(PackState {
@@ -102,7 +110,8 @@ fn relocate_to_centre(
         (Some(centre), Some(tower)) => {
             let moved = keep_in_gui_range(
                 relocate_keepout(tower.keepout, centre, usable_bed),
-                job.gui_tower.map(|range| range.keepout_min_range(tower.keepout)),
+                job.gui_tower
+                    .map(|range| range.keepout_min_range(tower.keepout)),
             );
             // The clamp only knows the bed; a centre near an exclusion corner or purge line
             // would put the printed tower on it.
@@ -148,7 +157,8 @@ fn first_pack(
         job,
         plan,
         tower.keepout,
-        job.gui_tower.map(|range| range.keepout_min_range(tower.keepout)),
+        job.gui_tower
+            .map(|range| range.keepout_min_range(tower.keepout)),
     )?;
     plan.tower_keepout = Some(relocation.map_or(tower.keepout, |relocated| relocated.keepout));
     plan.relocation = relocation;
@@ -163,15 +173,12 @@ fn first_pack(
 /// included: on a U1 job the bottom-left corner won the contest before the sample (48) and
 /// packed 47 after it; the contest runs again on the learned supports. `true` when the
 /// supports were learned.
-fn sample_learned(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> bool {
+fn sample_learned(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> AppResult<bool> {
     if !(plan.lock_orientation && job.args.sample_objects > 0 && packed.placements.len() > 1) {
-        return false;
+        return Ok(false);
     }
-    match sample_supports(job, plan, packed) {
-        Ok(()) => true,
-        Err(error) => {
-            eprintln!("WARNING: sample slice failed, packing with the probe's supports only: {error}");
-            false
-        }
-    }
+    // A failed measurement is not evidence of safe supports. Do not publish a degraded
+    // layout as success, particularly when no full-plate slice will follow.
+    sample_supports(job, plan, packed)?;
+    Ok(true)
 }

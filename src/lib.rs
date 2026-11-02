@@ -27,6 +27,7 @@ mod raster_mask;
 mod span_raster;
 mod stl;
 mod validation;
+mod validation_geometry;
 
 pub mod ams_calibration;
 pub mod assemble;

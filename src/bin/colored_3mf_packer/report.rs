@@ -50,7 +50,7 @@ pub struct ColoredPackReport {
     pub support_rule: SupportRule,
     /// The reserved support patch was widened to what the final slice really printed.
     pub support_patch_learned: bool,
-    /// Supports touching a foreign body in the written plate's G-code (normally empty).
+    /// Supports touching a foreign body (empty in successful reports; remaining contacts fail).
     pub support_collisions: Vec<SupportCollision>,
     /// The whole plate was sliced and checked. `false` (`--no-final-slice`): the plate is
     /// packed against the sample slice's supports, the final checks wait for `--finish-state`
@@ -127,14 +127,27 @@ fn report_path(job: &Job) -> PathBuf {
 /// `--no-final-slice`: the packed 3MF is already written; saves the state for `--finish-state`
 /// and a report that says the plate was not sliced.
 pub fn write_unsliced_plate(job: &Job, state: PackState, repacked: bool) -> AppResult<()> {
-    progress::stage(Stage::Writing, "writing the packed plate (final slice skipped)...", None, None);
+    progress::stage(
+        Stage::Writing,
+        "writing the packed plate (final slice skipped)...",
+        None,
+        None,
+    );
     let state_path = job.args.output.with_extension("state.json");
     fs::write(&state_path, serde_json::to_vec(&state)?)?;
-    let mut report =
-        ColoredPackReport::of_packed_plate(job, &state.plan, &state.packed, state.probe_tower, repacked)?;
+    let mut report = ColoredPackReport::of_packed_plate(
+        job,
+        &state.plan,
+        &state.packed,
+        state.probe_tower,
+        repacked,
+    )?;
     report.state_path = Some(state_path.display().to_string());
     let report_path = report_path(job);
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
+    println!(
+        "note: geometry checked against measured support envelopes; a future slicer may generate different supports or tower geometry"
+    );
     println!(
         "packed {} colored objects without the final slice; wrote {}\nreport: {}\nstate: {}",
         report.object_count,
@@ -147,7 +160,12 @@ pub fn write_unsliced_plate(job: &Job, state: PackState, repacked: bool) -> AppR
 
 /// The report of a sliced and checked plate.
 pub fn write_final_report(job: &Job, report: &ColoredPackReport) -> AppResult<()> {
-    progress::stage(Stage::Writing, "writing the verification report...", None, None);
+    progress::stage(
+        Stage::Writing,
+        "writing the verification report...",
+        None,
+        None,
+    );
     let report_path = report_path(job);
     fs::write(&report_path, serde_json::to_vec_pretty(report)?)?;
     println!(

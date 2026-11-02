@@ -8,10 +8,7 @@ use crate::raster_mask::RasterMask;
 
 /// The mask pairs whose overlap makes two placements collide (`b` shifted relative to `a`):
 /// a full patch against the other's landing zone both ways, and silhouette against
-/// silhouette when a landing zone is narrower than the body (the landing pairs alone would
-/// let two bodies interpenetrate above the first layer). Without landing loops the body pair
-/// is implied by the first two (body ⊂ full), so it is left out and layouts stay what the
-/// two-zone rule gave. Layer zones (`Footprint::layer_zones`) add support-vs-body pairs per
+/// silhouette (the patch need not contain the body's overhangs, so that pair is mandatory). Layer zones (`Footprint::layer_zones`) add support-vs-body pairs per
 /// height band. Support cores (`support_overlap_mm`) are a separate pair, see
 /// `support_cores_overlap`.
 pub(crate) fn zone_pairs<'a>(
@@ -22,13 +19,16 @@ pub(crate) fn zone_pairs<'a>(
         (&a.clearance, &b.landing_clearance),
         (&a.landing_clearance, &b.clearance),
     ];
-    if !(a.landing_is_body && b.landing_is_body) {
-        pairs.push((&a.body_clearance, &b.body_clearance));
-    }
+    // Bodies may extend past the first-layer patch; neither patch/body pair implies this.
+    pairs.push((&a.body_clearance, &b.body_clearance));
     // Same height band: supports of one against the body of the other, both ways.
     for ((support_a, body_a), (support_b, body_b)) in a.layer_zones.iter().zip(&b.layer_zones) {
-        pairs.push((support_a, body_b));
-        pairs.push((body_a, support_b));
+        if support_a.pixel_count > 0 && body_b.pixel_count > 0 {
+            pairs.push((support_a, body_b));
+        }
+        if body_a.pixel_count > 0 && support_b.pixel_count > 0 {
+            pairs.push((body_a, support_b));
+        }
     }
     pairs
 }

@@ -169,13 +169,15 @@ fn layer_zones_come_from_the_sample_in_the_footprint_frame() {
         layer_zones_from_sample(&[gcode.as_bytes()], &footprint, &placements).unwrap();
     assert_eq!(analysis.layers, 2);
     // Band 0 has no support; band 1 has both.
-    assert_eq!(zones.len(), 1);
-    let support = crate::plate_centre::loops_bounds(&zones[0].support_loops).unwrap();
+    assert_eq!(zones.len(), 2);
+    assert!(zones[0].support_loops.is_empty());
+    assert!(!zones[0].body_loops.is_empty());
+    let support = crate::plate_centre::loops_bounds(&zones[1].support_loops).unwrap();
     assert!(
         (support.min_x - 4.0).abs() < 1e-6 && (support.max_x - 5.0).abs() < 1e-6,
         "{support:?}"
     );
-    let body = crate::plate_centre::loops_bounds(&zones[0].body_loops).unwrap();
+    let body = crate::plate_centre::loops_bounds(&zones[1].body_loops).unwrap();
     // Three sides of the square: bottom, right, top (no closing left side).
     assert!(
         (body.min_x + 1.0).abs() < 1e-6 && (body.max_x - 1.2).abs() < 1e-6,
@@ -262,7 +264,7 @@ fn an_arc_bulging_past_the_plate_edge_is_off_plate() {
     assert_eq!(off.len(), 1, "{off:?}");
     assert_eq!(off[0].0, "7");
     assert!(
-        off[0].1.max_x > 256.2 && off[0].1.max_x < 256.4,
+        off[0].1.max_x > 256.4 && off[0].1.max_x < 256.7,
         "{:?}",
         off[0].1
     );
@@ -365,4 +367,52 @@ fn learned_patch_reaches_the_printed_support_of_the_matched_object() {
         }],
     };
     assert!(learn_support_patch(&footprint, &placements, &[stray]).is_err());
+}
+
+#[test]
+fn bed_check_includes_extrusion_width_not_just_the_path_centre() {
+    let gcode = "; CHANGE_LAYER\n; start printing object, unique label id: 7\n; FEATURE: Outer wall\n; LINE_WIDTH: 0.4\nG1 X9.9 Y2\nG1 X9.9 Y8 E1\n";
+    let analysis = analyze_plate(gcode.as_bytes());
+    let off = analysis.off_plate(Rect::new(0.0, 0.0, 10.0, 10.0));
+    assert_eq!(off.len(), 1);
+    assert!((off[0].1.max_x - 10.1).abs() < 1e-6);
+}
+
+#[test]
+fn incomplete_or_unlabelled_slices_cannot_certify_the_plate() {
+    let analysis = analyze_plate(bambu_plate(2.0).as_bytes());
+    assert!(analysis.require_object_coverage(2).is_ok());
+    assert!(analysis.require_object_coverage(3).is_err());
+    assert!(
+        analyze_plate(b"G1 X1 Y1 E1")
+            .require_object_coverage(1)
+            .is_err()
+    );
+}
+
+#[test]
+fn final_or_window_slice_requires_complete_safe_material_envelope() {
+    let bed = Rect::new(-10.0, -10.0, 100.0, 100.0);
+    let clean = analyze_plate(bambu_plate(2.0).as_bytes());
+    assert!(clean.require_safe(2, bed).is_ok());
+    assert!(clean.require_safe(3, bed).is_err());
+    assert!(
+        clean
+            .require_safe(2, Rect::new(0.0, 0.0, 1.0, 1.0))
+            .is_err()
+    );
+    assert!(
+        analyze_plate(bambu_plate(0.1).as_bytes())
+            .require_safe(2, bed)
+            .is_err()
+    );
+}
+
+#[test]
+fn informational_orca_labels_do_not_count_as_extra_printed_objects() {
+    // Orca can emit both a comment and Klipper's actual exclusion label before any ink.
+    let gcode = b";LAYER_CHANGE\n; printing object Cube id:0 copy 0\nEXCLUDE_OBJECT_START NAME=Cube_id_0_copy_0\n;TYPE:Outer wall\nG1 X5 Y5\nG1 X8 Y5 E1\nEXCLUDE_OBJECT_END NAME=Cube_id_0_copy_0\n";
+    let analysis = analyze_plate(gcode);
+    assert_eq!(analysis.extents.len(), 1);
+    assert!(analysis.require_object_coverage(1).is_ok());
 }

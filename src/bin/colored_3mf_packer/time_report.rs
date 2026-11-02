@@ -2,9 +2,10 @@
 //! the search for the prefix of the plate that fits it.
 
 use goat_packer::{
-    PackResult, loops_touch_rect,
+    PackResult,
     colored_packer::{PrimeTowerBounds, parse_prime_tower_bounds},
     gcode_collisions::{SupportCollision, analyze_plate},
+    loops_touch_rect,
     print_time::TimeSample,
     progress::{self, LayoutSource, Stage},
 };
@@ -172,10 +173,13 @@ fn slice_window_prefix(
     let estimate = slice.estimate.map_err(|error| {
         format!("time-window slice ({count} objects) estimate unavailable: {error}")
     })?;
-    // A prefix drops objects, and the slicer re-generates every support: check the plate
-    // actually written, report (not repack) what still touches.
-    let collisions = analyze_plate(&slice.gcode).collisions;
-    describe_collisions(&collisions);
+    // Dropping objects regenerates supports too. A clean full plate is not evidence that
+    // this prefix is clean: use the same fail-closed publication conditions.
+    run.confirm_relocated_tower(tower)?;
+    let analysis = analyze_plate(&slice.gcode);
+    describe_collisions(&analysis.collisions);
+    analysis.require_safe(count, job.profile.printable_bed())?;
+    let collisions = analysis.collisions;
     let sample = time_sample(count, &estimate, job.slicer_change_s, &job.correction);
     Ok((sample, WindowPlate { tower, collisions }))
 }

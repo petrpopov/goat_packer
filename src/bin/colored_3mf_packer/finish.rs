@@ -2,12 +2,15 @@
 //! supports touching foreign bodies, and repack until the plate is clean.
 
 use goat_packer::{
-    PackResult, loops_touch_rect,
+    PackResult,
     colored_packer::{PrimeTowerBounds, parse_prime_tower_bounds},
     gcode_collisions::{PlateAnalysis, SupportCollision, analyze_plate},
+    loops_touch_rect,
     plate_centre::{TOWER_TARGET_TOLERANCE_MM, tower_corner_error_mm},
     print_time::TimeSample,
-    progress::{self, LayoutSource, RepackReason, Stage, expected_reslice_seconds, expected_slice_seconds},
+    progress::{
+        self, LayoutSource, RepackReason, Stage, expected_reslice_seconds, expected_slice_seconds,
+    },
 };
 
 use crate::AppResult;
@@ -163,7 +166,9 @@ impl<'a> PlateRun<'a> {
                 &self.plan,
                 &self.packed,
                 probe.keepout,
-                self.job.gui_tower.map(|range| range.keepout_min_range(probe.keepout)),
+                self.job
+                    .gui_tower
+                    .map(|range| range.keepout_min_range(probe.keepout)),
             )?
         {
             self.plan.tower_keepout = Some(relocated.keepout);
@@ -206,10 +211,20 @@ impl<'a> PlateRun<'a> {
             Some(self.expected_slice_seconds(count)),
             Some(count),
         );
-        let label = if self.repacked { "final_repacked" } else { "final_first" };
+        let label = if self.repacked {
+            "final_repacked"
+        } else {
+            "final_first"
+        };
         let started = std::time::Instant::now();
         let job = self.job;
-        match slice_project(&job.profile, &job.args.output, count, &job.args.work_dir, label) {
+        match slice_project(
+            &job.profile,
+            &job.args.output,
+            count,
+            &job.args.work_dir,
+            label,
+        ) {
             Ok(slice) => {
                 self.measured_slice = Some((started.elapsed().as_secs_f64(), count));
                 Ok(Some(slice))
@@ -218,7 +233,12 @@ impl<'a> PlateRun<'a> {
                 println!(
                     "final slice failed with the tower moved off its source position; \
                      repacking with the tower at its source position\n  {}",
-                    error.to_string().lines().take(2).collect::<Vec<_>>().join("\n  ")
+                    error
+                        .to_string()
+                        .lines()
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .join("\n  ")
                 );
                 self.tower_from_contest = false;
                 self.tower_pinned = true;
@@ -237,7 +257,10 @@ impl<'a> PlateRun<'a> {
         let args = &self.job.args;
         progress::repack(
             reason,
-            &format!("re-packing ({} attempts, seed {})...", args.attempts, args.seed),
+            &format!(
+                "re-packing ({} attempts, seed {})...",
+                args.attempts, args.seed
+            ),
         );
         self.packed = self.plan.pack(self.job)?;
         Ok(())
@@ -248,7 +271,10 @@ impl<'a> PlateRun<'a> {
     /// `different_settings_to_system`) prints the tower at the source corner, which would
     /// read as a "grown" tower and trigger a pointless repack instead of naming the cause.
     /// Returns the measured distance of the printed tower from the relocation target.
-    fn confirm_relocated_tower(&self, final_tower: Option<PrimeTowerBounds>) -> AppResult<Option<f64>> {
+    pub(crate) fn confirm_relocated_tower(
+        &self,
+        final_tower: Option<PrimeTowerBounds>,
+    ) -> AppResult<Option<f64>> {
         let (Some(relocated), Some(tower)) = (self.plan.relocation, final_tower) else {
             return Ok(None);
         };
@@ -284,7 +310,10 @@ impl<'a> PlateRun<'a> {
         // nothing at all. The final slice already ran clean on this exact file, so an
         // untouched layout is already validated.
         let collision = self.packed.placements.iter().position(|placement| {
-            loops_touch_rect(&placement_body_loops(&self.plan.footprint, placement), grown_keepout)
+            loops_touch_rect(
+                &placement_body_loops(&self.plan.footprint, placement),
+                grown_keepout,
+            )
         });
         let Some(index) = collision else {
             println!(
@@ -324,14 +353,14 @@ impl<'a> PlateRun<'a> {
         let analysis = analyze_plate(&slice.gcode);
         let support_collisions = analysis.collisions.clone();
         let done = |slice: SliceOutput, support_collisions: Vec<SupportCollision>| {
-            Ok(Checked::Done(Verified { slice, tower, tower_relocation_error_mm, support_collisions }))
+            Ok(Checked::Done(Verified {
+                slice,
+                tower,
+                tower_relocation_error_mm,
+                support_collisions,
+            }))
         };
-        if analysis.labelled_lines == 0 {
-            // Without object labels (slicer's label_objects off) lines cannot be attributed;
-            // say so instead of reporting a clean plate.
-            println!("support check skipped: the G-code carries no object labels");
-            return done(slice, support_collisions);
-        }
+        analysis.require_object_coverage(count)?;
         if self.handle_off_plate(&analysis)? {
             return Ok(Checked::Repacked);
         }
@@ -345,7 +374,9 @@ impl<'a> PlateRun<'a> {
         describe_collisions(&support_collisions);
         if !self.plan.lock_orientation {
             // No support zone was reserved at all (support-free probe): nothing to learn.
-            return done(slice, support_collisions);
+            return Err(
+                "final slice has support/body collisions without a learned support zone".into(),
+            );
         }
         if self.nudge_touching_objects(&analysis)? {
             return Ok(Checked::Repacked);
@@ -353,7 +384,7 @@ impl<'a> PlateRun<'a> {
         if self.learn_or_tighten(&analysis)? {
             return Ok(Checked::Repacked);
         }
-        done(slice, support_collisions)
+        Err(format!("final slice still has {} support/body collision(s) after repair; refusing unsafe result", support_collisions.len()).into())
     }
 
     /// The slicer GUI refuses a plate whose lines leave the printable area; the CLI that
@@ -371,8 +402,14 @@ impl<'a> PlateRun<'a> {
             println!(
                 "plate check: object {label} prints x [{:.2}, {:.2}] y [{:.2}, {:.2}] — past \
                  the printable area {:.0}..{:.0} x {:.0}..{:.0}",
-                extent.min_x, extent.max_x, extent.min_y, extent.max_y,
-                bed.min_x, bed.max_x, bed.min_y, bed.max_y
+                extent.min_x,
+                extent.max_x,
+                extent.min_y,
+                extent.max_y,
+                bed.min_x,
+                bed.max_x,
+                bed.min_y,
+                bed.max_y
             );
         }
         if !self.plan.lock_orientation || self.plan.patch_learned {
@@ -448,8 +485,7 @@ impl<'a> PlateRun<'a> {
             RepackReason::SupportStrict
         } else {
             eprintln!(
-                "WARNING: supports still touch foreign bodies under the strict rule; keeping \
-                 the layout (listed in the report as support_collisions)"
+                "supports still touch foreign bodies under the strict rule; rejecting the layout"
             );
             return Ok(false);
         };
@@ -457,7 +493,11 @@ impl<'a> PlateRun<'a> {
         Ok(true)
     }
 
-    fn final_report(&self, verified: Verified, time: Option<crate::report::TimeReport>) -> AppResult<ColoredPackReport> {
+    fn final_report(
+        &self,
+        verified: Verified,
+        time: Option<crate::report::TimeReport>,
+    ) -> AppResult<ColoredPackReport> {
         let job = self.job;
         let heat_zone = self.heat_zone();
         let mut report = ColoredPackReport::of_packed_plate(
@@ -497,5 +537,68 @@ impl<'a> PlateRun<'a> {
             );
         }
         zone
+    }
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    use crate::test_support::{test_job, test_plan};
+
+    fn rejects(gcode: &[u8], strict_exhausted: bool, expected: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let mut plan = test_plan(&job);
+        let packed = plan.pack(&job).unwrap();
+        let mut packed = packed;
+        packed.placements.truncate(2);
+        plan.lock_orientation = strict_exhausted;
+        plan.patch_learned = strict_exhausted;
+        let state = PackState {
+            plan,
+            packed,
+            probe_tower: None,
+            probe_seconds: 0.0,
+            tower_from_contest: false,
+            centre: None,
+            probe_sample: None,
+        };
+        let mut run = PlateRun::new(&job, state);
+        run.nudge_rounds = MAX_NUDGE_ROUNDS;
+        let slice = SliceOutput {
+            gcode: gcode.to_vec(),
+            estimate: Err("not needed".into()),
+        };
+        let error = match run.check_supports(slice, None, None) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("unsafe/unverifiable slice was accepted"),
+        };
+        assert!(error.contains(expected), "{error}");
+        assert!(!job.args.output.exists());
+    }
+
+    const COLLISION: &[u8] = b"; CHANGE_LAYER\n; start printing object, unique label id: 1\n; FEATURE: Support\nG1 X4 Y5\nG1 X7 Y5 E1\n; stop printing object, unique label id: 1\n; start printing object, unique label id: 2\n; FEATURE: Outer wall\nG1 X4 Y5.1\nG1 X7 Y5.1 E1\n";
+
+    #[test]
+    fn unsupported_collision_is_an_error_not_a_successful_report() {
+        rejects(
+            COLLISION,
+            false,
+            "collisions without a learned support zone",
+        );
+    }
+
+    #[test]
+    fn exhausted_collision_repairs_are_an_error_not_a_warning() {
+        rejects(COLLISION, true, "refusing unsafe result");
+    }
+
+    #[test]
+    fn missing_object_labels_cannot_report_a_verified_plate() {
+        rejects(
+            b"; CHANGE_LAYER\nG1 X1 Y1\nG1 X2 Y1 E1\n",
+            false,
+            "cannot verify slice",
+        );
     }
 }

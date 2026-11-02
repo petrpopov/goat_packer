@@ -26,15 +26,14 @@ pub struct SliceOutput {
 
 /// Slices of the same project whose supports the packer learns from. Tree supports differ
 /// between runs (`goat_packer::first_layer_footprint_of`): the union of a few runs stands for
-/// whatever the final slice or the user's slicer GUI prints. Single-core slicing would make
+/// the observed variability, not a guaranteed bound on a future slice. Single-core slicing would make
 /// them repeatable, but only on the server; the GUI slices on all cores.
 const SUPPORT_SLICE_RUNS: usize = 3;
 
 /// Lines of slicer output quoted in a failure message.
 const FAILURE_TAIL_LINES: usize = 15;
 
-/// `SUPPORT_SLICE_RUNS` slices of `project` at once (`label`, `label_2`, ...): each is one
-/// slicer process, so they take about as long as one on a machine with spare cores.
+/// Three independent slices (`label`, `label_2`, ...) run sequentially to limit peak RSS.
 pub fn slice_runs(
     profile: &PrinterProfile,
     project: &Path,
@@ -42,29 +41,27 @@ pub fn slice_runs(
     work_dir: &Path,
     label: &str,
 ) -> AppResult<Vec<SliceOutput>> {
-    let labels: Vec<String> = (0..SUPPORT_SLICE_RUNS)
-        .map(|run| if run == 0 { label.to_owned() } else { format!("{label}_{}", run + 1) })
-        .collect();
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = labels
-            .iter()
-            .map(|run_label| {
-                scope.spawn(move || {
-                    slice_project(profile, project, count, work_dir, run_label)
-                        .map_err(|error| error.to_string())
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| "slicer thread panicked".to_owned())?
-                    .map_err(Into::into)
-            })
-            .collect()
+    collect_support_runs(label, |run_label| {
+        slice_project(profile, project, count, work_dir, run_label)
     })
+}
+
+fn collect_support_runs<T, E>(
+    label: &str,
+    mut run: impl FnMut(&str) -> Result<T, E>,
+) -> Result<Vec<T>, E> {
+    // Preserve all realizations and their union, but bound each job to ONE live slicer.
+    // Running three at once multiplied peak RSS before the server queue could limit it.
+    (0..SUPPORT_SLICE_RUNS)
+        .map(|index| {
+            let label = if index == 0 {
+                label.to_owned()
+            } else {
+                format!("{label}_{}", index + 1)
+            };
+            run(&label)
+        })
+        .collect()
 }
 
 /// Slices `project` (holding `count` objects) into `<work_dir>/<label>_slice` and reads the
@@ -107,7 +104,10 @@ pub fn slice_project(
     let gcode_path = fs::read_dir(&output_dir)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| path.extension().is_some_and(|extension| extension == "gcode"))
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "gcode")
+        })
         .ok_or("slicer output did not contain G-code")?;
     // Everything below reads the slice in plate coordinates, the frame of the meshes, the bed
     // and the build items (see `gcode_frame`).
@@ -182,7 +182,10 @@ fn slicer_report_error(output_dir: &Path) -> Option<String> {
 fn output_tail(stdout: &[u8], stderr: &[u8], max_lines: usize) -> String {
     let combined = [stdout, stderr].concat();
     let text = String::from_utf8_lossy(&combined);
-    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let start = lines.len().saturating_sub(max_lines);
     lines[start..]
         .iter()
@@ -238,6 +241,24 @@ fn prepare_cli_copy(profile: &PrinterProfile, project: &Path, output: &Path) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sequential_probes_keep_all_three_realizations_and_stop_on_failure() {
+        let mut seen = Vec::new();
+        let runs: Result<Vec<_>, ()> = collect_support_runs("probe", |label| {
+            seen.push(label.to_owned());
+            Ok(seen.len())
+        });
+        assert_eq!(runs.unwrap(), vec![1, 2, 3]);
+        assert_eq!(seen, vec!["probe", "probe_2", "probe_3"]);
+        let mut calls = 0;
+        let failed = collect_support_runs("sample", |_| {
+            calls += 1;
+            if calls == 2 { Err("failed") } else { Ok(calls) }
+        });
+        assert!(failed.is_err());
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn output_tail_keeps_the_last_non_empty_lines_of_combined_slicer_output() {
