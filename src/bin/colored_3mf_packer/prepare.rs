@@ -10,7 +10,7 @@ use goat_packer::{
 
 use crate::AppResult;
 use crate::job::Job;
-use crate::plan::{PackPlan, PackState, SupportRule};
+use crate::plan::{PackPlan, PackState, SupportRule, support_edge_reserve_mm};
 use crate::probe::{footprint_from_probe, probe_source};
 use crate::source::model_center_on_bed;
 use crate::support_learning::sample_supports;
@@ -66,6 +66,7 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
         },
         patch_learned: false,
         mesh_silhouette: if lock_orientation { silhouette.loops.clone() } else { Vec::new() },
+        support_edge_reserve_mm: support_edge_reserve_mm(profile),
     };
     progress::stage(
         Stage::Packing,
@@ -73,8 +74,10 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
         None,
         None,
     );
-    let (mut packed, tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
-    repack_with_sample(job, &mut plan, &mut packed)?;
+    let (mut packed, mut tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
+    if sample_learned(job, &mut plan, &packed) {
+        (packed, tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
+    }
     Ok(PackState {
         plan,
         packed,
@@ -142,34 +145,33 @@ fn first_pack(
         return Ok((plan.pack(job)?, false));
     };
     let (relocation, packed) = choose_tower_position(
-        &job.args,
-        &job.profile,
+        job,
         plan,
         tower.keepout,
         job.gui_tower.map(|range| range.keepout_min_range(tower.keepout)),
     )?;
-    let Some(relocated) = relocation else {
-        return Ok((packed, false));
-    };
-    plan.tower_keepout = Some(relocated.keepout);
-    plan.relocation = Some(relocated);
-    Ok((packed, true))
+    plan.tower_keepout = Some(relocation.map_or(tower.keepout, |relocated| relocated.keepout));
+    plan.relocation = relocation;
+    Ok((packed, relocation.is_some()))
 }
 
 /// The one-object probe comes from the source project; the slicer builds the supports of the
 /// assembled plate a little differently (up to 0.4 mm wider bases, interfaces past the ears).
 /// A few objects of the first layout, sliced as an assembled plate, print exactly what every
 /// object of the full plate will (identical within 0.1 mm, sample vs plate within 0.5 mm); the
-/// plate is packed again against those supports, height band by band.
-fn repack_with_sample(job: &Job, plan: &mut PackPlan, packed: &mut PackResult) -> AppResult<()> {
+/// plate is packed again against those supports, height band by band — the tower contest
+/// included: on a U1 job the bottom-left corner won the contest before the sample (48) and
+/// packed 47 after it; the contest runs again on the learned supports. `true` when the
+/// supports were learned.
+fn sample_learned(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> bool {
     if !(plan.lock_orientation && job.args.sample_objects > 0 && packed.placements.len() > 1) {
-        return Ok(());
+        return false;
     }
     match sample_supports(job, plan, packed) {
-        Ok(()) => *packed = plan.pack(job)?,
-        Err(error) => eprintln!(
-            "WARNING: sample slice failed, packing with the probe's supports only: {error}"
-        ),
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!("WARNING: sample slice failed, packing with the probe's supports only: {error}");
+            false
+        }
     }
-    Ok(())
 }

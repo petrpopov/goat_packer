@@ -6,7 +6,7 @@
 //! Usage:
 //! ```text
 //! cargo run --release --example pack_bench -- \
-//!   --stl tests/fixtures/goat4_v2.stl --profile profiles/p1s.json --overshoot 1.7 \
+//!   --stl tests/fixtures/goat4_v2.stl --profile <printer profile json> --overshoot 1.7 \
 //!   --tower 225.85,200.10,246.15,252.15 --rotations 0,13,45,90,137 --seeds 3
 //! ```
 //! `--footprint-json <path>` loads a `Footprint` serialized as JSON instead of an STL (the
@@ -34,7 +34,7 @@ fn run() -> Result<(), String> {
     let mut stl: Option<PathBuf> = None;
     let mut footprint_json: Option<PathBuf> = None;
     let mut dump_footprint: Option<PathBuf> = None;
-    let mut profile_path = PathBuf::from("profiles/p1s.json");
+    let mut profile_path: Option<PathBuf> = None;
     let mut tower: Option<Rect> = None;
     let mut overshoot = 0.0f64;
     let mut rotations: Vec<f64> = vec![0.0];
@@ -63,7 +63,7 @@ fn run() -> Result<(), String> {
             "--stl" => stl = Some(value.into()),
             "--footprint-json" => footprint_json = Some(value.into()),
             "--dump-footprint" => dump_footprint = Some(value.into()),
-            "--profile" => profile_path = value.into(),
+            "--profile" => profile_path = Some(value.into()),
             "--tower" => {
                 let values: Vec<f64> = value.split(',').map(number).collect::<Result<_, _>>()?;
                 if values.len() != 4 {
@@ -112,6 +112,7 @@ fn run() -> Result<(), String> {
         std::fs::write(&path, serde_json::to_vec(&footprint).unwrap())
             .map_err(|e| e.to_string())?;
     }
+    let profile_path = profile_path.ok_or("--profile is required")?;
     let profile = load_printer_profile(&profile_path).map_err(|e| e.to_string())?;
     let mut exclusions = profile
         .fixed_keepouts(overshoot)

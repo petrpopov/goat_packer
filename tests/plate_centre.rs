@@ -13,7 +13,7 @@ use goat_packer::{
 use serde_json::json;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-fn a2l_zones() -> Vec<HeatZone> {
+fn nested_zones() -> Vec<HeatZone> {
     vec![
         HeatZone { name: "inner".into(), rect: [102.0, 93.4, 228.0, 226.6] },
         HeatZone { name: "middle".into(), rect: [60.0, 49.0, 270.0, 271.0] },
@@ -34,20 +34,20 @@ fn assert_rect(actual: Rect, expected: [f64; 4]) {
 
 // ---- profile -------------------------------------------------------------------------------
 
+fn fixture_profile(name: &str) -> PrinterProfile {
+    let path = format!("{}/tests/fixtures/profiles/{name}", env!("CARGO_MANIFEST_DIR"));
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
 #[test]
-fn a2l_profile_carries_the_bed_heat_soak_zones_smallest_first() {
-    let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/bambu_a2l.json"))
-        .unwrap();
-    let profile: PrinterProfile = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(profile.heat_zones, a2l_zones());
+fn a_profile_carries_its_bed_heat_soak_zones_smallest_first() {
+    assert_eq!(fixture_profile("heat_zones.json").heat_zones, nested_zones());
 }
 
 #[test]
 fn profiles_without_heat_zones_parse_to_an_empty_list() {
-    for name in ["p1s.json", "snapmaker_u1.json"] {
-        let path = format!("{}/profiles/{name}", env!("CARGO_MANIFEST_DIR"));
-        let profile: PrinterProfile = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        assert!(profile.heat_zones.is_empty(), "{name}");
+    for name in ["corner_bed.json", "margin_bed.json"] {
+        assert!(fixture_profile(name).heat_zones.is_empty(), "{name}");
     }
 }
 
@@ -56,7 +56,7 @@ fn profiles_without_heat_zones_parse_to_an_empty_list() {
 #[test]
 fn centre_is_the_smallest_zone_centre_or_the_usable_bed_centre() {
     let bed = Rect::new(0.0, 0.0, 330.0, 320.0);
-    let (x, y) = plate_centre(&a2l_zones(), bed);
+    let (x, y) = plate_centre(&nested_zones(), bed);
     assert_close(x, 165.0);
     assert_close(y, 160.0);
     let (x, y) = plate_centre(&[], Rect::new(3.5, 3.5, 266.5, 266.5));
@@ -66,7 +66,7 @@ fn centre_is_the_smallest_zone_centre_or_the_usable_bed_centre() {
 
 #[test]
 fn centre_comes_from_the_smallest_zone_regardless_of_profile_order() {
-    let mut zones = a2l_zones();
+    let mut zones = nested_zones();
     zones.reverse();
     zones[0].rect = [0.0, 0.0, 300.0, 300.0]; // "full" first, centre (150, 150)
     let (x, y) = plate_centre(&zones, Rect::new(0.0, 0.0, 330.0, 320.0));
@@ -205,7 +205,7 @@ fn loops_bounds_covers_every_point() {
 
 #[test]
 fn smallest_containing_zone_is_reported() {
-    let zones = a2l_zones();
+    let zones = nested_zones();
     let name = |bbox: Rect| smallest_containing_zone(&zones, bbox).map(|zone| zone.name.clone());
     assert_eq!(name(Rect::new(110.0, 100.0, 220.0, 220.0)), Some("inner".into()));
     // Edges count as inside.
@@ -218,7 +218,7 @@ fn smallest_containing_zone_is_reported() {
 
 #[test]
 fn smallest_zone_does_not_depend_on_profile_order() {
-    let mut zones = a2l_zones();
+    let mut zones = nested_zones();
     zones.reverse();
     let zone = smallest_containing_zone(&zones, Rect::new(110.0, 100.0, 220.0, 220.0)).unwrap();
     assert_eq!(zone.name, "inner");

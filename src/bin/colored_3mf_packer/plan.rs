@@ -65,6 +65,23 @@ pub struct PackPlan {
     /// 48 goats) that printed with no support touching a foreign body. Empty = keep the body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mesh_silhouette: Vec<Vec<Point>>,
+    /// The bed-edge reserve of this plan's supports (`support_edge_reserve_mm`); saved so a
+    /// `--finish-state` repack uses the same one. Older states had the default.
+    #[serde(default = "default_support_edge_reserve")]
+    pub support_edge_reserve_mm: f64,
+}
+
+fn default_support_edge_reserve() -> f64 {
+    SUPPORT_EDGE_RESERVE_MM
+}
+
+/// The reserve for a profile: its calibrated `support_edge_margin_mm` already is the distance
+/// the slicer needs (U1 in Snapmaker Orca: a hand-made 48-goat plate printed support bases
+/// 0.7 mm from the edge, and a full-plate Orca slice printed the supports inside the learned
+/// patch at the bed edges, unlike BambuStudio's 0.5 mm drift), so no drift reserve is added on
+/// top; without one the default reserve applies.
+pub fn support_edge_reserve_mm(profile: &PrinterProfile) -> f64 {
+    if profile.support_edge_margin_mm.is_some() { 0.0 } else { SUPPORT_EDGE_RESERVE_MM }
 }
 
 /// How much farther than the learned patch a later slice may print a support, at the bed
@@ -73,7 +90,8 @@ pub struct PackPlan {
 /// (x 255.84 of 256) printed every goat's first-layer support base 0.5 mm wider in the full
 /// plate's slice, and the base's G3 arcs reached x = 256.34: BambuStudio's GUI refused the
 /// plate ("G-code path goes beyond plate boundaries") on the three rightmost goats. The CLI
-/// has no such check. Three times the measured drift; bodies keep the plain edge margin.
+/// has no such check. Three times the measured drift; bodies keep the plain edge margin. A
+/// profile's calibrated `support_edge_margin_mm` replaces it (`support_edge_reserve_mm`).
 const SUPPORT_EDGE_RESERVE_MM: f64 = 1.5;
 
 impl PackPlan {
@@ -100,7 +118,7 @@ impl PackPlan {
         if self.lock_orientation && !footprint.body_loops.is_empty() {
             let bed = footprint.bed_loops.clone().unwrap_or_else(|| footprint.loops.clone());
             footprint.bed_loops =
-                Some(grow_beyond(&bed, &footprint.body_loops, SUPPORT_EDGE_RESERVE_MM));
+                Some(grow_beyond(&bed, &footprint.body_loops, self.support_edge_reserve_mm));
         }
         footprint
     }
@@ -114,12 +132,17 @@ impl PackPlan {
         self.fixed_keepouts.iter().copied().chain(self.tower_keepout).collect()
     }
 
-    /// Packs under the rule, and — when its body zone is the bare outline — also under the
-    /// stricter interface body, keeping whichever places more. The search is a heuristic, not
-    /// monotone in the rule: on the same learned plan the looser rule packed a P1S goat plate
-    /// 42 instead of 43 and a U1 plate 47 instead of 49, and another U1 plan 48 instead of 47.
-    /// The stricter layouts are valid under the rule, so the better of the two never loses.
     pub fn pack(&self, job: &Job) -> AppResult<PackResult> {
+        self.pack_at(job, self.tower_keepout, true)
+    }
+
+    /// Packs with the tower keepout at `tower_keepout` under the rule, and — when its body
+    /// zone is the bare outline — also under the stricter interface body, keeping whichever
+    /// places more. The search is a heuristic, not monotone in the rule: on the same learned
+    /// plan the looser rule packed a P1S goat plate 41 instead of 43 and a U1 plate 47 instead
+    /// of 49, and another U1 plan 48 instead of 47. The stricter layouts are valid under the
+    /// rule, so the better of the two never loses.
+    pub fn pack_at(&self, job: &Job, tower_keepout: Option<Rect>, verbose: bool) -> AppResult<PackResult> {
         let rule = self.rule_footprint();
         let pack_with = |footprint: &Footprint, verbose: bool| {
             pack(
@@ -128,11 +151,11 @@ impl PackPlan {
                 footprint,
                 self.lock_orientation,
                 &self.fixed_keepouts,
-                self.tower_keepout,
+                tower_keepout,
                 verbose,
             )
         };
-        let packed = pack_with(&rule, true)?;
+        let packed = pack_with(&rule, verbose)?;
         if !self.body_is_bare_outline() {
             return Ok(packed);
         }
@@ -145,14 +168,16 @@ impl PackPlan {
             &job.profile,
             self.lock_orientation,
             &self.fixed_keepouts,
-            self.tower_keepout,
+            tower_keepout,
         )?;
         validate_result(&rule, &options, &strict)?;
-        eprintln!(
-            "layout: {} objects with the support interfaces in the body zone (bare outline: {})",
-            strict.placements.len(),
-            packed.placements.len()
-        );
+        if verbose {
+            eprintln!(
+                "layout: {} objects with the support interfaces in the body zone (bare outline: {})",
+                strict.placements.len(),
+                packed.placements.len()
+            );
+        }
         Ok(strict)
     }
 

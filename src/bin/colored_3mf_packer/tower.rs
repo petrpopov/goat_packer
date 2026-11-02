@@ -17,7 +17,8 @@ use goat_packer::{
 use crate::AppResult;
 use crate::args::Args;
 use crate::placement::placement_world_loops;
-use crate::plan::{PackPlan, pack};
+use crate::job::Job;
+use crate::plan::PackPlan;
 use crate::source::source_project_settings;
 
 /// Fraction of the probe tower's depth reserved above a corner-placed tower for its growth
@@ -210,14 +211,12 @@ fn tower_candidates(
 /// A corner on a fixed keepout (P1S exclusion corner, purge line) or off the bed is skipped.
 /// Returns the chosen relocation (`None` = source position) with its packed layout.
 pub fn choose_tower_position(
-    args: &Args,
-    profile: &PrinterProfile,
+    job: &Job,
     plan: &PackPlan,
     probe_keepout: Rect,
     gui_range: Option<Rect>,
 ) -> AppResult<(Option<RelocatedTower>, PackResult)> {
-    let bed = profile.usable_bed()?;
-    let footprint = plan.rule_footprint();
+    let bed = job.profile.usable_bed()?;
     let mut best: Option<(&str, Option<RelocatedTower>, PackResult)> = None;
     for (name, relocation) in tower_candidates(probe_keepout, bed, gui_range) {
         let keepout = relocation.map_or(probe_keepout, |relocated| relocated.keepout);
@@ -227,15 +226,7 @@ pub fn choose_tower_position(
         {
             continue;
         }
-        let packed = pack(
-            args,
-            profile,
-            &footprint,
-            plan.lock_orientation,
-            &plan.fixed_keepouts,
-            Some(keepout),
-            false,
-        )?;
+        let packed = plan.pack_at(job, Some(keepout), false)?;
         println!("tower at {name}: {} objects", packed.placements.len());
         if best
             .as_ref()

@@ -1,55 +1,38 @@
 use goat_packer::colored_packer::load_printer_profile;
 
+fn fixture(name: &str) -> goat_packer::colored_packer::PrinterProfile {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles").join(name);
+    load_printer_profile(&path).unwrap()
+}
+
 #[test]
-fn p1s_profile_contains_blind_corner_and_purge_u_line() {
-    let profile = load_printer_profile(std::path::Path::new("profiles/p1s.json")).unwrap();
-    assert_eq!(profile.printer_name, "Bambu Lab P1S");
+fn profile_loads_its_exclusion_corner_and_purge_line() {
+    let profile = fixture("corner_bed.json");
     assert_eq!(profile.edge_margin_mm, 0.0);
     assert_eq!(profile.exclusion_rectangles.len(), 1);
     assert_eq!(profile.purge_lines.len(), 4);
     assert!(!profile.blank_start_gcode_for_cli);
-    // BambuStudio's CLI can report a false-positive "gcode path conflicts" error on dense
-    // multi-color plates that our own validate_result/verify_outputs.py checks confirm have no
-    // real overlap; --no-check (gated by this flag) skips that internal heuristic.
     assert!(profile.no_check_for_final_tower_probe);
+    assert_eq!(profile.filament_change_seconds, Some(91.0));
+    assert_eq!(profile.support_bed().unwrap(), profile.usable_bed().unwrap());
 }
 
 #[test]
-fn u1_profile_has_edge_margin_and_cli_workaround() {
-    let profile = load_printer_profile(std::path::Path::new("profiles/snapmaker_u1.json")).unwrap();
-    assert_eq!(profile.printer_name, "Snapmaker U1");
-    // 4.0 (было 3.5): Orca Snapmaker при spiral lifting требует зазор строго больше 3.5 мм,
-    // и пакер с margin=3.5 упирался в границу точно по порогу предупреждения.
-    assert_eq!(profile.edge_margin_mm, 4.0);
-    assert_eq!(profile.purge_lines.len(), 1);
-    assert!(profile.blank_start_gcode_for_cli);
-    assert!(profile.no_check_for_final_tower_probe);
+fn edge_margin_shrinks_the_usable_bed_and_a_support_margin_only_the_support_bed() {
+    let profile = fixture("margin_bed.json");
     let usable = profile.usable_bed().unwrap();
     assert_eq!((usable.min_x, usable.min_y, usable.max_x, usable.max_y), (4.5, 5.0, 266.5, 267.0));
+    let support = profile.support_bed().unwrap();
+    assert_eq!((support.min_x, support.min_y, support.max_x, support.max_y), (1.2, 1.7, 269.8, 270.3));
+    // A tool changer: no AMS change correction.
+    assert_eq!(profile.filament_change_seconds, None);
 }
 
 #[test]
-fn detects_slicer_kind_from_known_printer_models() {
+fn detects_slicer_kind_from_the_vendor_in_printer_model() {
     use goat_packer::colored_packer::detect_slicer_kind_from_printer_model;
-    assert_eq!(
-        detect_slicer_kind_from_printer_model("Bambu Lab P1S"),
-        Some("bambu")
-    );
-    assert_eq!(
-        detect_slicer_kind_from_printer_model("Snapmaker U1"),
-        Some("orca")
-    );
-    assert_eq!(detect_slicer_kind_from_printer_model("Prusa MK4"), None);
-}
-
-#[test]
-fn profiles_carry_real_filament_change_duration() {
-    let load = |path: &str| load_printer_profile(std::path::Path::new(path)).unwrap();
-    // gen-1 AMS measured on koza-mini: A2L 23 + 72, P1S 57 + 34 (spec 2026-10-26).
-    assert_eq!(load("profiles/bambu_a2l.json").filament_change_seconds, Some(95.0));
-    assert_eq!(load("profiles/p1s.json").filament_change_seconds, Some(91.0));
-    // U1 is a tool changer: no AMS change correction.
-    assert_eq!(load("profiles/snapmaker_u1.json").filament_change_seconds, None);
+    assert_eq!(detect_slicer_kind_from_printer_model("Bambu Lab X"), Some("bambu"));
+    assert_eq!(detect_slicer_kind_from_printer_model("Unknown Printer"), None);
 }
 
 /// Every `profiles/*.json` (hand-made and catalog-generated) must load, and ids / printer names
@@ -73,7 +56,7 @@ fn every_repo_profile_loads_with_unique_id_and_printer_name() {
         assert!(names.insert(profile.printer_name.clone()), "duplicate printer_name {}", profile.printer_name);
         count += 1;
     }
-    assert!(count >= 3, "expected at least the three hand-made profiles, found {count}");
+    assert!(count > 0, "no profiles in {}", dir.display());
 }
 
 mod cli_settings {
@@ -126,8 +109,12 @@ mod cli_settings {
 
     #[test]
     fn cli_workarounds_blank_start_gcode_only_when_the_profile_asks_and_always_fix_the_matrix() {
-        let p1s = load_printer_profile(std::path::Path::new("profiles/p1s.json")).unwrap();
-        let u1 = load_printer_profile(std::path::Path::new("profiles/snapmaker_u1.json")).unwrap();
+        let fixture = |name: &str| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles").join(name);
+            load_printer_profile(&path).unwrap()
+        };
+        let keeps_start_gcode = fixture("corner_bed.json");
+        let blanks_start_gcode = fixture("margin_bed.json");
         let stale = json!({
             "machine_start_gcode": "G28",
             "filament_colour": ["#C6001A"],
@@ -135,16 +122,16 @@ mod cli_settings {
         });
 
         let mut settings = stale.clone();
-        assert!(apply_cli_settings_workarounds(&p1s, &mut settings));
+        assert!(apply_cli_settings_workarounds(&keeps_start_gcode, &mut settings));
         assert_eq!(settings["machine_start_gcode"], json!("G28"));
         assert_eq!(settings["flush_volumes_matrix"], json!(["0"]));
 
         let mut settings = stale.clone();
-        assert!(apply_cli_settings_workarounds(&u1, &mut settings));
+        assert!(apply_cli_settings_workarounds(&blanks_start_gcode, &mut settings));
         assert_eq!(settings["machine_start_gcode"], json!(""));
         assert_eq!(settings["flush_volumes_matrix"], json!(["0"]));
 
         let mut consistent = json!({ "filament_colour": ["#C6001A"], "flush_volumes_matrix": ["0"] });
-        assert!(!apply_cli_settings_workarounds(&p1s, &mut consistent));
+        assert!(!apply_cli_settings_workarounds(&keeps_start_gcode, &mut consistent));
     }
 }

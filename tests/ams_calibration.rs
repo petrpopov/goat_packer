@@ -25,7 +25,7 @@ fn assert_all_close(actual: &[f64], expected: &[f64]) {
 }
 
 fn profile(name: &str) -> PrinterProfile {
-    load_printer_profile(&Path::new("profiles").join(name)).unwrap()
+    load_printer_profile(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles").join(name)).unwrap()
 }
 
 fn settings_json(extra: serde_json::Value) -> Vec<u8> {
@@ -240,23 +240,23 @@ fn template_settings_slicer_change_seconds_branches() {
 
 #[test]
 fn cube_is_centred_when_tower_is_clear() {
-    let p1s = profile("p1s.json");
+    let bed_256 = profile("corner_bed.json");
     let settings = parse_template_settings(&settings_json(serde_json::json!({}))).unwrap();
-    let centre = place_cube(&p1s, settings.tower).unwrap();
+    let centre = place_cube(&bed_256, settings.tower).unwrap();
     assert_eq!(centre, (128.0, 128.0));
 }
 
 #[test]
 fn cube_moves_away_from_overlapping_tower() {
-    let a2l = profile("bambu_a2l.json");
-    // A2L template: tower corner at the bed centre, 35 mm wide.
+    let bed_330 = profile("heat_zones.json");
+    // A 330 x 320 bed whose template puts the tower corner at the bed centre, 35 mm wide.
     let bytes = settings_json(serde_json::json!({
         "wipe_tower_x": ["164.898", "153"],
         "wipe_tower_y": ["141.172", "160"],
         "prime_tower_width": "35",
     }));
     let settings = parse_template_settings(&bytes).unwrap();
-    let centre = place_cube(&a2l, settings.tower).unwrap();
+    let centre = place_cube(&bed_330, settings.tower).unwrap();
     // Tower lies right of the centre, so the cube moves left by 35 + 10 mm.
     assert_eq!(centre, (120.0, 160.0));
     let cube = cube_footprint(centre);
@@ -298,7 +298,7 @@ fn calibration_projects_are_written_with_verbatim_settings() {
         project_settings: settings.clone(),
         application: "BambuStudio-02.08.02.61".to_owned(),
     };
-    let projects = plan_projects(&template, &profile("p1s.json"), Variant::Normal).unwrap();
+    let projects = plan_projects(&template, &profile("corner_bed.json"), Variant::Normal).unwrap();
     let a = dir.path().join("calib_A.3mf");
     let b = dir.path().join("calib_B.3mf");
     write_calibration_3mf(&a, &settings, &projects.model, &projects.model_settings, None).unwrap();

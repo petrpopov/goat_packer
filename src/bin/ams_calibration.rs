@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn cli_settings_resize_a_stale_flush_matrix_like_the_packer() {
-        let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
+        let profile = load_printer_profile(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles/corner_bed.json")).unwrap();
         let original = serde_json::to_vec(&serde_json::json!({
             "filament_colour": ["#C6001A", "#CBC6B8"],
             "flush_volumes_matrix": ["0", "1", "2", "3", "0", "4", "5", "6", "0"],
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn cli_settings_keep_the_original_bytes_when_nothing_needs_fixing() {
-        let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
+        let profile = load_printer_profile(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles/corner_bed.json")).unwrap();
         let original = br##"{"flush_volumes_matrix":["0"],  "filament_colour":["#FFFFFF"]}"##;
         assert_eq!(cli_project_settings(&profile, original).unwrap(), original.to_vec());
     }

@@ -76,7 +76,7 @@ mod support;
 fn fixture_options() -> PackOptions {
     let profile = goat_packer::colored_packer::load_printer_profile(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/profiles/p1s.json"
+        "/tests/fixtures/profiles/corner_bed.json"
     )))
     .unwrap();
     let mut exclusions = profile.fixed_keepouts(1.7).unwrap();

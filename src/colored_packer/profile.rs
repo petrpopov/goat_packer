@@ -21,9 +21,11 @@ pub struct PrinterProfile {
     /// Edge margin for the supports and brim (the printed patch beyond the model) when it
     /// differs from `edge_margin_mm`, which then binds the model only (`PackOptions::body_bed`).
     /// U1: the 4 mm margin keeps the meshes off the edge, but a hand-made 48-goat plate
-    /// printed its support bases 0.7 mm from the printable edge, and the 4 mm margin on the
-    /// 47.6 mm support patch held the packer at 45. Absent = `edge_margin_mm` binds
-    /// everything: a macro purge (`printer_catalog annotate`) may run anywhere near the edge.
+    /// printed its support bases 0.7 mm from the printable edge (the closest the owner found
+    /// Snapmaker Orca to accept), and the 4 mm margin on the 47.6 mm support patch held the
+    /// packer at 45. A set value is calibrated: it replaces the packer's default drift reserve
+    /// for supports at the bed edge. Absent = `edge_margin_mm` binds everything: a macro purge
+    /// (`printer_catalog annotate`) may run anywhere near the edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub support_edge_margin_mm: Option<f64>,
     pub exclusion_rectangles: Vec<[f64; 4]>,
@@ -158,20 +160,21 @@ mod tests {
 
     #[test]
     fn support_margin_widens_the_support_bed_only() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let u1 = load_printer_profile(&root.join("profiles/snapmaker_u1.json")).unwrap();
-        assert_eq!(u1.support_bed().unwrap(), u1.printable_bed());
-        assert_eq!(u1.usable_bed().unwrap(), Rect::new(4.5, 5.0, 266.5, 267.0));
-        let p1s = load_printer_profile(&root.join("profiles/p1s.json")).unwrap();
-        assert_eq!(p1s.support_bed().unwrap(), p1s.usable_bed().unwrap());
+        let mut profile = corner_bed_profile();
+        profile.printable_area = [0.5, 1.0, 270.5, 271.0];
+        profile.edge_margin_mm = 4.0;
+        assert_eq!(profile.support_bed().unwrap(), profile.usable_bed().unwrap());
+        profile.support_edge_margin_mm = Some(0.7);
+        assert_eq!(profile.support_bed().unwrap(), profile.printable_bed().inset(0.7).unwrap());
+        assert_eq!(profile.usable_bed().unwrap(), Rect::new(4.5, 5.0, 266.5, 267.0));
     }
 
-    /// The real P1S profile geometry: the purge line hugs the front edge (y=1.0..1.5,
-    /// x 18..240) and one exclusion corner sits front-left.
-    fn p1s_profile() -> PrinterProfile {
+    /// A bed whose purge line hugs the front edge (y=1.0..1.5, x 18..240) with one exclusion
+    /// corner front-left (the geometry of the plate in the regression below).
+    fn corner_bed_profile() -> PrinterProfile {
         PrinterProfile {
-            id: "bambu_p1s".to_owned(),
-            printer_name: "Bambu Lab P1S".to_owned(),
+            id: "test_corner_bed".to_owned(),
+            printer_name: "Test Corner Bed".to_owned(),
             slicer_kind: "bambu".to_owned(),
             slicer_path: String::new(),
             blank_start_gcode_for_cli: false,
@@ -201,7 +204,7 @@ mod tests {
     /// exclusion corner keeps its own validated safety.
     #[test]
     fn purge_keepouts_grow_by_the_measured_tip_overshoot_and_only_them() {
-        let profile = p1s_profile();
+        let profile = corner_bed_profile();
         let bare = profile.fixed_keepouts(0.0).unwrap();
         let widened = profile.fixed_keepouts(1.66).unwrap();
         assert_eq!(bare.len(), 5, "1 corner + 4 purge strips");
@@ -220,7 +223,7 @@ mod tests {
     /// measured overshoot, and would still be legal with the bare one (that was the bug).
     #[test]
     fn widened_purge_keepout_rejects_the_position_that_printed_through_the_line() {
-        let profile = p1s_profile();
+        let profile = corner_bed_profile();
         let keepouts = profile.fixed_keepouts(1.66).unwrap();
         let loops = vec![
             Point { x: -31.5, y: -26.5 },
@@ -250,6 +253,6 @@ mod tests {
     }
 
     fn keepouts_bare() -> Vec<Rect> {
-        p1s_profile().fixed_keepouts(0.0).unwrap()
+        corner_bed_profile().fixed_keepouts(0.0).unwrap()
     }
 }

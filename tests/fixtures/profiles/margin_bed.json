@@ -1,0 +1,28 @@
+{
+  "id": "test_margin_bed",
+  "printer_name": "Test Margin Bed",
+  "slicer_kind": "orca",
+  "slicer_path": "",
+  "blank_start_gcode_for_cli": true,
+  "no_check_for_final_tower_probe": true,
+  "printable_area": [
+    0.5,
+    1.0,
+    270.5,
+    271.0
+  ],
+  "edge_margin_mm": 4.0,
+  "support_edge_margin_mm": 0.7,
+  "exclusion_rectangles": [],
+  "purge_lines": [
+    [
+      84.5,
+      0.5,
+      185.5,
+      0.5,
+      0.5
+    ]
+  ],
+  "tower_marker_style": "wipe_tower",
+  "tower_line_width_mm": 0.5
+}

@@ -16,7 +16,7 @@
     271.0
   ],
   "edge_margin_mm": 4.0,
-  "support_edge_margin_mm": 0.0,
+  "support_edge_margin_mm": 0.7,
   "plate_outline": [[4.5,-10.5],[266.5,-10.5],[275.5,-1.5],[275.5,273.5],[266.5,282.5],[4.5,282.5],[-4.5,273.5],[-4.5,-1.5]],
   "exclusion_rectangles": [],
   "purge_lines": [

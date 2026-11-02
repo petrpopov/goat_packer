@@ -258,11 +258,10 @@ mod tests {
     #[test]
     fn parse_printer_spec_reads_profile_and_defaults_name_and_prep() {
         let dir = tempfile::tempdir().unwrap();
-        let profile_path = dir.path().join("p1s.json");
-        fs::write(&profile_path, fs::read("profiles/p1s.json").unwrap()).unwrap();
+        let profile_path = write_profile(dir.path(), "corner_bed.json");
         let spec = format!("profile={},source=some.3mf", profile_path.display());
         let printer = parse_printer_spec(&spec).unwrap();
-        assert_eq!(printer.profile.printer_name, "Bambu Lab P1S");
+        assert_eq!(printer.profile.printer_name, "Test Corner Bed");
         assert_eq!(printer.source, PathBuf::from("some.3mf"));
         assert_eq!(printer.preparation_minutes, 0);
         assert_eq!(printer.preparation_sweep_minutes, vec![0]);
@@ -271,12 +270,7 @@ mod tests {
     #[test]
     fn parse_printer_spec_applies_name_override_and_prep_sweep() {
         let dir = tempfile::tempdir().unwrap();
-        let profile_path = dir.path().join("u1.json");
-        fs::write(
-            &profile_path,
-            fs::read("profiles/snapmaker_u1.json").unwrap(),
-        )
-        .unwrap();
+        let profile_path = write_profile(dir.path(), "margin_bed.json");
         let spec = format!(
             "profile={},source=some.3mf,name=U1 #2,prep-min=11,prep-sweep=6:8:10:11:12:15",
             profile_path.display()
@@ -293,8 +287,7 @@ mod tests {
     #[test]
     fn parse_printer_spec_rejects_missing_source() {
         let dir = tempfile::tempdir().unwrap();
-        let profile_path = dir.path().join("p1s.json");
-        fs::write(&profile_path, fs::read("profiles/p1s.json").unwrap()).unwrap();
+        let profile_path = write_profile(dir.path(), "corner_bed.json");
         let spec = format!("profile={}", profile_path.display());
         let error = parse_printer_spec(&spec).unwrap_err();
         assert!(error.to_string().contains("source"));
@@ -302,14 +295,15 @@ mod tests {
 
     fn write_profile(dir: &Path, name: &str) -> PathBuf {
         let path = dir.join(name);
-        fs::write(&path, fs::read(Path::new("profiles").join(name)).unwrap()).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles").join(name);
+        fs::write(&path, fs::read(fixture).unwrap()).unwrap();
         path
     }
 
     #[test]
     fn parse_printer_spec_reads_change_seconds_override() {
         let dir = tempfile::tempdir().unwrap();
-        let profile_path = write_profile(dir.path(), "p1s.json");
+        let profile_path = write_profile(dir.path(), "corner_bed.json");
         let plain = parse_printer_spec(&format!("profile={},source=a.3mf", profile_path.display()))
             .unwrap();
         assert_eq!(plain.change_seconds, None);
@@ -331,7 +325,7 @@ mod tests {
     #[test]
     fn real_change_seconds_follows_flag_key_and_profile() {
         let dir = tempfile::tempdir().unwrap();
-        let profile_path = write_profile(dir.path(), "p1s.json");
+        let profile_path = write_profile(dir.path(), "corner_bed.json");
         let plain = parse_printer_spec(&format!("profile={},source=a.3mf", profile_path.display()))
             .unwrap();
         assert_eq!(plain.real_change_seconds(false), None);
@@ -344,7 +338,7 @@ mod tests {
         assert_eq!(keyed.real_change_seconds(true), Some(70.0));
         // The explicit key implies the correction, like the packer's --change-seconds.
         assert_eq!(keyed.real_change_seconds(false), Some(70.0));
-        let u1 = write_profile(dir.path(), "snapmaker_u1.json");
+        let u1 = write_profile(dir.path(), "margin_bed.json");
         let tool_changer =
             parse_printer_spec(&format!("profile={},source=a.3mf", u1.display())).unwrap();
         assert_eq!(tool_changer.real_change_seconds(true), None);

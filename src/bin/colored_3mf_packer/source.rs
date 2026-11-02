@@ -117,7 +117,10 @@ mod tests {
 
     #[test]
     fn validate_source_printer_rejects_slicer_kind_mismatch() {
-        let profile = load_printer_profile(Path::new("profiles/p1s.json")).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profiles/corner_bed.json");
+        let mut profile = load_printer_profile(&fixture).unwrap();
+        // The fixture project's own printer_model.
+        profile.printer_name = "Bambu Lab P1S".to_owned();
         let source = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bambu.3mf"));
         validate_source_printer(source, &profile).unwrap();
 
