@@ -6,8 +6,8 @@ use super::zone_tests::{
     PlateTest, Range, ZoneTest, clear_range, inside_range, intersect, plate_tests, rect_of,
 };
 use super::{KindMasks, PlateZone};
-use crate::collision::overlap_shifts;
 use crate::geometry::Point;
+use crate::pack::no_fit::overlap_shifts;
 use crate::span_raster::SpanRaster;
 
 /// Origins are `origin + (x, y) * resolution` for integer `(x, y)`.

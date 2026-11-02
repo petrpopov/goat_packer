@@ -608,3 +608,126 @@ fn grid_nests_shaped_rows_by_shifting_every_other_row() {
         result.placements.len()
     );
 }
+
+/// An L-shaped body on a support base that juts out to one side, with a support column in
+/// band 1, at `half_turns` x 180°: two rotation classes whose supports differ in placement.
+fn class_print(half_turns: u8) -> goat_packer::ObjectPrint {
+    let sign = if half_turns.is_multiple_of(2) {
+        1.0
+    } else {
+        -1.0
+    };
+    let ring = |points: &[(f64, f64)]| -> Vec<Point> {
+        let mut ring: Vec<Point> = points
+            .iter()
+            .map(|&(x, y)| Point {
+                x: sign * x,
+                y: sign * y,
+            })
+            .collect();
+        ring.push(ring[0]);
+        ring
+    };
+    let rect = |x0: f64, y0: f64, x1: f64, y1: f64| ring(&[(x0, y0), (x1, y0), (x1, y1), (x0, y1)]);
+    let l_shape = ring(&[
+        (-3., -2.),
+        (3., -2.),
+        (3., -1.),
+        (-2., -1.),
+        (-2., 2.),
+        (-3., 2.),
+    ]);
+    let hull = ring(&[(-3., -2.), (3., -2.), (3., -1.), (-2., 2.), (-3., 2.)]);
+    let b = Rect::of_points(hull.iter());
+    goat_packer::ObjectPrint {
+        rotation_deg: 180.0 * f64::from(half_turns),
+        silhouette: vec![l_shape],
+        part_hulls: vec![hull],
+        part_boxes: vec![b],
+        landing: vec![rect(-3., -2., 3., -1.5)],
+        support_base: vec![rect(-4., -3., 4., -2.)],
+        body: vec![vec![rect(-3., -2., 3., -1.)], vec![rect(-3., -1., -2., 2.)]],
+        support: vec![vec![], vec![rect(3.5, -1., 5., 0.)]],
+        interface: vec![vec![], vec![]],
+        ..goat_packer::ObjectPrint::default()
+    }
+}
+
+#[test]
+fn the_portfolio_is_identical_for_one_and_eight_threads_and_two_runs() {
+    use goat_packer::keepout::{BodyRule, Keepout, KeepoutClass, KeepoutFrame, KeepoutShape};
+    use goat_packer::pack::{TowerSpec, pack};
+    let prints = [class_print(0), class_print(1)];
+    let rules = goat_packer::PlateRules {
+        printable_area: Rect::new(0.0, 0.0, 70.0, 50.0),
+        body_edge_band_mm: 1.0,
+        print_edge_reserve_mm: 0.0,
+        keepouts: vec![Keepout {
+            id: "purge".to_owned(),
+            class: KeepoutClass::Soft,
+            shape: KeepoutShape::Strips(vec![[10.0, 1.0, 60.0, 1.0, 1.0]]),
+            z_range_mm: Some([0.0, 0.2]),
+            frame: KeepoutFrame::Plate,
+        }],
+        body_rule: BodyRule::Silhouette,
+    };
+    let tower = TowerSpec {
+        body: Rect::new(-0.25, -0.25, 9.0, 7.0),
+        brim_l0_mm: 2.0,
+        chamfer: vec![[0.4, 1.5], [0.6, 0.75]],
+        top_z_mm: 3.5,
+        anchor_range: Rect::new(1.0, 1.0, 60.0, 42.0),
+        source_anchor: Point { x: 55.0, y: 38.0 },
+    };
+    let mut options = stable_options();
+    options.resolution = 0.5;
+    options.attempts = 32;
+    let run = |threads: usize| {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        let outcome = pool
+            .install(|| pack(&prints, &rules, Some(&tower), &options))
+            .unwrap();
+        serde_json::to_string(&outcome).unwrap()
+    };
+    let reference = run(1);
+    assert!(
+        reference.contains("\"print\":1"),
+        "both classes used: {reference}"
+    );
+    for threads in [8, 1, 8] {
+        assert_eq!(run(threads), reference, "{threads} threads");
+    }
+}
+
+#[test]
+fn a_locked_search_never_loses_copies_with_more_effort() {
+    // One mask: before the phase fix, efforts above 32 sweeps only repeated earlier ones.
+    let fp = polygon(&[
+        (-3., -2.),
+        (3., -2.),
+        (3., -1.),
+        (-2., -1.),
+        (-2., 2.),
+        (-3., 2.),
+    ]);
+    let mut opts = stable_options();
+    opts.lock_orientation = true;
+    opts.bed = Rect::new(0., 0., 23., 17.);
+    opts.exclusions.clear();
+    opts.clearance = 0.3;
+    opts.resolution = 0.5;
+    let mut best = 0;
+    for attempts in [1, 8, 32, 64] {
+        opts.attempts = attempts;
+        let result = pack_footprint(&fp, &opts);
+        assert!(
+            result.placements.len() >= best,
+            "effort {attempts} regressed"
+        );
+        best = result.placements.len();
+        validate_result(&fp, &opts, &result).unwrap();
+    }
+}

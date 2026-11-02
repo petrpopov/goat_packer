@@ -1,77 +1,58 @@
-//! A layout in pixel units while it is being searched, and how two layouts are compared.
+//! A layout in pixel units while it is being searched: which rotation class each copy is and
+//! where its frame origin sits on the run's origin grid.
 
 use crate::geometry::Rect;
-use crate::options::{PackOptions, PackedPlacement};
-use crate::raster_mask::RasterMask;
+use crate::kind_masks::OriginGrid;
 
-/// One placed mask: which of the search's masks, and its origin in bed pixels.
-#[derive(Clone, Copy, Debug)]
+/// One placed copy: its rotation class (an index the run defines) and the pixel origin of
+/// the class's frame. Placing a class is a pure translation (see `object_print::ObjectPrint`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PixelPlacement {
-    pub(crate) mask: usize,
+    pub(crate) class: usize,
     pub(crate) x: i32,
     pub(crate) y: i32,
 }
 
 impl PixelPlacement {
-    /// The placement in millimetres on the bed, at `angle_deg`.
-    pub(crate) fn to_packed(self, angle_deg: f64, options: &PackOptions) -> PackedPlacement {
-        PackedPlacement {
-            x_mm: options.bed.min_x + f64::from(self.x) * options.resolution,
-            y_mm: options.bed.min_y + f64::from(self.y) * options.resolution,
-            angle_deg,
-        }
+    /// The origin's position on the plate, mm.
+    pub(crate) fn mm(self, grid: &OriginGrid) -> (f64, f64) {
+        (
+            grid.origin.x + f64::from(self.x) * grid.resolution,
+            grid.origin.y + f64::from(self.y) * grid.resolution,
+        )
     }
 }
 
-/// More objects win; equal counts are decided by the smaller bounding box, and a tie keeps `a`.
-pub(crate) fn better_layout(
-    a: Vec<PixelPlacement>,
-    b: Vec<PixelPlacement>,
-    masks: &[RasterMask],
-) -> Vec<PixelPlacement> {
-    if b.len() > a.len() {
-        return b;
+/// A class's printed extent in whole pixels of its frame, `(min_x, min_y, max_x, max_y)`:
+/// the box rounded outwards, so the compactness key compares integers only.
+pub(crate) fn extent_px(extent: Rect, resolution: f64) -> (i64, i64, i64, i64) {
+    let finite = [extent.min_x, extent.min_y, extent.max_x, extent.max_y]
+        .iter()
+        .all(|v| v.is_finite());
+    if !finite {
+        return (0, 0, 0, 0);
     }
-    if a.len() > b.len() {
-        return a;
-    }
-    if layout_bbox_area(&b, masks) < layout_bbox_area(&a, masks) {
-        b
-    } else {
-        a
-    }
+    (
+        (extent.min_x / resolution).floor() as i64,
+        (extent.min_y / resolution).floor() as i64,
+        (extent.max_x / resolution).ceil() as i64,
+        (extent.max_y / resolution).ceil() as i64,
+    )
 }
 
-/// Area of the box around every placed patch, in pixel units (infinite for an empty layout).
-pub(crate) fn layout_bbox_area(layout: &[PixelPlacement], masks: &[RasterMask]) -> f64 {
-    if layout.is_empty() {
-        return f64::INFINITY;
-    }
-    let mut bounds = Rect::new(
-        f64::INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NEG_INFINITY,
-    );
-    for p in layout {
-        let mask = &masks[p.mask];
-        bounds.min_x = bounds
-            .min_x
-            .min(f64::from(p.x) + mask.extent_bounds.min_x / mask.resolution);
-        bounds.min_y = bounds
-            .min_y
-            .min(f64::from(p.y) + mask.extent_bounds.min_y / mask.resolution);
-        bounds.max_x = bounds
-            .max_x
-            .max(f64::from(p.x) + mask.extent_bounds.max_x / mask.resolution);
-        bounds.max_y = bounds
-            .max_y
-            .max(f64::from(p.y) + mask.extent_bounds.max_y / mask.resolution);
-    }
-    (bounds.max_x - bounds.min_x) * (bounds.max_y - bounds.min_y)
+/// Area in pixels of the box around every placed copy's extent (`extents[class]`); the
+/// largest value for an empty layout, so it never wins on compactness.
+pub(crate) fn bbox_area_px(layout: &[PixelPlacement], extents: &[(i64, i64, i64, i64)]) -> u64 {
+    let boxes = layout.iter().map(|p| {
+        let (x0, y0, x1, y1) = extents[p.class];
+        let (x, y) = (i64::from(p.x), i64::from(p.y));
+        (x + x0, y + y0, x + x1, y + y1)
+    });
+    let bounds = boxes.reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)));
+    bounds.map_or(u64::MAX, |(x0, y0, x1, y1)| ((x1 - x0) * (y1 - y0)) as u64)
 }
 
 /// True when the optional per-plate object cap is set and reached (0 = unlimited).
-pub(crate) fn cap_reached(placed: usize, options: &PackOptions) -> bool {
-    options.max_objects > 0 && placed >= options.max_objects
+pub(crate) fn cap_reached(placed: usize, max_objects: usize) -> bool {
+    max_objects > 0 && placed >= max_objects
 }

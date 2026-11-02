@@ -6,10 +6,7 @@
 use crate::footprint::Footprint;
 use crate::geometry::{Point, rotate_point};
 use crate::keepout::BodyRule;
-use crate::kind_masks::{
-    FeasibleOrigins, KindMasks, KindShapes, MaskRules, OriginGrid, PlateZone, feasible_origins,
-    plate_zones,
-};
+use crate::kind_masks::{KindMasks, KindShapes, MaskRules, OriginGrid, PlateZone, plate_zones};
 use crate::object_print::{Loops, ObjectPrint};
 use crate::options::PackOptions;
 use geo::{ConvexHull, MultiPoint};
@@ -61,10 +58,6 @@ impl LegacyPrint {
 
     pub(crate) fn masks_at(&self, angle_deg: f64) -> KindMasks {
         self.masks(angle_deg, Point { x: 0.0, y: 0.0 })
-    }
-
-    pub(crate) fn origins(&self, masks: &KindMasks) -> FeasibleOrigins {
-        feasible_origins(masks, &self.zones, &self.grid)
     }
 }
 
