@@ -19,6 +19,7 @@
 //! Modules: `parser` (reads the G-code), `touching` (the per-layer geometry), `types` (the
 //! report), `learning` (what a sample slice teaches the packer), `nudge` (moving contacts apart).
 
+pub mod gui_checks;
 mod learning;
 mod nudge;
 mod parser;

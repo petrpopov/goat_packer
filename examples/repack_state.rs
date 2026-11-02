@@ -107,6 +107,7 @@ fn run() -> Result<(), String> {
         lock_orientation,
         seed: 20270831,
         support_overlap_mm: None,
+        plate_rules: None,
     };
     if let Some(path) = check_path {
         // A given layout (e.g. a hand-made plate's placements) against the same rules.

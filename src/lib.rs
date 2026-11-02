@@ -9,6 +9,10 @@
 //! - `packing` (+ `packing_search`, `frame`): the search itself and the grid baseline.
 //! - `validation`: an independent re-check of a finished layout.
 //!
+//! The slicer-free redesign (docs/superpowers/specs/2026-11-02-slicer-free-packer-design.md)
+//! adds `object_print` (an object split into typed kinds), `keepout` (plate zones and the
+//! permission matrix over kinds) and the modules named in its section 12.
+//!
 //! Everything the binaries and tests use is re-exported here.
 
 mod collision;
@@ -34,23 +38,34 @@ pub mod assemble;
 pub mod bed_outline;
 pub mod colored_packer;
 pub mod embedded_mesh;
+pub mod first_layer;
 pub mod gcode_collisions;
 pub mod gcode_frame;
+pub mod keepout;
+pub mod kind_masks;
+pub mod mesh_section;
 pub mod nozzle_clean;
+pub mod object_print;
 pub mod orca_presets;
 pub mod orca_project;
+pub mod pack;
+pub mod paint;
 pub mod plate_centre;
 pub mod plate_preview;
+pub mod polygon_ops;
 pub mod print_time;
 pub mod process_output;
 pub mod progress;
 pub mod purge_detect;
 pub mod scheduler;
 pub mod slicer_cli;
+pub mod support_model;
+pub mod tower_model;
 
 pub use collision::{placement_is_allowed, placements_collide};
 pub use footprint::{
-    Footprint, LAYER_ZONE_GAP_MM, LayerZone, patch_overshoot_mm, patch_within_silhouette,
+    Footprint, LAYER_ZONE_GAP_MM, LayerZone, SUPPORT_BODY_GAP_MM, patch_overshoot_mm,
+    patch_within_silhouette,
 };
 pub use gcode_footprint::{
     first_layer_footprint, first_layer_footprint_of, support_interface_loops,
@@ -61,6 +76,8 @@ pub use geometry::{
     polygon_area, union_loops,
 };
 pub use grid::grid_layout;
+pub use keepout::{Keepout, KeepoutClass, PlateRules};
+pub use object_print::{ObjectPrint, PrintKind, Realization};
 pub use options::{PackOptions, PackResult, PackedPlacement};
 pub use packing::pack_footprint;
 pub use pixel_mask::{PixelMask, masks_overlap};

@@ -145,6 +145,7 @@ fn run() -> Result<(), String> {
                 lock_orientation: false,
                 seed,
                 support_overlap_mm: None,
+                plate_rules: None,
             };
             let started = Instant::now();
             let grid = grid_layout(&rotated, &options);

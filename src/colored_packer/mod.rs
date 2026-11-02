@@ -4,6 +4,7 @@
 
 use std::error::Error;
 
+pub mod bed_rules;
 mod cli_settings;
 mod prime_tower;
 mod profile;

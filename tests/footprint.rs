@@ -1,6 +1,7 @@
 use goat_packer::{
-    Footprint, Point, Rect, extract_footprint, first_layer_footprint, loops_touch_rect,
-    patch_overshoot_mm, patch_within_silhouette, polygon_area,
+    Footprint, LayerZone, ObjectPrint, Point, PrintKind, Rect, extract_footprint,
+    first_layer_footprint, loops_touch_rect, patch_overshoot_mm, patch_within_silhouette,
+    point_in_footprint, polygon_area,
 };
 use std::{fs::File, io::Write};
 
@@ -685,4 +686,119 @@ G1 X60.000 Y60.000 E0.5
     let single = first_layer_footprint(with_left_foot.as_bytes(), Some((65.0, 65.0))).unwrap();
     let single_max = single.loops.iter().flatten().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
     assert!(single_max < 6.0, "one run reserves only its own foot: {single_max}");
+}
+
+/// A 20 mm first-layer patch around a 10 mm body: the ring between them is the support base.
+fn supported_footprint() -> Footprint {
+    let mut footprint = loops_footprint(vec![rect_loop(-10.0, -10.0, 10.0, 10.0)]);
+    footprint.body_loops = vec![rect_loop(-5.0, -5.0, 5.0, 5.0)];
+    footprint
+}
+
+#[test]
+fn legacy_adapter_splits_patch_into_body_and_support_base() {
+    let print = ObjectPrint::from_legacy(&supported_footprint());
+
+    assert_eq!(print.silhouette, vec![rect_loop(-5.0, -5.0, 5.0, 5.0)]);
+    assert_eq!(print.part_boxes, vec![Rect::new(-5.0, -5.0, 5.0, 5.0)]);
+    assert_eq!(
+        print.part_hulls.len(),
+        1,
+        "one hull for the one unknown part"
+    );
+    // The base is the patch minus the body: material in the ring, none under the body.
+    assert!(point_in_footprint(&print.support_base, 7.0, 0.0));
+    assert!(!point_in_footprint(&print.support_base, 0.0, 0.0));
+    assert!(!point_in_footprint(&print.support_base, 12.0, 0.0));
+    let ring_area: f64 = print
+        .support_base
+        .iter()
+        .map(|l| polygon_area(l).abs())
+        .sum();
+    assert!(
+        (ring_area - 500.0).abs() < 1e-6,
+        "outer 400 + hole 100 as even-odd rings: {ring_area}"
+    );
+}
+
+/// Empty landing = the body (the old two-zone rule); a given landing is kept.
+#[test]
+fn legacy_adapter_resolves_the_landing() {
+    let mut footprint = supported_footprint();
+    let print = ObjectPrint::from_legacy(&footprint);
+    assert_eq!(print.landing, print.silhouette);
+
+    footprint.support_landing_loops = vec![rect_loop(-4.0, -4.0, 4.0, 4.0)];
+    let print = ObjectPrint::from_legacy(&footprint);
+    assert_eq!(print.landing, vec![rect_loop(-4.0, -4.0, 4.0, 4.0)]);
+    assert_eq!(print.silhouette, vec![rect_loop(-5.0, -5.0, 5.0, 5.0)]);
+}
+
+/// Without a body zone the whole footprint is body: there are no supports to separate.
+#[test]
+fn legacy_adapter_treats_a_bodyless_footprint_as_all_body() {
+    let mut footprint = supported_footprint();
+    footprint.body_loops.clear();
+    let print = ObjectPrint::from_legacy(&footprint);
+
+    assert_eq!(print.silhouette, footprint.loops);
+    assert_eq!(print.landing, footprint.loops);
+    assert!(print.support_base.is_empty());
+}
+
+/// Empty and one-sided bands must keep their absolute index through the adapter.
+#[test]
+fn legacy_adapter_keeps_band_indices_aligned() {
+    let mut footprint = supported_footprint();
+    footprint.layer_zones = vec![
+        LayerZone {
+            support_loops: vec![rect_loop(-8.0, -8.0, 8.0, 8.0)],
+            body_loops: vec![rect_loop(-5.0, -5.0, 5.0, 5.0)],
+        },
+        LayerZone::default(),
+        LayerZone {
+            support_loops: Vec::new(),
+            body_loops: vec![rect_loop(-3.0, -3.0, 3.0, 3.0)],
+        },
+    ];
+    let print = ObjectPrint::from_legacy(&footprint);
+
+    assert_eq!(
+        (print.body.len(), print.support.len(), print.interface.len()),
+        (3, 3, 3)
+    );
+    assert_eq!(print.band_count(), 3);
+    assert_eq!(
+        print.loops_of(PrintKind::SupportBand, 0),
+        [rect_loop(-8.0, -8.0, 8.0, 8.0)]
+    );
+    assert!(print.loops_of(PrintKind::BodyBand, 1).is_empty());
+    assert_eq!(
+        print.loops_of(PrintKind::BodyBand, 2),
+        [rect_loop(-3.0, -3.0, 3.0, 3.0)]
+    );
+    assert!(print.loops_of(PrintKind::SupportBand, 2).is_empty());
+    assert!(
+        print.loops_of(PrintKind::InterfaceBand, 0).is_empty(),
+        "legacy has no interface split"
+    );
+    assert!(print.loops_of(PrintKind::BodyBand, 99).is_empty());
+    assert!(
+        print.loops_of(PrintKind::TowerBody, 0).is_empty(),
+        "the tower is plate-level"
+    );
+}
+
+#[test]
+fn legacy_adapter_marks_its_provenance_and_survives_a_state_file() {
+    let print = ObjectPrint::from_legacy(&supported_footprint());
+    assert_eq!(print.rotation_deg, 0.0);
+    assert_eq!(print.provenance.flavour, "legacy-footprint");
+
+    let json = serde_json::to_string(&print).unwrap();
+    assert_eq!(serde_json::from_str::<ObjectPrint>(&json).unwrap(), print);
+    // A state written before a field existed still loads.
+    let minimal: ObjectPrint = serde_json::from_str(r#"{"rotation_deg": 180.0}"#).unwrap();
+    assert_eq!(minimal.rotation_deg, 180.0);
+    assert!(minimal.silhouette.is_empty());
 }

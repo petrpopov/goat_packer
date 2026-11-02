@@ -255,6 +255,7 @@ pub fn pack_options(
         // Only bites when the footprint has a support zone (the locked patch ∪ silhouette
         // branch); a silhouette footprint has body == full and the option is a no-op.
         support_overlap_mm: args.support_overlap_mm,
+        plate_rules: None,
     })
 }
 
@@ -377,6 +378,7 @@ mod tests {
             stall_attempts: args.stall,
             seed: args.seed,
             support_overlap_mm: None,
+            plate_rules: None,
         };
         validate_result(&footprint, &options, &result).unwrap();
     }

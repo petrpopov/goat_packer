@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 geo = "0.33"
+i_overlay = "4.5"
+libm = "0.2"
 quick-xml = "0.42"
 rayon = "1.10"
 serde = { version = "1", features = ["derive"] }

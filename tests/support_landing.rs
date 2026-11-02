@@ -61,6 +61,7 @@ fn options() -> PackOptions {
         stall_attempts: 0,
         seed: 1,
         support_overlap_mm: None,
+        plate_rules: None,
     }
 }
 

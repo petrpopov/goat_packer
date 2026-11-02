@@ -2,6 +2,7 @@
 
 use crate::footprint::Footprint;
 use crate::geometry::{Point, Rect, polygon_area, rotate_loops};
+use crate::keepout::PlateRules;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -50,6 +51,24 @@ pub struct PackOptions {
     /// footprints without a separate body zone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub support_overlap_mm: Option<f64>,
+    /// The plate's zone rules for the slicer-free core (design 2026-11-02 §7). `None` = the
+    /// bed fields above decide, as before; see `effective_plate_rules` for their conversion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plate_rules: Option<PlateRules>,
+}
+
+impl PackOptions {
+    /// `plate_rules`, or today's `bed`, `body_bed`, `exclusions` and `body_exclusions` as rules.
+    pub fn effective_plate_rules(&self) -> PlateRules {
+        self.plate_rules.clone().unwrap_or_else(|| {
+            PlateRules::from_legacy(
+                self.bed,
+                self.body_bed,
+                &self.exclusions,
+                &self.body_exclusions,
+            )
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

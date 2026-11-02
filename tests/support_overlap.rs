@@ -57,6 +57,7 @@ fn options(support_overlap_mm: Option<f64>) -> PackOptions {
         stall_attempts: 0,
         seed: 1,
         support_overlap_mm,
+        plate_rules: None,
     }
 }
 
