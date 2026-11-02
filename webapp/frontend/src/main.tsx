@@ -11,10 +11,7 @@ import '@fontsource/ibm-plex-sans/700.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/600.css';
-import './styles/tokens.css';
-import './styles/core.css';
-import './styles/shell.css';
-import './styles/workspace.css';
+import './styles/app.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

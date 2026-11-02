@@ -121,12 +121,17 @@ export function DraftStatusStrip({ file, selection, parsing, canSubmit, submitti
   );
   return (
     <StatusStrip
-      title={file ? <span className="fname">{file.name}</span> : 'Модель не выбрана'}
+      title={<span className="fname">{file ? file.name : 'Модель не выбрана'}</span>}
       detail={detail}
       line={{ kind: 'off' }}
       actions={actions}
-      // У черновика «Инфо» нет — пустое место той же ширины, чтобы текст не прыгал.
-      lead={<span className="info-slot" aria-hidden="true" />}
+      // У черновика «Инфо» есть, но недоступна: этапов и файлов ещё нет, а текст не прыгает при запуске.
+      lead={
+        <button type="button" className="info-btn" disabled>
+          <Icon name="info" />
+          Инфо
+        </button>
+      }
     />
   );
 }

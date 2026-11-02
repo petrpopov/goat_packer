@@ -131,26 +131,18 @@ export default function SchedulePage() {
     <div className="work">
       <form id={FORM_ID} className="form-col" onSubmit={handleSubmit}>
         <section className="stack">
-          <div className="source-switch">
-            {packHandoff && (
-              <button
-                type="button"
-                className={`btn${source === 'pack' ? ' btn-primary' : ''}`}
-                disabled={busy}
-                onClick={() => setSource('pack')}
-              >
+          {/* Источник — выбор из двух, а не действие: сегменты, чтобы главной кнопкой на экране осталась «Построить».
+              Без результата упаковки выбирать не из чего — переключателя нет. */}
+          {packHandoff && (
+            <div className="seg" role="group" aria-label="Источник">
+              <button type="button" aria-pressed={source === 'pack'} disabled={busy} onClick={() => setSource('pack')}>
                 Из упаковки
               </button>
-            )}
-            <button
-              type="button"
-              className={`btn${source === 'file' ? ' btn-primary' : ''}`}
-              disabled={busy}
-              onClick={() => setSource('file')}
-            >
-              Файл .3mf
-            </button>
-          </div>
+              <button type="button" aria-pressed={source === 'file'} disabled={busy} onClick={() => setSource('file')}>
+                Файл .3mf
+              </button>
+            </div>
+          )}
 
           {source === 'pack' && packHandoff ? (
             <p className="source-note">

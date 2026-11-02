@@ -47,7 +47,7 @@ export function bedGroup(bed: BedSpec): THREE.Group {
       new THREE.ExtrudeGeometry(shapeOf(bed.plate), { depth: PLATE_DEPTH_MM, bevelEnabled: false }),
       new THREE.MeshLambertMaterial()
     ),
-    '--plate'
+    '--scene-plate'
   );
   plate.position.z = PLATE_Z;
   // Без вырезов (край области может совпадать с краем пластины — триангуляция ломается):
@@ -57,12 +57,12 @@ export function bedGroup(bed: BedSpec): THREE.Group {
       new THREE.ShapeGeometry(shapeOf(bed.plate)),
       new THREE.MeshBasicMaterial({ transparent: true, opacity: FORBIDDEN_OPACITY, depthWrite: false })
     ),
-    '--keepout'
+    '--scene-keepout'
   );
   forbidden.position.z = FORBIDDEN_Z;
   const top = themed(
     new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(rectPoints(bed.usable))), new THREE.MeshBasicMaterial()),
-    '--plate-top'
+    '--scene-plate-top'
   );
   top.position.z = USABLE_Z;
   group.add(plate, forbidden, top);
@@ -75,13 +75,13 @@ export function bedGroup(bed: BedSpec): THREE.Group {
     grid.push(u.x0, y, 0, u.x1, y, 0);
   const gridLines = themed(
     lines(grid, new THREE.LineBasicMaterial({ transparent: true, opacity: GRID_OPACITY })),
-    '--plate-grid'
+    '--scene-plate-grid'
   );
   gridLines.position.z = GRID_Z;
   group.add(gridLines);
 
   for (const rect of bed.exclusions) {
-    const exclusion = themed(flatRect(rect, EXCLUSION_OPACITY), '--keepout');
+    const exclusion = themed(flatRect(rect, EXCLUSION_OPACITY), '--scene-keepout');
     exclusion.position.z = EXCLUSION_Z;
     group.add(exclusion);
   }
@@ -99,6 +99,6 @@ export function bedGroup(bed: BedSpec): THREE.Group {
     side.x - t, a.y0, 0, side.x + t, a.y0, 0,
     side.x - t, a.y1, 0, side.x + t, a.y1, 0,
   ];
-  group.add(themed(lines(dims, new THREE.LineBasicMaterial()), '--fg-dim'));
+  group.add(themed(lines(dims, new THREE.LineBasicMaterial()), '--dim'));
   return group;
 }

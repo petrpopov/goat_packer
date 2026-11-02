@@ -1,29 +1,30 @@
 ---
 name: Goat Packer
-description: Stone & Spark, a warm-stone operating UI with one signal-orange spark for actions and machine progress.
+description: Paper & Spark, a hairline-paper operating UI with a blue-black night, one signal-orange spark for actions and machine progress, schematic blue for geometry.
 colors:
-  # Light ("Камень", stone) is the base key; the dark (warm charcoal) value of the
-  # same role is the sibling key with the "-dark" suffix.
-  bg: "#ebe7e2"
-  bg-dark: "#121110"
-  chrome: "#e3ded8"
-  chrome-dark: "#0f0e0d"
-  panel: "#f8f6f3"
-  panel-dark: "#1b1918"
-  panel-2: "#e0dbd5"
-  panel-2-dark: "#23201e"
-  hover: "#d9d3cc"
-  hover-dark: "#2a2724"
-  border: "#cdc6be"
-  border-dark: "#34302c"
-  border-strong: "#aba299"
-  border-strong-dark: "#45403a"
-  text: "#1b1916"
-  text-dark: "#ece8e3"
-  muted: "#5a5249"
-  muted-dark: "#a49d95"
-  dim: "#5a5249"
-  dim-dark: "#958e86"
+  # Light ("Бумага", paper) is the base key; the dark (blue-black, "Бездна") value of the
+  # same role is the sibling key with the "-dark" suffix. Neutrals come from Parallel Web
+  # Systems (paper, hairlines) and Brex (Abyss/Carbon night), via styles.refero.design.
+  bg: "#f5f4f1"
+  bg-dark: "#0f1215"
+  chrome: "#eeedea"
+  chrome-dark: "#0b0e11"
+  panel: "#ffffff"
+  panel-dark: "#15191e"
+  panel-2: "#eeeeee"
+  panel-2-dark: "#1c2127"
+  hover: "#e5e5e5"
+  hover-dark: "#232931"
+  border: "#e2e1de"
+  border-dark: "#2c333b"
+  border-strong: "#858483"
+  border-strong-dark: "#66707b"
+  text: "#181818"
+  text-dark: "#eef0f2"
+  muted: "#434343"
+  muted-dark: "#9aa3ad"
+  dim: "#5c5c5c"
+  dim-dark: "#8b95a0"
   accent: "#9c3d00"
   accent-dark: "#ff9640"
   accent-fill: "#ff7a1a"
@@ -34,34 +35,36 @@ colors:
   accent-soft-dark: "#ff964024"
   signal: "#ff7a1a"
   signal-dark: "#ff9640"
-  accent-2: "#006b4a"
-  accent-2-dark: "#3ddc91"
-  accent-2-soft: "#006b4a1f"
-  accent-2-soft-dark: "#3ddc9124"
-  ok: "#1f7a3a"
-  ok-dark: "#3ddc91"
-  ok-soft: "#1f7a3a1f"
-  ok-soft-dark: "#3ddc911f"
-  warn: "#9a5b00"
+  accent-2: "#0d6ea5"
+  accent-2-dark: "#5cb3e6"
+  accent-2-soft: "#0d6ea51f"
+  accent-2-soft-dark: "#5cb3e624"
+  ok: "#176b3d"
+  ok-dark: "#45d483"
+  ok-soft: "#176b3d1f"
+  ok-soft-dark: "#45d4831f"
+  warn: "#875000"
   warn-dark: "#ffcd48"
-  warn-soft: "#9a5b001f"
+  warn-soft: "#8750001f"
   warn-soft-dark: "#ffcd4824"
-  crit: "#c42847"
-  crit-dark: "#ff6285"
-  crit-soft: "#c428471a"
-  crit-soft-dark: "#ff628524"
-  scene-bg: "#e4dfd9"
-  scene-bg-dark: "#161413"
-  scene-plate: "#2b2724"
-  scene-plate-dark: "#070606"
-  scene-plate-top: "#faf8f5"
-  scene-plate-top-dark: "#221f1c"
-  scene-plate-grid: "#e2dcd4"
-  scene-plate-grid-dark: "#302c28"
-  scene-keepout: "#8f877e"
-  scene-keepout-dark: "#ece8e3"
-  scene-object: "#aea69c"
-  scene-object-dark: "#c2bbb3"
+  crit: "#ad2840"
+  crit-dark: "#ff6b81"
+  crit-soft: "#ad28401a"
+  crit-soft-dark: "#ff6b8124"
+  crit-ink: "#ffffff"
+  crit-ink-dark: "#2a0610"
+  scene-bg: "#eeeeee"
+  scene-bg-dark: "#12161a"
+  scene-plate: "#2a2b2d"
+  scene-plate-dark: "#07090b"
+  scene-plate-top: "#fbfbfa"
+  scene-plate-top-dark: "#1a1f25"
+  scene-plate-grid: "#e6e5e2"
+  scene-plate-grid-dark: "#262d35"
+  scene-keepout: "#8a8987"
+  scene-keepout-dark: "#c9cfd6"
+  scene-object: "#a9a8a5"
+  scene-object-dark: "#b9c0c8"
 typography:
   page-title:
     fontFamily: "IBM Plex Sans, -apple-system, system-ui, sans-serif"
@@ -239,46 +242,46 @@ components:
 
 ## Overview
 
-**Creative North Star: "Камень и искра" (Stone & Spark)**
+**Creative North Star: "Бумага и искра" (Paper & Spark)**
 
-The interface is a workshop bench: warm stone in daylight, warm charcoal at night, dense and quiet so the work on it is what you see. One bright signal orange is the spark. It marks what the user can do (the primary action) and what the machine is doing right now (progress, the slicing plane). A single green is reserved for geometry truth: the measured projection contour, the tower, "готово". Everything else is tonal stone.
+The interface is an engineering journal: light paper ruled with hairlines by day, a blue-black "Abyss" at night, quiet so the work on it is what you see. One bright signal orange is the spark. It marks what the user can do (the primary action) and what the machine is doing right now (progress, the slicing plane). A schematic blue draws the geometry the packer measured: the projection contour and the tower. Green is only a status ("готово"). Everything else is paper, ink and hairlines.
 
 Mode is **Operate**: a product UI used for minutes at a time next to a slicer. Precision and restraint beat expression. Familiar patterns, 13px body, tight but legible density, numbers in a monospaced face that never jitters. Brand lives in the details (the spark, the scene), not in decoration.
 
-It is warm but deliberately not the Anthropic look: dense grey-beige stone instead of pale cream, a loud signal orange instead of clay, a grotesque instead of a serif.
+It is deliberately not the Anthropic look: near-neutral paper and white panels instead of beige stone or pale cream, a cool blue-black night instead of warm charcoal, a loud signal orange instead of clay, a grotesque instead of a serif. The neutrals follow Parallel Web Systems (paper, hairlines) and Brex (Abyss, Carbon); the orange is the project's own and does not change.
 
 **Key Characteristics:**
-- Two themes of one material: stone (light) and warm charcoal (dark), switched with `data-theme`.
-- One spark (orange) for action and machine progress; one green for geometry truth and success.
-- Flat tonal layering; shadows only on floating layers.
+- Two themes: paper (light) and blue-black (dark), switched with `data-theme`.
+- One spark (orange) for action and machine progress; one schematic blue for measured geometry; green for success only.
+- Flat layering: white panels on paper, hairline borders; shadows only on floating layers.
 - IBM Plex Sans for UI, JetBrains Mono with tabular figures for every number.
 - Thin 24px stroke icons from one sprite.
 
 ## Colors
 
-Warm, low-chroma neutrals carry the whole surface; chroma is spent only on the spark and on truth.
+Near-neutral paper and ink carry the whole surface; chroma is spent only on the spark, the measured geometry and status.
 
-**Token convention.** Each frontmatter key is the light ("Камень") value; the same role in the dark theme is the sibling key with a `-dark` suffix (`accent` / `accent-dark`). In CSS both map to one custom property (`--accent`) redefined under `:root[data-theme="dark"]`. Components reference the base key; the theme picks the value.
+**Token convention.** Each frontmatter key is the light ("Бумага") value; the same role in the dark theme is the sibling key with a `-dark` suffix (`accent` / `accent-dark`). In CSS both map to one custom property (`--accent`) redefined under `:root[data-theme="dark"]`. Components and the scene reference the base key; the theme picks the value. There are no alias names: `tokens.css` declares exactly these keys.
 
 ### Primary
-- **Spark Orange, text** (`accent` / `accent-dark`): links, active nav icon, running pill, ID links in tables. On light it is the burnt `#9c3d00` (5.5:1 on bg); on dark the bright orange (8.7:1 on bg).
+- **Spark Orange, text** (`accent` / `accent-dark`): links, active nav icon, running pill, ID links in tables, focus outline. On light it is the burnt `#9c3d00` (6.2:1 on bg); on dark the bright orange (8.7:1 on bg).
 - **Spark Orange, fill** (`accent-fill`): the primary button and Gantt print bars. Always with `accent-ink` text (7.3:1 on light fill, 8.8:1 on dark fill).
 - **Signal** (`signal`): machine progress only: done/current progress segments, current stage dot, the rising slice plane in the scene.
 - **Spark Haze** (`accent-soft`): active nav background, input focus ring, selection, calculation readouts.
 
 ### Secondary
-- **Geometry Green** (`accent-2`, `accent-2-soft`): projection contour, tower keepout, "готово" moments. On light `#006b4a` (5.3:1 on bg).
+- **Schematic Blue** (`accent-2`, `accent-2-soft`): projection contour, tower keepout, the measured footprint. On light `#0d6ea5` (5.5:1 on bg); on dark `#5cb3e6`.
 
 ### Status
-- **ok / warn / crit** with `-soft` tints for banners and pills. `warn` also marks stubs ("скоро", "заготовка").
+- **ok / warn / crit** with `-soft` tints for banners and pills; `crit-ink` is the text on a `crit` fill (danger button, error toast). `ok` is green and means only "done". `warn` also marks stubs ("скоро", "заготовка").
 
 ### Neutral
-- **Bench Stone / Charcoal** (`bg`): page background.
-- **Chrome** (`chrome`): topbar and sidebar, one step darker than bg.
-- **Panel / Panel-2** (`panel`, `panel-2`): raised working surfaces; panel-2 is the recessed well (segmented track, table header, progress track, notes).
+- **Paper / Abyss** (`bg`): page background.
+- **Chrome** (`chrome`): topbar and sidebar, one step off bg.
+- **Panel / Panel-2** (`panel`, `panel-2`): white working surfaces (Carbon at night); panel-2 is the recessed well (segmented track, table header, progress track, notes).
 - **Hover** (`hover`): row and ghost-button hover.
-- **Border / Border-strong**: hairlines between regions; strong for control outlines.
-- **Text / Muted / Dim**: primary copy (14.3:1 on light bg), secondary copy, hints. On light, muted and dim share `#5a5249` (6.2:1) so hints never drop below AA.
+- **Border / Border-strong**: hairlines between regions; strong for control outlines (field edges at 3:1 or better against panel).
+- **Text / Muted / Dim**: primary copy (16:1 on light bg), secondary copy, hints (6:1 on light bg, so hints never drop below AA).
 
 ### Scene (Goat Packer-specific)
 - `scene-bg`, `scene-plate` (the dark build-plate edge), `scene-plate-top` (usable area), `scene-plate-grid`, `scene-keepout` (forbidden zones), `scene-object` (placed silhouettes, flat fill). The projection contour and tower use `accent-2`; the slicing plane uses `signal`.
@@ -286,9 +289,9 @@ Warm, low-chroma neutrals carry the whole surface; chroma is spent only on the s
 ### Named Rules
 **The One Spark Rule.** Orange appears only where the user acts (`accent-fill`) or the machine works (`signal`). Never as decoration, section color or illustration fill.
 
-**The Burnt-on-Stone Rule.** On light surfaces orange text is only `#9c3d00`. `#ff7a1a` is fill-only on light (2.4:1 as text, fails).
+**The Burnt-on-Paper Rule.** On light surfaces orange text is only `#9c3d00`. `#ff7a1a` is fill-only on light (2.4:1 as text, fails).
 
-**The Truth Is Green Rule.** Green means "measured and correct": projection contour, tower, success. Not for categories, not for charts, not for night bands.
+**The Geometry Is Blue Rule.** Schematic blue means "measured by the packer": projection contour, tower, footprint. Not for links, categories, charts or night bands; success is `ok` green, not blue.
 
 ## Typography
 
@@ -321,16 +324,16 @@ Work screen (Goat Packer-specific): **form column 320px** (vertical form, fields
 
 Content pages (tables, job detail): centred, max-width 1100px, 24px padding, 16px gaps.
 
-Responsive: at ≤1180px the side panel drops below the columns and the form narrows to 300px; at ≤760px the sidebar hides and the form stacks above the main column.
+Responsive: at ≤1180px the side panel drops below the columns and the form narrows to 300px; at ≤1024px the sidebar shows as the rail whatever the toggle says (sidebar, form and work column do not fit side by side); at ≤760px the sidebar becomes a row of tabs and the form stacks above the main column. No width from 320 to 1920 scrolls sideways (`overflow-x: clip` on `html` and `body`).
 
 **The Same-Place Rule.** Progress and results render in the column where the job started. No navigation for status.
 
 ## Elevation & Depth
 
-Flat by default. Depth is tonal: chrome is darker than bg, panels lighter (light theme) or one step up (dark), panel-2 recessed. Hairline borders separate regions. Shadows exist only for floating layers and the active segment.
+Flat by default. Depth is tonal: chrome one step off bg, white panels on paper (light) or Carbon one step up (dark), panel-2 recessed. Hairline borders separate regions. Shadows exist only for floating layers and the active segment.
 
 ### Shadow Vocabulary
-- **Float** (`0 16px 48px rgb(0 0 0 / .12), 0 2px 8px rgb(0 0 0 / .08)`; dark `.5` / `.3`): menus, popovers.
+- **Float** (`0 16px 48px` ink at 12%, `0 2px 8px` ink at 8%; dark black at 50% / 30%): menus, popovers, tooltips. No hairline border under it on the same surface.
 - **Lift** (`0 1px 2px rgb(0 0 0 / .08)`; dark `.3`): primary button, active segmented option.
 
 ### Named Rules
@@ -354,26 +357,28 @@ Icons: 24px viewBox, stroke-only, `stroke-width: 1.75`, round caps and joins, `c
 
 ### Inputs / Fields
 - **Style:** 32px, panel background, `border-strong`, 6px, 10px side padding. Label (500) above, hint (12px `dim`) below, 5px gap.
-- **Focus:** border turns `accent`, plus a 3px `accent-soft` ring; no outline.
+- **Focus:** border turns `accent`, plus a 3px `accent-soft` ring; no outline. The ring appears instantly (no transition on `box-shadow`).
 - **Suffix action:** password "показать" eye as an icon button inside the right edge.
 - **Segmented control:** panel-2 track with 2px padding; options 26px, 12.5px/500, `muted`; selected option is panel + text + lift + 1px border ring.
 - **Checkbox with nested reveal:** native checkbox in `accent`, label 500 with a 12px `dim` line under it; when checked, dependent fields appear indented 24px ("Учитывать реальную смену прутка" → "Смена прутка, с" + "Откалибровать заново…").
 - **Disclosure:** 12px/600 `muted` text with a chevron that rotates 180° ("Дополнительно").
+- **Select:** the native select keeps the same stroke chevron as the printer picker (drawn in `muted`), never the UA triangle.
+- **Choice of source** (schedule: "Из упаковки" / "Файл .3mf"): a segmented control, never two buttons, so the view keeps one primary.
 
 ### File chip and drop zone
 Drop zone: 10px dashed card, upload icon, "Перетащите 3MF или выберите файл". After upload it becomes a file chip: 10px card with file icon, name (500, ellipsis), meta line (12px `dim`, mono numbers) and a remove icon button.
 
 ### Progress (signature)
-One 8px bar, segments proportional to each stage's share, 2px gaps. Done = `signal`; current = `signal` filled to its percentage over `border-strong`; pending = `border-strong` at 35%; skipped = diagonal hatching. Above: current stage in 600 and mono "идёт 1:12 · осталось ~3 мин". Below: stage list with 7px dots (current dot gets a 3px `accent-soft` halo; optional stages have dashed dots and "если понадобится"). Never show stage ids.
+Bars fill with `transform: scaleX()` (never animated `width`). One 8px bar, segments proportional to each stage's share, 2px gaps. Done = `signal`; current = `signal` filled to its percentage over `border-strong`; pending = `border-strong` at 35%; skipped = diagonal hatching. Above: current stage in 600 and mono "идёт 1:12 · осталось ~3 мин". Below: stage list with 7px dots (current dot gets a 3px `accent-soft` halo; optional stages have dashed dots and "если понадобится"). Never show stage ids.
 
 ### Result banner
 10px tonal card in `ok-soft` (or `crit-soft`), 20px status icon, title 600/14px ("Стол готов: 38 объектов"), muted line, then a stats row (12px `dim` label over 15px mono value) and actions. No border, no stripe.
 
 ### Pills
-Pill radius, 12px/500, 6px currentColor dot: ok, running (`accent`), error, queued (panel-2 + muted). Status only.
+Pill radius, 12px/500, 6px currentColor dot (the dot is the live state, not decoration): ok, running (`accent`), error, queued (panel-2 + muted). Status only.
 
 ### Tables
-Panel background, 1px border, 10px corners. Header row panel-2, 12px/500 `dim`, 9px 14px. Rows 44px, hairline separators, `hover` on hover. ID column is a mono `accent` link to the detail page.
+Panel background, 1px border, 10px corners. Header row panel-2, 12px/500 `dim`, sentence case, untracked, 9px 14px. Rows 44px, hairline separators, `hover` on hover. ID column is a mono `accent` link to the detail page.
 
 ### Navigation
 Sidebar items 34px, 6px corners, icon + label 500 in `muted`; hover `hover` + `text`; active `accent-soft` background, `text` label, `accent` icon. In rail mode labels hide and icons centre. Separator: 1px border with 8px margins.
@@ -388,7 +393,7 @@ Single column, max 380px, centred; heading 22px/600, muted subline, 14px field g
 Icon button in the topbar: sun in dark theme, moon in light. Sets `data-theme="light|dark"` on `<html>` and persists to `localStorage`; first visit follows `prefers-color-scheme`. Apply before first paint to avoid a flash.
 
 ### Motion
-Calm and functional: 150–200ms ease-out for hover, focus, disclosure and panel reveals. No bounce, no parallax, no animated layout entry.
+Calm and functional: 150–200ms ease-out for hover, disclosure and panel reveals; focus rings appear instantly. Only `transform`, `opacity` and colours animate. Tooltips show after 800ms on hover and at once on keyboard focus. No bounce, no parallax, no animated layout entry.
 
 ### Scene card (Goat Packer-specific)
 A 10px card in `scene-bg` with a 16:9.4 isometric/orthographic view of the real build plate: dark plate edge, light usable area with grid, keepouts, objects as flat-filled prisms of their real silhouettes and height. Corner tags (12px `dim`, values in `text` 500), legend top-right (12×9px swatches), dimension labels in mono 11.5px on a `scene-bg` chip. During a job the scene shows real stages (probe slice, layout, assembly from the centre, rising `signal` slice plane); with `prefers-reduced-motion: reduce` it shows a still frame of the current state. Results allow mouse rotation.
@@ -398,7 +403,7 @@ A 10px card in `scene-bg` with a 16:9.4 isometric/orthographic view of the real 
 ### Do:
 - **Do** keep orange to the primary action, progress and the slice plane; one primary button per view.
 - **Do** use `#9c3d00` for orange text and icons on light, `#ff7a1a` only as a fill with `#1a0d00` ink.
-- **Do** use green only for the projection contour, tower and success states.
+- **Do** use schematic blue only for the projection contour, tower and footprint, and green only for success.
 - **Do** set every changing number in JetBrains Mono with tabular figures.
 - **Do** separate regions with tonal steps and 1px hairlines; reserve shadows for menus and the pressed segment.
 - **Do** write UI copy in Russian, plain and specific: "Упаковать", "Отменить", "Стол готов", "Откалибровать заново…"; hide internal jargon ("Фаза 1", `final_slice`).
@@ -407,7 +412,7 @@ A 10px card in `scene-bg` with a 16:9.4 isometric/orthographic view of the real 
 - **Do** draw icons as 24px stroke paths (1.75, round) in one sprite.
 
 ### Don't:
-- **Don't** use pale cream backgrounds (the `#faf9f5` / `#f0eee6` family); light bg stays dense stone `#ebe7e2`.
+- **Don't** use beige stone or pale cream backgrounds (the `#ebe7e2`, `#faf9f5`, `#f0eee6` family); light bg stays near-neutral paper `#f5f4f1` with white panels, dark stays blue-black `#0f1215`.
 - **Don't** use clay orange (the `#d97757` family) or any second orange.
 - **Don't** use a serif or a display face anywhere.
 - **Don't** use gradient text, eyebrow labels, uppercase letterspaced captions or decorative glow.
@@ -415,5 +420,5 @@ A 10px card in `scene-bg` with a 16:9.4 isometric/orthographic view of the real 
 - **Don't** use colored `border-left` stripes for callouts or banners; use a tonal `-soft` background and an icon.
 - **Don't** use emoji as icons or status markers.
 - **Don't** use pills for anything except status and stub tags.
-- **Don't** use `accent-2` green for categorical data (e.g. night bands in the schedule Gantt); use a neutral or hatching instead.
+- **Don't** use `accent-2` blue or `ok` green for categorical data (e.g. night bands in the schedule Gantt); use a neutral or hatching instead.
 - **Don't** animate fake progress when real stage data exists.
