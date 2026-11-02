@@ -85,7 +85,8 @@ export default function PackScene({
               tower={placed.tower}
               usableOverride={placed.bed}
               readout={model ? `Модель: ${model.size.map((v) => Math.round(v)).join(' × ')} мм` : ''}
-              objectCount={pack.resultCount}
+              objectCount={pack.objectCount}
+              countPreliminary={pack.countPreliminary}
             />
           </Suspense>
         </ErrorBoundary>

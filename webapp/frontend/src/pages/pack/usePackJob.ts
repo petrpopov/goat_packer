@@ -43,6 +43,13 @@ export function usePackJob(jobId: string | null) {
   const deliverables: JobArtifact[] = checkDone && check ? check.artifacts : (job?.artifacts ?? []);
   /** Сколько объектов получилось; null — итога ещё нет. */
   const resultCount = job?.status === 'SUCCEEDED' && result ? result.objectCount : null;
+  /**
+   * Сколько объектов на столе — итог, а пока его нет, число последней раскладки пакера (layout-событие):
+   * раскладка готова за минуты, а сборка и нарезки после неё идут долго. preliminary — число ещё может
+   * измениться (перепаковка после выборочной нарезки или проверки).
+   */
+  const objectCount = resultCount ?? job?.layout?.objects ?? null;
+  const countPreliminary = resultCount == null && objectCount != null;
 
   const refetch = () => void query.refetch();
   // Проверка нарезкой идёт внутри той же задачи: адрес не меняется, опрос подхватывает её ход.
@@ -82,6 +89,8 @@ export function usePackJob(jobId: string | null) {
     checkDone,
     result,
     resultCount,
+    objectCount,
+    countPreliminary,
     deliverables,
     plateFile: visibleArtifacts(deliverables).find(isPlateFile),
     startCheck: checkMutation,

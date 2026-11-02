@@ -8,6 +8,7 @@ import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 import { startDownload } from '@/utils/artifacts';
 import { formatBytes, formatHoursMinutes, formatWaitMinutes, objectsText } from '@/utils/format';
+import { PRELIMINARY_HINT } from '@/utils/jobs';
 import { splitJobError } from '@/utils/jobs';
 import { stageClockText, stageElapsed, stripStage } from '@/utils/progress';
 import type { PackJob } from './usePackJob';
@@ -161,11 +162,20 @@ interface StripContent {
 export function JobStatusStrip(props: JobStatusProps) {
   const { jobId, pack, fallbackName, infoOpen, onToggleInfo } = props;
   const name = pack.job?.originalName ?? fallbackName;
-  // Рядом с именем — сколько объектов получилось (id задачи пользователю ничего не говорит); без итога — ничего.
+  // Рядом с именем — сколько объектов на столе (id задачи пользователю ничего не говорит): итог или, пока его
+  // нет, число последней раскладки с «≈»; до первой раскладки — ничего.
   const title = (
     <>
       <span className="fname">{name || 'Задача'}</span>
-      {pack.resultCount != null ? <span className="job-id">{objectsText(pack.resultCount)}</span> : null}
+      {pack.objectCount != null ? (
+        <span
+          className={pack.countPreliminary ? 'job-id is-preliminary' : 'job-id'}
+          title={pack.countPreliminary ? PRELIMINARY_HINT : undefined}
+        >
+          {pack.countPreliminary ? '≈ ' : ''}
+          {objectsText(pack.objectCount)}
+        </span>
+      ) : null}
     </>
   );
   const content = useJobStripContent(props);

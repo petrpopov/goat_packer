@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { PRELIMINARY_HINT } from '@/utils/jobs';
 import Icon from '@/components/Icon';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -33,8 +34,10 @@ export interface BedSceneProps {
   /** Подписи в углах сцены. */
   caption?: string;
   readout?: string;
-  /** Сколько объектов получилось на столе — числом под легендой; null — итога ещё нет. */
+  /** Сколько объектов на столе — числом под легендой; null — раскладки ещё нет. */
   objectCount?: number | null;
+  /** Число по промежуточной раскладке (итога ещё нет): приглушённое, с «≈». */
+  countPreliminary?: boolean;
 }
 
 const LAYER_MM = 0.2;
@@ -488,7 +491,12 @@ export default function BedScene(props: BedSceneProps) {
           </span>
         )}
         {props.objectCount != null && (
-          <b className="scene-count" aria-label={`Объектов на столе: ${props.objectCount}`}>
+          <b
+            className={props.countPreliminary ? 'scene-count is-preliminary' : 'scene-count'}
+            aria-label={`Объектов на столе: ${props.countPreliminary ? 'около ' : ''}${props.objectCount}`}
+            title={props.countPreliminary ? PRELIMINARY_HINT : undefined}
+          >
+            {props.countPreliminary ? '≈ ' : ''}
             {props.objectCount}
           </b>
         )}

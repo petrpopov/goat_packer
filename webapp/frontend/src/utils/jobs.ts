@@ -42,3 +42,6 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
 export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
+
+/** Подсказка к предварительному числу объектов: раскладка готова, но пакер ещё может её изменить. */
+export const PRELIMINARY_HINT = 'Предварительно: по последней раскладке, после нарезок число может измениться';
