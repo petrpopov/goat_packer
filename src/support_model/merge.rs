@@ -17,9 +17,11 @@ pub use rounds::{Buckets, merge_rounds};
 
 /// Which way the box-tree order is read when buckets are cut (an ensemble axis of the model,
 /// not of the slicer). The behaviour spec's order vectors fix the permutation but not whether
-/// the slicer's own list runs along it or against it. Against the corpus, reading it against
-/// the permutation reproduces deterministic Orca slices (the flat-bridge and cantilever
-/// shapes) and the permutation order reproduces Bambu's, so both are members.
+/// the slicer's own list runs along it or against it. `Along` is the default: with the roof
+/// lines at the build's own angle, deterministic Orca slices and Bambu's both fit it, and
+/// `Against` adds area without moving the worst miss (corpus campaign 2026-11-03). It stays
+/// selectable (`--support-orders`) because the order of the tip list itself is a modelled
+/// unknown (spec 01 §5.7, 02 §4.2).
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MergeOrder {
     #[default]

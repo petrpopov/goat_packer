@@ -174,15 +174,15 @@ impl Flavour {
     /// campaign of 2026-11-03).
     pub fn first_layer_margin_mm(self) -> f64 {
         match self {
-            // P1S and A2L: 34 observations (CLI runs, GUI runs, the printed-OK plates): worst
-            // 2.30 mm, 180°, the feet under the right hoof.
-            Flavour::Bambu0208 => 2.4,
-            // The owner's Snapmaker GUI plates (4 plates, 8 observations): worst 1.61 mm. O has
+            // P1S and A2L: 70 observations (CLI runs at all rotations, GUI runs, plates; Along-only
+            // 45-degree roof lines): worst 3.46 mm (A2L, 0 degrees).
+            Flavour::Bambu0208 => 3.6,
+            // The owner's Snapmaker GUI plates (4 plates, 8 observations): worst 1.57 mm. O has
             // no support slices of its own and takes S's values.
             Flavour::Snapmaker240 | Flavour::Orca242 => 1.7,
-            // Vanilla Orca CLI on the U1 (10 observations): worst 3.50 mm at 180°. R is
+            // Vanilla Orca CLI on the U1 (40 observations): worst 4.85 mm over 40 observations at all rotations. R is
             // deterministic, so this is model error, not slicer noise.
-            Flavour::Orca250 => 3.6,
+            Flavour::Orca250 => 5.0,
         }
     }
 
@@ -192,13 +192,13 @@ impl Flavour {
     pub fn band_margins_mm(self) -> &'static [f64] {
         match self {
             Flavour::Bambu0208 => &[
-                5.15, 5.15, 5.15, 4.96, 4.96, 4.81, 3.94, 2.39, 2.05, 1.73, 1.28, 1.04, 0.76,
+                5.47, 5.47, 5.47, 5.38, 5.16, 5.01, 4.58, 3.03, 2.21, 1.74, 1.28, 1.19, 0.76,
             ],
             Flavour::Snapmaker240 | Flavour::Orca242 => &[
-                2.75, 2.75, 2.75, 2.51, 2.25, 1.91, 1.49, 1.33, 1.33, 1.33, 0.73, 0.61, 0.48,
+                2.23, 1.65, 1.42, 1.42, 1.42, 1.42, 1.42, 1.42, 1.42, 1.39, 1.08, 0.57, 0.48,
             ],
             Flavour::Orca250 => &[
-                6.56, 6.56, 6.56, 5.81, 4.73, 3.61, 2.33, 1.56, 1.56, 1.19, 0.87, 0.62, 0.5,
+                7.34, 7.34, 7.34, 5.87, 5.06, 3.89, 2.3, 1.71, 1.71, 1.33, 1.16, 0.63, 0.5,
             ],
         }
     }

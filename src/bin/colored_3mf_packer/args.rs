@@ -80,7 +80,8 @@ pub struct Args {
     /// `--support-source`: probe slices (default) or the support model.
     pub support_source: SupportSource,
     /// `--support-orders`: which readings of the slicers' merge order the support model runs
-    /// (`along`, `against`; default both).
+    /// (`along`, `against`; default `along`, the reading that matches the corpus once the roof
+    /// lines run at the build's own angle).
     pub support_orders: Vec<MergeOrder>,
     /// `--support-margins FIRST_LAYER:BAND` (mm): replaces the flavour's calibrated margins.
     pub support_margins: Option<(f64, f64)>,
@@ -231,7 +232,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
     let mut cache_dir = None;
     let mut support_source = SupportSource::default();
-    let mut support_orders = vec![MergeOrder::Along, MergeOrder::Against];
+    let mut support_orders = vec![MergeOrder::Along];
     let mut support_margins = None;
     let mut verify = false;
     let mut seed = DEFAULT_SEED;

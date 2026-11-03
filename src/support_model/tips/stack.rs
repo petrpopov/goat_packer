@@ -1,8 +1,6 @@
 //! Sampling one area into roofs and tips (spec 01 §5.4): the roof stack under a roof
 //! candidate, which line pattern the tips are seeded on, and the small-area fallback.
 
-use std::f64::consts::PI;
-
 use super::classify::{TipKind, status, still_valid, tip};
 use super::lines::{Polyline, pattern_polylines};
 use super::resample::resample;
@@ -10,9 +8,6 @@ use super::{ArcFamily, Context, RoofPiece};
 use crate::polygon_ops::{IntPoint, Island, Rings, area, difference, islands};
 use crate::support_model::node::Node;
 use crate::support_model::settings::MINIMUM_ROOF_AREA_MM2;
-
-/// Roof lines always run at 135°, whatever the layer (spec 01 §5.5 item 1).
-const ROOF_ANGLE: f64 = 3.0 * PI / 4.0;
 
 /// The floor of every resampling distance, mm.
 const SMALLEST_SPACING_MM: f64 = 0.1;
@@ -185,7 +180,7 @@ fn roof_lines(context: &Context, region: &Rings) -> Vec<Polyline> {
         context,
         region,
         context.stage.derived.fill.roof_line_spacing,
-        ROOF_ANGLE,
+        context.stage.flavour.roof_line_angle_degrees().to_radians(),
     )
 }
 

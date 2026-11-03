@@ -51,7 +51,7 @@ fn options() -> Options {
         cache_dir: None,
         json: None,
         dump: None,
-        orders: "along,against".to_owned(),
+        orders: "along".to_owned(),
         single: None,
         observations: Vec::new(),
     };

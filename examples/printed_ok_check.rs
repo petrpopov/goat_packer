@@ -30,7 +30,7 @@ fn main() {
     let plate = args.next().expect("plate key");
     let mut flavour_name = None;
     let mut cache_dir = None;
-    let mut orders_text = "along,against".to_owned();
+    let mut orders_text = "along".to_owned();
     let mut deltas = vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0];
     let mut printed_ok = PathBuf::from("/tmp/goat_calib/printed_ok.json");
     let mut pairs_only = false;
