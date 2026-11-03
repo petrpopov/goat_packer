@@ -69,8 +69,8 @@ pub use footprint::{
     patch_within_silhouette,
 };
 pub use gcode_footprint::{
-    SlicedObject, first_layer_footprint, first_layer_footprint_of, realization_from_gcode,
-    realizations_from_gcode, support_interface_loops, support_interface_loops_of,
+    SlicedObject, all_realizations_from_gcode, first_layer_footprint, first_layer_footprint_of,
+    realization_from_gcode, realizations_from_gcode, support_interface_loops, support_interface_loops_of,
 };
 pub use geometry::{
     Point, Rect, axis_aligned_line_keepout, grow_beyond, loops_touch_rect, point_in_footprint,

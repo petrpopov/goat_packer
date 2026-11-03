@@ -21,9 +21,6 @@ use crate::plan::{MemberResult, PackState};
 use crate::model::ClassSummary;
 use crate::source::paint_attribute_count;
 
-/// Where the supports of the plate came from.
-const SUPPORT_SOURCE: &str = "probe";
-
 #[derive(Debug, Serialize)]
 pub struct ColoredPackReport {
     pub source_3mf: String,
@@ -38,6 +35,8 @@ pub struct ColoredPackReport {
     pub flavour_approximated: bool,
     /// Per rotation class: runs sliced, whether the last runs added nothing, cache hit.
     pub probes: Vec<ClassSummary>,
+    /// Seconds the support model took (0 with probes).
+    pub model_seconds: f64,
     pub margins_mm: Margins,
     /// The slicer's support gap to the support's own model (project settings; the probes
     /// sliced with it and the output 3MF carries the same values, which assembly checks).
@@ -173,14 +172,12 @@ impl ColoredPackReport {
             object_count: state.placements.len(),
             clearance_mm: args.clearance,
             paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
-            support_source: SUPPORT_SOURCE,
+            support_source: args.support_source.as_str(),
             slicer_flavour: job.flavour.flavour.name().to_owned(),
             flavour_approximated: job.flavour.approximated,
             probes: summary.probes.clone(),
-            margins_mm: Margins {
-                first_layer: DELTA_FIRST_LAYER_MM,
-                bands: DELTA_BAND_MM,
-            },
+            model_seconds: summary.model_seconds,
+            margins_mm: margins_of(state),
             own_support_gap: job.own_gap,
             chosen_gaps: ChosenGaps {
                 foreign_base_mm: state.plan.foreign_gaps.base_mm,
@@ -272,4 +269,22 @@ pub fn write_report(job: &Job, report: &ColoredPackReport) -> AppResult<()> {
         );
     }
     Ok(())
+}
+
+/// The margins the plan's supports were grown by (the first class's: every class shares them).
+fn margins_of(state: &PackState) -> Margins {
+    state
+        .plan
+        .prints
+        .first()
+        .map_or(
+            Margins {
+                first_layer: DELTA_FIRST_LAYER_MM,
+                bands: DELTA_BAND_MM,
+            },
+            |print| Margins {
+                first_layer: print.provenance.margins.first_layer_mm,
+                bands: print.provenance.margins.band_mm,
+            },
+        )
 }

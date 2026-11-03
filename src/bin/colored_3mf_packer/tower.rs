@@ -43,15 +43,20 @@ struct Ring {
 /// The tower to reserve, `None` when the slicer printed none.
 pub fn tower_spec(job: &Job, probes: &[ClassProbe]) -> AppResult<Option<TowerSpec>> {
     let layers = union_layers(probes);
+    let model = model_tower(job);
     if layers.is_empty() {
-        println!("no prime/wipe tower in the probe slices; packing without a tower");
-        return Ok(None);
+        // Without probes (`--support-source model`) the tower model alone decides; with
+        // probes, a slice that printed no tower means there is none.
+        let Some(print) = model.as_ref().filter(|_| probes.is_empty()) else {
+            println!("no prime/wipe tower in the probe slices; packing without a tower");
+            return Ok(None);
+        };
+        return model_only_spec(job, print);
     }
     let anchor = job
         .tower_anchor
         .unwrap_or((layers[0].extent.min_x, layers[0].extent.min_y));
     let measured = measured_shape(&layers, anchor);
-    let model = model_tower(job);
     let shape = match &model {
         Some(print) => merged(&measured, &model_shape(print)),
         None => measured.clone(),
@@ -77,6 +82,40 @@ pub fn tower_spec(job: &Job, probes: &[ClassProbe]) -> AppResult<Option<TowerSpe
         brim_l0_mm: shape.brim_mm,
         chamfer: chamfer_entries(&shape.rings),
         // The GUI the plate is opened in decides whether a support over the brim warns.
+        brim_conflicts: job.flavour.flavour.conflict_tower_lines() != TowerLines::None,
+        top_z_mm: shape.top_z,
+        anchor_range,
+        source_anchor: Point {
+            x: anchor.0,
+            y: anchor.1,
+        },
+    }))
+}
+
+/// The tower the target GUI's model predicts, no probe involved.
+fn model_only_spec(job: &Job, print: &TowerPrint) -> AppResult<Option<TowerSpec>> {
+    let shape = model_shape(print);
+    let anchor_range = anchor_range(job, Some(print))?;
+    let anchor = job
+        .tower_anchor
+        .unwrap_or((anchor_range.min_x, anchor_range.min_y));
+    println!(
+        "prime tower (model): column {:.1}x{:.1} mm, brim {:.1} mm, {} chamfer rings, top z {:.1}; \
+         anchor range x [{:.1}, {:.1}], y [{:.1}, {:.1}]",
+        shape.body.max_x - shape.body.min_x,
+        shape.body.max_y - shape.body.min_y,
+        shape.brim_mm,
+        shape.rings.len(),
+        shape.top_z,
+        anchor_range.min_x,
+        anchor_range.max_x,
+        anchor_range.min_y,
+        anchor_range.max_y,
+    );
+    Ok(Some(TowerSpec {
+        body: shape.body,
+        brim_l0_mm: shape.brim_mm,
+        chamfer: chamfer_entries(&shape.rings),
         brim_conflicts: job.flavour.flavour.conflict_tower_lines() != TowerLines::None,
         top_z_mm: shape.top_z,
         anchor_range,

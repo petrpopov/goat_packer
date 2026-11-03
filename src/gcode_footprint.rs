@@ -11,7 +11,9 @@ use crate::gcode_text::{
 use crate::geometry::{Point, closed_loop, drop_specks, sort_largest_first, strip_polygon};
 use geo::{Polygon, algorithm::bool_ops::unary_union};
 
-pub use realization::{SlicedObject, realization_from_gcode, realizations_from_gcode};
+pub use realization::{
+    SlicedObject, all_realizations_from_gcode, realization_from_gcode, realizations_from_gcode,
+};
 
 /// Line width assumed until the G-code names one, mm.
 const DEFAULT_LINE_WIDTH_MM: f64 = 0.5;

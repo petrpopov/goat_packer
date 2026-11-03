@@ -52,6 +52,9 @@ pub struct PackState {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct PackSummary {
     pub probes: Vec<ClassSummary>,
+    /// Seconds the support model took (0 with probes).
+    #[serde(default)]
+    pub model_seconds: f64,
     /// The packing member that won and the best count each member reached.
     pub member: String,
     pub member_counts: Vec<MemberResult>,

@@ -17,15 +17,27 @@ pub struct BranchGraph {
     pub roofs: Vec<RoofPiece>,
     /// The merge decision values of the run (see `Descended::merge_values`).
     pub merge_values: Vec<usize>,
+    /// Seconds of the stages (diagnostics): tips, moves, merges, placement.
+    pub seconds: [f64; 4],
 }
 
 /// B1-B4 for one member.
 pub fn branch_graph(stage: &StageA, family: ArcFamily, class: ThreadClass) -> BranchGraph {
+    let started = std::time::Instant::now();
     let seeds = seed_tips(stage, family);
+    let tips_seconds = started.elapsed().as_secs_f64();
     let descended = descend(stage, seeds.tips, class);
+    let started = std::time::Instant::now();
+    let layers = place(descended.layers);
     BranchGraph {
-        layers: place(descended.layers),
+        layers,
         roofs: seeds.roofs,
         merge_values: descended.merge_values,
+        seconds: [
+            tips_seconds,
+            descended.move_seconds,
+            descended.merge_seconds,
+            started.elapsed().as_secs_f64(),
+        ],
     }
 }

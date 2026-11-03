@@ -31,6 +31,25 @@ const DEFAULT_TIME_MARGIN_PCT: f64 = 10.0;
 const MAX_CHANGE_SECONDS: f64 = 600.0;
 const MAX_TIME_MARGIN_PCT: f64 = 50.0;
 
+/// Where the supports of a plate come from (`--support-source`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SupportSource {
+    /// Probe slices of one object per rotation class (the slicer is called).
+    #[default]
+    Probe,
+    /// The clean-room model of the slicers' tree supports (no slicer call).
+    Model,
+}
+
+impl SupportSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SupportSource::Probe => "probe",
+            SupportSource::Model => "model",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Args {
     pub source_3mf: PathBuf,
@@ -58,6 +77,8 @@ pub struct Args {
     /// `--rotations`: the rotation classes (degrees about the frame centre, in `[0, 360)`) the
     /// layout may use; the first is class 0. Supports are predicted per class.
     pub rotations: Vec<f64>,
+    /// `--support-source`: probe slices (default) or the support model.
+    pub support_source: SupportSource,
     /// `--cache-dir`: where the per-class support probes are kept between runs.
     pub cache_dir: Option<PathBuf>,
     /// `--verify` (or a time window, or `--finish-state`): slice the assembled plate and run
@@ -204,6 +225,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut edge_margin: Option<f64> = None;
     let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
     let mut cache_dir = None;
+    let mut support_source = SupportSource::default();
     let mut verify = false;
     let mut seed = DEFAULT_SEED;
     let mut nozzle_clean = None;
@@ -260,6 +282,13 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             },
             "--rotations" => rotations = parse_rotations(&value)?,
             "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
+            "--support-source" => {
+                support_source = match value.as_str() {
+                    "probe" => SupportSource::Probe,
+                    "model" => SupportSource::Model,
+                    other => return Err(format!("unknown support source: {other}").into()),
+                }
+            }
             "--seed" => seed = value.parse()?,
             "--nozzle-clean" => {
                 nozzle_clean = Some(NozzleCleanSpec::parse(&value)?);
@@ -314,6 +343,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         time,
         rotations,
         cache_dir,
+        support_source,
         verify,
         support_overlap_mm,
         foreign_gaps,

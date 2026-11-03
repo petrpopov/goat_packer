@@ -44,6 +44,7 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
         probe_sample,
         summary: PackSummary {
             probes: modelled.summaries,
+            model_seconds: modelled.model_seconds,
             ..PackSummary::default()
         },
     };

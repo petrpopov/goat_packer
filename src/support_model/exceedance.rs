@@ -23,6 +23,9 @@ impl Exceedance {
     }
 }
 
+/// What an observation reports when the prediction has no material at all, mm.
+const MISSING_MM: f64 = 1000.0;
+
 /// The measurement grid: nanometres, exact for any plate.
 const UNITS: Grid = Grid::Nanometre;
 
@@ -44,7 +47,8 @@ pub fn exceedance(observed: &Loops, predicted: &Loops) -> Exceedance {
         .fold(0.0, f64::max);
     Exceedance {
         outside_mm2: UNITS.mm2(area(&outside)),
-        max_mm: UNITS.mm(far),
+        // Nothing predicted at all: no finite distance, reported as a kilometre.
+        max_mm: UNITS.mm(far).min(MISSING_MM),
     }
 }
 

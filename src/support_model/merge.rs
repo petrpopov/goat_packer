@@ -15,11 +15,34 @@ use crate::polygon_ops::IntBox;
 pub use order::aabb_order;
 pub use rounds::{Buckets, merge_rounds};
 
+/// Which way the box-tree order is read when buckets are cut (an ensemble axis of the model,
+/// not of the slicer). The behaviour spec's order vectors fix the permutation but not whether
+/// the slicer's own list runs along it or against it. Against the corpus, reading it against
+/// the permutation reproduces deterministic Orca slices (the flat-bridge and cantilever
+/// shapes) and the permutation order reproduces Bambu's, so both are members.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub enum MergeOrder {
+    #[default]
+    Along,
+    Against,
+}
+
 /// The slicer's thread class of a member (design §5.4): `threads` is the arena size T the
 /// merge bucket rule compares against; a fixed-four build ignores it.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ThreadClass {
     pub threads: usize,
+    pub order: MergeOrder,
+}
+
+impl ThreadClass {
+    /// Thread count `threads`, box-tree order read along the permutation.
+    pub fn along(threads: usize) -> ThreadClass {
+        ThreadClass {
+            threads,
+            order: MergeOrder::Along,
+        }
+    }
 }
 
 impl ThreadClass {
@@ -55,7 +78,11 @@ pub fn merge_layer(
         .iter()
         .map(|candidate| candidate.bounds.expect("a merge candidate has a box"))
         .collect();
-    let ordered: Vec<Moved> = aabb_order(&boxes)
+    let mut order = aabb_order(&boxes);
+    if class.order == MergeOrder::Against {
+        order.reverse();
+    }
+    let ordered: Vec<Moved> = order
         .into_iter()
         .map(|index| candidates[index].clone())
         .collect();

@@ -18,6 +18,7 @@ fn main() {
     let path = Path::new(&args[0]);
     let rotation: f64 = args.get(1).map_or(0.0, |text| text.parse().unwrap());
     let threads: usize = args.get(2).map_or(1, |text| text.parse().unwrap());
+    let tips_out = args.get(5).cloned();
     let trace: Option<(f64, f64)> = args
         .get(3)
         .zip(args.get(4))
@@ -51,8 +52,12 @@ fn main() {
         start.elapsed()
     );
     let start = Instant::now();
-    let graph = branch_graph(&stage, family, ThreadClass { threads });
-    println!("graph {:?}", start.elapsed());
+    let graph = branch_graph(&stage, family, ThreadClass::along(threads));
+    println!(
+        "graph {:?} (tips, moves, merges, placement: {:.2?})",
+        start.elapsed(),
+        graph.seconds
+    );
     let counts: Vec<usize> = graph.layers.iter().map(Vec::len).collect();
     println!("nodes per layer {counts:?}");
     println!("merge values {:?}", graph.merge_values);
@@ -141,5 +146,19 @@ fn main() {
                 None => break,
             }
         }
+    }
+    if let Some(file) = tips_out {
+        let mut tips = Vec::new();
+        for (layer, nodes) in graph.layers.iter().enumerate() {
+            for node in nodes.iter().filter(|node| node.parents.is_empty()) {
+                let centre = node.centre.unwrap();
+                tips.push(serde_json::json!({
+                    "layer": layer,
+                    "x": units.mm(f64::from(centre.x)) + stage.frame_shift[0],
+                    "y": units.mm(f64::from(centre.y)) + stage.frame_shift[1],
+                }));
+            }
+        }
+        std::fs::write(file, serde_json::to_vec(&tips).unwrap()).unwrap();
     }
 }

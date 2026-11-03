@@ -31,18 +31,25 @@ pub struct Descended {
     /// m = ⌊(n + 2) / 4⌋ of every merge call: a member's thread class is exact if it makes
     /// the same decision `m ≥ T` on all of them (spec 02 §4.7).
     pub merge_values: Vec<usize>,
+    /// Seconds spent moving nodes down and merging (diagnostics).
+    pub move_seconds: f64,
+    pub merge_seconds: f64,
 }
 
 /// Runs the descent from the highest tip layer down to layer 1.
 pub fn descend(stage: &StageA, mut layers: Vec<Vec<Node>>, class: ThreadClass) -> Descended {
     let mut merge_values = Vec::new();
+    let (mut move_seconds, mut merge_seconds) = (0.0, 0.0);
     let Some(top) = layers.iter().rposition(|layer| !layer.is_empty()) else {
         return Descended {
             layers,
             merge_values,
+            move_seconds,
+            merge_seconds,
         };
     };
     for layer in (1..=top).rev() {
+        let started = std::time::Instant::now();
         let mut direct: Vec<Node> = Vec::new();
         let mut meeting: Vec<Moved> = Vec::new();
         for index in 0..layers[layer].len() {
@@ -63,7 +70,10 @@ pub fn descend(stage: &StageA, mut layers: Vec<Vec<Node>>, class: ThreadClass) -
                 }
             }
         }
+        move_seconds += started.elapsed().as_secs_f64();
+        let started = std::time::Instant::now();
         let (merged, value) = merge_layer(stage, layer - 1, meeting, class);
+        merge_seconds += started.elapsed().as_secs_f64();
         merge_values.extend(value);
         layers[layer - 1].extend(direct);
         layers[layer - 1].extend(merged.into_iter().map(|moved| moved.node));
@@ -71,5 +81,7 @@ pub fn descend(stage: &StageA, mut layers: Vec<Vec<Node>>, class: ThreadClass) -
     Descended {
         layers,
         merge_values,
+        move_seconds,
+        merge_seconds,
     }
 }

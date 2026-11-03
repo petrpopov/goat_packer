@@ -8,6 +8,8 @@ use serde_json::json;
 /// Stage ids the webapp maps to its own labels; keep in sync with `ProgressTracker.kt`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
+    /// The support model predicting supports and tower (no slicer call).
+    Modelling,
     ProbeSlice,
     Packing,
     Assembling,
@@ -21,6 +23,7 @@ pub enum Stage {
 impl Stage {
     pub fn id(self) -> &'static str {
         match self {
+            Stage::Modelling => "modelling",
             Stage::ProbeSlice => "probe_slice",
             Stage::Packing => "packing",
             Stage::Assembling => "assembling",

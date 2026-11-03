@@ -26,6 +26,7 @@ pub mod merge;
 pub mod node;
 pub mod overhangs;
 pub mod place;
+pub mod predict;
 pub mod sections;
 pub mod settings;
 pub mod smooth;

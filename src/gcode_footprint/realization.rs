@@ -57,6 +57,17 @@ pub fn realizations_from_gcode(
         .collect()
 }
 
+/// Every object of a sliced plate with its label, each as its realization in plate
+/// coordinates (origin 0): the offline campaign matches them to placements itself.
+pub fn all_realizations_from_gcode(gcode: &[u8], member: MemberId) -> Vec<(String, Realization)> {
+    let (labels, lines) = object_lines(gcode);
+    labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| (label.clone(), realization_of(&lines, index, (0.0, 0.0), member)))
+        .collect()
+}
+
 fn object_index(labels: &[String], label: Option<&str>) -> Result<usize, String> {
     match label {
         Some(label) => labels
