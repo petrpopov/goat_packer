@@ -18,6 +18,7 @@ pub mod descend;
 pub mod draw;
 pub mod ensemble;
 pub mod envelope;
+pub mod exceedance;
 pub mod flavour;
 pub mod graph;
 pub mod layers;
