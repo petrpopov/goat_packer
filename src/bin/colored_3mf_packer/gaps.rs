@@ -213,14 +213,21 @@ impl GapVariant {
 /// (79 / 77 / 76 / 74). Climbing all rungs took A2L from 20 s to 84 s for no extra copy.
 pub const REFINE_SLACK: usize = 1;
 
-/// The rungs worth a finer pass, given each rung's coarse count (`None` = it failed).
+/// The rungs worth a finer pass, given each rung's coarse count (`None` = it failed), at
+/// most two: the lowest near-best rung (the tightest gaps: the only one a finer level has
+/// lifted, U1 55 -> 56 at 0.15 mm) and the coarse winner (the largest gaps among the best
+/// count, which the tie rule picks). Refining every near-best rung cost 150 s on the smoke
+/// plate where all four rungs tied at 8 copies, for no extra copy.
 pub fn refine_rungs(counts: &[Option<usize>]) -> Vec<usize> {
     let Some(best) = counts.iter().flatten().max().copied() else {
         return Vec::new();
     };
-    (0..counts.len())
-        .filter(|&i| counts[i].is_some_and(|c| c + REFINE_SLACK >= best))
-        .collect()
+    let near = |i: &usize| counts[*i].is_some_and(|c| c + REFINE_SLACK >= best);
+    let lowest = (0..counts.len()).find(near);
+    let winner = (0..counts.len()).rev().find(|&i| counts[i] == Some(best));
+    let mut rungs: Vec<usize> = lowest.into_iter().chain(winner).collect();
+    rungs.dedup();
+    rungs
 }
 
 /// The winner: the most copies; ties go to the larger foreign band gap, then the larger base
@@ -250,7 +257,8 @@ mod tests {
     #[test]
     fn only_rungs_near_the_best_climb_the_ladder() {
         assert_eq!(refine_rungs(&[Some(79), Some(77), Some(76), Some(74)]), vec![0]);
-        assert_eq!(refine_rungs(&[Some(55), Some(55), Some(55), Some(53)]), vec![0, 1, 2]);
+        assert_eq!(refine_rungs(&[Some(55), Some(55), Some(55), Some(53)]), vec![0, 2]);
+        assert_eq!(refine_rungs(&[Some(8), Some(8), Some(8), Some(8)]), vec![0, 3]);
         assert_eq!(refine_rungs(&[None, Some(46), Some(47), None]), vec![1, 2]);
         assert!(refine_rungs(&[None, None]).is_empty());
     }
