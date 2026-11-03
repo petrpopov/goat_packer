@@ -115,7 +115,7 @@ fn a_full_layout_comes_back_unchanged_and_the_cap_is_respected() {
 }
 
 #[test]
-fn growing_never_loses_a_copy_whatever_the_budget() {
+fn growing_never_loses_a_copy_and_more_spots_never_lose_a_result() {
     let zones = zones(60.0, 30.0);
     let ctx = context(&zones);
     let sparse = [
@@ -139,9 +139,9 @@ fn growing_never_loses_a_copy_whatever_the_budget() {
         free: &free,
     };
     let mut last = 0;
-    for tries in [0, 1, 5, 40] {
-        let grown = grow::grow(&ctx, &field, None, &layout, tries, 0);
-        assert!(grown.len() >= layout.len(), "{tries} tries");
+    for spots in [0, 1, 3, 8] {
+        let grown = grow::grow(&ctx, &field, &layout, spots, 0);
+        assert!(grown.len() >= layout.len(), "{spots} spots");
         assert!(grown.len() >= last, "more tries never lose a result");
         assert_legal(&ctx, &grown);
         last = grown.len();
@@ -151,11 +151,11 @@ fn growing_never_loses_a_copy_whatever_the_budget() {
 
 #[test]
 fn effort_only_extends_the_tries() {
-    let tries: Vec<usize> = (1..=70).map(tries_for).collect();
-    assert!(tries.windows(2).all(|w| w[0] <= w[1]));
-    assert_eq!(tries[0], 2);
-    assert_eq!(tries[63], FULL_TRIES);
-    assert_eq!(tries[69], FULL_TRIES);
+    let spots: Vec<usize> = (1..=70).map(spots_for).collect();
+    assert!(spots.windows(2).all(|w| w[0] <= w[1]));
+    assert_eq!(spots[0], 1);
+    assert_eq!(spots[63], FULL_SPOTS);
+    assert_eq!(spots[69], FULL_SPOTS);
 }
 
 #[test]

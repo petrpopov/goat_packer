@@ -5,9 +5,9 @@
 //! depth, `separate`) until no pair overlaps; every success is searched again for the next
 //! copy, and a stalled layout is pulled into each corner and searched again (`grow`).
 //!
-//! Deterministic: windows, tries and moves follow fixed orders and there are no random
-//! numbers; the budget counts tries, so more effort extends the sequence of tries and never
-//! loses an earlier result. Layouts are independent units; rayon reduces them in input order.
+//! Deterministic: insertion origins, tries and moves follow fixed orders and there are no random
+//! numbers; the budget counts insertion origins per round, so more effort extends the sequence
+//! of tries and never loses an earlier result. Layouts are independent units; rayon reduces them in input order.
 
 mod compact;
 mod grow;
@@ -33,13 +33,14 @@ pub(super) use polish::polish_candidates;
 const TOP_LAYOUTS: usize = 20;
 /// A layout this many copies below the best count is not worth improving.
 const SOURCE_SLACK: usize = 3;
-/// Tries per layout at full effort (`FULL_EFFORT` and above); one at effort 1.
-const FULL_TRIES: usize = 120;
+/// Insertion origins tried per round at full effort (`FULL_EFFORT` and above); one at effort 1.
+const FULL_SPOTS: usize = 8;
 const FULL_EFFORT: usize = 64;
 
-/// Tries for `effort`: grows with it, never shrinks.
-fn tries_for(effort: usize) -> usize {
-    (FULL_TRIES * effort.clamp(1, FULL_EFFORT)).div_ceil(FULL_EFFORT)
+/// Insertion origins per round for `effort`: grows with it, never shrinks. The origins are
+/// the cheapest first, so a higher effort tries the same ones and then more.
+fn spots_for(effort: usize) -> usize {
+    (FULL_SPOTS * effort.clamp(1, FULL_EFFORT)).div_ceil(FULL_EFFORT)
 }
 
 /// The improved layouts of the best of `candidates`, as candidates of member `Improve`
@@ -56,7 +57,7 @@ pub(super) fn improve_candidates(
         return Vec::new();
     }
     let depth = DepthTable::new(ctx);
-    let tries = tries_for(effort);
+    let spots = spots_for(effort);
     sources
         .par_iter()
         .filter_map(|source| {
@@ -68,7 +69,7 @@ pub(super) fn improve_candidates(
                 free: &free,
             };
             let layout = local_layout(ctx, source);
-            let grown = grow::grow(ctx, &field, source.anchor, &layout, tries, cap);
+            let grown = grow::grow(ctx, &field, &layout, spots, cap);
             if grown.len() <= layout.len() {
                 return None;
             }

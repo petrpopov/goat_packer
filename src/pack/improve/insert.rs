@@ -1,13 +1,12 @@
 //! Where one more copy could be squeezed in: the origins with the least overlap against the
-//! layout. One cost map over the whole plate serves every window (they overlap heavily), and
-//! is rebuilt only when the layout changes.
+//! layout, over the whole plate; rebuilt whenever the layout changes.
 
 use super::separate::Field;
 use super::windows::Window;
 use crate::layout::PixelPlacement;
 use std::collections::HashMap;
 
-/// Two tries of one window start at least this far apart (max norm, pixels).
+/// Two tries start at least this far apart (max norm, pixels).
 const SPREAD: i32 = 12;
 /// Origins whose summed depth is above this never start a try: nothing a few moves could
 /// resolve, and keeping them would make the map as large as the plate.
@@ -53,18 +52,13 @@ impl CostMap {
         CostMap { cells }
     }
 
-    /// The cheapest cost inside `window`.
-    pub(super) fn best(&self, window: Window) -> Option<u32> {
-        self.cells
-            .iter()
-            .find(|(_, p)| window.contains(p.x, p.y))
-            .map(|&(cost, _)| cost)
-    }
-
-    /// The cheapest origins of `window`, at most `limit`, spread apart.
-    pub(super) fn spots(&self, window: Window, limit: usize) -> Vec<(u32, PixelPlacement)> {
+    /// The cheapest origins, at most `limit`, spread apart.
+    pub(super) fn spots(&self, limit: usize) -> Vec<(u32, PixelPlacement)> {
         let mut picked: Vec<(u32, PixelPlacement)> = Vec::new();
-        for &(cost, p) in self.cells.iter().filter(|(_, p)| window.contains(p.x, p.y)) {
+        if limit == 0 {
+            return picked;
+        }
+        for &(cost, p) in &self.cells {
             let apart = picked
                 .iter()
                 .all(|(_, q)| (q.x - p.x).abs().max((q.y - p.y).abs()) >= SPREAD);
