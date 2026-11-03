@@ -222,14 +222,24 @@ fn material_test(
 ) -> ZoneTest {
     let gap_mm = gap.mm(masks.rules.clearance_mm, masks.rules.foreign);
     match &zone.area {
-        ZoneArea::Outside {
-            inside,
-            material_inset_mm,
-        } => {
+        ZoneArea::Outside { .. } => {
             let points = group.iter().flat_map(|(.., loops)| loops.iter().flatten());
+            // The tightest limit of the group: a clip counts only if every kind in it is support.
+            let inside = group
+                .iter()
+                .filter_map(|&(kind, ..)| zone.area.material_limit(kind))
+                .reduce(|a, b| {
+                    Rect::new(
+                        a.min_x.max(b.min_x),
+                        a.min_y.max(b.min_y),
+                        a.max_x.min(b.max_x),
+                        a.max_y.min(b.max_y),
+                    )
+                })
+                .expect("a group has a kind");
             ZoneTest::BoxesInside {
                 boxes: vec![Rect::of_points(points).grown(gap_mm)],
-                inside: inside.grown(-material_inset_mm),
+                inside,
             }
         }
         area => {

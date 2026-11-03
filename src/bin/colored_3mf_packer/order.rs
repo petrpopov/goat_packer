@@ -7,6 +7,10 @@
 use goat_packer::{
     PrintPlacement, Rect,
     keepout::ZoneClass,
+    keepout::{
+        PlateRules,
+        clip::{crosses_any, dominating_copy, support_overhang},
+    },
     kind_masks::{PlateZone, ZoneArea},
     object_print::ObjectPrint,
     plate_centre::{centre_out_order, loops_bounds},
@@ -45,7 +49,7 @@ pub fn barriers(zones: &[PlateZone]) -> Vec<Barrier> {
         .iter()
         .filter(|zone| matches!(zone.class, ZoneClass::Boundary | ZoneClass::Hard | ZoneClass::TowerBody))
         .filter_map(|zone| match &zone.area {
-            ZoneArea::Outside { inside, material_inset_mm } => Some(Barrier::Inside {
+            ZoneArea::Outside { inside, material_inset_mm, .. } => Some(Barrier::Inside {
                 inside: *inside,
                 inset_mm: *material_inset_mm,
             }),
@@ -89,12 +93,18 @@ fn clearance(envelope: Rect, barrier: Barrier) -> f64 {
 /// Moves the copy of each class with the most clearance to the first position the class has,
 /// swapping it with the copy that stood there. Returns what was chosen per class, classes in
 /// order of their first appearance.
+///
+/// When the rules let supports cross the bed edge (`support_clip_mm`) and some copy's support
+/// does, the first copy is instead the one that crosses every edge by at least as much as any
+/// other copy (`keepout::clip`: the slicer cuts the shared support at the first copy's edge);
+/// a class with no such copy is an error, the layout is not safe to publish.
 pub fn canonical_first(
     prints: &[ObjectPrint],
     barriers: &[Barrier],
+    rules: &PlateRules,
     near_edge_mm: f64,
     placements: &mut [PrintPlacement],
-) -> Vec<Canonical> {
+) -> Result<Vec<Canonical>, String> {
     let envelopes: Vec<Option<Rect>> = prints.iter().map(envelope).collect();
     let clearance_of = |placement: &PrintPlacement| {
         let Some(own) = envelopes[placement.print] else {
@@ -116,9 +126,23 @@ pub fn canonical_first(
         };
         let clearances: Vec<f64> = members.iter().map(|&i| clearance_of(&placements[i])).collect();
         // The first of equals: the order stays as the packer made it where it cannot matter.
-        let best = (0..members.len())
-            .reduce(|best, next| if clearances[next] > clearances[best] { next } else { best })
-            .expect("a class with members");
+        let overhangs: Vec<[f64; 4]> = members
+            .iter()
+            .map(|&i| support_overhang(print, (placements[i].x_mm, placements[i].y_mm), rules.printable_area))
+            .collect();
+        let best = if rules.support_clip_mm > 0.0 && crosses_any(&overhangs) {
+            dominating_copy(&overhangs).ok_or_else(|| {
+                format!(
+                    "supports of class {class} cross different bed edges and no copy crosses every one of \
+                     them as far as the others, so the slicer's clip (taken at the first copy) \
+                     would leave support past the bed: {overhangs:?}"
+                )
+            })?
+        } else {
+            (0..members.len())
+                .reduce(|best, next| if clearances[next] > clearances[best] { next } else { best })
+                .expect("a class with members")
+        };
         placements.swap(first, members[best]);
         chosen.push(Canonical {
             rotation_deg: print.rotation_deg,
@@ -128,7 +152,7 @@ pub fn canonical_first(
         });
     }
     chosen.sort_by_key(|canonical| canonical.index);
-    chosen
+    Ok(chosen)
 }
 
 /// Orders the copies by the distance of their envelope's centre from `centre`, so that a time
@@ -177,7 +201,7 @@ mod tests {
         let prints = [square_print(0.0), square_print(180.0)];
         // Class 0 at the edge, class 1, class 0 in the middle, class 0 near the edge.
         let mut placements = vec![at(0, 6.0, 50.0), at(1, 20.0, 20.0), at(0, 50.0, 50.0), at(0, 90.0, 50.0)];
-        let chosen = canonical_first(&prints, &plate(), BAMBU_OBSTACLE_MM, &mut placements);
+        let chosen = canonical_first(&prints, &plate(), &rules(0.0), BAMBU_OBSTACLE_MM, &mut placements).unwrap();
         assert_eq!(placements[0], at(0, 50.0, 50.0));
         assert_eq!(placements[2], at(0, 6.0, 50.0));
         assert_eq!(chosen.len(), 2);
@@ -191,12 +215,54 @@ mod tests {
     fn a_lone_copy_near_the_edge_is_flagged_and_a_tower_counts_as_a_barrier() {
         let prints = [square_print(0.0)];
         let mut placements = vec![at(0, 6.0, 50.0)];
-        let chosen = canonical_first(&prints, &plate(), BAMBU_OBSTACLE_MM, &mut placements);
+        let chosen = canonical_first(&prints, &plate(), &rules(0.0), BAMBU_OBSTACLE_MM, &mut placements).unwrap();
         assert!(chosen[0].near_edge);
         let tower = Barrier::Outside(Rect::new(16.0, 40.0, 30.0, 60.0));
         let both = [plate()[0], tower];
-        let chosen = canonical_first(&prints, &both, 0.0, &mut placements);
+        let chosen = canonical_first(&prints, &both, &rules(0.0), 0.0, &mut placements).unwrap();
         assert!((chosen[0].clearance_mm - 1.0).abs() < 1e-9, "{chosen:?}");
+    }
+
+    fn rules(support_clip_mm: f64) -> PlateRules {
+        PlateRules {
+            printable_area: Rect::new(0.0, 0.0, 100.0, 100.0),
+            body_edge_band_mm: 0.0,
+            print_edge_reserve_mm: 0.0,
+            support_clip_mm,
+            support_clip_sides: [true; 4],
+            keepouts: Vec::new(),
+            body_rule: goat_packer::keepout::BodyRule::default(),
+        }
+    }
+
+    /// A square print whose support reaches 3 mm past the body on every side.
+    fn supported_print() -> ObjectPrint {
+        let mut print = square_print(0.0);
+        let p = |x: f64, y: f64| Point { x, y };
+        print.support_base = vec![vec![p(-8.0, -8.0), p(8.0, -8.0), p(8.0, 8.0), p(-8.0, 8.0), p(-8.0, -8.0)]];
+        print
+    }
+
+    #[test]
+    fn with_a_clip_the_copy_crossing_the_most_edges_goes_first_not_the_interior_one() {
+        let prints = [supported_print()];
+        // Interior, top row (support 2 mm over the top edge), top row further out (4 mm).
+        let mut placements = vec![at(0, 50.0, 50.0), at(0, 30.0, 94.0), at(0, 70.0, 96.0)];
+        let chosen = canonical_first(&prints, &plate(), &rules(4.0), 0.0, &mut placements).unwrap();
+        assert_eq!(placements[0], at(0, 70.0, 96.0));
+        assert_eq!(chosen[0].index, 0);
+        // The same layout without a clip keeps the interior copy first.
+        let mut strict = vec![at(0, 50.0, 50.0), at(0, 30.0, 94.0), at(0, 70.0, 96.0)];
+        canonical_first(&prints, &plate(), &rules(0.0), 0.0, &mut strict).unwrap();
+        assert_eq!(strict[0], at(0, 50.0, 50.0));
+    }
+
+    #[test]
+    fn copies_crossing_different_edges_have_no_first_copy_and_the_layout_is_refused() {
+        let prints = [supported_print()];
+        let mut placements = vec![at(0, 50.0, 96.0), at(0, 96.0, 50.0)];
+        let error = canonical_first(&prints, &plate(), &rules(4.0), 0.0, &mut placements).unwrap_err();
+        assert!(error.contains("different bed edges"), "{error}");
     }
 
     #[test]

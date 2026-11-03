@@ -194,6 +194,10 @@ pub struct GapVariant {
     /// The resolution ladder's levels of this pack (count, bound and wall time each).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub levels: Vec<LevelReport>,
+    /// The bed edge supports were let cross in this pack (`min_x`, `min_y`, `max_x`,
+    /// `max_y`), or `all` when every edge was open; absent = supports kept inside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_edge: Option<String>,
 }
 
 impl GapVariant {
@@ -240,7 +244,7 @@ mod tests {
     use super::*;
 
     fn variant(base: f64, band: f64, count: usize) -> GapVariant {
-        GapVariant { foreign_base_mm: base, foreign_band_mm: band, count, wall_s: 0.0, error: None, levels: Vec::new() }
+        GapVariant { foreign_base_mm: base, foreign_band_mm: band, count, wall_s: 0.0, error: None, levels: Vec::new(), clip_edge: None }
     }
 
     #[test]

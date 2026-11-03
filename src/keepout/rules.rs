@@ -23,12 +23,33 @@ pub struct PlateRules {
     pub body_edge_band_mm: f64,
     /// Supports and the tower stay inside the printable area inset by this.
     pub print_edge_reserve_mm: f64,
+    /// How far support material (base, bands, interfaces; never a body or the tower) may
+    /// reach beyond the printable edge, past `print_edge_reserve_mm`: the slicer clips the one
+    /// support it builds per class at the bed. 0 = supports stay inside (see
+    /// `keepout::clip` for the joint condition on the first copy of a class).
+    #[serde(default)]
+    pub support_clip_mm: f64,
+    /// The edges `support_clip_mm` applies to: min x, min y, max x, max y. The slicer clips at
+    /// the FIRST copy's edge, so crossings on several edges need a first copy that crosses all
+    /// of them as far as any other copy; a job packs with one edge open at a time and keeps
+    /// the best layout that has such a copy.
+    #[serde(default = "all_sides")]
+    pub support_clip_sides: [bool; 4],
     pub keepouts: Vec<Keepout>,
     #[serde(default)]
     pub body_rule: BodyRule,
 }
 
+fn all_sides() -> [bool; 4] {
+    [true; 4]
+}
+
 impl PlateRules {
+    /// The clip per edge (min x, min y, max x, max y): `support_clip_mm` where the edge is open.
+    pub fn support_clip_per_side(&self) -> [f64; 4] {
+        self.support_clip_sides.map(|open| if open { self.support_clip_mm } else { 0.0 })
+    }
+
     /// Today's `PackOptions` bed fields as rules, so the new core can run on a legacy job.
     /// The mapping is lossy in two known ways. Purge-line strips arrive as ordinary
     /// exclusions, so they become hard instead of soft; and `bed` is already inset by the
@@ -64,6 +85,8 @@ impl PlateRules {
             printable_area: bed,
             body_edge_band_mm: body_bed.map_or(0.0, |inner| widest_inset(bed, inner)),
             print_edge_reserve_mm: 0.0,
+            support_clip_mm: 0.0,
+            support_clip_sides: all_sides(),
             keepouts,
             body_rule: BodyRule::default(),
         }

@@ -17,6 +17,7 @@ use crate::model::{Modelled, model_plate};
 use crate::order::{BAMBU_OBSTACLE_MM, barriers, canonical_first, centre_out};
 use crate::plan::{MemberResult, PackPlan, PackState, PackSummary, STATE_VERSION};
 use crate::probe::time_probe;
+use goat_packer::keepout::clip::first_copies_exist;
 use goat_packer::support_model::flavour::Family;
 
 /// Models the plate (probes, tower), packs it and orders the copies.
@@ -60,20 +61,84 @@ fn pack_variants(job: &Job) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>
         progress::stage(Stage::Packing, &format!("warning: {warning}"), None, None);
     }
     let mut model = model_plate(job)?;
-    let (variants, mut outcomes): (Vec<_>, Vec<_>) =
-        pack_foreign_pairs(job, &model.plan).into_iter().unzip();
-    let Some(best) = choose(&variants) else {
+    // Supports may cross the bed edge only where the layout has a first copy that the
+    // slicer's clip is taken at (`keepout::clip`): pack once with supports inside, then once
+    // per open edge, and keep the layout with the most copies (supports inside on ties).
+    let mut variants = Vec::new();
+    let mut best: Option<(usize, PackPlan, PackOutcome)> = None;
+    for sides in clip_configurations(&model.plan.rules) {
+        let mut plan = model.plan.clone();
+        plan.rules.support_clip_sides = sides;
+        let label = clip_label(&plan.rules);
+        let (mut found, mut outcomes): (Vec<_>, Vec<_>) =
+            pack_foreign_pairs(job, &plan).into_iter().unzip();
+        for (variant, outcome) in found.iter_mut().zip(&mut outcomes) {
+            variant.clip_edge.clone_from(&label);
+            let usable = outcome.as_ref().is_none_or(|outcome| first_copy_exists(&plan, outcome));
+            if !usable {
+                *outcome = None;
+                variant.error = Some("no first copy that the bed clip is taken at".to_owned());
+            }
+        }
+        if let Some(index) = choose(&found) {
+            let chosen = &found[index];
+            let count = chosen.count;
+            if best.as_ref().is_none_or(|(held, ..)| count > *held) {
+                let outcome = outcomes[index].take().expect("the chosen variant packed");
+                best = Some((count, plan.with_foreign_gaps(chosen.foreign()), outcome));
+            }
+        }
+        variants.extend(found);
+    }
+    let Some((count, plan, outcome)) = best else {
         let first = variants.iter().find_map(|v| v.error.clone());
         return Err(first.unwrap_or_else(|| "no gap variant to pack".to_owned()).into());
     };
-    let chosen = &variants[best];
-    model.plan = model.plan.with_foreign_gaps(chosen.foreign());
+    model.plan = plan;
     println!(
-        "chosen gaps: foreign base {} mm, band {} mm: {} objects",
-        chosen.foreign_base_mm, chosen.foreign_band_mm, chosen.count
+        "chosen gaps: foreign base {} mm, band {} mm: {} objects{}",
+        model.plan.foreign_gaps.base_mm,
+        model.plan.foreign_gaps.band_mm,
+        count,
+        clip_label(&model.plan.rules).map_or(String::new(), |edge| format!(" (supports may cross edge {edge})")),
     );
-    let outcome = outcomes[best].take().expect("the chosen variant packed");
     Ok((model, outcome, variants))
+}
+
+const EDGE_NAMES: [&str; 4] = ["min_x", "min_y", "max_x", "max_y"];
+
+/// The edge sets to pack with: supports inside (every edge closed), then each edge alone.
+/// Without a clip (`support_clip_mm` 0) only the first, which is the former behaviour.
+fn clip_configurations(rules: &goat_packer::PlateRules) -> Vec<[bool; 4]> {
+    let mut configurations = vec![[false; 4]];
+    if rules.support_clip_mm > 0.0 {
+        configurations.extend((0..4).map(|edge| std::array::from_fn(|side| side == edge)));
+    }
+    configurations
+}
+
+/// The open edge of a rule set for the report: `None` when supports stay inside.
+fn clip_label(rules: &goat_packer::PlateRules) -> Option<String> {
+    if rules.support_clip_mm <= 0.0 {
+        return None;
+    }
+    let open: Vec<&str> = EDGE_NAMES
+        .iter()
+        .zip(rules.support_clip_sides)
+        .filter_map(|(name, open)| open.then_some(*name))
+        .collect();
+    match open.len() {
+        0 => None,
+        4 => Some("all".to_owned()),
+        _ => Some(open.join("+")),
+    }
+}
+
+/// Whether `outcome` has a first copy per class that the slicer's bed clip can be taken at.
+fn first_copy_exists(plan: &PackPlan, outcome: &PackOutcome) -> bool {
+    let order: Vec<(usize, f64, f64)> =
+        outcome.placements.iter().map(|p| (p.print, p.x_mm, p.y_mm)).collect();
+    first_copies_exist(&plan.prints, &order, plan.rules.printable_area, plan.rules.support_clip_mm)
 }
 
 /// One pack of `plan` per `--foreign-gaps` pair, in the order given, each with its wall time.
@@ -135,6 +200,7 @@ fn pack_coarse_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<Pack
                 wall_s: started.elapsed().as_secs_f64(),
                 error: None,
                 levels: Vec::new(),
+                clip_edge: None,
             };
             let outcome = match result {
                 Ok(outcome) => {
@@ -187,8 +253,25 @@ fn place(job: &Job, state: &mut PackState, outcome: PackOutcome) -> AppResult<()
         Family::Bambu => BAMBU_OBSTACLE_MM,
         Family::Orca | Family::SnapmakerOrca => 0.0,
     };
-    state.summary.canonical =
-        canonical_first(&state.plan.prints, &barriers(&zones), near_edge_mm, &mut placements);
+    let canonical = canonical_first(
+        &state.plan.prints,
+        &barriers(&zones),
+        &state.plan.rules,
+        near_edge_mm,
+        &mut placements,
+    );
+    state.summary.canonical = match canonical {
+        Ok(canonical) => canonical,
+        Err(reason) if state.plan.rules.support_clip_mm > 0.0 => {
+            // The slicer clips the shared support at the first copy's edge, and this layout
+            // has no first copy that clips for all of them: pack again with supports inside.
+            eprintln!("supports across the bed edge dropped: {reason}");
+            state.plan.rules.support_clip_mm = 0.0;
+            let strict = state.plan.pack(&job.args)?;
+            return place(job, state, strict);
+        }
+        Err(reason) => return Err(reason.into()),
+    };
     state.summary.member = format!("{:?}", outcome.member);
     state.summary.resolution_mm = outcome.resolution_mm;
     state.summary.upper_bound = outcome.upper_bound;

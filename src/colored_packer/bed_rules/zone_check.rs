@@ -128,6 +128,8 @@ enum ZoneArea {
         inside: Rect,
         tolerance: f64,
         reserve: f64,
+        /// Support material may reach this far past `inside` (the slicer clips it at the bed).
+        support_clip: [f64; 4],
     },
     Region(MultiPolygon),
 }
@@ -149,6 +151,7 @@ fn zones(rules: &PlateRules) -> Vec<Zone<'_>> {
             inside: printable,
             tolerance: PART_INSIDE_EPS_MM,
             reserve: rules.print_edge_reserve_mm,
+            support_clip: rules.support_clip_per_side(),
         },
         keepout: None,
     }];
@@ -180,6 +183,7 @@ fn edge_band(printable: Rect, width: f64) -> ZoneArea {
             .unwrap_or(Rect::new(centre_x, centre_y, centre_x, centre_y)),
         tolerance: EDGE_EPS_MM,
         reserve: 0.0,
+        support_clip: [0.0; 4],
     }
 }
 
@@ -252,7 +256,7 @@ impl Zone<'_> {
             }
             // Profile-zone cells forbid with `Gap::Zero` only (keepout tests pin the matrix);
             // the clearance and support gaps belong to the tower columns.
-            Permission::Forbidden { gap } => self.covers(&kind.material, gap.mm(0.0, ForeignGaps::default())),
+            Permission::Forbidden { gap } => self.covers(kind.kind, &kind.material, gap.mm(0.0, ForeignGaps::default())),
         }
     }
 
@@ -267,17 +271,31 @@ impl Zone<'_> {
     }
 
     /// Material inside the zone or closer than `gap` to it.
-    fn covers(&self, material: &MultiPolygon, gap: f64) -> bool {
+    fn covers(&self, kind: PrintKind, material: &MultiPolygon, gap: f64) -> bool {
         let Some(bounds) = material.bounding_rect() else {
             return false;
         };
         match &self.area {
             ZoneArea::Outside {
-                inside, reserve, ..
-            } => match inside.inset(reserve + gap) {
-                Ok(kept) => rect_of(bounds).sticks_out_of(kept, EDGE_EPS_MM),
-                Err(_) => true,
-            },
+                inside,
+                reserve,
+                support_clip,
+                ..
+            } => {
+                let reach = if kind.is_support() { *support_clip } else { [0.0; 4] };
+                match inside.inset(reserve + gap) {
+                    Ok(kept) => rect_of(bounds).sticks_out_of(
+                        Rect::new(
+                            kept.min_x - reach[0],
+                            kept.min_y - reach[1],
+                            kept.max_x + reach[2],
+                            kept.max_y + reach[3],
+                        ),
+                        EDGE_EPS_MM,
+                    ),
+                    Err(_) => true,
+                }
+            }
             ZoneArea::Region(region) => overlap(region, material, gap),
         }
     }

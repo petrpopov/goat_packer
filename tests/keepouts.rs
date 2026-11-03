@@ -343,6 +343,8 @@ fn explicit_plate_rules_win_over_the_legacy_fields() {
         printable_area: Rect::new(0.0, 0.0, 256.0, 256.0),
         body_edge_band_mm: 3.5,
         print_edge_reserve_mm: 0.0,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: Vec::new(),
         body_rule: BodyRule::Bands,
     };
@@ -356,6 +358,8 @@ fn plate_rules_survive_a_state_file_and_default_missing_fields() {
         printable_area: Rect::new(0.0, 0.0, 256.0, 256.0),
         body_edge_band_mm: 3.5,
         print_edge_reserve_mm: 0.7,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: vec![
             keepout(Some([0.0, 0.2])),
             Keepout {

@@ -112,14 +112,12 @@ fn material_breaks(
         .into_iter()
         .filter_map(|(band, _)| class.region(kind, band));
     match (&zone.zone.area, &zone.area) {
-        (
-            ZoneArea::Outside {
-                inside,
-                material_inset_mm,
-            },
-            _,
-        ) => {
-            let allowed = inside.grown(-material_inset_mm);
+        (ZoneArea::Outside { .. }, _) => {
+            let allowed = zone
+                .zone
+                .area
+                .material_limit(kind)
+                .expect("an outside zone has a limit");
             regions
                 .map(|r| moved_box(r.bounds(), at).grown(gap))
                 .any(|b| b.sticks_out_of(allowed, GAP_EPS))

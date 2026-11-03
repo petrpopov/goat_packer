@@ -682,6 +682,8 @@ fn the_portfolio_is_identical_for_one_and_eight_threads_and_two_runs() {
         printable_area: Rect::new(0.0, 0.0, 70.0, 50.0),
         body_edge_band_mm: 1.0,
         print_edge_reserve_mm: 0.0,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: vec![Keepout {
             id: "purge".to_owned(),
             class: KeepoutClass::Soft,

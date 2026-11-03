@@ -5,6 +5,7 @@
 //! A profile declares geometry and a class only. What a class forbids lives in `matrix`, never
 //! in profile data.
 
+pub mod clip;
 mod matrix;
 mod rules;
 

@@ -48,6 +48,8 @@ pub(super) fn plate() -> PlateRules {
         printable_area: Rect::new(0.0, 0.0, 60.0, 40.0),
         body_edge_band_mm: 0.0,
         print_edge_reserve_mm: 0.0,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: Vec::new(),
         body_rule: BodyRule::Silhouette,
     }

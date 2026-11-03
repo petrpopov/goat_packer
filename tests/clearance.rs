@@ -170,6 +170,8 @@ fn zone_gaps_are_euclidean_too() {
             printable_area: Rect::new(0.0, 0.0, 30.0, 30.0),
             body_edge_band_mm: 0.0,
             print_edge_reserve_mm: 0.0,
+            support_clip_mm: 0.0,
+            support_clip_sides: [true; 4],
             keepouts: Vec::new(),
             body_rule: BodyRule::Silhouette,
         };
@@ -273,6 +275,8 @@ fn the_base_map_and_the_single_origin_check_agree() {
         printable_area: Rect::new(0.0, 0.0, 40.0, 30.0),
         body_edge_band_mm: 2.0,
         print_edge_reserve_mm: 0.5,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: vec![
             keepout(
                 "hard",
