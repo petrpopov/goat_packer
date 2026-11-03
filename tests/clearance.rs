@@ -102,6 +102,7 @@ fn sag(gap: f64) -> f64 {
 fn masks(ring: &[Point], gap: f64, resolution: f64) -> KindMasks {
     let rules = MaskRules {
         clearance_mm: gap,
+        foreign: Default::default(),
         body_rule: BodyRule::Silhouette,
         support_overlap_mm: None,
     };
@@ -256,6 +257,7 @@ fn the_base_map_and_the_single_origin_check_agree() {
     ];
     let rules = MaskRules {
         clearance_mm: 0.7,
+        foreign: Default::default(),
         body_rule: BodyRule::Silhouette,
         support_overlap_mm: None,
     };

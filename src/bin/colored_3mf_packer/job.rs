@@ -21,6 +21,7 @@ use goat_packer::{
 
 use crate::AppResult;
 use crate::args::Args;
+use crate::gaps::OwnGap;
 use crate::source::{
     source_application, source_entry, source_project_settings, validate_source_printer,
 };
@@ -48,6 +49,9 @@ pub struct Job {
     pub tower_anchor: Option<(f64, f64)>,
     /// The project's `extruder_offset`: plate = G-code + this.
     pub gcode_offset: (f64, f64),
+    /// The project's support-to-own-model gaps, read once here: the probes slice with them and
+    /// the output 3MF copies them (`gaps::check_output`).
+    pub own_gap: OwnGap,
     pub window_s: Option<f64>,
     /// The source project's per-change assumption, read once: the assembled output copies
     /// project_settings.config byte-for-byte, so it holds for every plate sliced.
@@ -74,6 +78,7 @@ impl Job {
         profile.gui_flavour = Some(GuiFlavour::try_from(flavour.flavour.name().to_owned())?);
         let bed = ProjectBed::from_settings(&settings_value)?;
         let rules = plate_rules(&profile, &bed)?;
+        let own_gap = OwnGap::of_settings(&settings_value)?;
         let slicer_change_s = slicer_change_seconds(&settings_value);
         let correction = args.time.correction(&profile);
         if args.time.ams_correction && correction.real_change_s.is_none() {
@@ -106,6 +111,7 @@ impl Job {
             frame,
             tower_anchor: wipe_tower_anchor(&settings_value).ok(),
             gcode_offset: bed.gcode_offset,
+            own_gap,
             window_s,
             slicer_change_s,
             correction,

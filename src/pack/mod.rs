@@ -169,6 +169,7 @@ fn check_run(
     {
         return Err("invalid packing resolution, clearance or support overlap".to_owned());
     }
+    options.foreign_gaps.check()?;
     if let Some(member) = members.iter().find(|m| !DEFAULT_MEMBERS.contains(m)) {
         return Err(format!(
             "member {member:?} does not run on fixed rotation classes yet"
@@ -188,6 +189,7 @@ fn fixed_context<'a>(
 ) -> Result<Ctx<'a>, String> {
     let mask_rules = MaskRules {
         clearance_mm: options.clearance,
+        foreign: options.foreign_gaps,
         body_rule: rules.body_rule,
         support_overlap_mm: options.support_overlap_mm,
     };
@@ -254,7 +256,13 @@ impl<'a> Checks<'a> {
         Ok(Checks {
             prints,
             grid: *ctx.grid(),
-            base: LayoutRules::new(plate, None, options.clearance, options.support_overlap_mm)?,
+            base: LayoutRules::new(
+                plate,
+                None,
+                options.clearance,
+                options.foreign_gaps,
+                options.support_overlap_mm,
+            )?,
             towers: ctx.towers().iter().map(|t| t.zones.clone()).collect(),
         })
     }

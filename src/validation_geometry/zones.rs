@@ -6,7 +6,7 @@ use super::GAP_EPS;
 use super::class::{ClassShapes, rect_ring};
 use super::region::{Region, moved_box, negated, overlaps};
 use crate::geometry::{Point, Rect};
-use crate::keepout::{Permission, ZoneClass, permission};
+use crate::keepout::{ForeignGaps, Permission, ZoneClass, permission};
 use crate::kind_masks::{PlateZone, ZoneArea, zone_material};
 use crate::object_print::PrintKind;
 
@@ -48,6 +48,7 @@ pub(super) fn breaks_zone(
     at: Point,
     zone: &ZoneShape,
     clearance: f64,
+    foreign: ForeignGaps,
 ) -> bool {
     let (mut boxes, mut hulls) = (false, false);
     let mut materials = Vec::new();
@@ -56,7 +57,7 @@ pub(super) fn breaks_zone(
             Permission::Allowed => {}
             Permission::PartBox => boxes = true,
             Permission::PartHull => hulls = true,
-            Permission::Forbidden { gap } => materials.push((kind, gap.mm(clearance))),
+            Permission::Forbidden { gap } => materials.push((kind, gap.mm(clearance, foreign))),
         }
     }
     extent_breaks(class, at, zone)

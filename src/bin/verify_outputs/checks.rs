@@ -19,7 +19,7 @@ use crate::project::{
     read_entry,
 };
 use crate::report::{Report, json_number, py_f64};
-use crate::rules::{self, Kind, Rule, Zone};
+use crate::rules::{self, Foreign, Kind, Rule, Zone};
 use crate::stl::stl_xy_center;
 use crate::{Failure, assertion};
 
@@ -80,7 +80,7 @@ pub fn verify(args: &Args) -> Result<Report, Failure> {
     )?;
 
     let edge_clearances = check_inside_bed(&polygons, &limits, args)?;
-    let minimum_distance = check_object_gaps(&polygons, body_gap(args.minimum_gap))?;
+    let minimum_distance = check_object_gaps(&polygons, body_gap(args.minimum_gap, args.foreign))?;
     let purge = check_purge_gap(&polygons, args)?;
 
     Ok(Report {
@@ -442,7 +442,7 @@ fn check_inside_bed(
         }
         edge_clearances.push(Euclidean.distance(polygon, &limits.printable_boundary));
         if let Some(exclusion) = &limits.exclusion
-            && enters_hard_zone(polygon, exclusion, args.minimum_gap)
+            && enters_hard_zone(polygon, exclusion, args.minimum_gap, args.foreign)
         {
             return Err(assertion(format!(
                 "placement {index} enters exclusion polygon"
@@ -451,7 +451,7 @@ fn check_inside_bed(
         for keepout in &args.custom_keepouts {
             let keepout_polygon =
                 rect_polygon(keepout.min_x, keepout.min_y, keepout.max_x, keepout.max_y);
-            if enters_hard_zone(polygon, &keepout_polygon, args.minimum_gap) {
+            if enters_hard_zone(polygon, &keepout_polygon, args.minimum_gap, args.foreign) {
                 return Err(assertion(format!(
                     "placement {index} enters custom keepout"
                 )));
@@ -462,20 +462,26 @@ fn check_inside_bed(
 }
 
 /// The gap two objects' outlines keep: the table's body/body pair, i.e. the clearance.
-fn body_gap(clearance: f64) -> f64 {
-    rules::pair_gap(Kind::Silhouette, Kind::Silhouette, false).map_or(0.0, |gap| gap.mm(clearance))
+fn body_gap(clearance: f64, foreign: Foreign) -> f64 {
+    rules::pair_gap(Kind::Silhouette, Kind::Silhouette, false)
+        .map_or(0.0, |gap| gap.mm(clearance, foreign))
 }
 
 /// An outline against a hard zone (the bed exclusion, a custom keepout) by the table's body
 /// row. This binary has the bottom outline only, not per-part hulls, so the hull row is
 /// tested on the outline itself: touching passes, an overlap fails.
-fn enters_hard_zone(outline: &GeoPolygon<f64>, zone: &GeoPolygon<f64>, clearance: f64) -> bool {
+fn enters_hard_zone(
+    outline: &GeoPolygon<f64>,
+    zone: &GeoPolygon<f64>,
+    clearance: f64,
+    foreign: Foreign,
+) -> bool {
     let overlaps = || outline.intersection(zone).unsigned_area() > MIN_INTRUSION_AREA_MM2;
     match rules::rule(Kind::Silhouette, Zone::Hard) {
         Rule::Allowed => false,
         Rule::PartHull | Rule::PartBox => overlaps(),
         Rule::Forbidden(gap) => {
-            overlaps() || Euclidean.distance(outline, zone) + GAP_TOLERANCE_MM < gap.mm(clearance)
+            overlaps() || Euclidean.distance(outline, zone) + GAP_TOLERANCE_MM < gap.mm(clearance, foreign)
         }
     }
 }
@@ -744,6 +750,7 @@ mod tests {
             purge_lines: Vec::new(),
             purge_gap: 0.5,
             custom_keepouts: Vec::new(),
+            foreign: Foreign::default(),
             report: None,
         })
     }

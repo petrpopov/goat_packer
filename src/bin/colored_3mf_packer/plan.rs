@@ -2,7 +2,7 @@
 //! behind for `--finish-state`.
 
 use goat_packer::{
-    PackOptions, PlateRules, Point, PrintPlacement,
+    ForeignGaps, PackOptions, PlateRules, Point, PrintPlacement,
     object_print::ObjectPrint,
     pack::{PackOutcome, TowerSpec, pack},
     print_time::TimeSample,
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
 use crate::args::Args;
+use crate::gaps::GapVariant;
 use crate::model::ClassSummary;
 use crate::order::Canonical;
 
@@ -26,6 +27,10 @@ pub struct PackPlan {
     pub prints: Vec<ObjectPrint>,
     pub rules: PlateRules,
     pub tower: Option<TowerSpec>,
+    /// Support-to-neighbour-body gaps this plan packs and validates with. A state written
+    /// before they were options loads with the former fixed values.
+    #[serde(default)]
+    pub foreign_gaps: ForeignGaps,
 }
 
 /// What `--finish-state` reads back: the plan, the layout in 3MF order and what the time
@@ -51,6 +56,9 @@ pub struct PackSummary {
     pub member: String,
     pub member_counts: Vec<MemberResult>,
     pub canonical: Vec<Canonical>,
+    /// Every (own gap, foreign pair) variant packed, in packing order.
+    #[serde(default)]
+    pub gap_variants: Vec<GapVariant>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -76,6 +84,11 @@ impl PackState {
 }
 
 impl PackPlan {
+    /// The same prints packed against another foreign-gap pair: only the masks change.
+    pub fn with_foreign_gaps(&self, foreign_gaps: ForeignGaps) -> PackPlan {
+        PackPlan { foreign_gaps, ..self.clone() }
+    }
+
     /// The packing options of a run. The bed fields belong to the legacy search; the plate
     /// comes from `rules`.
     pub fn options(&self, args: &Args) -> PackOptions {
@@ -95,6 +108,7 @@ impl PackPlan {
             lock_orientation: false,
             seed: args.seed,
             support_overlap_mm: args.support_overlap_mm,
+            foreign_gaps: self.foreign_gaps,
             plate_rules: Some(self.rules.clone()),
         }
     }
@@ -112,7 +126,13 @@ impl PackPlan {
         placements: &[PrintPlacement],
         anchor: Option<Point>,
     ) -> AppResult<()> {
-        let mut rules = LayoutRules::new(&self.rules, None, args.clearance, args.support_overlap_mm)?;
+        let mut rules = LayoutRules::new(
+            &self.rules,
+            None,
+            args.clearance,
+            self.foreign_gaps,
+            args.support_overlap_mm,
+        )?;
         if let (Some(spec), Some(anchor)) = (&self.tower, anchor) {
             rules.zones.extend(spec.zones(anchor));
         }
@@ -136,6 +156,7 @@ pub fn plan_of(job: &crate::job::Job, prints: Vec<ObjectPrint>, tower: Option<To
         prints,
         rules: job.rules.clone(),
         tower,
+        foreign_gaps: ForeignGaps::default(),
     }
 }
 
@@ -148,6 +169,31 @@ mod tests {
     fn a_state_of_another_version_is_refused_with_the_way_out() {
         let error = PackState::from_json(br#"{"plan": {}, "packed": {}}"#).unwrap_err().to_string();
         assert!(error.contains("pack the plate again"), "{error}");
+    }
+
+    #[test]
+    fn a_state_written_before_the_gap_options_loads_with_the_former_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let mut value = serde_json::to_value(test_state(test_plan(&job, 1))).unwrap();
+        let plan = value["plan"].as_object_mut().unwrap();
+        plan.remove("foreign_gaps");
+        value["summary"].as_object_mut().unwrap().remove("gap_variants");
+        let back = PackState::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(back.plan.foreign_gaps, ForeignGaps::default());
+        assert_eq!(back.plan.foreign_gaps.band_mm, 0.5);
+        assert!(back.summary.gap_variants.is_empty());
+    }
+
+    #[test]
+    fn the_foreign_gaps_of_a_plan_reach_the_options_and_the_state_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let gaps = ForeignGaps { base_mm: 0.25, band_mm: 0.75 };
+        let state = test_state(test_plan(&job, 1).with_foreign_gaps(gaps));
+        assert_eq!(state.plan.options(&job.args).foreign_gaps, gaps);
+        let back = PackState::from_json(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(back.plan.foreign_gaps, gaps);
     }
 
     #[test]

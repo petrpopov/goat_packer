@@ -4,7 +4,7 @@
 use std::{fs, path::PathBuf};
 
 use goat_packer::{
-    Point, Rect,
+    ForeignGaps, Point, Rect,
     gcode_collisions::SupportCollision,
     pack::TowerSpec,
     print_time::TimeSample,
@@ -13,6 +13,7 @@ use goat_packer::{
 use serde::Serialize;
 
 use crate::AppResult;
+use crate::gaps::{GapVariant, OwnGap, floor_warning};
 use crate::job::Job;
 use crate::margins::{DELTA_BAND_MM, DELTA_FIRST_LAYER_MM};
 use crate::order::Canonical;
@@ -38,6 +39,17 @@ pub struct ColoredPackReport {
     /// Per rotation class: runs sliced, whether the last runs added nothing, cache hit.
     pub probes: Vec<ClassSummary>,
     pub margins_mm: Margins,
+    /// The slicer's support gap to the support's own model (project settings; the probes
+    /// sliced with it and the output 3MF carries the same values, which assembly checks).
+    pub own_support_gap: OwnGap,
+    /// The packer-only support gaps to a neighbour's body that the layout was packed with.
+    pub chosen_gaps: ChosenGaps,
+    /// The least a foreign-gap rung could be (`--foreign-gap-floor`).
+    pub foreign_gap_floor: ForeignGaps,
+    /// Every foreign-gap variant packed: count, wall time and any failure.
+    pub gap_variants: Vec<GapVariant>,
+    /// Things the operator should know before trusting the layout (a lowered floor).
+    pub warnings: Vec<String>,
     /// Copies per rotation class, in `--rotations` order.
     pub class_counts: Vec<ClassCount>,
     /// The packing member that won and the best count each member reached.
@@ -64,6 +76,13 @@ pub struct ColoredPackReport {
     pub heat_zone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_path: Option<String>,
+}
+
+/// The foreign gaps the layout was packed with.
+#[derive(Debug, Serialize)]
+pub struct ChosenGaps {
+    pub foreign_base_mm: f64,
+    pub foreign_band_mm: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +122,10 @@ pub struct Verification {
     /// Tower extent of the slice, plate coordinates.
     pub tower: Option<Rect>,
     pub gui_checks: &'static str,
+    /// Smallest edge gap between a support above the first layer and a foreign body among
+    /// pairs closer than 3 mm (`null` = none that close; negative = overlap). A statistic to
+    /// read against `chosen_gaps.foreign_band_mm`, never a failure.
+    pub min_support_body_gap_mm: Option<f64>,
 }
 
 /// `time` block of the report. `samples` lists every plate whose time was measured: without
@@ -150,6 +173,14 @@ impl ColoredPackReport {
                 first_layer: DELTA_FIRST_LAYER_MM,
                 bands: DELTA_BAND_MM,
             },
+            own_support_gap: job.own_gap,
+            chosen_gaps: ChosenGaps {
+                foreign_base_mm: state.plan.foreign_gaps.base_mm,
+                foreign_band_mm: state.plan.foreign_gaps.band_mm,
+            },
+            foreign_gap_floor: args.foreign_gap_floor,
+            gap_variants: summary.gap_variants.clone(),
+            warnings: floor_warning(args.foreign_gap_floor).into_iter().collect(),
             class_counts,
             member: summary.member.clone(),
             member_counts: summary.member_counts.clone(),

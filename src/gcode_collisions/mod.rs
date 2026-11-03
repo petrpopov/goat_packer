@@ -54,5 +54,6 @@ pub fn analyze_plate(gcode: &[u8]) -> PlateAnalysis {
         first_layer: parser.first_layer,
         layers: parser.layer,
         labelled_lines: parser.labelled_lines,
+        min_support_gap_mm: parser.min_support_gap_mm,
     }
 }

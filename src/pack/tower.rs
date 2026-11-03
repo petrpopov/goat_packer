@@ -4,7 +4,7 @@
 //! rings), and what they forbid comes from `keepout::permission` like every other zone.
 
 use crate::geometry::{Point, Rect, polygon_from_loop};
-use crate::keepout::{Permission, ZoneClass, permission};
+use crate::keepout::{ForeignGaps, Permission, ZoneClass, permission};
 use crate::kind_masks::{PlateZone, ZoneArea};
 use crate::object_print::PrintKind;
 use geo::Intersects;
@@ -129,7 +129,7 @@ impl TowerSpec {
                     continue;
                 };
                 // The tower rows against plate zones only use gap 0 (touching passes).
-                let rect = rect.grown(gap.mm(0.0));
+                let rect = rect.grown(gap.mm(0.0, ForeignGaps::default()));
                 if breaks(rect, &zone.area) {
                     return Some(format!(
                         "{} at ({:.2}, {:.2}) breaks the {:?} zone '{}'",

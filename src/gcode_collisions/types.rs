@@ -57,6 +57,10 @@ pub struct PlateAnalysis {
     /// Printed lines attributed to an object; 0 means no object labels were found, so the
     /// check proved nothing.
     pub labelled_lines: usize,
+    /// Smallest edge gap between a support above the first layer and a foreign body, among
+    /// pairs closer than 3 mm (negative = overlap depth); `None` = none that close. Reported
+    /// against the packer's band gap, never a failure.
+    pub min_support_gap_mm: Option<f64>,
     /// Every object's material envelope over all layers: sampled arc/line centres plus
     /// half the extrusion width. Checking centre lines alone lets beads leave the bed.
     pub extents: Vec<(String, Rect)>,

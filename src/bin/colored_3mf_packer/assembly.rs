@@ -11,6 +11,7 @@ use goat_packer::{
 };
 
 use crate::AppResult;
+use crate::gaps::check_output;
 use crate::job::Job;
 use crate::plan::PackPlan;
 use crate::source::derive_embedded_stl;
@@ -85,7 +86,9 @@ pub fn build_colored_project(
             args.output.display()
         );
     }
-    Ok(())
+    // The settings were rewritten above (tower, nozzle clean); the slice must still print
+    // supports the way the probes did.
+    check_output(&args.output, job.own_gap)
 }
 
 /// `placements.json` in the legacy `PackResult` shape that `verify_outputs`, the webapp and
@@ -147,7 +150,33 @@ pub fn tower_rect(plan: &PackPlan, anchor: Option<Point>) -> Option<Rect> {
 mod tests {
     use super::*;
     use crate::test_support::{fixture_job, test_plan};
+    use crate::gaps::OwnGap;
     use goat_packer::embedded_mesh::load_object_mesh;
+
+    #[test]
+    fn the_output_carries_the_gaps_the_probes_used_and_a_mismatch_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut job = fixture_job(dir.path());
+        let plan = test_plan(&job, 1);
+        let placements = [PrintPlacement { print: 0, x_mm: 100.0, y_mm: 120.0 }];
+        // The project's own values (the fixture has none: the slicer defaults) survive the
+        // assembly and the tower rewrite; build_colored_project checks them itself.
+        build_colored_project(&job, &plan, &placements, Some(Point { x: 50.0, y: 50.0 })).unwrap();
+        check_output(&job.args.output, job.own_gap).unwrap();
+        // Probes that sliced with other values than the file carries: refused, naming both.
+        let error = check_output(&job.args.output, OwnGap { first_layer_mm: 0.75, xy_mm: 0.35 })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("support_object_first_layer_gap") && error.contains("0.2"), "{error}");
+        let error = check_output(&job.args.output, OwnGap { first_layer_mm: 0.2, xy_mm: 0.75 })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("support_object_xy_distance"), "{error}");
+        // A file whose settings drifted after the probes: the assembly itself fails.
+        job.own_gap.xy_mm = 0.75;
+        let error = build_colored_project(&job, &plan, &placements, None).unwrap_err().to_string();
+        assert!(error.contains("support_object_xy_distance"), "{error}");
+    }
 
     /// A clone of each rotation class stands with its frame centre on the placement, whatever
     /// translations the source's component and build item carry (the fixture has both), and is

@@ -5,6 +5,7 @@
 use super::{BodyRule, KeepoutClass};
 use crate::footprint::SUPPORT_BODY_GAP_MM;
 use crate::object_print::PrintKind::{self, *};
+use serde::{Deserialize, Serialize};
 
 /// How far a support base keeps from a neighbour's landing (mm). Zero: they may touch, never
 /// overlap. Evidence (owner, 2026-11-02): the plates that printed fine (U1 48 goats, A2L 70,
@@ -15,6 +16,37 @@ use crate::object_print::PrintKind::{self, *};
 /// of the band tests, which the first layer does not share (its patch is learned exactly).
 pub const SUPPORT_BASE_GAP_MM: f64 = 0.0;
 
+/// The packer-only gaps between one object's support and a NEIGHBOUR's model body (the 3MF
+/// knows nothing of them; supports against supports and brims against anything stay free).
+/// The defaults are the constants above; `--foreign-gaps` iterates over pairs of them, because
+/// the printed plates the owner trusts sit much closer than the strict start values.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ForeignGaps {
+    /// A support base (layer 0) to a neighbour's landing.
+    pub base_mm: f64,
+    /// A support above layer 0 to a neighbour's body in the same 2 mm band.
+    pub band_mm: f64,
+}
+
+impl Default for ForeignGaps {
+    fn default() -> Self {
+        Self {
+            base_mm: SUPPORT_BASE_GAP_MM,
+            band_mm: SUPPORT_BODY_GAP_MM,
+        }
+    }
+}
+
+impl ForeignGaps {
+    pub fn check(self) -> Result<(), String> {
+        let bad = |v: f64| !v.is_finite() || v < 0.0;
+        if bad(self.base_mm) || bad(self.band_mm) {
+            return Err(format!("invalid foreign gaps {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How far apart two things must stay. Symbolic, because the numbers belong to the job.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Gap {
@@ -22,19 +54,20 @@ pub enum Gap {
     Zero,
     /// `PackOptions::clearance`: body to body.
     Clearance,
-    /// `SUPPORT_BODY_GAP_MM`: a support above layer 0 to a body ("never touch").
+    /// `ForeignGaps::band_mm`: a support above layer 0 to a body. The tower body is a body
+    /// too, so it follows the same value.
     Support,
-    /// `SUPPORT_BASE_GAP_MM`: a support base to a neighbour's landing.
+    /// `ForeignGaps::base_mm`: a support base to a neighbour's landing.
     SupportBase,
 }
 
 impl Gap {
-    pub fn mm(self, clearance_mm: f64) -> f64 {
+    pub fn mm(self, clearance_mm: f64, foreign: ForeignGaps) -> f64 {
         match self {
             Gap::Zero => 0.0,
             Gap::Clearance => clearance_mm,
-            Gap::Support => SUPPORT_BODY_GAP_MM,
-            Gap::SupportBase => SUPPORT_BASE_GAP_MM,
+            Gap::Support => foreign.band_mm,
+            Gap::SupportBase => foreign.base_mm,
         }
     }
 }

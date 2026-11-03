@@ -16,7 +16,7 @@ mod zones;
 
 use crate::footprint::Footprint;
 use crate::geometry::{Point, Rect, rotate_loops};
-use crate::keepout::{BodyRule, pair_rules};
+use crate::keepout::{BodyRule, ForeignGaps, pair_rules};
 use crate::kind_masks::{join_sag_mm, plate_zones};
 use crate::object_print::{Loops, ObjectPrint, PrintKind};
 use crate::options::{PackOptions, PackResult, PackedPlacement};
@@ -38,6 +38,7 @@ pub struct VectorValidator {
     zones: Vec<ZoneShape>,
     body_rule: BodyRule,
     clearance_mm: f64,
+    foreign: ForeignGaps,
 }
 
 /// A broken pair rule: `own` of one placement too close to `foreign` of the other.
@@ -69,6 +70,7 @@ impl VectorValidator {
             zones: rules.zones.iter().map(ZoneShape::new).collect(),
             body_rule: rules.body_rule,
             clearance_mm: rules.clearance_mm,
+            foreign: rules.foreign,
         }
     }
 
@@ -84,7 +86,7 @@ impl VectorValidator {
                 let class = &self.classes[p.print];
                 self.zones
                     .iter()
-                    .find(|zone| breaks_zone(class, at[index], zone, self.clearance_mm))
+                    .find(|zone| breaks_zone(class, at[index], zone, self.clearance_mm, self.foreign))
                     .map(|zone| (index, zone_message(index, zone)))
             });
         // Boxes grown by half the widest gap meet whenever two copies can break a pair rule.
@@ -111,7 +113,7 @@ impl VectorValidator {
     fn widest_gap(&self) -> f64 {
         pair_rules(self.body_rule)
             .iter()
-            .map(|rule| rule.gap.mm(self.clearance_mm))
+            .map(|rule| rule.gap.mm(self.clearance_mm, self.foreign))
             .fold(0.0, f64::max)
     }
 
@@ -124,7 +126,7 @@ impl VectorValidator {
             } else {
                 1
             };
-            let gap = rule.gap.mm(self.clearance_mm);
+            let gap = rule.gap.mm(self.clearance_mm, self.foreign);
             for band in 0..bands {
                 let found = |flipped| PairBreak {
                     own: rule.a,
@@ -228,6 +230,7 @@ pub(crate) fn validate_geometry(
         zones: plate_zones(&plate, None)?,
         body_rule: plate.body_rule,
         clearance_mm: options.clearance,
+        foreign: options.foreign_gaps,
         support_overlap_mm: options.support_overlap_mm,
     };
     let print = ObjectPrint::from_legacy(fp);

@@ -1,5 +1,7 @@
 //! From the source project to a packed plate: modelling, packing and ordering.
 
+use std::time::Instant;
+
 use goat_packer::{
     PackedPlacement, PrintPlacement,
     pack::PackOutcome,
@@ -9,8 +11,9 @@ use goat_packer::{
 
 use crate::AppResult;
 use crate::assembly::tower_rect;
+use crate::gaps::{GapVariant, choose, floor_warning};
 use crate::job::Job;
-use crate::model::model_plate;
+use crate::model::{Modelled, model_plate};
 use crate::order::{BAMBU_OBSTACLE_MM, barriers, canonical_first, centre_out};
 use crate::plan::{MemberResult, PackPlan, PackState, PackSummary, STATE_VERSION};
 use crate::probe::time_probe;
@@ -23,7 +26,7 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
         Some(window_s) => Some(time_probe(job, window_s)?),
         None => None,
     };
-    let modelled = model_plate(job)?;
+    let (modelled, outcome, variants) = pack_variants(job)?;
     // Centre-out time-window plate: the kept objects gather around the smallest heat zone's
     // centre (any prefix of a valid layout is valid, so the order is all it takes).
     let centre = if job.args.time.centre_out() {
@@ -44,8 +47,81 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
             ..PackSummary::default()
         },
     };
-    arrange(job, &mut state)?;
+    state.summary.gap_variants = variants;
+    place(job, &mut state, outcome)?;
     Ok(state)
+}
+
+/// Probes the classes once, then packs the plan once per foreign-gap pair (the prints are
+/// shared, only the masks change). Returns the winning plan with its outcome and every
+/// variant packed, for the report.
+fn pack_variants(job: &Job) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>)> {
+    if let Some(warning) = floor_warning(job.args.foreign_gap_floor) {
+        progress::stage(Stage::Packing, &format!("warning: {warning}"), None, None);
+    }
+    let mut model = model_plate(job)?;
+    let (variants, mut outcomes): (Vec<_>, Vec<_>) =
+        pack_foreign_pairs(job, &model.plan).into_iter().unzip();
+    let Some(best) = choose(&variants) else {
+        let first = variants.iter().find_map(|v| v.error.clone());
+        return Err(first.unwrap_or_else(|| "no gap variant to pack".to_owned()).into());
+    };
+    let chosen = &variants[best];
+    model.plan = model.plan.with_foreign_gaps(chosen.foreign());
+    println!(
+        "chosen gaps: foreign base {} mm, band {} mm: {} objects",
+        chosen.foreign_base_mm, chosen.foreign_band_mm, chosen.count
+    );
+    let outcome = outcomes[best].take().expect("the chosen variant packed");
+    Ok((model, outcome, variants))
+}
+
+/// One pack of `plan` per `--foreign-gaps` pair, in the order given, each with its wall time.
+/// A pair that yields no valid layout is recorded with its error, not hidden.
+fn pack_foreign_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<PackOutcome>)> {
+    job.args
+        .foreign_gaps
+        .iter()
+        .map(|&foreign| {
+            progress::stage(
+                Stage::Packing,
+                &format!(
+                    "packing (foreign gaps base {} band {}; {} attempts, seed {})...",
+                    foreign.base_mm, foreign.band_mm, job.args.attempts, job.args.seed
+                ),
+                None,
+                None,
+            );
+            let started = Instant::now();
+            let result = plan.with_foreign_gaps(foreign).pack(&job.args);
+            let mut variant = GapVariant {
+                foreign_base_mm: foreign.base_mm,
+                foreign_band_mm: foreign.band_mm,
+                count: 0,
+                wall_s: started.elapsed().as_secs_f64(),
+                error: None,
+            };
+            let outcome = match result {
+                Ok(outcome) => {
+                    variant.count = outcome.placements.len();
+                    Some(outcome)
+                }
+                Err(error) => {
+                    variant.error = Some(error.to_string());
+                    None
+                }
+            };
+            eprintln!(
+                "foreign gaps {}:{} -> {} objects in {:.1} s{}",
+                foreign.base_mm,
+                foreign.band_mm,
+                variant.count,
+                variant.wall_s,
+                variant.error.as_deref().map_or(String::new(), |e| format!(" ({e})")),
+            );
+            (variant, outcome)
+        })
+        .collect()
 }
 
 /// Packs the plan, orders the copies (centre-out on window plates, then the canonical copy of
@@ -59,6 +135,12 @@ pub fn arrange(job: &Job, state: &mut PackState) -> AppResult<()> {
         None,
     );
     let outcome = state.plan.pack(args)?;
+    place(job, state, outcome)
+}
+
+/// Orders the copies of a packed `outcome` (centre-out on window plates, then the canonical
+/// copy of each class first) and records it in `state`.
+fn place(job: &Job, state: &mut PackState, outcome: PackOutcome) -> AppResult<()> {
     log_outcome(&outcome);
     let mut placements = outcome.placements.clone();
     if let Some(centre) = state.centre {
@@ -130,6 +212,7 @@ pub fn show_layout(state: &PackState, source: LayoutSource) {
 mod tests {
     use super::*;
     use crate::test_support::{test_job, test_plan, test_state};
+    use goat_packer::ForeignGaps;
 
     #[test]
     fn arranging_records_the_layout_the_canonical_copies_and_the_members() {
@@ -146,6 +229,50 @@ mod tests {
             assert!(state.placements[..canonical.index].iter().all(|p| p.print != class));
         }
         assert_eq!(state.tower_anchor, None);
+    }
+
+    /// Squares of 10 mm with a first-layer support patch 2 mm wider on every side: a foreign
+    /// base gap of g keeps neighbours g further apart than a bare touch.
+    fn supported_plan(job: &Job) -> PackPlan {
+        let mut plan = test_plan(job, 1);
+        let ring = |h: f64| {
+            let p = |x, y| goat_packer::Point { x, y };
+            vec![vec![p(-h, -h), p(h, -h), p(h, h), p(-h, h), p(-h, -h)]]
+        };
+        plan.prints[0].support_base = ring(7.0);
+        plan
+    }
+
+    #[test]
+    fn every_foreign_pair_is_packed_and_the_best_count_wins_with_the_safer_tie() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut job = test_job(dir.path());
+        job.args.foreign_gaps = vec![
+            ForeignGaps { base_mm: 6.0, band_mm: 1.0 },
+            ForeignGaps { base_mm: 0.0, band_mm: 0.5 },
+            ForeignGaps { base_mm: 0.0, band_mm: 0.25 },
+        ];
+        let packed = pack_foreign_pairs(&job, &supported_plan(&job));
+        let counts: Vec<usize> = packed.iter().map(|(variant, _)| variant.count).collect();
+        assert!(counts[0] < counts[1], "a 6 mm base gap costs copies: {counts:?}");
+        // No band supports here: the band gap does not matter, so the two loose rungs tie and
+        // the larger band gap wins.
+        assert_eq!(counts[1], counts[2]);
+        let variants: Vec<GapVariant> = packed.into_iter().map(|(variant, _)| variant).collect();
+        assert_eq!(choose(&variants), Some(1));
+        assert!(variants.iter().all(|v| v.error.is_none() && v.wall_s >= 0.0));
+    }
+
+    #[test]
+    fn the_chosen_variant_is_what_the_plan_remembers() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let plan = supported_plan(&job).with_foreign_gaps(ForeignGaps { base_mm: 0.25, band_mm: 0.75 });
+        let mut state = test_state(plan);
+        arrange(&job, &mut state).unwrap();
+        assert_eq!(state.plan.foreign_gaps, ForeignGaps { base_mm: 0.25, band_mm: 0.75 });
+        // The layout was packed under those gaps and passes the exact check under them.
+        state.plan.validate(&job.args, &state.placements, state.tower_anchor).unwrap();
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub struct Findings {
     off_plate: Vec<String>,
     collisions: Vec<SupportCollision>,
     gui: Vec<String>,
+    /// `PlateAnalysis::min_support_gap_mm` of the slice.
+    min_support_gap_mm: Option<f64>,
     /// The sliced tower, when it reaches past the reserved box.
     outgrown_tower: Option<Vec<TowerLayer>>,
 }
@@ -208,6 +210,7 @@ impl<'a> PlateRun<'a> {
             off_plate: off_plate(&analysis, rules.printable_area),
             collisions: analysis.collisions.clone(),
             gui: gui.errors(),
+            min_support_gap_mm: analysis.min_support_gap_mm,
             outgrown_tower: outgrown(&layers, reserved),
         })
     }
@@ -240,6 +243,7 @@ impl<'a> PlateRun<'a> {
                 layers: findings.layers,
                 tower: findings.tower_box,
                 gui_checks: "passed",
+                min_support_body_gap_mm: findings.min_support_gap_mm,
             },
             support_collisions: findings.collisions,
             slice,

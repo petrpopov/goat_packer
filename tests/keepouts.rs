@@ -11,7 +11,7 @@ use goat_packer::keepout::{
     BodyRule, Gap, Keepout, KeepoutFrame, KeepoutShape, Permission, PlateRules, ZoneClass,
     pair_gap, pair_rules, permission,
 };
-use goat_packer::{KeepoutClass, PackOptions, Point, PrintKind, Rect, SUPPORT_BODY_GAP_MM};
+use goat_packer::{ForeignGaps, KeepoutClass, PackOptions, Point, PrintKind, Rect, SUPPORT_BODY_GAP_MM};
 
 use Gap::{Clearance, Support, Zero};
 use Permission::{Allowed, Forbidden, PartBox, PartHull};
@@ -138,12 +138,12 @@ fn profile_classes_map_to_their_matrix_columns() {
 
 #[test]
 fn gaps_resolve_to_the_job_clearance_and_the_support_gap() {
-    assert_eq!(Zero.mm(0.7), 0.0);
-    assert_eq!(Clearance.mm(0.7), 0.7);
-    assert_eq!(Support.mm(0.7), SUPPORT_BODY_GAP_MM);
+    assert_eq!(Zero.mm(0.7, ForeignGaps::default()), 0.0);
+    assert_eq!(Clearance.mm(0.7, ForeignGaps::default()), 0.7);
+    assert_eq!(Support.mm(0.7, ForeignGaps::default()), SUPPORT_BODY_GAP_MM);
     assert_eq!(SUPPORT_BODY_GAP_MM, 0.5);
     // A support base may touch a neighbour's landing (printed-OK plates).
-    assert_eq!(Gap::SupportBase.mm(0.7), 0.0);
+    assert_eq!(Gap::SupportBase.mm(0.7, ForeignGaps::default()), 0.0);
 }
 
 /// §7.3: forbidden pairs with their gap, both directions.
@@ -271,6 +271,7 @@ fn options(body_bed: Option<Rect>) -> PackOptions {
         lock_orientation: false,
         seed: 1,
         support_overlap_mm: None,
+        foreign_gaps: Default::default(),
         plate_rules: None,
     }
 }

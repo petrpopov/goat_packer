@@ -305,6 +305,7 @@ mod zones {
     fn masks(with_supports: bool) -> KindMasks {
         let rules = MaskRules {
             clearance_mm: 0.7,
+            foreign: Default::default(),
             body_rule: BodyRule::Silhouette,
             support_overlap_mm: None,
         };
@@ -384,6 +385,7 @@ mod zones {
         left.support_base = vec![square(-3.0, 0.0, 0.5, 1.0)];
         let rules = MaskRules {
             clearance_mm: 0.7,
+            foreign: Default::default(),
             body_rule: BodyRule::Silhouette,
             support_overlap_mm: None,
         };

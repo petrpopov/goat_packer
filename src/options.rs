@@ -2,7 +2,7 @@
 
 use crate::footprint::Footprint;
 use crate::geometry::{Point, Rect, polygon_area, rotate_loops};
-use crate::keepout::PlateRules;
+use crate::keepout::{ForeignGaps, PlateRules};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -55,6 +55,9 @@ pub struct PackOptions {
     /// bed fields above decide, as before; see `effective_plate_rules` for their conversion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plate_rules: Option<PlateRules>,
+    /// Support-to-neighbour-body gaps (`ForeignGaps`); the defaults are the former constants.
+    #[serde(default)]
+    pub foreign_gaps: ForeignGaps,
 }
 
 impl PackOptions {
@@ -121,6 +124,7 @@ pub(crate) fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> 
         || options.resolution <= 0.0
         || !options.clearance.is_finite()
         || options.clearance < 0.0
+        || options.foreign_gaps.check().is_err()
         || !options.angle_step_deg.is_finite()
         || options.angle_step_deg <= 0.0
         || options.angle_step_deg > 360.0

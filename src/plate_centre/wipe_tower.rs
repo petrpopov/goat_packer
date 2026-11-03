@@ -1,26 +1,8 @@
 //! The one project-settings edit the packer makes: moving the wipe tower of plate 1.
 
-use std::{
-    fs,
-    io::{Read, Write},
-    path::Path,
-};
+use std::path::Path;
 
-use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
-
-const PROJECT_SETTINGS_ENTRY: &str = "Metadata/project_settings.config";
-
-/// Formats a millimetre setting the way BambuStudio writes them: up to three decimals, no
-/// trailing zeros ("164.898", "160").
-fn format_setting_mm(value: f64) -> String {
-    let text = format!("{value:.3}");
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" {
-        "0".to_owned()
-    } else {
-        text.to_owned()
-    }
-}
+use crate::project_settings_edit::{edit_project_settings_in_3mf, format_setting_mm};
 
 fn first_entry(settings: &serde_json::Value, key: &str) -> Result<f64, String> {
     let entry = settings
@@ -52,46 +34,10 @@ pub fn shift_wipe_tower_settings(
     Ok((x, y))
 }
 
-/// Rewrites `project` in place with the wipe tower of plate 1 shifted by `shift`. Every entry
-/// other than `project_settings.config` is copied byte-for-byte; the settings JSON is
-/// re-serialized (keys alphabetized, the same as `prepare_cli_copy` and nozzle-clean injection
-/// already do — BambuStudio reads a settings map, order carries no meaning).
+/// Rewrites `project` in place with the wipe tower of plate 1 shifted by `shift` (the rest of
+/// the archive as `edit_project_settings_in_3mf` leaves it).
 pub fn relocate_wipe_tower_in_3mf(project: &Path, shift: (f64, f64)) -> Result<(f64, f64), String> {
-    let context = |error: &dyn std::fmt::Display| format!("{}: {error}", project.display());
-    let mut archive = ZipArchive::new(fs::File::open(project).map_err(|e| context(&e))?)
-        .map_err(|e| context(&e))?;
-    let mut entries: Vec<(String, bool, Vec<u8>)> = Vec::with_capacity(archive.len());
-    let mut moved = None;
-    for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|e| context(&e))?;
-        let name = entry.name().to_owned();
-        let is_dir = entry.is_dir();
-        let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).map_err(|e| context(&e))?;
-        if name == PROJECT_SETTINGS_ENTRY {
-            let mut settings: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(|e| context(&e))?;
-            moved = Some(shift_wipe_tower_settings(&mut settings, shift)?);
-            bytes = serde_json::to_vec(&settings).map_err(|e| context(&e))?;
-        }
-        entries.push((name, is_dir, bytes));
-    }
-    drop(archive);
-    let moved =
-        moved.ok_or_else(|| format!("{} has no {PROJECT_SETTINGS_ENTRY}", project.display()))?;
-    let mut zip = ZipWriter::new(fs::File::create(project).map_err(|e| context(&e))?);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    for (name, is_dir, bytes) in entries {
-        if is_dir {
-            zip.add_directory(name.trim_end_matches('/'), options)
-                .map_err(|e| context(&e))?;
-        } else {
-            zip.start_file(&name, options).map_err(|e| context(&e))?;
-            zip.write_all(&bytes).map_err(|e| context(&e))?;
-        }
-    }
-    zip.finish().map_err(|e| context(&e))?;
-    Ok(moved)
+    edit_project_settings_in_3mf(project, |settings| shift_wipe_tower_settings(settings, shift))
 }
 
 /// The stored tower position of plate 1 (`wipe_tower_x[0]`, `wipe_tower_y[0]`).

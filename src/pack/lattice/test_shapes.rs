@@ -63,6 +63,7 @@ pub(super) fn with_ctx<R>(prints: &[ObjectPrint], f: impl FnOnce(&Ctx) -> R) -> 
     };
     let mask_rules = MaskRules {
         clearance_mm: 0.5,
+        foreign: Default::default(),
         body_rule: rules.body_rule,
         support_overlap_mm: None,
     };

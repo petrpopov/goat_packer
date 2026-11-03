@@ -21,7 +21,7 @@ pub use raster::{RasterValidator, validate_raster};
 use crate::footprint::Footprint;
 use crate::frame::Frame;
 use crate::geometry::{Point, Rect};
-use crate::keepout::{BodyRule, PlateRules};
+use crate::keepout::{BodyRule, ForeignGaps, PlateRules};
 use crate::kind_masks::{PlateZone, plate_zones};
 use crate::object_print::ObjectPrint;
 use crate::options::{PackOptions, PackResult, PackedPlacement, check_pack_input};
@@ -61,6 +61,8 @@ pub struct LayoutRules {
     pub body_rule: BodyRule,
     /// What `Gap::Clearance` means, mm.
     pub clearance_mm: f64,
+    /// What `Gap::Support` and `Gap::SupportBase` mean, mm.
+    pub foreign: ForeignGaps,
     /// Support bases of two objects may overlap this deep (raster check only).
     pub support_overlap_mm: Option<f64>,
 }
@@ -72,12 +74,14 @@ impl LayoutRules {
         plate: &PlateRules,
         gcode_offset: Option<Point>,
         clearance_mm: f64,
+        foreign: ForeignGaps,
         support_overlap_mm: Option<f64>,
     ) -> Result<LayoutRules, String> {
         let rules = LayoutRules {
             zones: plate_zones(plate, gcode_offset)?,
             body_rule: plate.body_rule,
             clearance_mm,
+            foreign,
             support_overlap_mm,
         };
         rules.check_values()?;
@@ -89,6 +93,7 @@ impl LayoutRules {
         if bad(self.clearance_mm) || self.support_overlap_mm.is_some_and(bad) {
             return Err("invalid clearance or support overlap".to_owned());
         }
+        self.foreign.check()?;
         Ok(())
     }
 }

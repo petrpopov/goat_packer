@@ -5,7 +5,7 @@
 
 use crate::footprint::Footprint;
 use crate::geometry::{Point, rotate_point};
-use crate::keepout::BodyRule;
+use crate::keepout::{BodyRule, ForeignGaps};
 use crate::kind_masks::{KindMasks, KindShapes, MaskRules, OriginGrid, PlateZone, plate_zones};
 use crate::object_print::{Loops, ObjectPrint};
 use crate::options::PackOptions;
@@ -30,6 +30,7 @@ impl LegacyPrint {
         let zones = plate_zones(&rules, None)?;
         let mask_rules = MaskRules {
             clearance_mm: options.clearance,
+            foreign: options.foreign_gaps,
             body_rule: rules.body_rule,
             support_overlap_mm: options.support_overlap_mm,
         };
@@ -135,6 +136,7 @@ pub fn rasterize_footprint_with_support(
     assert!(angle_deg.is_finite());
     let rules = MaskRules {
         clearance_mm: clearance,
+        foreign: ForeignGaps::default(),
         body_rule: BodyRule::Silhouette,
         support_overlap_mm,
     };

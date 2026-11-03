@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use goat_packer::{
-    Point, Rect,
+    ForeignGaps, Point, Rect,
     assemble::ItemFrame,
     colored_packer::PrinterProfile,
     embedded_mesh::{ObjectMesh, Part, PartKind},
@@ -14,6 +14,7 @@ use goat_packer::{
 };
 
 use crate::args::{Args, TimeOptions};
+use crate::gaps::OwnGap;
 use crate::job::Job;
 use crate::plan::{PackPlan, PackState, PackSummary, STATE_VERSION};
 
@@ -62,6 +63,9 @@ pub fn test_args(work_dir: &Path) -> Args {
         cache_dir: None,
         verify: false,
         support_overlap_mm: None,
+        // One rung, the library defaults: the plain single-pack behaviour of the tests.
+        foreign_gaps: vec![ForeignGaps::default()],
+        foreign_gap_floor: ForeignGaps::default(),
         finish_state: None,
     }
 }
@@ -127,6 +131,7 @@ pub fn test_job(dir: &Path) -> Job {
         },
         tower_anchor: None,
         gcode_offset: (0.0, 0.0),
+        own_gap: OwnGap { first_layer_mm: 0.2, xy_mm: 0.35 },
         window_s: None,
         slicer_change_s: 0.0,
         correction,
@@ -156,6 +161,7 @@ pub fn test_plan(job: &Job, classes: usize) -> PackPlan {
         prints,
         rules: job.rules.clone(),
         tower: None,
+        foreign_gaps: ForeignGaps::default(),
     }
 }
 

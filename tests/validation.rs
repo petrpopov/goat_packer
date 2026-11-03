@@ -88,7 +88,7 @@ fn keepout(class: KeepoutClass, shape: KeepoutShape) -> Keepout {
 }
 
 fn rules(keepouts: Vec<Keepout>) -> LayoutRules {
-    LayoutRules::new(&plate(keepouts, 0.0), None, CLEARANCE, None).unwrap()
+    LayoutRules::new(&plate(keepouts, 0.0), None, CLEARANCE, Default::default(), None).unwrap()
 }
 
 fn at(points: &[(f64, f64)]) -> Vec<PrintPlacement> {
@@ -299,7 +299,7 @@ fn part_hulls_may_touch_a_hard_zone_but_not_enter_it() {
 
 #[test]
 fn part_boxes_may_meet_the_restricted_edge_band() {
-    let rules = LayoutRules::new(&plate(vec![], 3.5), None, CLEARANCE, None).unwrap();
+    let rules = LayoutRules::new(&plate(vec![], 3.5), None, CLEARANCE, Default::default(), None).unwrap();
     // The part box reaches x = -3 + 6.5 = 3.5: exactly the band.
     assert!(vector(&print(), &rules, &[(6.5, 50.0)]).is_ok());
     assert!(vector(&print(), &rules, &[(6.49, 50.0)]).is_err());

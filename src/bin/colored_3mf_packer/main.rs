@@ -13,6 +13,7 @@
 mod args;
 mod assembly;
 mod class_print;
+mod gaps;
 mod job;
 mod learn;
 mod loops_ops;

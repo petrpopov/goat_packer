@@ -89,6 +89,7 @@ impl<'a> RasterValidator<'a> {
         }
         let mask_rules = MaskRules {
             clearance_mm: rules.clearance_mm,
+            foreign: rules.foreign,
             body_rule: rules.body_rule,
             support_overlap_mm: rules.support_overlap_mm,
         };

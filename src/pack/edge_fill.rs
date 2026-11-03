@@ -152,6 +152,7 @@ mod tests {
         };
         let mask_rules = MaskRules {
             clearance_mm: 0.5,
+            foreign: Default::default(),
             body_rule: Default::default(),
             support_overlap_mm: None,
         };

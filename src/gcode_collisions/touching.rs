@@ -11,6 +11,10 @@ pub(super) const TOUCH_EPSILON_MM: f64 = 0.01;
 /// packer's rule lets a base touch a foreign landing (`SUPPORT_BASE_GAP_MM` = 0). Above the
 /// first layer a support on a foreign body fuses to it, so there `TOUCH_EPSILON_MM` stays.
 pub(super) const FIRST_LAYER_BASE_OVERLAP_MM: f64 = 0.1;
+/// How close a support above the first layer must come to a foreign body to enter the
+/// reported minimum gap (`PlateAnalysis::min_support_gap_mm`): a statistic for judging the
+/// packer's `ForeignGaps::band_mm`, never a failure threshold.
+pub(super) const GAP_STATISTIC_REACH_MM: f64 = 3.0;
 /// Spatial hash cell for the body lines of one layer.
 const CELL_MM: f64 = 2.0;
 
@@ -60,8 +64,10 @@ fn point_segment_distance(p: (f64, f64), s0: (f64, f64), s1: (f64, f64)) -> f64 
     (p.0 - (s0.0 + t * dx)).hypot(p.1 - (s0.1 + t * dy))
 }
 
-/// (support object, body object, smallest edge gap) for every touching pair on one layer.
-pub(super) fn layer_collisions(lines: &[Line]) -> Vec<(usize, usize, f64)> {
+/// (support object, body object, smallest edge gap) for every pair on one layer whose gap is
+/// below `reach_mm` (at least `TOUCH_EPSILON_MM`: the touching pairs always come back).
+pub(super) fn layer_collisions(lines: &[Line], reach_mm: f64) -> Vec<(usize, usize, f64)> {
+    let reach_mm = reach_mm.max(TOUCH_EPSILON_MM);
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     let mut widest = 0.0f64;
     for (index, line) in lines.iter().enumerate().filter(|(_, line)| !line.support) {
@@ -80,7 +86,7 @@ pub(super) fn layer_collisions(lines: &[Line]) -> Vec<(usize, usize, f64)> {
     for support in lines.iter().filter(|line| line.support) {
         // Every body line within reach sits in a cell overlapping the support line's bbox
         // grown by the widest possible touching distance.
-        let reach = (support.width + widest) * 0.5 + TOUCH_EPSILON_MM;
+        let reach = (support.width + widest) * 0.5 + reach_mm;
         let lo = cell((
             support.from.0.min(support.to.0) - reach,
             support.from.1.min(support.to.1) - reach,
@@ -101,7 +107,7 @@ pub(super) fn layer_collisions(lines: &[Line]) -> Vec<(usize, usize, f64)> {
                     }
                     let gap = segment_distance(support.from, support.to, body.from, body.to)
                         - (support.width + body.width) * 0.5;
-                    if gap < TOUCH_EPSILON_MM {
+                    if gap < reach_mm {
                         let entry = found
                             .entry((support.object, body.object))
                             .or_insert(f64::INFINITY);

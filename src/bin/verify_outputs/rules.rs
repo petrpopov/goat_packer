@@ -52,13 +52,29 @@ pub const SUPPORT_GAP_MM: f64 = 0.5;
 /// `SUPPORT_BASE_GAP_MM` (touching allowed; evidence at its definition).
 pub const SUPPORT_BASE_GAP_MM: f64 = 0.0;
 
+/// The packer's `ForeignGaps` (`--foreign-base-gap`, `--foreign-band-gap`), own copy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Foreign {
+    pub base_mm: f64,
+    pub band_mm: f64,
+}
+
+impl Default for Foreign {
+    fn default() -> Self {
+        Self {
+            base_mm: SUPPORT_BASE_GAP_MM,
+            band_mm: SUPPORT_GAP_MM,
+        }
+    }
+}
+
 impl Gap {
-    pub fn mm(self, clearance_mm: f64) -> f64 {
+    pub fn mm(self, clearance_mm: f64, foreign: Foreign) -> f64 {
         match self {
             Gap::Zero => 0.0,
             Gap::Clearance => clearance_mm,
-            Gap::Support => SUPPORT_GAP_MM,
-            Gap::SupportBase => SUPPORT_BASE_GAP_MM,
+            Gap::Support => foreign.band_mm,
+            Gap::SupportBase => foreign.base_mm,
         }
     }
 }
@@ -187,6 +203,21 @@ mod tests {
     fn the_pair_table_copy_agrees_with_the_packer_both_body_rules() {
         assert_eq!(SUPPORT_GAP_MM, goat_packer::SUPPORT_BODY_GAP_MM);
         assert_eq!(SUPPORT_BASE_GAP_MM, keepout::SUPPORT_BASE_GAP_MM);
+        let packer = keepout::ForeignGaps::default();
+        assert_eq!((Foreign::default().base_mm, Foreign::default().band_mm), (packer.base_mm, packer.band_mm));
+        // The same non-default values mean the same millimetres in both tables.
+        let ours = Foreign { base_mm: 0.13, band_mm: 0.37 };
+        let theirs = keepout::ForeignGaps { base_mm: 0.13, band_mm: 0.37 };
+        for gap in [Gap::Zero, Gap::Clearance, Gap::Support, Gap::SupportBase] {
+            let packer_gap = match gap {
+                Gap::Zero => keepout::Gap::Zero,
+                Gap::Clearance => keepout::Gap::Clearance,
+                Gap::Support => keepout::Gap::Support,
+                Gap::SupportBase => keepout::Gap::SupportBase,
+            };
+            assert_eq!(gap.mm(0.7, ours), packer_gap.mm(0.7, theirs), "{gap:?}");
+            assert_eq!(gap_of(packer_gap), gap);
+        }
         for (bands, body_rule) in [(false, BodyRule::Silhouette), (true, BodyRule::Bands)] {
             for (a, print_a) in KINDS {
                 for (b, print_b) in KINDS {

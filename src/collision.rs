@@ -106,6 +106,7 @@ mod tests {
     fn rules(body_rule: BodyRule, overlap: Option<f64>) -> MaskRules {
         MaskRules {
             clearance_mm: 0.7,
+            foreign: Default::default(),
             body_rule,
             support_overlap_mm: overlap,
         }

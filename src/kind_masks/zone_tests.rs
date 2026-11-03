@@ -220,7 +220,7 @@ fn material_test(
     grid: &OriginGrid,
     covers: &mut CoverCache,
 ) -> ZoneTest {
-    let gap_mm = gap.mm(masks.rules.clearance_mm);
+    let gap_mm = gap.mm(masks.rules.clearance_mm, masks.rules.foreign);
     match &zone.area {
         ZoneArea::Outside {
             inside,

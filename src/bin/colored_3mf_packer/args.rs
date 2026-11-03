@@ -3,10 +3,13 @@
 use std::path::PathBuf;
 
 use goat_packer::{
-    colored_packer::PrinterProfile, nozzle_clean::NozzleCleanSpec, print_time::TimeCorrection,
+    ForeignGaps, colored_packer::PrinterProfile, nozzle_clean::NozzleCleanSpec, print_time::TimeCorrection,
 };
 
 use crate::AppResult;
+use crate::gaps::{
+    DEFAULT_FOREIGN_GAPS, check_ladder, parse_foreign_gaps, parse_foreign_pair,
+};
 
 /// Default `--rotations`: every goat prints one realization per rotation class, and the
 /// half-turn class lets neighbours interlock (design §14 Q13).
@@ -55,6 +58,13 @@ pub struct Args {
     /// `--support-overlap-mm`: how far the supports of different objects may overlap
     /// (`PackOptions::support_overlap_mm`); `None` = unlimited, the plain two-zone rule.
     pub support_overlap_mm: Option<f64>,
+    /// `--foreign-gaps`: the (support base, support band) gaps to a neighbour's body, tried
+    /// one pack each, floor first; none below `foreign_gap_floor`.
+    pub foreign_gaps: Vec<ForeignGaps>,
+    /// `--foreign-gap-floor`: the least a rung may be. The default is the former fixed rule,
+    /// what control full-plate slices passed with zero contacts; lowering it is explicit and
+    /// warned about in the progress output and the report.
+    pub foreign_gap_floor: ForeignGaps,
     /// `--finish-state PATH`: skip modelling and packing, verify the plate of a saved state.
     pub finish_state: Option<PathBuf>,
 }
@@ -176,6 +186,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
     let mut finish_state = None;
+    let mut foreign_gap_floor = ForeignGaps::default();
+    let mut foreign_gaps = parse_foreign_gaps(DEFAULT_FOREIGN_GAPS)?;
     while let Some(option) = args.next() {
         // The valueless switches; every other option consumes the next argument.
         if option == "--ams-correction" {
@@ -237,6 +249,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--prep-min" => {
                 time.prep_min = parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?;
             }
+            "--foreign-gap-floor" => foreign_gap_floor = parse_foreign_pair(&option, &value)?,
+            "--foreign-gaps" => foreign_gaps = parse_foreign_gaps(&value)?,
             "--finish-state" => finish_state = Some(PathBuf::from(value)),
             "--support-overlap-mm" => {
                 support_overlap_mm =
@@ -245,6 +259,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             _ => return Err(format!("unknown option: {option}").into()),
         }
     }
+    check_ladder(&foreign_gaps, foreign_gap_floor)?;
     let output = output.ok_or("--output is required")?;
     let work_dir = work_dir.unwrap_or_else(|| output.with_extension("work"));
     let attempts = attempts.max(1);
@@ -270,6 +285,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         cache_dir,
         verify,
         support_overlap_mm,
+        foreign_gaps,
+        foreign_gap_floor,
         finish_state,
     })
 }
@@ -329,6 +346,38 @@ mod tests {
         for bad in ["-0.5", "NaN", "inf", "x"] {
             assert!(parse_with(&["--support-overlap-mm", bad]).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn gap_flags_default_to_an_upward_ladder_from_the_floor() {
+        let defaults = parse(&REQUIRED).unwrap();
+        assert_eq!(defaults.foreign_gaps.len(), 4);
+        assert_eq!(defaults.foreign_gaps[0], ForeignGaps::default());
+        assert_eq!(defaults.foreign_gap_floor, ForeignGaps::default());
+        let args = parse_with(&["--foreign-gaps", "0.5,0.1:0.7"]).unwrap();
+        assert_eq!(
+            args.foreign_gaps,
+            vec![
+                ForeignGaps { base_mm: 0.0, band_mm: 0.5 },
+                ForeignGaps { base_mm: 0.1, band_mm: 0.7 }
+            ]
+        );
+        assert!(parse_with(&["--foreign-gaps", "x"]).is_err());
+        assert!(parse_with(&["--own-first-layer-gap", "1.2"]).is_err());
+    }
+
+    #[test]
+    fn a_rung_below_the_floor_needs_the_floor_flag_in_either_order() {
+        assert!(parse_with(&["--foreign-gaps", "0:0.25,0:0.5"]).is_err());
+        for order in [
+            ["--foreign-gaps", "0:0.25,0:0.5", "--foreign-gap-floor", "0:0.25"],
+            ["--foreign-gap-floor", "0:0.25", "--foreign-gaps", "0:0.25,0:0.5"],
+        ] {
+            let args = parse_with(&order).unwrap();
+            assert_eq!(args.foreign_gap_floor, ForeignGaps { base_mm: 0.0, band_mm: 0.25 });
+            assert_eq!(args.foreign_gaps.len(), 2);
+        }
+        assert!(parse_with(&["--foreign-gap-floor", "-1"]).is_err());
     }
 
     #[test]

@@ -56,6 +56,20 @@ fn a_support_clear_of_foreign_bodies_is_not_reported() {
 }
 
 #[test]
+fn the_closest_support_gap_above_layer_one_is_a_statistic_never_a_failure() {
+    // Centre lines 1.0 apart, half widths 0.225 + 0.2: a 0.575 mm gap, far from touching.
+    let analysis = analyze_plate(bambu_plate(1.0).as_bytes());
+    assert!(analysis.collisions.is_empty());
+    let gap = analysis.min_support_gap_mm.expect("a pair within reach");
+    assert!((gap - 0.575).abs() < 1e-9, "{gap}");
+    // A touching pair reports its overlap, and is a collision as before.
+    let touching = analyze_plate(bambu_plate(0.3).as_bytes());
+    assert!((touching.min_support_gap_mm.unwrap() + 0.125).abs() < 1e-9);
+    // Nothing within 3 mm: no figure.
+    assert_eq!(analyze_plate(bambu_plate(10.0).as_bytes()).min_support_gap_mm, None);
+}
+
+#[test]
 fn own_support_touching_own_body_is_fine() {
     let gcode = "; CHANGE_LAYER\n; start printing object, unique label id: 1\n\
                  ; FEATURE: Outer wall\nG1 X0 Y0\nG1 X10 Y0 E0.5\n\

@@ -55,6 +55,7 @@ pub mod plate_preview;
 pub mod polygon_ops;
 pub mod print_time;
 pub mod process_output;
+pub mod project_settings_edit;
 pub mod progress;
 pub mod purge_detect;
 pub mod scheduler;
@@ -76,7 +77,7 @@ pub use geometry::{
     polygon_area, union_loops,
 };
 pub use grid::grid_layout;
-pub use keepout::{Keepout, KeepoutClass, PlateRules};
+pub use keepout::{ForeignGaps, Keepout, KeepoutClass, PlateRules};
 pub use object_print::{ObjectPrint, PrintKind, Realization};
 pub use options::{PackOptions, PackResult, PackedPlacement};
 pub use packing::pack_footprint;

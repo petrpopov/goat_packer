@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 
 use super::reader::{Extrusion, ExtrusionSink, Role, read};
-use super::touching::{FIRST_LAYER_BASE_OVERLAP_MM, Line, layer_collisions};
+use super::touching::{
+    FIRST_LAYER_BASE_OVERLAP_MM, GAP_STATISTIC_REACH_MM, Line, TOUCH_EPSILON_MM, layer_collisions,
+};
 use super::types::{ObjectFirstLayer, Strip, SupportCollision};
 use crate::geometry::Rect;
 
@@ -23,6 +25,9 @@ pub(super) struct Parser {
     touching: BTreeMap<(usize, usize), (usize, usize, usize, f64)>,
     first_strips: Vec<Vec<Strip>>,
     pub(super) labelled_lines: usize,
+    /// Smallest support-to-foreign-body gap above the first layer among pairs closer than
+    /// `GAP_STATISTIC_REACH_MM`.
+    pub(super) min_support_gap_mm: Option<f64>,
     pub(super) extents: Vec<Option<Rect>>,
     /// Every labelled line with its layer height, kept only for
     /// `gcode_footprint::realization_from_gcode`.
@@ -69,7 +74,15 @@ impl ExtrusionSink for Parser {
         if layer == 0 || lines.is_empty() || self.skip_contacts {
             return;
         }
-        for (support_object, body_object, gap) in layer_collisions(&lines) {
+        for (support_object, body_object, gap) in layer_collisions(&lines, GAP_STATISTIC_REACH_MM) {
+            if layer > 1 {
+                let seen = self.min_support_gap_mm.unwrap_or(f64::INFINITY);
+                self.min_support_gap_mm = Some(seen.min(gap));
+            }
+            // The wider search only feeds the statistic; failures stay contact-only.
+            if gap >= TOUCH_EPSILON_MM {
+                continue;
+            }
             if layer == 1 && gap >= -FIRST_LAYER_BASE_OVERLAP_MM {
                 continue;
             }

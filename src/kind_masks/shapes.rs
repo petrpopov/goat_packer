@@ -4,7 +4,7 @@
 
 use super::buffer::{grown, shrunk};
 use crate::geometry::{Point, Rect};
-use crate::keepout::{BodyRule, Gap, pair_rules};
+use crate::keepout::{BodyRule, ForeignGaps, Gap, pair_rules};
 use crate::object_print::{Loops, ObjectPrint, PrintKind};
 use rayon::prelude::*;
 
@@ -13,6 +13,8 @@ use rayon::prelude::*;
 pub struct MaskRules {
     /// `PackOptions::clearance`: what `Gap::Clearance` means.
     pub clearance_mm: f64,
+    /// What `Gap::Support` and `Gap::SupportBase` mean.
+    pub foreign: ForeignGaps,
     pub body_rule: BodyRule,
     /// `PackOptions::support_overlap_mm`: support bases of two objects may overlap this deep.
     pub support_overlap_mm: Option<f64>,
@@ -50,13 +52,14 @@ pub struct KindShapes {
 impl KindShapes {
     pub fn new(print: &ObjectPrint, rules: MaskRules) -> KindShapes {
         assert!(rules.clearance_mm.is_finite() && rules.clearance_mm >= 0.0);
+        assert!(rules.foreign.check().is_ok(), "{:?}", rules.foreign);
         let (keys, slots) = mask_layout(rules.body_rule, print.band_count());
         // Growing is i_overlay's outline, ~10 µs per vertex; masks are independent, and an
         // indexed parallel collect keeps their order.
         let grown = keys
             .par_iter()
             .map(|key| {
-                let radius = key.gap.mm(rules.clearance_mm) * 0.5;
+                let radius = key.gap.mm(rules.clearance_mm, rules.foreign) * 0.5;
                 grown(print.loops_of(key.kind, key.band), radius)
             })
             .collect();

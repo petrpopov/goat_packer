@@ -98,6 +98,7 @@ fn options(attempts: usize) -> PackOptions {
         lock_orientation: true,
         seed: 0,
         support_overlap_mm: None,
+        foreign_gaps: Default::default(),
         plate_rules: None,
     }
 }

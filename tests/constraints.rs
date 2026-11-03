@@ -111,13 +111,14 @@ fn options() -> PackOptions {
         lock_orientation: true,
         seed: 0,
         support_overlap_mm: None,
+        foreign_gaps: Default::default(),
         plate_rules: None,
     }
 }
 
 /// The layout rules of `plate` with the tower at `anchor`.
 fn tower_rules(plate: &PlateRules, anchor: Point) -> LayoutRules {
-    let mut rules = LayoutRules::new(plate, None, CLEARANCE, None).unwrap();
+    let mut rules = LayoutRules::new(plate, None, CLEARANCE, Default::default(), None).unwrap();
     rules.zones.extend(tower().zones(anchor));
     rules
 }

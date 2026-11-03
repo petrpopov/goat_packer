@@ -10,7 +10,7 @@
 use geo::{Area, BooleanOps, BoundingRect, Distance, Euclidean, MultiPolygon, Polygon};
 
 use crate::geometry::{Point, Rect, polygon_from_loop, strip_polygon};
-use crate::keepout::{Keepout, KeepoutShape, Permission, PlateRules, ZoneClass, permission};
+use crate::keepout::{ForeignGaps, Keepout, KeepoutShape, Permission, PlateRules, ZoneClass, permission};
 use crate::object_print::{ObjectPrint, PrintKind};
 
 /// Overlap below this area is touching, which every profile-zone rule allows.
@@ -252,7 +252,7 @@ impl Zone<'_> {
             }
             // Profile-zone cells forbid with `Gap::Zero` only (keepout tests pin the matrix);
             // the clearance and support gaps belong to the tower columns.
-            Permission::Forbidden { gap } => self.covers(&kind.material, gap.mm(0.0)),
+            Permission::Forbidden { gap } => self.covers(&kind.material, gap.mm(0.0, ForeignGaps::default())),
         }
     }
 
