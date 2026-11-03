@@ -150,6 +150,10 @@ output.input { display: flex; align-items: center; color: var(--muted); }
 .menu small { margin-left: auto; color: var(--dim); font: 11.5px var(--font-mono); }
 .menu hr { margin: var(--space-2xs) var(--space-xs); border: 0; border-top: 1px solid var(--border); }
 
+/* Готовый стол с башней очистки: GUI слайсера её сдвинет — просьба вернуть, между строкой статуса и сценой. */
+.tower-notice { display: flex; align-items: flex-start; gap: var(--space-sm); }
+.tower-notice svg { flex: none; margin-top: 1px; }
+
 /* Панели поверх сцены (этапы, файлы, ошибка): в потоке страницы их нет — сцена не двигается. */
 .scene-wrap { position: relative; }
 .scene-pop { position: absolute; z-index: var(--z-pop); top: var(--space-sm); left: var(--space-sm); width: min(360px, calc(100% - 20px)); max-height: calc(100% - 20px); overflow: auto; padding: var(--space-md) var(--space-lg); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-float); }

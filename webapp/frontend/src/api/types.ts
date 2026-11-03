@@ -131,6 +131,16 @@ export interface PackJobInfo {
   supportOverlapMm?: number | null;
   /** false — стол упакован по пробной нарезке, полная нарезка ещё не запускалась; нет поля — нарезан. */
   finalSliced?: boolean;
+  /** Башня очистки, которую поставил пакер; null/нет поля — башни нет (или старый бэкенд). */
+  tower?: PackTowerInfo | null;
+}
+
+/** Угол башни очистки (wipe_tower_x/y) и её размер, мм, координаты стола. */
+export interface PackTowerInfo {
+  anchorXMm: number;
+  anchorYMm: number;
+  widthMm: number | null;
+  depthMm: number | null;
 }
 
 /** Итог задачи калибровки AMS: значения calibration.json и текст instructions.md. */
