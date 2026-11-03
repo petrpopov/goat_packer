@@ -3,6 +3,7 @@
 //! reviewer can check it without reading the generator.
 
 use super::{Family, Flavour};
+use crate::gcode_collisions::TowerLines;
 use crate::paint::StateCoding;
 
 /// What `support_critical_regions_only` keeps (spec 01 §3.7, design §3.1).
@@ -231,6 +232,19 @@ impl Flavour {
     /// The ConflictChecker's collinear-overlap rule (absent in S).
     pub fn conflict_checks_collinear(self) -> bool {
         self != Flavour::Snapmaker240
+    }
+
+    /// The tower lines the ConflictChecker compares with the objects' (measured on the owner's
+    /// U1 plate and read in the builds, `docs/superpowers/specs/2026-11-03-gcode-conflict-check.md`):
+    /// B records the wall and the brim loops of every layer, S only the brim loops (its newer
+    /// tower records no wall), O/R record nothing for a non-Bambu machine, so a support over
+    /// their tower brim never warns.
+    pub fn conflict_tower_lines(self) -> TowerLines {
+        match self {
+            Flavour::Bambu0208 => TowerLines::All,
+            Flavour::Snapmaker240 => TowerLines::BrimLoops,
+            Flavour::Orca242 | Flavour::Orca250 => TowerLines::None,
+        }
     }
 
     pub fn tower_chamfer(self) -> TowerChamfer {

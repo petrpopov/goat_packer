@@ -37,7 +37,7 @@ mod types;
 
 use parser::{extents_of, parse};
 
-pub use conflicts::ConflictKind;
+pub use conflicts::{ConflictKind, TowerLines};
 pub(crate) use parser::{KeptLine, object_lines};
 
 pub use tower_layers::{TowerLayer, tower_layers};

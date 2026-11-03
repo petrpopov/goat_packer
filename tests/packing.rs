@@ -685,6 +685,7 @@ fn the_portfolio_is_identical_for_one_and_eight_threads_and_two_runs() {
         body: Rect::new(-0.25, -0.25, 9.0, 7.0),
         brim_l0_mm: 2.0,
         chamfer: vec![[0.4, 1.5], [0.6, 0.75]],
+        brim_conflicts: false,
         top_z_mm: 3.5,
         anchor_range: Rect::new(1.0, 1.0, 60.0, 42.0),
         source_anchor: Point { x: 55.0, y: 38.0 },

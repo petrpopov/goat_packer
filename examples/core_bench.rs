@@ -207,6 +207,7 @@ fn tower_from_measured(value: &Value) -> Option<TowerSpec> {
         body: rect(&value["relative_to_anchor"]["body_rect"])?,
         brim_l0_mm: widest(&measured["l0_brim_beyond_body_mm"])?,
         chamfer,
+        brim_conflicts: false,
         top_z_mm: measured["top_z"].as_f64()?,
         anchor_range: Rect::new(
             gui.min_x.max(printed.min_x),
