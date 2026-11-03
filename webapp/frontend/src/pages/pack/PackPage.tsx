@@ -10,7 +10,7 @@ import CalibrationPage from '@/pages/CalibrationPage';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 import { apiErrorMessage, isActiveStatus, snapmakerTowerNote, towerWarning } from '@/utils/jobs';
-import type { CustomBedInput } from '@/utils/printers';
+import { effectiveSlicer, slicerOptions, type CustomBedInput } from '@/utils/printers';
 import { DEFAULT_PACK_FORM, EMPTY_BED, packFormData, packRequestParts, valuesFromParams } from './packFormValues';
 import type { PackFormValues } from './packFormValues';
 import PackForm from './PackForm';
@@ -75,6 +75,18 @@ export default function PackPage() {
     setValues((current) => valuesFromParams(params, current));
   }, [params, jobId]);
 
+  // Слайсер STL: варианты принтера и действующий выбор; у задачи по ссылке — как отправлен.
+  const slicerProfile = external ? (job?.profile ?? null) : selection.selectedProfile;
+  const slicerChoices = slicerProfile ? slicerOptions(slicerProfile) : [];
+  const stlSlicer = !external && selection.stl && slicerProfile ? effectiveSlicer(slicerChoices, values.slicer) : null;
+  const slicerField = external
+    ? values.slicer
+      ? { options: slicerChoices, value: values.slicer }
+      : null
+    : stlSlicer
+      ? { options: slicerChoices, value: stlSlicer }
+      : null;
+
   const ams = useAmsCorrection(selection.selectedProfile);
   const parts = packRequestParts(values, {
     nozzleCleanAvailable: selection.selectedProfile === null || selection.selectedProfile.supportsNozzleClean,
@@ -107,7 +119,7 @@ export default function PackPage() {
       selection.custom && selection.customBed
         ? ({ kind: 'custom', bed: selection.customBed } as const)
         : ({ kind: 'profile', profileId: selection.profileId } as const);
-    startMutation.mutate(packFormData(file, values, target, parts));
+    startMutation.mutate(packFormData(file, values, target, parts, stlSlicer));
   };
 
   /** Новый файл — новая упаковка: открытая задача к нему не относится (идущая продолжает работать). */
@@ -151,6 +163,7 @@ export default function PackPage() {
     <div className={`work${calibOpen ? ' with-side' : ''}`}>
       <PackForm
         values={values}
+        slicer={slicerField}
         update={update}
         shownFile={shownFile}
         onFileChange={handleFileChange}

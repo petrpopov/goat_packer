@@ -38,6 +38,8 @@ object CliCommands {
         // Пакер по умолчанию стол не режет; --verify — нарезка и проверки (доводка по состоянию тоже).
         if (params.finalSlice) add("--verify")
         params.finishState?.let { addOption("--finish-state", it.toString()) }
+        // Слайсер STL-задачи: пакер переключает профиль на него и берёт его GUI целевым.
+        params.slicer?.let { addOption("--slicer", it) }
     }
 
     fun schedule(binary: String, params: ScheduleParams): List<String> = buildList {

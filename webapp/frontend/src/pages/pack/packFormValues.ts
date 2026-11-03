@@ -32,6 +32,8 @@ export interface PackFormValues {
   marginPct: string;
   /** Пусто — без ограничений. */
   supportOverlap: string;
+  /** Слайсер STL (bambu|orca); пусто — умолчание принтера. */
+  slicer: string;
   /** Свой стол («Моего принтера нет в списке» или 3MF неизвестного принтера). */
   bed: CustomBedInput;
 }
@@ -53,6 +55,7 @@ export const DEFAULT_PACK_FORM: PackFormValues = {
   windowHours: '12',
   marginPct: '10',
   supportOverlap: '',
+  slicer: '',
   bed: EMPTY_BED,
 };
 
@@ -76,6 +79,7 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
     windowHours: params.timeWindowHours != null ? String(params.timeWindowHours) : current.windowHours,
     marginPct: params.timeMarginPct != null ? String(params.timeMarginPct) : current.marginPct,
     supportOverlap: text(params.supportOverlapMm),
+    slicer: params.slicer ?? '',
     bed: params.customBed
       ? {
           width: String(params.customBed.width),
@@ -160,7 +164,9 @@ export function packFormData(
   file: File,
   values: PackFormValues,
   target: PackTarget,
-  parts: PackRequestParts
+  parts: PackRequestParts,
+  /** Слайсер STL-задачи (effectiveSlicer); null — 3MF, слайсер задаёт проект. */
+  slicer: string | null = null
 ): FormData {
   const form = new FormData();
   form.append('file', file);
@@ -187,5 +193,6 @@ export function packFormData(
   for (const [name, value] of parts.supportFields) form.append(name, value);
   // Окно печати меряется нарезками — с ним стол режется всегда.
   form.append('finalSlice', String(values.sliceNow || values.windowOn));
+  if (slicer) form.append('slicer', slicer);
   return form;
 }

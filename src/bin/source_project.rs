@@ -4,7 +4,7 @@
 //!   source_project --stl model.stl [--presets /opt/slicer/resources/profiles]
 //!     [--orca /opt/slicers/orca/AppRun]
 //!     (--vendor BBL --machine "Bambu Lab P1S 0.4 nozzle" | --custom-bed W,D,H)
-//!     [--edge-margin 5] --output input.3mf --work-dir work
+//!     [--edge-margin 5] [--gui-flavour snapmaker-orca-2.4] --output input.3mf --work-dir work
 //!
 //! Presets are read at run time from the slicer installed in the image (plain JSON) and
 //! flattened by `orca_project`; nothing from Orca is shipped by us. A catalog printer loads its
@@ -17,6 +17,13 @@
 //! minus `--edge-margin` (the profile's `edge_margin_mm`, the packer keeps the same margin) and
 //! `printable_height`, checked before the export. Every failure exits 1 with one line
 //! `error: STL could not be converted: …` (the webapp's CliErrorTranslator keys on it).
+//!
+//! `--gui-flavour` is the GUI the user picked to print with (webapp: the job profile's
+//! `gui_flavour` after the slicer choice). OrcaSlicer writes `BambuStudio-<compat>` into
+//! `Application` plus its own `OrcaSlicer` tag; read alone that passed for BambuStudio, so a U1
+//! STL project was packed against BambuStudio's GUI rules. The export is re-stamped for the
+//! target (Snapmaker Orca: `Snapmaker_Orca-2.4.0`; BambuStudio: its own string), so the GUI
+//! loads the project's settings as its own and the packer resolves the same target.
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -26,6 +33,8 @@ use goat_packer::{
     orca_presets::PresetIndex,
     orca_project::{self, CliPresets, Error, failure_line},
     process_output::bounded_output,
+    project_application::{project_application, stamp_project},
+    support_model::flavour::Flavour,
 };
 
 const DEFAULT_PRESETS: &str = "/opt/slicer/resources/profiles";
@@ -44,6 +53,11 @@ struct Args {
     orca: PathBuf,
     printer: Printer,
     edge_margin: f64,
+    /// `--gui-flavour`: the slicer GUI the user opens the project in (`bambu-02.08`,
+    /// `orca-2.4`, `snapmaker-orca-2.4`, the job profile's `gui_flavour`); the export is
+    /// stamped so that GUI reads it as its own (`project_application::stamp_project`).
+    /// `None` = the exporting slicer's own stamp.
+    gui_flavour: Option<Flavour>,
     output: PathBuf,
     work_dir: PathBuf,
 }
@@ -61,6 +75,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
     let mut presets = PathBuf::from(DEFAULT_PRESETS);
     let mut orca = PathBuf::from(DEFAULT_ORCA);
     let mut edge_margin = 0.0;
+    let mut gui_flavour = None;
     while let Some(option) = args.next() {
         let value = args.next().ok_or_else(|| format!("missing value for {option}"))?;
         match option.as_str() {
@@ -77,6 +92,11 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
                     .ok()
                     .filter(|m| m.is_finite() && *m >= 0.0)
                     .ok_or_else(|| format!("--edge-margin {value}: expected a non-negative number of mm"))?
+            }
+            "--gui-flavour" => {
+                gui_flavour = Some(Flavour::from_name(&value).ok_or_else(|| {
+                    format!("--gui-flavour {value}: expected bambu-02.08, orca-2.4, orca-2.5 or snapmaker-orca-2.4")
+                })?)
             }
             "--output" => output = Some(PathBuf::from(value)),
             "--work-dir" => work_dir = Some(PathBuf::from(value)),
@@ -96,6 +116,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
         orca,
         printer,
         edge_margin,
+        gui_flavour,
         output: output.ok_or("missing --output")?,
         work_dir: work_dir.ok_or("missing --work-dir")?,
     })
@@ -184,6 +205,12 @@ fn run(args: &Args) -> Result<(), Error> {
     }
     let origin = orca_project::free_spot(usable, &exclusions, footprint);
     orca_project::place_build_item(&args.output, (origin.0 + footprint.0 / 2.0, origin.1 + footprint.1 / 2.0))?;
+    // The export carries the exporting slicer's stamp; the GUI the user prints with must read
+    // the project as its own (Snapmaker Orca: `Snapmaker_Orca-2.4.0`), and the packer takes its
+    // target GUI from the same metadata.
+    if let Some(flavour) = args.gui_flavour {
+        stamp_project(&args.output, flavour)?;
+    }
     let settings = orca_project::project_settings(&args.output)?;
     orca_project::check_project_settings(&settings, &presets)?;
     // The export's leftovers (result.json, a copied 3MF) are not needed past this point.
@@ -206,11 +233,12 @@ fn export(args: &Args, files: &[PathBuf; 3], export_dir: &Path) -> Result<(), Er
 
 fn print_summary(output: &Path, presets: &CliPresets) {
     println!(
-        "source project {}: machine {}, process {}, filament {}",
+        "source project {}: machine {}, process {}, filament {}, application {}",
         output.display(),
         presets.machine_name(),
         presets.process_name(),
-        presets.filament_name()
+        presets.filament_name(),
+        project_application(output).unwrap_or_else(|| "?".to_owned())
     );
 }
 
@@ -268,6 +296,14 @@ mod tests {
         assert!(tall.starts_with("the model is taller than the printer"), "{tall}");
         assert!(usable_area(area, 0.0, [10.0, 10.0, 230.0], None).is_ok());
         assert!(usable_area(area, 105.0, [1.0, 1.0, 1.0], None).is_err());
+    }
+
+    #[test]
+    fn gui_flavour_is_optional_and_a_known_build() {
+        assert_eq!(args(&with(&["--custom-bed", "300,250,220"])).unwrap().gui_flavour, None);
+        let parsed = args(&with(&["--custom-bed", "300,250,220", "--gui-flavour", "snapmaker-orca-2.4"])).unwrap();
+        assert_eq!(parsed.gui_flavour, Some(Flavour::Snapmaker240));
+        assert!(args(&with(&["--custom-bed", "300,250,220", "--gui-flavour", "cura-5"])).is_err());
     }
 
     #[test]

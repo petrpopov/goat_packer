@@ -1,5 +1,6 @@
 package com.goatpacker.web.service.server
 
+import com.goatpacker.web.config.SlicerKind
 import com.goatpacker.web.dto.JobRequest
 import com.goatpacker.web.exception.badRequest
 import com.goatpacker.web.model.JobKind
@@ -39,6 +40,8 @@ object JobRequestValidator {
         if (r.changeSeconds.isOutOf(JobLimits.CHANGE_SECONDS)) badRequest("Длительность смены прутка должна быть 0–600 с")
         if (r.timeMarginPct.isOutOf(JobLimits.TIME_MARGIN_PCT)) badRequest("Запас времени должен быть 0–50 %")
         if (r.nozzleClean.isNotBlank()) validateNozzleClean(r.nozzleClean)
+        if (r.slicer != null && r.slicer !in SlicerKind.ALL) badRequest("Слайсер: ${SlicerKind.ALL.joinToString(" или ")}")
+        if (r.slicer != null && kind != JobKind.PACK) badRequest("Слайсер выбирается только для упаковки STL")
         validateScheduleWindow(r)
         return kind
     }

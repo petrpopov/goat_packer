@@ -72,6 +72,11 @@ data class PackParams(
     val finishState: Path? = null,
     /** Свой стол, если джоб на разовом профиле: отдаётся в статусе (форма только для чтения). */
     val customBed: CustomBed? = null,
+    /**
+     * --slicer: слайсер, в котором пользователь печатает STL (SlicerChoice);
+     * null — вход 3MF, слайсер и GUI берутся из проекта и профиля.
+     */
+    val slicer: String? = null,
 )
 
 /** Параметры calibration-джоба — CLI-аргументы ams_calibration. */

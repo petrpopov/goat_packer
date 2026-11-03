@@ -37,6 +37,15 @@ class StlInputsTest {
     }
 
     @Test
+    fun `GUI снимка профиля едет в source_project — проект штампуется для слайсера пользователя`() {
+        val snapmaker = mapper.readTree("""{"vendor":"Snapmaker","orca_machine":"Test U 0.4","gui_flavour":"snapmaker-orca-2.4"}""")
+        val command = StlInputs.command("/b", "/p", "/s", snapmaker)
+        assertEquals("snapmaker-orca-2.4", command[command.indexOf("--gui-flavour") + 1])
+        val plain = StlInputs.command("/b", "/p", "/s", mapper.readTree("""{"vendor":"A","orca_machine":"B"}"""))
+        assertEquals(false, "--gui-flavour" in plain)
+    }
+
+    @Test
     fun `проверка STL — бинарный по размеру, ASCII по solid и facet`() {
         fun binary(triangles: Int, extra: Int = 0): ByteArray = ByteArray(84 + 50 * triangles + extra).also {
             "solid but binary".toByteArray().copyInto(it)

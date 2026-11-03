@@ -83,6 +83,7 @@ fun PackParams.toDto() = PackParamsDto(
     changeSeconds = changeSeconds,
     supportOverlapMm = supportOverlapMm,
     customBed = customBed,
+    slicer = slicer,
 )
 
 /** Настройки pack-джоба для режима «только чтение» (серверный режим). */
@@ -99,6 +100,7 @@ fun JobRequest.toPackParamsDto() = PackParamsDto(
     changeSeconds = changeSeconds,
     supportOverlapMm = supportOverlapMm,
     customBed = customBed,
+    slicer = slicer,
 )
 
 fun Detection.toDto() = DetectProfileDto(profileId, printerModel, kind, projectBed)

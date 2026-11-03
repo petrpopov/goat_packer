@@ -15,6 +15,8 @@
   "purge_lines": [[18.0, 1.0, 240.0, 1.0, 0.5]],
   "tower_marker_style": "wipe_tower",
   "tower_line_width_mm": 0.5,
+  "gui_flavour": "bambu-02.08",
+  "slicers": { "bambu": "bambu-02.08", "orca": "orca-2.4" },
   "filament_change_seconds": 91,
   "nozzle_clean_gcode": "M400 ; test wipe\nG1 Z{max_layer_z + 3.0} F1200\nG1 X70 F21000\nG1 Z{layer_z} F1200"
 }

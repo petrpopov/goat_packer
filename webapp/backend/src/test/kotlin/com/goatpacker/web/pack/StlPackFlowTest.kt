@@ -101,6 +101,36 @@ class StlPackFlowTest(@Autowired private val mockMvc: MockMvc) {
         assertEquals("TSTV", source.after("--vendor"))
         assertEquals("Test Corner Bed 0.4 nozzle", source.after("--machine"))
         assertEquals("/fake/orca", source.after("--orca"))
+        // Умолчание принтера Bambu — Bambu Studio: проект штампуется для него, пакер получает слайсер явно.
+        assertEquals("bambu-02.08", source.after("--gui-flavour"))
+        assertEquals("bambu", lines(jobId, "packer-args.txt").after("--slicer"))
+    }
+
+    @Test
+    fun `STL на bambu-принтере в OrcaSlicer — профиль джоба orca, его GUI и слайсер, выбор виден в статусе`() {
+        val jobId = pack(cube, "profileId" to "test_corner_bed", "slicer" to "orca")
+        val body = mockMvc.awaitJobCompletion(jobId)
+        val source = lines(jobId, "source-args.txt")
+        assertEquals("/fake/orca", source.after("--orca"))
+        assertEquals("orca-2.4", source.after("--gui-flavour"))
+        val packer = lines(jobId, "packer-args.txt")
+        assertEquals("orca", packer.after("--slicer"))
+        val profile = json.readTree(Path.of(packer.after("--profile")).toFile())
+        assertEquals("orca", profile["slicer_kind"].asText())
+        assertEquals("/fake/orca", profile["slicer_path"].asText())
+        assertEquals("orca-2.4", profile["gui_flavour"].asText())
+        assertEquals("orca", body["params"]["slicer"].asText())
+        assertEquals(listOf("bambu:bambu-02.08", "orca:orca-2.4"), body["profile"]["slicers"].map { "${it["kind"].asText()}:${it["gui"].asText()}" })
+    }
+
+    @Test
+    fun `слайсер, которого нет у принтера, — 400 до постановки`() {
+        mockMvc.perform(
+            multipart("/api/pack/jobs")
+                .file(MockMultipartFile("file", "cube.stl", MediaType.APPLICATION_OCTET_STREAM_VALUE, cube))
+                .param("profileId", "test_catalog_bed")
+                .param("slicer", "bambu"),
+        ).andExpect(status().isBadRequest)
     }
 
     @Test

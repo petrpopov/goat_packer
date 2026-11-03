@@ -19,6 +19,14 @@ export interface PrinterProfile {
   exclusionRectangles: number[][];
   /** Упрощённый контур пластины; null — прямоугольник области. */
   plateOutline: number[][] | null;
+  /** Слайсеры, в которых можно печатать STL (умолчание первым); нет — только slicerKind (старый бэкенд). */
+  slicers?: SlicerOption[];
+}
+
+/** Слайсер принтера: kind — bambu|orca, gui — GUI, где открывают стол (`snapmaker-orca-2.4`; '' — не назван). */
+export interface SlicerOption {
+  kind: SlicerKind;
+  gui: string;
 }
 
 /** Ответ /api/profiles/detect. printerModel — принтер, записанный в файле (для понятных ошибок). */
@@ -214,6 +222,8 @@ export interface PackParamsView {
   changeSeconds: number | null;
   supportOverlapMm: number | null;
   customBed: { width: number; depth: number; height: number; margin: number } | null;
+  /** Слайсер STL-задачи (bambu|orca); null/нет — вход 3MF или старый бэкенд. */
+  slicer?: string | null;
 }
 
 export interface JobStatusResponse {

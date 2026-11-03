@@ -107,6 +107,7 @@ export function usePrinterSelection({ file, picked, profiles, bed, setBed }: Sel
 
   return {
     upload: detectQuery.upload,
+    stl,
     choice,
     custom,
     profileId,

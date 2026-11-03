@@ -26,6 +26,7 @@ fn test_profile(nozzle_clean_gcode: Option<&str>) -> PrinterProfile {
         heat_zones: vec![],
         bed_rules: None,
         gui_flavour: None,
+        slicers: Default::default(),
     }
 }
 

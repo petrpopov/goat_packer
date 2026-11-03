@@ -63,6 +63,9 @@ data class PackJobForm(
     val supportOverlapMm: Double? = null,
     /** Сразу нарезать весь стол; false/пусто в веб-форме — только по кнопке после упаковки. Пусто = true (API до флага). */
     val finalSlice: Boolean? = null,
+    /** Слайсер STL (bambu|orca); пусто — умолчание принтера. Для 3MF не задаётся. */
+    @field:Pattern(regexp = """^(bambu|orca)$""", message = "slicer допустим bambu или orca")
+    val slicer: String? = null,
 )
 
 /** Форма calibration-джоба (multipart/form-data): свой проект 3MF как шаблон теста смены AMS. */

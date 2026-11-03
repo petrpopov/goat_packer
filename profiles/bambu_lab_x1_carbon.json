@@ -1909,6 +1909,10 @@
   ],
   "slicer_kind": "bambu",
   "slicer_path": "/opt/slicers/bambu/AppRun",
+  "slicers": {
+    "bambu": "bambu-02.08",
+    "orca": "orca-2.4"
+  },
   "source": {
     "imported": "2026-11-01",
     "notes": [

@@ -38,6 +38,7 @@ pub fn test_profile() -> PrinterProfile {
         heat_zones: vec![],
         bed_rules: None,
         gui_flavour: None,
+        slicers: Default::default(),
     }
 }
 
@@ -70,6 +71,7 @@ pub fn test_args(work_dir: &Path) -> Args {
         // The fixtures carry no preset bookkeeping: tests keep their project's own gaps.
         keep_own_gap: true,
         finish_state: None,
+        slicer: None,
     }
 }
 

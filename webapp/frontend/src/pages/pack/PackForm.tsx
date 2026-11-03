@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from 'react';
-import type { PrinterProfile } from '@/api/types';
+import type { PrinterProfile, SlicerOption } from '@/api/types';
 import AmsCorrectionFields from '@/components/AmsCorrectionFields';
 import Field from '@/components/Field';
 import FileDrop from '@/components/FileDrop';
@@ -8,6 +8,7 @@ import PrinterPicker, { CUSTOM_PRINTER } from '@/components/PrinterPicker';
 import type { useAmsCorrection } from '@/hooks/useAmsCorrection';
 import { formatBytes } from '@/utils/format';
 import { inRange, LIMITS, rangeHint, type NozzleCleanMode } from '@/utils/forms';
+import { slicerLabel } from '@/utils/printers';
 import CustomBedFields from './CustomBedFields';
 import type { PackFormValues, PackRequestParts } from './packFormValues';
 import { PACK_FORM_ID } from './PackStatusStrip';
@@ -39,6 +40,8 @@ interface PackFormProps {
   ams: ReturnType<typeof useAmsCorrection>;
   onCalibrate: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  /** Слайсер STL: варианты принтера и выбор; null — не STL (3MF режется своим слайсером). */
+  slicer: { options: SlicerOption[]; value: string } | null;
   /** «Упаковать заново» под формой у завершённой задачи; null — нет. */
   repack: ReactNode;
 }
@@ -56,6 +59,14 @@ export default function PackForm(props: PackFormProps) {
       {!viewing && selection.detectionError ? <div className="error-block">{selection.detectionError}</div> : null}
       <fieldset className="form-lock" disabled={props.locked}>
         <PrinterField {...props} />
+        {props.slicer ? (
+          <SlicerField
+            options={props.slicer.options}
+            value={props.slicer.value}
+            onChange={(kind) => update('slicer', kind)}
+            disabled={busy}
+          />
+        ) : null}
         {selection.custom ? (
           <CustomBedFields
             bed={values.bed}
@@ -221,6 +232,54 @@ function PrinterField({ selection, profiles, profilesLoading, onPick, busy, view
         />
       )}
       {selection.pickerHint && !viewing ? <span className="field-hint">{selection.pickerHint}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * Слайсер, в котором пользователь откроет и напечатает стол (только STL: 3MF режется слайсером, для
+ * которого сохранён). Им же сервер собирает проект и проверяет раскладку. Один вариант — подпись
+ * без выбора. Не Field: label-обёртка уводила бы клик по кнопке в первую.
+ */
+function SlicerField({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: SlicerOption[];
+  value: string;
+  onChange: (kind: string) => void;
+  disabled: boolean;
+}) {
+  const hint = 'в нём откроете стол: проект и проверки — под него';
+  if (options.length <= 1) {
+    const only = options[0] ?? { kind: value, gui: '' };
+    return (
+      <div className="field">
+        <span className="field-label">Слайсер</span>
+        <output className="input">{slicerLabel(only)}</output>
+        <span className="field-hint">{hint}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="field">
+      <span className="field-label">Слайсер</span>
+      <div className="seg" role="group" aria-label="Слайсер">
+        {options.map((option) => (
+          <button
+            key={option.kind}
+            type="button"
+            aria-pressed={value === option.kind}
+            onClick={() => onChange(option.kind)}
+            disabled={disabled}
+          >
+            {slicerLabel(option)}
+          </button>
+        ))}
+      </div>
+      <span className="field-hint">{hint}</span>
     </div>
   );
 }

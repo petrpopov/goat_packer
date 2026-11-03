@@ -55,7 +55,8 @@ bun run dev
 
 ## API
 
-- `GET /api/profiles` — профили принтеров из `profiles/` (`filamentChangeSeconds` нет — коррекция смены не нужна).
+- `GET /api/profiles` — профили принтеров из `profiles/` (`filamentChangeSeconds` нет — коррекция смены не нужна;
+  `slicers` — `[{kind, gui}]`, слайсеры для STL, умолчание `slicerKind` первым).
 - `POST /api/pack/jobs` — multipart: `file` (.3mf с одним объектом или .stl) + `profileId` либо свой стол
   `customWidth`/`customDepth`/`customHeight` (50–1000 мм) и `customMargin` (0–30, дефолт 5). STL сначала
   превращается в проект бинарником `source_project` (этап «Готовлю проект из STL…»): каталожный принтер —
@@ -64,7 +65,9 @@ bun run dev
   `resolution`, `attempts` (необязательно, дефолт 16000 как у CLI; фронт не шлёт), `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
   (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
   (0–50 %, дефолт CLI 10), `supportOverlapMm` (0–20 мм; пусто — без ограничений, флаг
-  `--support-overlap-mm` не передаётся) → `{"jobId"}`. В результате `pack.time` — оценка времени стола
+  `--support-overlap-mm` не передаётся), `slicer` (`bambu`|`orca`, только STL; пусто — умолчание принтера,
+  чужой для принтера — 400; задача получает профиль с этим `slicer_kind`/`gui_flavour`, `source_project
+  --gui-flavour` и пакер `--slicer`) → `{"jobId"}`. В результате `pack.time` — оценка времени стола
   с коррекцией, `pack.supportsDetected`/`pack.supportOverlapMm` — из отчёта (могут отсутствовать),
   `pack.tower` — угол (`anchorXMm`/`anchorYMm`) и размер башни очистки из `tower` отчёта (null — башни нет);
   по нему страница задачи предупреждает, что Bambu Studio / Snapmaker Orca сдвинут башню при открытии.
@@ -89,7 +92,7 @@ bun run dev
   загруженного файла), `profile` (тот же объект, что элемент `/profiles`; для своего стола — разовый профиль с id `custom`
   и столом проекта; `null`, если профиль пропал из каталога) и `params` (настройки как отправлены: `clearance`,
   `resolution`, `layout`, `nozzleClean`, `edgeMargin`, `finalSlice`, `timeWindowHours`, `timeMarginPct`, `amsCorrection`,
-  `changeSeconds`, `supportOverlapMm`, `customBed` `{width,depth,height,margin}`|null; у доводки — настройки родителя).
+  `changeSeconds`, `supportOverlapMm`, `customBed` `{width,depth,height,margin}`|null, `slicer` (STL; null — 3MF); у доводки — настройки родителя).
   Серверный режим: те же поля в `GET /api/v2/jobs/{id}`; в списке `/api/v2/jobs` `profile`/`params` нет.
 - `GET /api/jobs/{id}/input` — загруженный файл pack-джоба (`Content-Disposition: attachment; filename=<originalName>`).
   Серверный режим: `POST /api/v2/jobs/{id}/input/download` → `{url, filename}` (доступ и подписанная ссылка как у

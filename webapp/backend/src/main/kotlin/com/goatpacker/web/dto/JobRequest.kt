@@ -41,4 +41,6 @@ data class JobRequest(
     val finalSlice: Boolean = true,
     /** Доводка «Нарезать стол» (PACK с packJobId): блоб состояния родителя. Ставит только сервер. */
     val finishStateBlobId: String? = null,
+    /** Слайсер, в котором пользователь печатает STL (bambu|orca); null — умолчание профиля. Для 3MF не задаётся. */
+    val slicer: String? = null,
 )

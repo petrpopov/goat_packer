@@ -251,26 +251,40 @@ fn ensure_plate_instance(config: &str) -> String {
 /// `--arrange 1` misreads seam-chained `bed_exclude_area` lists (Kobra 3: cube at y = -61), so the
 /// position is set here from the bed geometry we parsed ourselves.
 pub fn place_build_item(project: &Path, centre: (f64, f64)) -> Result<(), Error> {
+    let mut moved = false;
+    rewrite_entries(project, |name, bytes| {
+        Ok(if name == MODEL_ENTRY {
+            moved = true;
+            centre_build_item(&String::from_utf8(bytes)?, centre)?.into_bytes()
+        } else if name == MODEL_SETTINGS_ENTRY {
+            ensure_plate_instance(&String::from_utf8(bytes)?).into_bytes()
+        } else {
+            bytes
+        })
+    })?;
+    if !moved {
+        return Err(format!("{} has no {MODEL_ENTRY}", project.display()).into());
+    }
+    Ok(())
+}
+
+/// Rewrites a project archive in place, every entry passed through `edit` (name, bytes) in
+/// archive order.
+pub(crate) fn rewrite_entries(
+    project: &Path,
+    mut edit: impl FnMut(&str, Vec<u8>) -> Result<Vec<u8>, Error>,
+) -> Result<(), Error> {
     let mut archive = zip::ZipArchive::new(fs::File::open(project)?)?;
     let mut entries = Vec::with_capacity(archive.len());
-    let mut moved = false;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
         let (name, is_dir) = (entry.name().to_owned(), entry.is_dir());
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
-        if name == MODEL_ENTRY {
-            bytes = centre_build_item(&String::from_utf8(bytes)?, centre)?.into_bytes();
-            moved = true;
-        } else if name == MODEL_SETTINGS_ENTRY {
-            bytes = ensure_plate_instance(&String::from_utf8(bytes)?).into_bytes();
-        }
+        let bytes = if is_dir { bytes } else { edit(&name, bytes)? };
         entries.push((name, is_dir, bytes));
     }
     drop(archive);
-    if !moved {
-        return Err(format!("{} has no {MODEL_ENTRY}", project.display()).into());
-    }
     let mut zip = zip::ZipWriter::new(fs::File::create(project)?);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, is_dir, bytes) in entries {

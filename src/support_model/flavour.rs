@@ -109,6 +109,18 @@ impl Flavour {
             })
     }
 
+    /// The `Application` this build's GUI writes into its own projects, when a project made by
+    /// another build has to be re-stamped so this GUI opens it as its own (`source_project
+    /// --gui-flavour`). `None` for vanilla Orca: an Orca export already carries Orca's own
+    /// stamp (a BambuStudio compatibility string plus the `OrcaSlicer` version tag).
+    pub fn own_application(self) -> Option<&'static str> {
+        match self {
+            Flavour::Bambu0208 => Some("BambuStudio-02.08.02.61"),
+            Flavour::Snapmaker240 => Some("Snapmaker_Orca-2.4.0"),
+            Flavour::Orca242 | Flavour::Orca250 => None,
+        }
+    }
+
     /// Reads the 3MF `Application` metadata (`BambuStudio-02.08.02.61`,
     /// `Snapmaker_Orca-2.4.0`, `OrcaSlicer-2.4.2`): `(flavour, exact)`. Orca forks that still
     /// write "BambuStudio" are told apart by the version shape: Bambu versions have four
@@ -194,6 +206,23 @@ impl Flavour {
     }
 }
 
+/// The application that wrote a project, from its `Application` metadata and the `OrcaSlicer`
+/// metadata next to it. OrcaSlicer (2.3.2 on) writes a BambuStudio compatibility string into
+/// `Application` (`BambuStudio-02.06.00.51` from 2.4.2, `BambuStudio-02.08.01.55` from
+/// 2.5.0-rc, both Bambu-shaped) and its own version into `OrcaSlicer`: read alone, an Orca
+/// export passed for BambuStudio 02.08, so an STL project exported by Orca for a U1 was packed
+/// by BambuStudio's GUI rules. Such a pair reads as `OrcaSlicer-<version>`; any other
+/// `Application` (Snapmaker's `Snapmaker_Orca-2.4.0`, BambuStudio's own) stays as it is.
+pub fn project_generator(application: &str, orca_version: Option<&str>) -> String {
+    let application = application.trim();
+    match orca_version.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(version) if application.starts_with("BambuStudio-") => {
+            format!("OrcaSlicer-{version}")
+        }
+        _ => application.to_owned(),
+    }
+}
+
 /// `(name, version)` of `Name-1.2.3`, `Name-1.2.3-rc` or `Name 1.2.3`.
 fn split_application(application: &str) -> (&str, &str) {
     let digits_start = |text: &str| text.chars().next().is_some_and(|c| c.is_ascii_digit());
@@ -266,6 +295,28 @@ mod tests {
             (Flavour::Bambu0208, FlavourSource::Profile)
         );
         assert!(Flavour::resolve(None, None, None).is_err());
+    }
+
+    #[test]
+    fn an_orca_export_reads_as_orca_not_as_its_bambu_compatibility_string() {
+        let orca = project_generator("BambuStudio-02.06.00.51", Some("2.4.2"));
+        assert_eq!(orca, "OrcaSlicer-2.4.2");
+        assert_eq!(Flavour::from_application(&orca), Some((Flavour::Orca242, true)));
+        let local = project_generator("BambuStudio-02.08.01.55", Some("2.5.0-rc"));
+        assert_eq!(Flavour::from_application(&local), Some((Flavour::Orca250, true)));
+        // BambuStudio's own project and Snapmaker's stamp are not rewritten.
+        assert_eq!(project_generator("BambuStudio-02.08.02.61", None), "BambuStudio-02.08.02.61");
+        assert_eq!(project_generator("Snapmaker_Orca-2.4.0", Some("2.4.2")), "Snapmaker_Orca-2.4.0");
+        assert_eq!(project_generator("BambuStudio-02.08.02.61", Some(" ")), "BambuStudio-02.08.02.61");
+    }
+
+    #[test]
+    fn own_applications_resolve_to_their_flavour() {
+        for flavour in Flavour::ALL {
+            if let Some(application) = flavour.own_application() {
+                assert_eq!(Flavour::from_application(application), Some((flavour, true)));
+            }
+        }
     }
 
     #[test]
