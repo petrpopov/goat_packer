@@ -52,6 +52,7 @@ fn options() -> PackOptions {
         exclusions: vec![],
         body_exclusions: vec![],
         resolution: RESOLUTION,
+        resolutions: Vec::new(),
         clearance: CLEARANCE,
         angle_step_deg: 90.0,
         attempts: 16,

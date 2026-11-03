@@ -4,14 +4,14 @@ use std::time::Instant;
 
 use goat_packer::{
     PackedPlacement, PrintPlacement,
-    pack::PackOutcome,
+    pack::{LevelReport, PackOutcome},
     plate_centre::plate_centre,
     progress::{self, LayoutSource, Stage},
 };
 
 use crate::AppResult;
 use crate::assembly::tower_rect;
-use crate::gaps::{GapVariant, choose, floor_warning};
+use crate::gaps::{GapVariant, choose, floor_warning, refine_rungs};
 use crate::job::Job;
 use crate::model::{Modelled, model_plate};
 use crate::order::{BAMBU_OBSTACLE_MM, barriers, canonical_first, centre_out};
@@ -77,8 +77,42 @@ fn pack_variants(job: &Job) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>
 }
 
 /// One pack of `plan` per `--foreign-gaps` pair, in the order given, each with its wall time.
-/// A pair that yields no valid layout is recorded with its error, not hidden.
+/// A pair that yields no valid layout is recorded with its error, not hidden. Every pair is
+/// packed at the coarsest resolution first; only the pairs near the best climb the finer
+/// levels (`gaps::REFINE_SLACK`).
 fn pack_foreign_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<PackOutcome>)> {
+    let mut packed = pack_coarse_pairs(job, plan);
+    let counts: Vec<Option<usize>> =
+        packed.iter().map(|(v, o)| o.as_ref().map(|_| v.count)).collect();
+    for rung in refine_rungs(&counts) {
+        let (variant, outcome) = &mut packed[rung];
+        let Some(coarse) = outcome.take() else { continue };
+        let started = Instant::now();
+        let rung_plan = plan.with_foreign_gaps(variant.foreign());
+        let refined = match rung_plan.refine(&job.args, coarse.clone()) {
+            Ok(refined) => refined,
+            Err(error) => {
+                eprintln!("finer resolutions failed, coarse layout kept: {error}");
+                coarse
+            }
+        };
+        variant.wall_s += started.elapsed().as_secs_f64();
+        variant.count = refined.placements.len();
+        variant.levels = refined.levels.clone();
+        eprintln!(
+            "foreign gaps {}:{} refined -> {} objects ({})",
+            variant.foreign_base_mm,
+            variant.foreign_band_mm,
+            variant.count,
+            levels_line(&refined.levels),
+        );
+        *outcome = Some(refined);
+    }
+    packed
+}
+
+/// The coarse pass of `pack_foreign_pairs`.
+fn pack_coarse_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<PackOutcome>)> {
     job.args
         .foreign_gaps
         .iter()
@@ -93,17 +127,19 @@ fn pack_foreign_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<Pac
                 None,
             );
             let started = Instant::now();
-            let result = plan.with_foreign_gaps(foreign).pack(&job.args);
+            let result = plan.with_foreign_gaps(foreign).pack_coarse(&job.args);
             let mut variant = GapVariant {
                 foreign_base_mm: foreign.base_mm,
                 foreign_band_mm: foreign.band_mm,
                 count: 0,
                 wall_s: started.elapsed().as_secs_f64(),
                 error: None,
+                levels: Vec::new(),
             };
             let outcome = match result {
                 Ok(outcome) => {
                     variant.count = outcome.placements.len();
+                    variant.levels = outcome.levels.clone();
                     Some(outcome)
                 }
                 Err(error) => {
@@ -154,6 +190,10 @@ fn place(job: &Job, state: &mut PackState, outcome: PackOutcome) -> AppResult<()
     state.summary.canonical =
         canonical_first(&state.plan.prints, &barriers(&zones), near_edge_mm, &mut placements);
     state.summary.member = format!("{:?}", outcome.member);
+    state.summary.resolution_mm = outcome.resolution_mm;
+    state.summary.upper_bound = outcome.upper_bound;
+    state.summary.class_bounds = outcome.class_bounds.clone();
+    state.summary.levels = outcome.levels.clone();
     state.summary.member_counts = outcome
         .member_counts
         .iter()
@@ -167,6 +207,15 @@ fn place(job: &Job, state: &mut PackState, outcome: PackOutcome) -> AppResult<()
     Ok(())
 }
 
+/// `0.25 mm: 55 in 2.1 s, 0.2 mm: 56 in 2.4 s, ...` for the progress line.
+fn levels_line(levels: &[LevelReport]) -> String {
+    levels
+        .iter()
+        .map(|l| format!("{} mm: {} in {:.1} s", l.resolution_mm, l.count, l.wall_s))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn log_outcome(outcome: &PackOutcome) {
     let counts: Vec<String> = outcome
         .member_counts
@@ -174,10 +223,15 @@ fn log_outcome(outcome: &PackOutcome) {
         .map(|result| format!("{:?} {}", result.member, result.count))
         .collect();
     eprintln!(
-        "packed {} objects with {:?} ({}); tower anchor {:?}",
+        "packed {} objects with {:?} at {} mm ({}); upper bound {} (classes {:?}); levels: {}; \
+         tower anchor {:?}",
         outcome.placements.len(),
         outcome.member,
+        outcome.resolution_mm,
         counts.join(", "),
+        outcome.upper_bound.map_or("n/a".to_owned(), |b| b.to_string()),
+        outcome.class_bounds,
+        levels_line(&outcome.levels),
         outcome.tower_anchor.map(|anchor| (anchor.x, anchor.y)),
     );
 }

@@ -136,6 +136,7 @@ fn run() -> Result<(), String> {
                 bed: profile.usable_bed()?,
                 exclusions: exclusions.clone(),
                 resolution,
+                resolutions: Vec::new(),
                 clearance,
                 angle_step_deg: angle_step,
                 attempts,

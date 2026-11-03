@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf};
 use goat_packer::{
     ForeignGaps, Point, Rect,
     gcode_collisions::SupportCollision,
-    pack::TowerSpec,
+    pack::{LevelReport, TowerSpec},
     print_time::TimeSample,
     progress::{self, Stage},
 };
@@ -48,6 +48,14 @@ pub struct ColoredPackReport {
     pub foreign_gap_floor: ForeignGaps,
     /// Every foreign-gap variant packed: count, wall time and any failure.
     pub gap_variants: Vec<GapVariant>,
+    /// Raster resolution of the published layout, mm (the ladder's winning level).
+    pub resolution_mm: f64,
+    /// The most copies the plate can hold at that resolution (Oler bound, `pack::bound`):
+    /// any mix of classes, then each class alone. A ceiling, not a target.
+    pub upper_bound: Option<usize>,
+    pub class_bounds: Vec<Option<usize>>,
+    /// The ladder's levels of the chosen layout, coarse first, with wall time each.
+    pub levels: Vec<LevelReport>,
     /// Things the operator should know before trusting the layout (a lowered floor).
     pub warnings: Vec<String>,
     /// Copies per rotation class, in `--rotations` order.
@@ -180,6 +188,10 @@ impl ColoredPackReport {
             },
             foreign_gap_floor: args.foreign_gap_floor,
             gap_variants: summary.gap_variants.clone(),
+            resolution_mm: summary.resolution_mm,
+            upper_bound: summary.upper_bound,
+            class_bounds: summary.class_bounds.clone(),
+            levels: summary.levels.clone(),
             warnings: floor_warning(args.foreign_gap_floor).into_iter().collect(),
             class_counts,
             member: summary.member.clone(),

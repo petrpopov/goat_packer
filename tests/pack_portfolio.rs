@@ -90,6 +90,7 @@ fn options(attempts: usize) -> PackOptions {
         exclusions: Vec::new(),
         body_exclusions: Vec::new(),
         resolution: 0.5,
+        resolutions: Vec::new(),
         clearance: 0.5,
         angle_step_deg: 90.0,
         attempts,

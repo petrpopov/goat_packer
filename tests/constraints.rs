@@ -103,6 +103,7 @@ fn options() -> PackOptions {
         exclusions: Vec::new(),
         body_exclusions: Vec::new(),
         resolution: 0.5,
+        resolutions: Vec::new(),
         clearance: CLEARANCE,
         angle_step_deg: 90.0,
         attempts: 16,
@@ -222,6 +223,7 @@ fn pack_reports_every_member_and_rejects_bad_input() {
     assert!(pack(&[], &plate, None, &options()).is_err());
     let bad = PackOptions {
         resolution: 0.0,
+        resolutions: Vec::new(),
         ..options()
     };
     assert!(pack(&[print()], &plate, None, &bad).is_err());

@@ -12,10 +12,12 @@
 //! rotation-equivariant). Placing a print is a pure translation of its frame origin, so a
 //! placement is (class, x, y) and never an angle.
 
+pub mod bound;
 pub mod context;
 pub mod edge_fill;
 pub mod free_map;
 pub mod improve;
+pub mod ladder;
 pub mod lattice;
 mod members;
 pub(crate) mod legacy;
@@ -27,7 +29,9 @@ pub mod sweep;
 pub mod tower;
 pub mod tower_scan;
 
+pub use bound::UpperBounds;
 pub use context::{Ctx, TowerLayer};
+pub use ladder::LevelReport;
 pub use free_map::{FreeCounts, FreeMap};
 pub use select::{CheckFailure, Member, RankKey, TieKey, ValidationReport};
 pub use tower::{TowerSpec, anchor_candidates};
@@ -73,6 +77,17 @@ pub struct PackOutcome {
     /// Per member whose layouts `Improve` took as a start, the best count it reached.
     pub improved_counts: Vec<MemberCount>,
     pub validation: ValidationReport,
+    /// The raster resolution of the published layout, mm (a ladder's winning level).
+    pub resolution_mm: f64,
+    /// The most copies of any mix of classes the plate holds at the winning resolution
+    /// (`bound`); `None` when no norm ball fits the no-fit region.
+    pub upper_bound: Option<usize>,
+    /// The same per class: layouts of that class alone.
+    pub class_bounds: Vec<Option<usize>>,
+    /// One report per level the ladder ran, coarse first. Carries wall times, so like
+    /// `timings` it is never serialized: two runs must write identical outcome files.
+    #[serde(skip)]
+    pub levels: Vec<LevelReport>,
     /// Wall-clock time per stage, for benchmarks only (never part of a result).
     #[serde(skip)]
     pub timings: StageTimes,
@@ -89,6 +104,8 @@ pub struct MemberCount {
 pub struct StageTimes {
     /// Kind masks, base free maps and tower layers.
     pub context_s: f64,
+    /// The upper bound (`bound`).
+    pub bound_s: f64,
     pub members_s: f64,
     /// Ranking and both checks.
     pub select_s: f64,
@@ -111,6 +128,9 @@ pub fn pack(
 }
 
 /// `pack` with an explicit member list (benchmarks; a member's own count).
+///
+/// The run climbs the resolution ladder of `options` (`ladder`): the best layout of any level
+/// is published, and a level that reaches the upper bound ends the climb.
 pub fn pack_members(
     prints: &[ObjectPrint],
     rules: &PlateRules,
@@ -119,6 +139,56 @@ pub fn pack_members(
     members: &[Member],
 ) -> Result<PackOutcome, String> {
     check_run(prints, options, members)?;
+    ladder::run(options, members, None, |resolution, level_members| {
+        let level = PackOptions {
+            resolution,
+            ..options.clone()
+        };
+        pack_level(prints, rules, tower, &level, level_members)
+    })
+}
+
+/// Continues the ladder of `options` from `coarse`, an earlier outcome for the same prints,
+/// rules, tower and members: only the levels `coarse` has not run, finer members only, and a
+/// finer layout replaces `coarse` when it ranks strictly higher. Callers use it to climb the
+/// ladder for the plates that matter after a coarse pass over all of them.
+pub fn refine_members(
+    prints: &[ObjectPrint],
+    rules: &PlateRules,
+    tower: Option<&TowerSpec>,
+    options: &PackOptions,
+    members: &[Member],
+    coarse: PackOutcome,
+) -> Result<PackOutcome, String> {
+    check_run(prints, options, members)?;
+    ladder::run(options, members, Some(coarse), |resolution, level_members| {
+        let level = PackOptions {
+            resolution,
+            ..options.clone()
+        };
+        pack_level(prints, rules, tower, &level, level_members)
+    })
+}
+
+/// `refine_members` with every default member.
+pub fn refine(
+    prints: &[ObjectPrint],
+    rules: &PlateRules,
+    tower: Option<&TowerSpec>,
+    options: &PackOptions,
+    coarse: PackOutcome,
+) -> Result<PackOutcome, String> {
+    refine_members(prints, rules, tower, options, &DEFAULT_MEMBERS, coarse)
+}
+
+/// One complete run at `options.resolution`.
+fn pack_level(
+    prints: &[ObjectPrint],
+    rules: &PlateRules,
+    tower: Option<&TowerSpec>,
+    options: &PackOptions,
+    members: &[Member],
+) -> Result<PackOutcome, String> {
     let started = Instant::now();
     let zones = plate_zones(rules, None)?;
     let grid = OriginGrid {
@@ -131,7 +201,15 @@ pub fn pack_members(
     let ctx = fixed_context(prints, rules, tower, options, &zones, grid)?;
     let context_s = started.elapsed().as_secs_f64();
     let started = Instant::now();
-    let candidates = member_candidates(&ctx, members, options);
+    let bounds = bound::upper_bounds(&ctx);
+    let bound_s = started.elapsed().as_secs_f64();
+    let started = Instant::now();
+    // Nothing places more copies than the bound, so the members may stop there.
+    let capped = PackOptions {
+        max_objects: capped_objects(options.max_objects, bounds.overall),
+        ..options.clone()
+    };
+    let candidates = member_candidates(&ctx, members, &capped);
     let member_counts = best_counts(members, &candidates);
     let improved_counts = improve::improved_counts(&candidates);
     let members_s = started.elapsed().as_secs_f64();
@@ -149,12 +227,26 @@ pub fn pack_members(
         member_counts,
         improved_counts,
         validation,
+        resolution_mm: options.resolution,
+        upper_bound: bounds.overall,
+        class_bounds: bounds.per_class.clone(),
+        levels: Vec::new(),
         timings: StageTimes {
             context_s,
+            bound_s,
             members_s,
             select_s,
         },
     })
+}
+
+/// The object cap the members get: the caller's (0 = none) lowered to the bound.
+fn capped_objects(max_objects: usize, bound: Option<usize>) -> usize {
+    match (max_objects, bound) {
+        (0, Some(bound)) => bound,
+        (cap, Some(bound)) => cap.min(bound),
+        (cap, None) => cap,
+    }
 }
 
 fn check_run(

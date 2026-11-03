@@ -12,7 +12,7 @@
 
 pub(crate) mod area;
 mod chain;
-mod hull;
+pub(crate) mod hull;
 mod offset;
 mod plane;
 mod print;

@@ -48,6 +48,7 @@ fn options(support_overlap_mm: Option<f64>) -> PackOptions {
         bed: Rect::new(0.0, 0.0, 34.5, 9.0),
         exclusions: vec![],
         resolution: RESOLUTION,
+        resolutions: Vec::new(),
         clearance: CLEARANCE,
         angle_step_deg: 90.0,
         attempts: 16,

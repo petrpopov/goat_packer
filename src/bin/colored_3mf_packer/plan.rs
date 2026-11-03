@@ -4,7 +4,7 @@
 use goat_packer::{
     ForeignGaps, PackOptions, PlateRules, Point, PrintPlacement,
     object_print::ObjectPrint,
-    pack::{PackOutcome, TowerSpec, pack},
+    pack::{LevelReport, PackOutcome, TowerSpec, pack, refine},
     print_time::TimeSample,
     validate_vector, LayoutRules,
 };
@@ -59,6 +59,16 @@ pub struct PackSummary {
     /// Every (own gap, foreign pair) variant packed, in packing order.
     #[serde(default)]
     pub gap_variants: Vec<GapVariant>,
+    /// The chosen layout's resolution (mm), the upper bound at it (any mix of classes, then
+    /// per class) and every ladder level that produced it.
+    #[serde(default)]
+    pub resolution_mm: f64,
+    #[serde(default)]
+    pub upper_bound: Option<usize>,
+    #[serde(default)]
+    pub class_bounds: Vec<Option<usize>>,
+    #[serde(default)]
+    pub levels: Vec<LevelReport>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -99,6 +109,7 @@ impl PackPlan {
             exclusions: Vec::new(),
             body_exclusions: Vec::new(),
             resolution: args.resolution,
+            resolutions: args.resolutions.clone(),
             clearance: args.clearance,
             angle_step_deg: args.angle_step,
             attempts: args.attempts,
@@ -116,6 +127,20 @@ impl PackPlan {
     /// One packing pass of the portfolio over every class.
     pub fn pack(&self, args: &Args) -> AppResult<PackOutcome> {
         Ok(pack(&self.prints, &self.rules, self.tower.as_ref(), &self.options(args))?)
+    }
+
+    /// The first level of the resolution ladder only: the pass over every foreign-gap rung.
+    pub fn pack_coarse(&self, args: &Args) -> AppResult<PackOutcome> {
+        let coarse = Args {
+            resolutions: vec![args.resolution],
+            ..args.clone()
+        };
+        self.pack(&coarse)
+    }
+
+    /// Climbs the rest of the ladder from a `pack_coarse` outcome of this plan.
+    pub fn refine(&self, args: &Args, coarse: PackOutcome) -> AppResult<PackOutcome> {
+        Ok(refine(&self.prints, &self.rules, self.tower.as_ref(), &self.options(args), coarse)?)
     }
 
     /// The exact check of a layout, the gate every plate passes before it is written: the

@@ -15,7 +15,10 @@ use crate::gaps::{
 /// half-turn class lets neighbours interlock (design §14 Q13).
 const DEFAULT_ROTATIONS: &str = "0,180";
 const DEFAULT_CLEARANCE_MM: f64 = 0.7;
-const DEFAULT_RESOLUTION_MM: f64 = 0.25;
+/// The resolution ladder (`pack::ladder`): the coarse run, then finer ones. Research
+/// 2026-11-03: 0.2 / 0.15 mm gained U1 +1 and A2L +3..4 copies, P1S stayed; the whole ladder
+/// costs 3 / 3 / 10 s per foreign-gap rung on U1 / P1S / A2L (14 cores).
+const DEFAULT_RESOLUTIONS_MM: [f64; 3] = [0.25, 0.2, 0.15];
 const DEFAULT_ANGLE_STEP_DEG: f64 = 2.0;
 const DEFAULT_ATTEMPTS: usize = 16_000;
 const DEFAULT_CANDIDATES: usize = 2_400;
@@ -35,7 +38,12 @@ pub struct Args {
     pub output: PathBuf,
     pub work_dir: PathBuf,
     pub clearance: f64,
+    /// The first (coarsest) resolution of the ladder: the one a layout is reported at when
+    /// no finer level beats it.
     pub resolution: f64,
+    /// `--resolutions` (`--resolution X` = just `X`): the raster resolutions the packer climbs,
+    /// coarse to fine, mm.
+    pub resolutions: Vec<f64>,
     pub angle_step: f64,
     pub attempts: usize,
     pub candidates: usize,
@@ -168,13 +176,26 @@ fn parse_rotations(text: &str) -> AppResult<Vec<f64>> {
     Ok(rotations)
 }
 
+/// `--resolutions a,b,c`: positive millimetres, at least one.
+fn parse_resolutions(list: &str) -> AppResult<Vec<f64>> {
+    let mut resolutions = Vec::new();
+    for item in list.split(',') {
+        let value: f64 = item.trim().parse()?;
+        if !value.is_finite() || value <= 0.0 {
+            return Err(format!("--resolutions: {item} is not a positive resolution").into());
+        }
+        resolutions.push(value);
+    }
+    Ok(resolutions)
+}
+
 pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut source_3mf = None;
     let mut profile_path = None;
     let mut output = None;
     let mut work_dir = None;
     let mut clearance = DEFAULT_CLEARANCE_MM;
-    let mut resolution = DEFAULT_RESOLUTION_MM;
+    let mut resolutions = DEFAULT_RESOLUTIONS_MM.to_vec();
     let mut angle_step = DEFAULT_ANGLE_STEP_DEG;
     let mut attempts = DEFAULT_ATTEMPTS;
     let mut candidates = DEFAULT_CANDIDATES;
@@ -224,7 +245,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--output" => output = Some(PathBuf::from(value)),
             "--work-dir" => work_dir = Some(PathBuf::from(value)),
             "--clearance" => clearance = value.parse()?,
-            "--resolution" => resolution = value.parse()?,
+            "--resolution" => resolutions = vec![value.parse()?],
+            "--resolutions" => resolutions = parse_resolutions(&value)?,
             "--angle-step" => angle_step = value.parse()?,
             "--attempts" => attempts = value.parse()?,
             "--candidates" => candidates = value.parse()?,
@@ -279,7 +301,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         output,
         work_dir,
         clearance,
-        resolution,
+        resolution: resolutions[0],
+        resolutions,
         angle_step,
         attempts,
         candidates,
@@ -361,6 +384,19 @@ mod tests {
         for bad in ["-0.5", "NaN", "inf", "x"] {
             assert!(parse_with(&["--support-overlap-mm", bad]).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn resolutions_default_to_the_ladder_and_a_single_resolution_replaces_it() {
+        let defaults = parse(&REQUIRED).unwrap();
+        assert_eq!(defaults.resolutions, vec![0.25, 0.2, 0.15]);
+        assert_eq!(defaults.resolution, 0.25);
+        let single = parse_with(&["--resolution", "0.5"]).unwrap();
+        assert_eq!((single.resolution, single.resolutions), (0.5, vec![0.5]));
+        let list = parse_with(&["--resolutions", "0.3, 0.2"]).unwrap();
+        assert_eq!((list.resolution, list.resolutions), (0.3, vec![0.3, 0.2]));
+        assert!(parse_with(&["--resolutions", "0.3,0"]).is_err());
+        assert!(parse_with(&["--resolutions", ""]).is_err());
     }
 
     #[test]

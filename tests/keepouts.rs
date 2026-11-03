@@ -272,6 +272,7 @@ fn options(body_bed: Option<Rect>) -> PackOptions {
         exclusions: vec![Rect::new(0.0, 0.0, 22.0, 32.0)],
         body_exclusions: vec![Rect::new(100.0, 100.0, 125.0, 125.0)],
         resolution: 0.25,
+        resolutions: Vec::new(),
         clearance: 0.7,
         angle_step_deg: 90.0,
         attempts: 1,

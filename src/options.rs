@@ -26,6 +26,11 @@ pub struct PackOptions {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub body_exclusions: Vec<Rect>,
     pub resolution: f64,
+    /// Raster resolutions the portfolio runs at, coarse to fine (`pack::ladder`); empty = just
+    /// `resolution`. Finer levels keep a coarser winner unless they place strictly more
+    /// copies (or equal copies with a better rank key), so a ladder never returns fewer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolutions: Vec<f64>,
     pub clearance: f64,
     pub angle_step_deg: f64,
     /// Deterministic search effort. All orientation pairs get a baseline pass; higher values

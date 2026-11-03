@@ -117,6 +117,7 @@ fn options(foreign_gaps: ForeignGaps) -> PackOptions {
         exclusions: Vec::new(),
         body_exclusions: Vec::new(),
         resolution: 0.25,
+        resolutions: Vec::new(),
         clearance: CLEARANCE,
         angle_step_deg: 90.0,
         attempts: 8,

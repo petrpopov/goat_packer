@@ -10,7 +10,9 @@
 
 use std::path::Path;
 
-use goat_packer::{ForeignGaps, orca_project, project_settings_edit::format_setting_mm};
+use goat_packer::{
+    ForeignGaps, orca_project, pack::LevelReport, project_settings_edit::format_setting_mm,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
@@ -189,12 +191,32 @@ pub struct GapVariant {
     pub wall_s: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The resolution ladder's levels of this pack (count, bound and wall time each).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub levels: Vec<LevelReport>,
 }
 
 impl GapVariant {
     pub fn foreign(&self) -> ForeignGaps {
         ForeignGaps { base_mm: self.foreign_base_mm, band_mm: self.foreign_band_mm }
     }
+}
+
+/// A rung climbs the finer resolutions when its coarse count is within this many copies of
+/// the best rung's. The finer levels cost 2-3x the coarse pass (A2L: 7 s a rung), and a rung
+/// that trails the best by more has never overtaken it: finer levels gained 1 copy on U1 and
+/// 0-1 on P1S/A2L at the rungs that led, while the 4-rung ladder spans 5 copies on A2L
+/// (79 / 77 / 76 / 74). Climbing all rungs took A2L from 20 s to 84 s for no extra copy.
+pub const REFINE_SLACK: usize = 1;
+
+/// The rungs worth a finer pass, given each rung's coarse count (`None` = it failed).
+pub fn refine_rungs(counts: &[Option<usize>]) -> Vec<usize> {
+    let Some(best) = counts.iter().flatten().max().copied() else {
+        return Vec::new();
+    };
+    (0..counts.len())
+        .filter(|&i| counts[i].is_some_and(|c| c + REFINE_SLACK >= best))
+        .collect()
 }
 
 /// The winner: the most copies; ties go to the larger foreign band gap, then the larger base
@@ -218,7 +240,15 @@ mod tests {
     use super::*;
 
     fn variant(base: f64, band: f64, count: usize) -> GapVariant {
-        GapVariant { foreign_base_mm: base, foreign_band_mm: band, count, wall_s: 0.0, error: None }
+        GapVariant { foreign_base_mm: base, foreign_band_mm: band, count, wall_s: 0.0, error: None, levels: Vec::new() }
+    }
+
+    #[test]
+    fn only_rungs_near_the_best_climb_the_ladder() {
+        assert_eq!(refine_rungs(&[Some(79), Some(77), Some(76), Some(74)]), vec![0]);
+        assert_eq!(refine_rungs(&[Some(55), Some(55), Some(55), Some(53)]), vec![0, 1, 2]);
+        assert_eq!(refine_rungs(&[None, Some(46), Some(47), None]), vec![1, 2]);
+        assert!(refine_rungs(&[None, None]).is_empty());
     }
 
     #[test]

@@ -50,6 +50,7 @@ pub fn test_args(work_dir: &Path) -> Args {
         work_dir: work_dir.to_path_buf(),
         clearance: 0.5,
         resolution: 0.5,
+        resolutions: Vec::new(),
         angle_step: 90.0,
         attempts: 8,
         candidates: 100,

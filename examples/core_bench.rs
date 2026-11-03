@@ -5,7 +5,7 @@
 //! ```text
 //! cargo run --release --example core_bench -- <print.json>... --rules <rules.json> \
 //!   [--tower <tower.json>] [--members lattice,sweep,rows] [--threads N] [--out <layout.json>] \
-//!   [--resolution 0.25] [--clearance 0.7] [--attempts 64] [--max-objects 0] \
+//!   [--resolution 0.25] [--resolutions 0.25,0.2,0.15] [--clearance 0.7] [--attempts 64] [--max-objects 0] \
 //!   [--support-overlap <mm>]
 //! ```
 //! Each `<print.json>` is an `ObjectPrint` (one per rotation class, already in the
@@ -107,6 +107,12 @@ fn parse_args() -> Result<Args, String> {
             .next()
             .ok_or_else(|| format!("missing value for {option}"))?;
         let number = |value: &str| value.parse::<f64>().map_err(|e| format!("{option}: {e}"));
+        let numbers = |value: &str| {
+            value
+                .split(',')
+                .map(|n| n.trim().parse::<f64>().map_err(|e| format!("{option}: {e}")))
+                .collect::<Result<Vec<f64>, String>>()
+        };
         let count = |value: &str| value.parse::<usize>().map_err(|e| format!("{option}: {e}"));
         match option.as_str() {
             "--rules" => rules = Some(PathBuf::from(value)),
@@ -115,6 +121,7 @@ fn parse_args() -> Result<Args, String> {
             "--threads" => threads = Some(count(&value)?),
             "--out" => out = Some(PathBuf::from(value)),
             "--resolution" => options.resolution = number(&value)?,
+            "--resolutions" => options.resolutions = numbers(&value)?,
             "--clearance" => options.clearance = number(&value)?,
             "--attempts" => options.attempts = count(&value)?,
             "--max-objects" => options.max_objects = count(&value)?,
@@ -144,6 +151,7 @@ fn default_options() -> PackOptions {
         exclusions: Vec::new(),
         body_exclusions: Vec::new(),
         resolution: 0.25,
+        resolutions: Vec::new(),
         clearance: 0.7,
         angle_step_deg: 2.0,
         attempts: 16_000,
@@ -238,8 +246,8 @@ fn describe_tower(tower: &TowerSpec) -> String {
 fn times(outcome: &PackOutcome, seconds: f64) -> String {
     let t = outcome.timings;
     format!(
-        "{seconds:.3} s (context {:.3}, members {:.3}, select {:.3})",
-        t.context_s, t.members_s, t.select_s
+        "{seconds:.3} s (context {:.3}, bound {:.3}, members {:.3}, select {:.3})",
+        t.context_s, t.bound_s, t.members_s, t.select_s
     )
 }
 
@@ -272,6 +280,21 @@ fn report(outcome: &PackOutcome, seconds: f64, options_resolution: f64) {
     );
     if outcome.member == Member::Lattice {
         describe_lattice(&outcome.key.tie.detail, options_resolution);
+    }
+    println!(
+        "resolution {} mm, upper bound {:?} (per class {:?})",
+        outcome.resolution_mm, outcome.upper_bound, outcome.class_bounds
+    );
+    for level in &outcome.levels {
+        println!(
+            "  level {} mm: {} objects ({:?}), bound {:?}, {:.2} s{}",
+            level.resolution_mm,
+            level.count,
+            level.member,
+            level.upper_bound,
+            level.wall_s,
+            level.error.as_deref().map_or(String::new(), |e| format!(", error: {e}"))
+        );
     }
     let v = &outcome.validation;
     println!(
