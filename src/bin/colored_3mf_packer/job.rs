@@ -78,7 +78,10 @@ impl Job {
         profile.gui_flavour = Some(GuiFlavour::try_from(flavour.flavour.name().to_owned())?);
         let bed = ProjectBed::from_settings(&settings_value)?;
         let rules = plate_rules(&profile, &bed)?;
-        let own_gap = OwnGap::of_settings(&settings_value)?;
+        let own_gap = OwnGap::decide(&settings_value, args.keep_own_gap)?;
+        if let Some(note) = own_gap.forced_note() {
+            eprintln!("{note}");
+        }
         let slicer_change_s = slicer_change_seconds(&settings_value);
         let correction = args.time.correction(&profile);
         if args.time.ams_correction && correction.real_change_s.is_none() {

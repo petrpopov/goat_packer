@@ -65,6 +65,9 @@ pub struct Args {
     /// what control full-plate slices passed with zero contacts; lowering it is explicit and
     /// warned about in the progress output and the report.
     pub foreign_gap_floor: ForeignGaps,
+    /// `--keep-own-gap`: keep the project's support first-layer gap even when the user never
+    /// changed it from the system preset (otherwise it is forced, see `own_gap`).
+    pub keep_own_gap: bool,
     /// `--finish-state PATH`: skip modelling and packing, verify the plate of a saved state.
     pub finish_state: Option<PathBuf>,
 }
@@ -186,12 +189,17 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
     let mut finish_state = None;
+    let mut keep_own_gap = false;
     let mut foreign_gap_floor = ForeignGaps::default();
     let mut foreign_gaps = parse_foreign_gaps(DEFAULT_FOREIGN_GAPS)?;
     while let Some(option) = args.next() {
         // The valueless switches; every other option consumes the next argument.
         if option == "--ams-correction" {
             time.ams_correction = true;
+            continue;
+        }
+        if option == "--keep-own-gap" {
+            keep_own_gap = true;
             continue;
         }
         if option == "--no-centre" {
@@ -287,6 +295,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         support_overlap_mm,
         foreign_gaps,
         foreign_gap_floor,
+        keep_own_gap,
         finish_state,
     })
 }
@@ -306,6 +315,12 @@ mod tests {
         let mut list = REQUIRED.to_vec();
         list.extend_from_slice(extra);
         parse(&list)
+    }
+
+    #[test]
+    fn keep_own_gap_is_a_valueless_switch_off_by_default() {
+        assert!(!parse(&REQUIRED).unwrap().keep_own_gap);
+        assert!(parse_with(&["--keep-own-gap", "--seed", "3"]).unwrap().keep_own_gap);
     }
 
     #[test]

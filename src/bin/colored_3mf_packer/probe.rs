@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::AppResult;
 use crate::job::Job;
 use crate::loops_ops::{area_mm2, union};
+use crate::own_gap::apply_own_gap;
 use crate::probe_cache::{cache_key, load, store};
 use crate::slicing::slice_project;
 use crate::time_window::{even_one_exceeds, hours, time_sample};
@@ -200,6 +201,8 @@ fn write_copy(job: &Job, rotation_deg: f64, centre: Point) -> AppResult<PathBuf>
     };
     assemble_project(&job.args.source_3mf, &path, &options)
         .map_err(|error| format!("probe copy for rotation {rotation_deg}°: {error}"))?;
+    // The probes must print the supports the output 3MF will (same forced gap).
+    apply_own_gap(&path, job.own_gap)?;
     Ok(path)
 }
 
