@@ -41,7 +41,13 @@ verification="${output%.3mf}.verification.json"
 # и запись. Подделку (неверный ключ внутри) пишем всегда: воркер обязан её отбросить. Итог — в cache-result.txt.
 if [[ -n "$cache_dir" ]]; then
   # Как у пакера, ключ — от сетки, а не от файла: вершины и треугольники проекта (нет сетки — весь файл).
-  mesh="$(unzip -p "$source_file" 3D/3dmodel.model 2>/dev/null | grep -oE '<(vertex|triangle) [^>]*>' || true)"
+  # CI's JDK image has no unzip: fall back to the JDK's jar.
+  model_xml() {
+    if command -v unzip >/dev/null; then unzip -p "$source_file" 3D/3dmodel.model 2>/dev/null; return; fi
+    local abs tmp; abs="$(cd "$(dirname "$source_file")" && pwd)/$(basename "$source_file")"; tmp="$(mktemp -d)"
+    (cd "$tmp" && jar xf "$abs" 3D/3dmodel.model 2>/dev/null && cat 3D/3dmodel.model); rm -rf "$tmp"
+  }
+  mesh="$(model_xml | grep -oE '<(vertex|triangle) [^>]*>' || true)"
   if [[ -n "$mesh" ]]; then
     key="$(printf '%s' "$mesh" | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-64)"
   else
