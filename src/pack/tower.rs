@@ -143,7 +143,7 @@ impl TowerSpec {
 
     /// Anchors where every tower part stays inside every `Outside` zone that forbids it (the
     /// printable area, hard edge bands), within `anchor_range`; `None` when there are none.
-    fn fit_range(&self, plate: &[PlateZone]) -> Option<Rect> {
+    pub(crate) fn fit_range(&self, plate: &[PlateZone]) -> Option<Rect> {
         let mut range = self.anchor_range;
         for part in self.parts() {
             for zone in plate

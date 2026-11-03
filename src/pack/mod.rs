@@ -30,6 +30,7 @@ pub use context::{Ctx, TowerLayer};
 pub use free_map::{FreeCounts, FreeMap};
 pub use select::{CheckFailure, Member, RankKey, TieKey, ValidationReport};
 pub use tower::{TowerSpec, anchor_candidates};
+pub use tower_scan::scan_anchors;
 
 use crate::geometry::Point;
 use crate::keepout::PlateRules;
@@ -39,6 +40,7 @@ use crate::options::PackOptions;
 use crate::validation::{
     LayoutRules, PrintPlacement, RasterValidator, VectorValidator, check_prints,
 };
+use lattice::single;
 use rayon::prelude::*;
 use select::{Candidate, choose, failure_summary};
 use serde::Serialize;
@@ -46,7 +48,7 @@ use std::time::Instant;
 
 /// The members `pack` runs on fixed rotation classes. `Mixed` needs a footprint that may
 /// turn freely, so only the legacy search runs it.
-pub const DEFAULT_MEMBERS: [Member; 2] = [Member::Sweep, Member::Rows];
+pub const DEFAULT_MEMBERS: [Member; 3] = [Member::Lattice, Member::Sweep, Member::Rows];
 
 /// The published layout of a run and how it was found.
 #[derive(Clone, Debug, Serialize)]
@@ -85,10 +87,10 @@ pub struct StageTimes {
 /// Packs copies of `prints` (one per allowed rotation class) on the plate of `rules`, with
 /// the tower of `tower` at one of its candidate anchors, using every default member.
 ///
-/// From `options` the run takes `resolution`, `clearance`, `attempts` (sweep variants, the
-/// effort), `max_objects` and `support_overlap_mm`; the plate comes from `rules` (the bed
-/// fields and `lock_orientation` belong to the legacy entry points). Keepouts must be in the
-/// plate frame.
+/// From `options` the run takes `resolution`, `clearance`, `attempts` (the effort: sweep
+/// variants and the lattice budget), `max_objects` and `support_overlap_mm`; the plate comes
+/// from `rules` (the bed fields and `lock_orientation` belong to the legacy entry points).
+/// Keepouts must be in the plate frame.
 pub fn pack(
     prints: &[ObjectPrint],
     rules: &PlateRules,
@@ -188,26 +190,69 @@ fn fixed_context<'a>(
         .collect();
     let mut ctx = Ctx::new(masks, (0..prints.len()).collect(), zones, grid);
     if let Some(spec) = tower {
-        let anchors = anchor_candidates(spec, zones)?;
+        let anchors = scan_anchors(spec, zones)?;
         ctx.add_towers(anchors.iter().map(|&a| (a, spec.zones(a))).collect());
     }
     Ok(ctx)
 }
 
-/// One unit of member work: a member at one tower anchor, for one class where the member
-/// runs per class.
+/// Tower anchors the greedy members (sweeps, rows) run at when no lattice ranked them: the
+/// source and the corners of the range, which `scan_anchors` lists first.
+const GREEDY_ANCHORS: usize = 5;
+
+/// One unit of greedy member work: a member at one tower anchor, for one class where the
+/// member runs per class.
 type Unit = (Member, Option<usize>, Option<usize>);
 
-/// Every member's candidates at every anchor, in parallel and collected in unit order.
+/// Every member's candidates. The lattice runs first, per class, over every scanned anchor;
+/// the greedy members cost a full run per anchor, so they run at the source anchor and the
+/// anchors of the best lattice candidates.
 fn member_candidates(ctx: &Ctx, members: &[Member], options: &PackOptions) -> Vec<Candidate> {
-    let variants = options.attempts.clamp(1, sweep::MAX_SWEEP_VARIANTS);
+    let effort = options.attempts.clamp(1, sweep::MAX_SWEEP_VARIANTS);
     let cap = options.max_objects;
+    let mut candidates: Vec<Candidate> = Vec::new();
+    if members.contains(&Member::Lattice) {
+        let budget = single::Budget::for_effort(effort);
+        for class in 0..ctx.classes() {
+            candidates.extend(single::single_lattice(ctx, class, budget, cap));
+        }
+    }
+    let slots = greedy_slots(ctx, &single::best_anchors(&candidates));
+    candidates.extend(greedy_candidates(ctx, members, &slots, effort, cap));
+    candidates
+}
+
+/// The anchor slots of the greedy members: the source (slot 0), the lattice's best anchors,
+/// and without a lattice result the corners too; ascending, no repeats.
+fn greedy_slots(ctx: &Ctx, ranked: &[usize]) -> Vec<Option<usize>> {
+    let slots = ctx.anchor_slots();
+    if slots[0].is_none() {
+        return slots;
+    }
+    let mut chosen: Vec<usize> = vec![0];
+    if ranked.is_empty() {
+        chosen.extend(1..GREEDY_ANCHORS.min(slots.len()));
+    }
+    chosen.extend_from_slice(ranked);
+    chosen.sort_unstable();
+    chosen.dedup();
+    chosen.into_iter().map(Some).collect()
+}
+
+fn greedy_candidates(
+    ctx: &Ctx,
+    members: &[Member],
+    slots: &[Option<usize>],
+    variants: usize,
+    cap: usize,
+) -> Vec<Candidate> {
     let mut units: Vec<Unit> = Vec::new();
     for &member in members {
-        for anchor in ctx.anchor_slots() {
+        for &anchor in slots {
             match member {
                 Member::Rows => units.extend((0..ctx.classes()).map(|c| (member, anchor, Some(c)))),
-                _ => units.push((member, anchor, None)),
+                Member::Sweep => units.push((member, anchor, None)),
+                _ => {}
             }
         }
     }
@@ -263,10 +308,13 @@ pub(crate) fn print_placements(candidate: &Candidate, grid: &OriginGrid) -> Vec<
 }
 
 /// The checks of a fixed-class run: per anchor, the plate zones plus that anchor's tower.
+/// Rules are built for the anchors candidates use only (a scan lists hundreds).
 struct Checks<'a> {
     prints: &'a [ObjectPrint],
     grid: OriginGrid,
-    rules: Vec<LayoutRules>,
+    base: LayoutRules,
+    /// Tower zones per anchor slot.
+    towers: Vec<Vec<PlateZone>>,
 }
 
 impl<'a> Checks<'a> {
@@ -276,23 +324,21 @@ impl<'a> Checks<'a> {
         options: &PackOptions,
         ctx: &Ctx,
     ) -> Result<Checks<'a>, String> {
-        let base = LayoutRules::new(plate, None, options.clearance, options.support_overlap_mm)?;
-        let rules = ctx
-            .anchor_slots()
-            .into_iter()
-            .map(|slot| {
-                let mut rules = base.clone();
-                if let Some(slot) = slot {
-                    rules.zones.extend(ctx.towers()[slot].zones.iter().cloned());
-                }
-                rules
-            })
-            .collect();
         Ok(Checks {
             prints,
             grid: *ctx.grid(),
-            rules,
+            base: LayoutRules::new(plate, None, options.clearance, options.support_overlap_mm)?,
+            towers: ctx.towers().iter().map(|t| t.zones.clone()).collect(),
         })
+    }
+
+    /// The rules of a candidate at `anchor`: the plate plus that anchor's tower.
+    fn rules(&self, anchor: Option<usize>) -> LayoutRules {
+        let mut rules = self.base.clone();
+        if let Some(slot) = anchor {
+            rules.zones.extend(self.towers[slot].iter().cloned());
+        }
+        rules
     }
 
     /// `select::choose` with one raster validator per anchor: the anchors' candidates are
@@ -303,8 +349,8 @@ impl<'a> Checks<'a> {
         candidates: Vec<Candidate>,
     ) -> Result<(Candidate, ValidationReport), ValidationReport> {
         let vector = |c: &Candidate| -> Result<(), String> {
-            let rules = &self.rules[c.anchor.unwrap_or(0)];
-            VectorValidator::new(self.prints, rules)?.check(&print_placements(c, &self.grid))
+            VectorValidator::new(self.prints, &self.rules(c.anchor))?
+                .check(&print_placements(c, &self.grid))
         };
         let raster = |shortlist: &[Candidate]| self.raster_verdicts(shortlist);
         choose(candidates, raster, vector).map_err(|(_, report)| report)
@@ -312,17 +358,16 @@ impl<'a> Checks<'a> {
 
     /// One raster verdict per candidate, in shortlist order.
     fn raster_verdicts(&self, shortlist: &[Candidate]) -> Vec<Result<(), String>> {
-        let slot_of = |c: &Candidate| c.anchor.unwrap_or(0);
-        let by_slot: Vec<Vec<(usize, Result<(), String>)>> = (0..self.rules.len())
+        let mut anchors: Vec<Option<usize>> = shortlist.iter().map(|c| c.anchor).collect();
+        anchors.sort_unstable();
+        anchors.dedup();
+        let by_anchor: Vec<Vec<(usize, Result<(), String>)>> = anchors
             .into_par_iter()
-            .map(|slot| {
+            .map(|anchor| {
                 let mine: Vec<usize> = (0..shortlist.len())
-                    .filter(|&i| slot_of(&shortlist[i]) == slot)
+                    .filter(|&i| shortlist[i].anchor == anchor)
                     .collect();
-                if mine.is_empty() {
-                    return Vec::new();
-                }
-                match RasterValidator::new(self.prints, &self.rules[slot], self.grid) {
+                match RasterValidator::new(self.prints, &self.rules(anchor), self.grid) {
                     Ok(mut validator) => mine
                         .into_iter()
                         .map(|i| {
@@ -337,7 +382,7 @@ impl<'a> Checks<'a> {
             })
             .collect();
         let mut verdicts: Vec<Option<Result<(), String>>> = vec![None; shortlist.len()];
-        for (index, verdict) in by_slot.into_iter().flatten() {
+        for (index, verdict) in by_anchor.into_iter().flatten() {
             verdicts[index] = Some(verdict);
         }
         verdicts
