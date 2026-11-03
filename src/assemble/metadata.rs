@@ -31,6 +31,7 @@ pub(super) fn rebuild_model_settings(
 
     let mut rebuilt: Vec<Event<'static>> = events[..=root_start].to_vec();
     let mut child_ordinal = 0usize;
+    let mut plate_seen = false;
     let mut index = root_start + 1;
     while index < root_end {
         if children.get(child_ordinal).map(|span| span.0) == Some(index) {
@@ -46,7 +47,12 @@ pub(super) fn rebuild_model_settings(
                 // Every other template object is dropped; the clones take the template's
                 // original position, keeping the surrounding children in order.
             } else if element_is(&events[span.0], "plate") {
-                rebuilt.extend(rebuild_plate_events(&events, span, placements)?);
+                // The packed plate is the first one. A project saved with extra (empty)
+                // plates keeps them empty: giving every plate the clones put each object on
+                // two plates of the A2L goat project (72 objects, 144 instances).
+                let plate_placements = if plate_seen { &[][..] } else { placements };
+                plate_seen = true;
+                rebuilt.extend(rebuild_plate_events(&events, span, plate_placements)?);
             } else if element_is(&events[span.0], "assemble") {
                 rebuilt.extend(rebuild_assemble_events(
                     &events, span, placements, z_offset,

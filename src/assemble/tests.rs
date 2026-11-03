@@ -773,3 +773,25 @@ fn cut_information_present_is_rewritten_and_stays_well_formed() {
         "old cut object must be replaced"
     );
 }
+
+/// A project saved with a second, empty plate (the owner's A2L goat project): only the first
+/// plate gets the clones, the extra plate stays empty.
+#[test]
+fn only_the_first_plate_gets_the_instances() {
+    let model_settings = r#"<config><object id="2"/><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="2"/><metadata key="instance_id" value="0"/></model_instance></plate><plate><metadata key="plater_id" value="2"/></plate></config>"#;
+    let placements = vec![
+        PackedPlacement {
+            x_mm: 10.0,
+            y_mm: 20.0,
+            angle_deg: 0.0,
+        };
+        3
+    ];
+    let rebuilt = rebuild_model_settings(model_settings.as_bytes(), &placements, 0.5).unwrap();
+    let text = String::from_utf8(rebuilt).unwrap();
+
+    let second_plate = text.find(r#"key="plater_id" value="2""#).unwrap();
+    assert_eq!(text[..second_plate].matches("<model_instance").count(), 3, "{text}");
+    assert_eq!(text[second_plate..].matches("<model_instance").count(), 0, "{text}");
+    assert_eq!(text.matches("</plate>").count(), 2, "{text}");
+}
