@@ -70,6 +70,14 @@ fn main() {
         start.elapsed(),
         smoothed.iterations
     );
+    let start = Instant::now();
+    let drawn = goat_packer::support_model::draw::draw(&stage, &graph.layers, &smoothed.centres);
+    println!(
+        "draw {:?} ({} layers, {} polygons in the busiest)",
+        start.elapsed(),
+        drawn.len(),
+        drawn.iter().map(Vec::len).max().unwrap_or(0)
+    );
     let body = &stage.sections.area[0];
     for (index, node) in graph.layers[0].iter().enumerate() {
         let centre = node.centre.unwrap();
@@ -160,5 +168,54 @@ fn main() {
             }
         }
         std::fs::write(file, serde_json::to_vec(&tips).unwrap()).unwrap();
+    }
+    if let Ok(spec) = std::env::var("DUMP_REGION") {
+        // "x0,x1,y0,y1,layer_max": nodes of the lowest layers inside the box (plate frame, mm).
+        let v: Vec<f64> = spec.split(',').map(|t| t.parse().unwrap()).collect();
+        for (layer, nodes) in graph.layers.iter().enumerate().take(v[4] as usize + 1) {
+            for (index, node) in nodes.iter().enumerate() {
+                let c = node.centre.unwrap();
+                let (x, y) = (
+                    units.mm(f64::from(c.x)) + stage.frame_shift[0],
+                    units.mm(f64::from(c.y)) + stage.frame_shift[1],
+                );
+                if x >= v[0] && x <= v[1] && y >= v[2] && y <= v[3] {
+                    println!(
+                        "N L{layer} #{index} ({x:.2},{y:.2}) depth {} rdepth {} foot {:.2} r {:.2} parents {:?} tight {} past {}",
+                        node.depth,
+                        node.rdepth,
+                        node.foot,
+                        units.mm(node.real_radius(derived) as f64),
+                        node.parents,
+                        node.tight_xy,
+                        node.past_holes
+                    );
+                }
+            }
+        }
+    }
+    if std::env::var("DUMP_JUMPS").is_ok() {
+        for layer in 1..graph.layers.len() {
+            for node in &graph.layers[layer - 1] {
+                for &parent in &node.parents {
+                    let a = smoothed.centres[layer - 1][graph.layers[layer - 1]
+                        .iter()
+                        .position(|n| std::ptr::eq(n, node))
+                        .unwrap()];
+                    let b = smoothed.centres[layer][parent];
+                    let step = units.mm(f64::from(a.x - b.x).hypot(f64::from(a.y - b.y)));
+                    if step > 0.55 {
+                        println!(
+                            "J L{} -> L{layer}: {step:.2} mm at ({:.1},{:.1}) r {:.2} depth {}",
+                            layer - 1,
+                            units.mm(f64::from(a.x)) + stage.frame_shift[0],
+                            units.mm(f64::from(a.y)) + stage.frame_shift[1],
+                            units.mm(node.real_radius(derived) as f64),
+                            node.depth
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::bands::realization;
 use super::clearance::Avoidance;
 use super::flavour::MergeBucket;
-use super::graph::branch_graph;
+use super::graph::{BranchGraph, branch_graph};
 use super::merge::{MergeOrder, ThreadClass};
 use super::stage_a::StageA;
 use super::tips::ArcFamily;
@@ -33,8 +33,10 @@ pub struct MemberRun {
     pub threads: usize,
     /// The thread counts (a, b] that give this very run; `None` = unbounded.
     pub class: (usize, Option<usize>),
-    pub realization: Realization,
-    /// Hash of the realization's footprints at 1 µm: equal hashes are one realization.
+    /// The member's realization, or `None` when another member produced the very same graph
+    /// first (equal graphs draw equal realizations, and drawing is most of a member's cost).
+    pub realization: Option<Realization>,
+    /// Hash of the branch graph and roofs: equal hashes are one realization.
     pub hash: u64,
 }
 
@@ -47,16 +49,17 @@ pub fn families(stage: &StageA) -> Vec<ArcFamily> {
     }
 }
 
-/// Every member of the core ensemble, in (family, thread count) order, duplicates kept (the
-/// caller dedups by `hash`).
-pub fn run_members(stage: &StageA) -> Vec<MemberRun> {
+/// Every member of the core ensemble for the given merge-order readings, in (family, order,
+/// thread count) order. Members whose graph another member already drew carry no realization.
+pub fn run_members(stage: &StageA, orders: &[MergeOrder]) -> Vec<MemberRun> {
     warm_volumes(stage);
+    let claims = Claims::default();
     let axes: Vec<(ArcFamily, MergeOrder)> = families(stage)
         .into_iter()
-        .flat_map(|family| [MergeOrder::Along, MergeOrder::Against].map(|order| (family, order)))
+        .flat_map(|family| orders.iter().map(move |&order| (family, order)))
         .collect();
     axes.into_par_iter()
-        .flat_map(|(family, order)| walk_classes(stage, family, order))
+        .flat_map(|(family, order)| walk_classes(stage, &claims, family, order))
         .collect::<Vec<_>>()
 }
 
@@ -84,7 +87,12 @@ fn warm_volumes(stage: &StageA) {
 }
 
 /// The class walk of one (family, order).
-fn walk_classes(stage: &StageA, family: ArcFamily, order: MergeOrder) -> Vec<MemberRun> {
+fn walk_classes(
+    stage: &StageA,
+    claims: &Claims,
+    family: ArcFamily,
+    order: MergeOrder,
+) -> Vec<MemberRun> {
     let fixed = stage.flavour.merge_bucket() == MergeBucket::FixedFour;
     let mut runs: Vec<MemberRun> = Vec::new();
     let mut next = 1;
@@ -92,7 +100,7 @@ fn walk_classes(stage: &StageA, family: ArcFamily, order: MergeOrder) -> Vec<Mem
     loop {
         let fresh: Vec<MemberRun> = (next..next + batch)
             .into_par_iter()
-            .map(|threads| run_one(stage, family, order, threads))
+            .map(|threads| run_one(stage, claims, family, order, threads))
             .collect();
         runs.extend(fresh);
         runs.sort_by_key(|run| run.threads);
@@ -100,8 +108,15 @@ fn walk_classes(stage: &StageA, family: ArcFamily, order: MergeOrder) -> Vec<Mem
         let mut finished = fixed;
         let mut kept: Vec<MemberRun> = Vec::new();
         for run in std::mem::take(&mut runs) {
-            // A run inside an earlier run's class repeats it (same decisions).
+            // A run inside an earlier run's class repeats it (same decisions): the same graph,
+            // so it hands over a realization it drew first.
             if run.threads < covered {
+                if let Some(last) = kept.last_mut()
+                    && last.realization.is_none()
+                    && last.hash == run.hash
+                {
+                    last.realization = run.realization;
+                }
                 continue;
             }
             if run.threads > covered {
@@ -121,17 +136,38 @@ fn walk_classes(stage: &StageA, family: ArcFamily, order: MergeOrder) -> Vec<Mem
     }
 }
 
-fn run_one(stage: &StageA, family: ArcFamily, order: MergeOrder, threads: usize) -> MemberRun {
+fn run_one(
+    stage: &StageA,
+    claims: &Claims,
+    family: ArcFamily,
+    order: MergeOrder,
+    threads: usize,
+) -> MemberRun {
     let graph = branch_graph(stage, family, ThreadClass { threads, order });
     let class = class_of(&graph.merge_values, threads);
-    let member = realization(stage, &graph, threads as u32);
+    let hash = graph_hash(&graph);
+    // Whoever reaches a graph first draws it; which member that is does not change the set.
+    let realization = claims.claim(hash).then(|| realization(stage, &graph, 0));
     MemberRun {
         family,
         order,
         threads,
         class,
-        hash: hash_of(&member),
-        realization: member,
+        hash,
+        realization,
+    }
+}
+
+/// The graphs already taken by a member.
+#[derive(Default)]
+struct Claims(std::sync::Mutex<std::collections::BTreeSet<u64>>);
+
+impl Claims {
+    fn claim(&self, hash: u64) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(hash)
     }
 }
 
@@ -142,8 +178,9 @@ pub fn class_of(values: &[usize], threads: usize) -> (usize, Option<usize>) {
     (below.unwrap_or(0), above)
 }
 
-/// FNV-1a over the loops of the realization rounded to 1 µm.
-fn hash_of(member: &Realization) -> u64 {
+/// FNV-1a over what drawing reads: every node's position, radius state and parents, and the
+/// roof pieces.
+fn graph_hash(graph: &BranchGraph) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     let mut feed = |value: i64| {
         for byte in value.to_le_bytes() {
@@ -151,24 +188,45 @@ fn hash_of(member: &Realization) -> u64 {
             hash = hash.wrapping_mul(0x0100_0000_01b3);
         }
     };
-    let kinds = [&member.above_base, &member.support, &member.interface];
-    for loops in std::iter::once(&member.base).chain(kinds.iter().flat_map(|bands| bands.iter())) {
+    for layer in &graph.layers {
         feed(-1);
-        for ring in loops {
-            feed(-2);
-            for point in ring {
-                feed(libm::round(point.x * 1000.0) as i64);
-                feed(libm::round(point.y * 1000.0) as i64);
+        for node in layer {
+            let centre = node.centre.unwrap_or_default();
+            feed(i64::from(centre.x));
+            feed(i64::from(centre.y));
+            feed(node.rdepth);
+            feed(node.depth);
+            feed(node.foot.to_bits() as i64);
+            for &parent in &node.parents {
+                feed(parent as i64);
             }
+            feed(-3);
+        }
+    }
+    for piece in &graph.roofs {
+        feed(-2);
+        feed(piece.layer as i64);
+        feed(i64::from(piece.interface));
+        for point in piece.rings.iter().flatten() {
+            feed(i64::from(point.x));
+            feed(i64::from(point.y));
         }
     }
     hash
 }
 
-/// The distinct realizations of `runs`, first of each hash, in run order.
-pub fn distinct(runs: &[MemberRun]) -> Vec<&MemberRun> {
+/// One realization per distinct graph, in the order of each graph's first member in run
+/// order (which member actually drew it depends on timing, so the order must not).
+pub fn distinct(runs: &[MemberRun]) -> Vec<&Realization> {
     let mut seen = std::collections::BTreeSet::new();
-    runs.iter().filter(|run| seen.insert(run.hash)).collect()
+    runs.iter()
+        .filter(|run| seen.insert(run.hash))
+        .filter_map(|run| {
+            runs.iter()
+                .filter(|other| other.hash == run.hash)
+                .find_map(|other| other.realization.as_ref())
+        })
+        .collect()
 }
 
 /// Serializable summary for reports.

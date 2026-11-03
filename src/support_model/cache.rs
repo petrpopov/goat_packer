@@ -11,12 +11,13 @@ use sha2::{Digest, Sha256};
 
 use super::ensemble::MemberSummary;
 use super::flavour::Flavour;
+use super::merge::MergeOrder;
 use super::settings::SupportSettings;
 use crate::embedded_mesh::ObjectMesh;
 use crate::object_print::Realization;
 
 /// Bumped on any change of what the generator computes: old entries then miss.
-pub const MODEL_VERSION: u32 = 2;
+pub const MODEL_VERSION: u32 = 4;
 
 /// The distinct realizations of one (object, settings, flavour, rotation).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -31,11 +32,15 @@ pub fn cache_key(
     settings: &SupportSettings,
     flavour: Flavour,
     rotation_deg: f64,
+    orders: &[MergeOrder],
 ) -> String {
     let mut hash = Sha256::new();
     hash.update(MODEL_VERSION.to_le_bytes());
     hash_bytes(&mut hash, flavour.name().as_bytes());
     hash.update(rotation_deg.to_le_bytes());
+    for order in orders {
+        hash_bytes(&mut hash, format!("{order:?}").as_bytes());
+    }
     hash_bytes(&mut hash, &serde_json::to_vec(settings).unwrap_or_default());
     for part in &mesh.parts {
         hash_bytes(&mut hash, format!("{:?}", part.kind).as_bytes());

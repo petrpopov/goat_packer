@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use goat_packer::{
-    ForeignGaps, colored_packer::PrinterProfile, nozzle_clean::NozzleCleanSpec, print_time::TimeCorrection,
+    ForeignGaps, support_model::merge::MergeOrder, colored_packer::PrinterProfile, nozzle_clean::NozzleCleanSpec, print_time::TimeCorrection,
 };
 
 use crate::AppResult;
@@ -79,6 +79,11 @@ pub struct Args {
     pub rotations: Vec<f64>,
     /// `--support-source`: probe slices (default) or the support model.
     pub support_source: SupportSource,
+    /// `--support-orders`: which readings of the slicers' merge order the support model runs
+    /// (`along`, `against`; default both).
+    pub support_orders: Vec<MergeOrder>,
+    /// `--support-margins FIRST_LAYER:BAND` (mm): replaces the flavour's calibrated margins.
+    pub support_margins: Option<(f64, f64)>,
     /// `--cache-dir`: where the per-class support probes are kept between runs.
     pub cache_dir: Option<PathBuf>,
     /// `--verify` (or a time window, or `--finish-state`): slice the assembled plate and run
@@ -226,6 +231,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
     let mut cache_dir = None;
     let mut support_source = SupportSource::default();
+    let mut support_orders = vec![MergeOrder::Along, MergeOrder::Against];
+    let mut support_margins = None;
     let mut verify = false;
     let mut seed = DEFAULT_SEED;
     let mut nozzle_clean = None;
@@ -282,6 +289,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             },
             "--rotations" => rotations = parse_rotations(&value)?,
             "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
+            "--support-orders" => support_orders = parse_orders(&value)?,
+            "--support-margins" => support_margins = Some(parse_margins(&value)?),
             "--support-source" => {
                 support_source = match value.as_str() {
                     "probe" => SupportSource::Probe,
@@ -344,6 +353,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         rotations,
         cache_dir,
         support_source,
+        support_orders,
+        support_margins,
         verify,
         support_overlap_mm,
         foreign_gaps,
@@ -351,6 +362,37 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         keep_own_gap,
         finish_state,
     })
+}
+
+/// `along,against`.
+fn parse_orders(text: &str) -> AppResult<Vec<MergeOrder>> {
+    let orders: Vec<MergeOrder> = text
+        .split(',')
+        .map(|name| match name.trim() {
+            "along" => Ok(MergeOrder::Along),
+            "against" => Ok(MergeOrder::Against),
+            other => Err(format!("unknown merge order: {other} (along, against)")),
+        })
+        .collect::<Result<_, _>>()?;
+    if orders.is_empty() {
+        return Err("--support-orders needs at least one reading".into());
+    }
+    Ok(orders)
+}
+
+/// `FIRST_LAYER:BAND`, both in mm and not negative.
+fn parse_margins(text: &str) -> AppResult<(f64, f64)> {
+    let (first, band) = text
+        .split_once(':')
+        .ok_or("--support-margins expects FIRST_LAYER:BAND in mm")?;
+    let parse = |part: &str| -> AppResult<f64> {
+        let value: f64 = part.trim().parse()?;
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("invalid support margin {part}").into());
+        }
+        Ok(value)
+    };
+    Ok((parse(first)?, parse(band)?))
 }
 
 #[cfg(test)]

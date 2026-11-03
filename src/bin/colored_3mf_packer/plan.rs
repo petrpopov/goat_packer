@@ -48,6 +48,10 @@ pub struct PackState {
     pub summary: PackSummary,
 }
 
+fn probe_source() -> String {
+    "probe".to_owned()
+}
+
 /// What the run found besides the layout, for the report.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct PackSummary {
@@ -55,6 +59,10 @@ pub struct PackSummary {
     /// Seconds the support model took (0 with probes).
     #[serde(default)]
     pub model_seconds: f64,
+    /// Where the supports of the plan came from (`probe` or `model`): kept with the plan so a
+    /// resumed `--finish-state` run reports the plate's own source, not its own arguments'.
+    #[serde(default = "probe_source")]
+    pub support_source: String,
     /// The packing member that won and the best count each member reached.
     pub member: String,
     pub member_counts: Vec<MemberResult>,

@@ -8,7 +8,7 @@ use goat_packer::{
     object_print::{Margins, ObjectPrint},
     progress::{self, Stage},
     support_model::{
-        envelope::envelope,
+        envelope::{envelope, envelope_banded},
         predict::{PredictInput, Prediction, predict},
         settings::{ProjectConfig, SupportSettings},
     },
@@ -23,8 +23,20 @@ use crate::tower::tower_spec;
 /// Predicts every rotation class and builds the plan.
 pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     let config = ProjectConfig::load(&job.args.source_3mf)?;
-    let settings = SupportSettings::from_config(&config)?;
-    let margins = job.flavour.flavour.initial_margins();
+    let mut settings = SupportSettings::from_config(&config)?;
+    // The output 3MF carries the first-layer gap this job forced (`own_gap`): the supports
+    // are predicted with the value the slicer will read, as the probe copies are sliced.
+    if job.own_gap.edits_project() {
+        settings.first_layer_gap = job.own_gap.first_layer_mm;
+    }
+    let flavour = job.flavour.flavour;
+    let margins = match job.args.support_margins {
+        Some((first_layer_mm, band_mm)) => Margins {
+            first_layer_mm,
+            band_mm,
+        },
+        None => flavour.margins(),
+    };
     let mut prints = Vec::new();
     let mut summaries = Vec::new();
     let mut seconds = 0.0;
@@ -41,6 +53,7 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
             flavour: job.flavour.flavour,
             rotation_deg: rotation,
             cache_dir: job.args.cache_dir.as_deref(),
+            orders: &job.args.support_orders,
         })?;
         println!(
             "support model, rotation {rotation}°: {} distinct realizations of {} members in {:.1} s{}",
@@ -89,7 +102,14 @@ fn class_print(
     let mut print = body_print(&job.mesh, rotation, &bands);
     print.landing = landing(&job.mesh, &job.settings, job.build, rotation)?.loops;
     let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
-    let grown = envelope(&members, margins);
+    let grown = if job.args.support_margins.is_some() {
+        envelope(&members, margins)
+    } else {
+        let flavour = job.flavour.flavour;
+        envelope_banded(&members, margins.first_layer_mm, &|band| {
+            flavour.band_margin_mm(band)
+        })
+    };
     print.support_base = grown.base;
     print.support = grown.above_base;
     print.interface = grown.interface;

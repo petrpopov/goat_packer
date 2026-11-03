@@ -14,6 +14,15 @@ const ARC_TOLERANCE_MM: f64 = 0.01;
 /// The union of `members` per kind and band with every kind grown by its margin: the first
 /// layer's base by δ_L1, the bands (support, above the base, interface) by δ_band.
 pub fn envelope(members: &[&Realization], margins: Margins) -> Realization {
+    envelope_banded(members, margins.first_layer_mm, &|_| margins.band_mm)
+}
+
+/// `envelope` with a margin per absolute band (`band_margin_mm(k)`).
+pub fn envelope_banded(
+    members: &[&Realization],
+    first_layer_mm: f64,
+    band_margin_mm: &dyn Fn(usize) -> f64,
+) -> Realization {
     let bands = members
         .iter()
         .map(|member| member.support.len())
@@ -27,7 +36,7 @@ pub fn envelope(members: &[&Realization], margins: Margins) -> Realization {
                     .filter_map(|member| pick(member).get(band))
                     .map(rings_of)
                     .collect();
-                loops_of(&grown(union_all(parts.iter()), margins.band_mm))
+                loops_of(&grown(union_all(parts.iter()), band_margin_mm(band)))
             })
             .collect()
     };
@@ -42,7 +51,7 @@ pub fn envelope(members: &[&Realization], margins: Margins) -> Realization {
     Realization {
         member: 0,
         landing: loops_of(&union_all(landing.iter())),
-        base: loops_of(&grown(union_all(base.iter()), margins.first_layer_mm)),
+        base: loops_of(&grown(union_all(base.iter()), first_layer_mm)),
         above_base: band_union(&|member| &member.above_base),
         support: band_union(&|member| &member.support),
         interface: band_union(&|member| &member.interface),

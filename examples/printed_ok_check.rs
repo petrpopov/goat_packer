@@ -1,7 +1,7 @@
 //! Is a plate the owner printed fine still admissible against the model's envelope?
 //!
 //! `printed_ok_check <profile.json> <project.3mf> <plate> [--flavour F] [--cache-dir D]
-//!  [--deltas a,b,c] [--printed-ok FILE]`
+//!  [--deltas a,b,c] [--printed-ok FILE] [--pairs-only]`
 //!
 //! `plate` is a key of `/tmp/goat_calib/printed_ok.json` (`p1s_plate3_cli`, `a2l_plate3_cli`,
 //! `u1_koza48_aux50_65t`, ...). The prints are built the way `colored_3mf_packer
@@ -17,6 +17,7 @@ use goat_packer::object_print::Margins;
 use goat_packer::orca_project::project_settings;
 use goat_packer::support_model::envelope::envelope;
 use goat_packer::support_model::flavour::Flavour;
+use goat_packer::support_model::merge::MergeOrder;
 use goat_packer::support_model::predict::{PredictInput, predict};
 use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::{ForeignGaps, LayoutRules, PrintPlacement, validate_vector};
@@ -29,12 +30,15 @@ fn main() {
     let plate = args.next().expect("plate key");
     let mut flavour_name = None;
     let mut cache_dir = None;
+    let mut orders_text = "along,against".to_owned();
     let mut deltas = vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0];
     let mut printed_ok = PathBuf::from("/tmp/goat_calib/printed_ok.json");
+    let mut pairs_only = false;
     while let Some(option) = args.next() {
         match option.as_str() {
             "--flavour" => flavour_name = args.next(),
             "--cache-dir" => cache_dir = args.next().map(PathBuf::from),
+            "--orders" => orders_text = args.next().unwrap(),
             "--deltas" => {
                 deltas = args
                     .next()
@@ -44,9 +48,13 @@ fn main() {
                     .collect()
             }
             "--printed-ok" => printed_ok = PathBuf::from(args.next().unwrap()),
+            // Neighbour pairs only: the printed plate sits on a bed whose edge and cutter the
+            // slicer clipped its supports against, which an unclipped envelope cannot show.
+            "--pairs-only" => pairs_only = true,
             other => panic!("unknown option {other}"),
         }
     }
+    let orders = parse_orders(&orders_text);
     let mesh = goat_packer::embedded_mesh::load_object_mesh(&project).unwrap();
     let config = ProjectConfig::load(&project).unwrap();
     let settings = SupportSettings::from_config(&config).unwrap();
@@ -59,6 +67,7 @@ fn main() {
         flavour,
         rotation_deg: 0.0,
         cache_dir: cache_dir.as_deref(),
+        orders: &orders,
     })
     .unwrap();
     println!(
@@ -74,7 +83,13 @@ fn main() {
     let mut profile = load_printer_profile(&profile_path).unwrap();
     profile.gui_flavour = Some(GuiFlavour::try_from(flavour.name().to_owned()).unwrap());
     let bed = ProjectBed::from_settings(&value).unwrap();
-    let rules = plate_rules(&profile, &bed).unwrap();
+    let mut rules = plate_rules(&profile, &bed).unwrap();
+    if pairs_only {
+        rules.printable_area = rules.printable_area.grown(30.0);
+        rules.body_edge_band_mm = 0.0;
+        rules.print_edge_reserve_mm = 0.0;
+        rules.keepouts.clear();
+    }
     let layout = LayoutRules::new(&rules, None, 0.7, ForeignGaps::default(), None).unwrap();
     let placements = placements(&printed_ok, &plate);
     println!("{plate}: {} printed placements", placements.len());
@@ -129,6 +144,16 @@ fn placements(file: &Path, plate: &str) -> Vec<PrintPlacement> {
             print: 0,
             x_mm: p["x"].as_f64().unwrap(),
             y_mm: p["y"].as_f64().unwrap(),
+        })
+        .collect()
+}
+
+fn parse_orders(text: &str) -> Vec<MergeOrder> {
+    text.split(',')
+        .map(|name| match name {
+            "along" => MergeOrder::Along,
+            "against" => MergeOrder::Against,
+            other => panic!("unknown merge order {other}"),
         })
         .collect()
 }

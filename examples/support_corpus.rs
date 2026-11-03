@@ -22,7 +22,7 @@ use goat_packer::support_model::envelope::envelope;
 use goat_packer::support_model::exceedance::{area_mm2, exceedance};
 use goat_packer::support_model::flavour::Flavour;
 use goat_packer::support_model::graph::branch_graph;
-use goat_packer::support_model::merge::ThreadClass;
+use goat_packer::support_model::merge::{MergeOrder, ThreadClass};
 use goat_packer::support_model::predict::{PredictInput, predict};
 use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::support_model::tips::ArcFamily;
@@ -38,6 +38,7 @@ struct Options {
     cache_dir: Option<PathBuf>,
     json: Option<PathBuf>,
     dump: Option<PathBuf>,
+    orders: String,
     single: Option<(usize, String)>,
     observations: Vec<(PathBuf, usize)>,
 }
@@ -50,12 +51,14 @@ fn options() -> Options {
         cache_dir: None,
         json: None,
         dump: None,
+        orders: "along,against".to_owned(),
         single: None,
         observations: Vec::new(),
     };
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--flavour" => found.flavour = args.next(),
+            "--orders" => found.orders = args.next().unwrap(),
             "--cache-dir" => found.cache_dir = args.next().map(PathBuf::from),
             "--json" => found.json = args.next().map(PathBuf::from),
             "--dump" => found.dump = args.next().map(PathBuf::from),
@@ -76,6 +79,7 @@ fn options() -> Options {
 
 fn main() {
     let options = options();
+    let orders = parse_orders(&options.orders);
     let mesh = load_object_mesh(&options.project).unwrap();
     let config = ProjectConfig::load(&options.project).unwrap();
     let settings = SupportSettings::from_config(&config).unwrap();
@@ -96,6 +100,7 @@ fn main() {
                 flavour,
                 rotation_deg: 0.0,
                 cache_dir: options.cache_dir.as_deref(),
+                orders: &orders,
             })
             .unwrap();
             println!(
@@ -286,4 +291,14 @@ fn summary(line: &Value) -> String {
         total("above_base"),
         worst("interface"),
     )
+}
+
+fn parse_orders(text: &str) -> Vec<MergeOrder> {
+    text.split(',')
+        .map(|name| match name {
+            "along" => MergeOrder::Along,
+            "against" => MergeOrder::Against,
+            other => panic!("unknown merge order {other}"),
+        })
+        .collect()
 }

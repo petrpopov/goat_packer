@@ -18,6 +18,8 @@ use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::support_model::tips::ArcFamily;
 use goat_packer::support_model::{StageAInput, SupportError, stage_a};
 
+const BOTH: [MergeOrder; 2] = [MergeOrder::Along, MergeOrder::Against];
+
 const COMMON: &str = r#""layer_height": "0.28", "min_layer_height": ["0.08"],
     "slice_closing_radius": "0.049", "resolution": "0.03", "slicing_mode": "regular",
     "elefant_foot_compensation": "0.15", "nozzle_diameter": ["0.4"], "line_width": "0.42",
@@ -213,7 +215,7 @@ fn flavour_switches_change_the_roots_and_the_bucket_rule() {
     assert!(area_mm2(&flat.base) >= area_mm2(&round.base) - 1e-6);
     // R pins the bucket rule: every thread count is one class; O walks the classes.
     let (r_stage, _) = model(Flavour::Orca250);
-    let r_runs = run_members(&r_stage);
+    let r_runs = run_members(&r_stage, &BOTH);
     assert!(
         r_runs
             .iter()
@@ -226,14 +228,14 @@ fn flavour_switches_change_the_roots_and_the_bucket_rule() {
             .count(),
         1
     );
-    let o_runs = run_members(&orca);
+    let o_runs = run_members(&orca, &BOTH);
     assert!(o_runs.len() >= 2);
 }
 
 #[test]
 fn the_thread_classes_tile_every_thread_count_and_a_class_repeats_its_run() {
     let (stage, _) = model(Flavour::Orca242);
-    let all = run_members(&stage);
+    let all = run_members(&stage, &BOTH);
     for family in [ArcFamily::Roof, ArcFamily::Base] {
         let runs: Vec<_> = all
             .iter()
@@ -254,10 +256,9 @@ fn the_thread_classes_tile_every_thread_count_and_a_class_repeats_its_run() {
                 .map_or(run.threads + 3, |upper| (run.threads + upper) / 2);
             let graph = branch_graph(&stage, run.family, ThreadClass::along(mid));
             assert_eq!(class_of(&graph.merge_values, mid).1, run.class.1);
-            assert!(same_ignoring_member(
-                &realization(&stage, &graph, 0),
-                &run.realization
-            ));
+            if let Some(drawn) = &run.realization {
+                assert!(same_ignoring_member(&realization(&stage, &graph, 0), drawn));
+            }
         }
         assert_eq!(covered, usize::MAX, "the last class is unbounded");
     }
@@ -272,6 +273,7 @@ fn unsupported_settings_are_named_before_any_geometry() {
         flavour: Flavour::Orca242,
         rotation_deg: 0.0,
         cache_dir: None,
+        orders: &BOTH,
     })
     .err();
     assert_eq!(
@@ -290,6 +292,7 @@ fn a_prediction_is_cached_and_the_envelope_grows_by_the_margins() {
         flavour: Flavour::Orca250,
         rotation_deg: 0.0,
         cache_dir: Some(dir.path()),
+        orders: &BOTH,
     };
     let first = predict(&input).unwrap();
     let second = predict(&input).unwrap();
@@ -328,6 +331,7 @@ fn ensemble_of(threads: usize) -> Ensemble {
             flavour: Flavour::Bambu0208,
             rotation_deg: 0.0,
             cache_dir: None,
+            orders: &BOTH,
         })
         .unwrap()
         .ensemble
@@ -345,15 +349,17 @@ fn the_ensemble_is_identical_for_one_and_eight_threads_and_across_runs() {
 }
 
 #[test]
-fn distinct_keeps_the_first_of_equal_hashes() {
+fn every_distinct_graph_has_exactly_one_realization() {
     let (stage, _) = model(Flavour::Orca242);
-    let runs = run_members(&stage);
+    let runs = run_members(&stage, &BOTH);
     let unique = distinct(&runs);
-    assert!(unique.len() <= runs.len());
-    let mut hashes: Vec<u64> = unique.iter().map(|run| run.hash).collect();
+    let mut hashes: Vec<u64> = runs.iter().map(|run| run.hash).collect();
     hashes.sort_unstable();
     hashes.dedup();
-    assert_eq!(hashes.len(), unique.len());
+    assert_eq!(unique.len(), hashes.len());
+    // Exactly the first member of each graph... or a later one drew it: one drawer each.
+    let drawn = runs.iter().filter(|run| run.realization.is_some()).count();
+    assert_eq!(drawn, hashes.len());
 }
 
 #[test]

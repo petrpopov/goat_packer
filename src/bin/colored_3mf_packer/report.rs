@@ -30,7 +30,7 @@ pub struct ColoredPackReport {
     pub clearance_mm: f64,
     pub paint_color_attribute_mentions: usize,
     /// `probe`: slicer probes of one object per rotation class (a cache hit counts as one).
-    pub support_source: &'static str,
+    pub support_source: String,
     pub slicer_flavour: String,
     pub flavour_approximated: bool,
     /// Per rotation class: runs sliced, whether the last runs added nothing, cache hit.
@@ -172,7 +172,11 @@ impl ColoredPackReport {
             object_count: state.placements.len(),
             clearance_mm: args.clearance,
             paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
-            support_source: args.support_source.as_str(),
+            support_source: if summary.support_source.is_empty() {
+                "probe".to_owned()
+            } else {
+                summary.support_source.clone()
+            },
             slicer_flavour: job.flavour.flavour.name().to_owned(),
             flavour_approximated: job.flavour.approximated,
             probes: summary.probes.clone(),

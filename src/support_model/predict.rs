@@ -8,6 +8,7 @@ use std::time::Instant;
 use super::cache::{Ensemble, cache_key, load, store};
 use super::ensemble::{distinct, run_members};
 use super::flavour::Flavour;
+use super::merge::MergeOrder;
 use super::settings::SupportSettings;
 use super::{StageAInput, SupportError, stage_a};
 use crate::embedded_mesh::ObjectMesh;
@@ -20,6 +21,8 @@ pub struct PredictInput<'a> {
     pub flavour: Flavour,
     pub rotation_deg: f64,
     pub cache_dir: Option<&'a Path>,
+    /// Which readings of the merge order run (an ensemble axis, `merge::MergeOrder`).
+    pub orders: &'a [MergeOrder],
 }
 
 /// The ensemble of one class and how it was obtained.
@@ -42,6 +45,7 @@ pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
         input.settings,
         input.flavour,
         input.rotation_deg,
+        input.orders,
     );
     if let Some(dir) = input.cache_dir
         && let Some(ensemble) = load(dir, &key)
@@ -61,13 +65,10 @@ pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
         flavour: input.flavour,
         bed: None,
     })?;
-    let runs = run_members(&stage);
+    let runs = run_members(&stage, input.orders);
     let ensemble = Ensemble {
         members: runs.iter().map(|run| run.summary()).collect(),
-        realizations: distinct(&runs)
-            .into_iter()
-            .map(|run| run.realization.clone())
-            .collect(),
+        realizations: distinct(&runs).into_iter().cloned().collect(),
     };
     if let Some(dir) = input.cache_dir {
         store(dir, &key, &ensemble).map_err(|error| SupportError::Invalid(error.to_string()))?;

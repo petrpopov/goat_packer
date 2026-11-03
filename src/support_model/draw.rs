@@ -7,7 +7,7 @@
 
 mod shapes;
 
-use shapes::{CHORD_TOLERANCE_MM, disc, ellipse};
+use shapes::{CHORD_TOLERANCE_MM, disc, slice_cylinder};
 
 use super::flavour::RootCap;
 use super::node::Node;
@@ -18,6 +18,9 @@ use crate::polygon_ops::{
 
 /// Notches narrower than a support line are filled (spec 03 §3.7 step 2).
 const NOTCH_CLOSING_MM: f64 = 0.42;
+
+/// A bend whose sine is above this (about 10°) gets a ball at its joint.
+const SHARP_BEND_SINE: f64 = 0.17;
 
 /// Simplification tolerance of the layer outline, mm (spec 03 §3.7 step 3).
 const SIMPLIFY_MM: f64 = 0.03;
@@ -99,11 +102,43 @@ impl<'a> Pieces<'a> {
             slices[0].push(self.root_disc(here, radius));
         }
         if let Some(below) = self.child[layer][index] {
-            slices[layer].push(self.tube(layer, here, radius, below));
+            self.add_tube(slices, layer, here, radius, below);
         }
-        if node.parents.len() >= 2 {
+        // A ball where branches meet or a branch bends sharply closes the wedge gaps between
+        // straight pieces (a gentle bend leaves none worth a polygon); a tip has no upper half
+        // to draw, and its piece already ends at it.
+        let bends =
+            node.parents.len() == 1 && self.bend(layer, index, node.parents[0]) > SHARP_BEND_SINE;
+        if node.parents.len() >= 2 || bends {
             self.add_ball(slices, layer, here, radius);
         }
+    }
+
+    /// Sine of the angle between the piece below the node and the piece above it (0 when the
+    /// node has no piece on one side).
+    fn bend(&self, layer: usize, index: usize, parent: usize) -> f64 {
+        let Some(below) = self.child[layer][index] else {
+            return 0.0;
+        };
+        let (a, b, c) = (
+            self.position(layer - 1, below),
+            self.position(layer, index),
+            self.position(layer + 1, parent),
+        );
+        let (z0, z1, z2) = (
+            self.top_z[layer - 1],
+            self.top_z[layer],
+            self.top_z[layer + 1],
+        );
+        let first = [b[0] - a[0], b[1] - a[1], z1 - z0];
+        let second = [c[0] - b[0], c[1] - b[1], z2 - z1];
+        let cross = [
+            first[1] * second[2] - first[2] * second[1],
+            first[2] * second[0] - first[0] * second[2],
+            first[0] * second[1] - first[1] * second[0],
+        ];
+        let norm = |v: [f64; 3]| libm::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        norm(cross) / (norm(first) * norm(second)).max(f64::MIN_POSITIVE)
     }
 
     /// The root's slice at the middle of layer 0 (spec 03 §3.3).
@@ -118,23 +153,39 @@ impl<'a> Pieces<'a> {
         disc(at, reach, self.tolerance)
     }
 
-    /// The slice of the tube between node `below` of layer l − 1 and the node at `here`.
-    fn tube(&self, layer: usize, here: [f64; 2], radius: f64, below: usize) -> Ring {
+    /// The straight piece between node `below` of layer l − 1 and the node at `here`, sliced
+    /// at every layer whose plane it can reach (a tilted piece reaches r·sin φ above and below
+    /// its ends).
+    fn add_tube(
+        &self,
+        slices: &mut [Vec<Ring>],
+        layer: usize,
+        here: [f64; 2],
+        radius: f64,
+        below: usize,
+    ) {
         let derived = &self.stage.derived;
         let other = &self.layers[layer - 1][below];
         let other_at = self.position(layer - 1, below);
         let mean = 0.5 * (radius + other.real_radius(derived) as f64);
-        let shift = [here[0] - other_at[0], here[1] - other_at[1]];
-        let sideways = libm::hypot(shift[0], shift[1]);
-        let height = self.top_z[layer] - self.top_z[layer - 1];
-        let cosine = height / libm::hypot(height, sideways);
-        let direction = if sideways > 0.0 {
-            [shift[0] / sideways, shift[1] / sideways]
-        } else {
-            [1.0, 0.0]
-        };
-        let middle = [0.5 * (here[0] + other_at[0]), 0.5 * (here[1] + other_at[1])];
-        ellipse(middle, mean / cosine, mean, direction, self.tolerance)
+        let (z_from, z_to) = (self.top_z[layer - 1], self.top_z[layer]);
+        let sideways = libm::hypot(here[0] - other_at[0], here[1] - other_at[1]);
+        let tilt = sideways / libm::hypot(z_to - z_from, sideways);
+        let (low, high) = (z_from - mean * tilt, z_to + mean * tilt);
+        let first = self.slice_z.partition_point(|&z| z < low);
+        let last = self.slice_z.partition_point(|&z| z <= high);
+        for index in first..last.min(slices.len()) {
+            let piece = slice_cylinder(
+                other_at,
+                z_from,
+                here,
+                z_to,
+                mean,
+                self.slice_z[index],
+                self.tolerance,
+            );
+            slices[index].extend(piece);
+        }
     }
 
     fn add_ball(&self, slices: &mut [Vec<Ring>], layer: usize, at: [f64; 2], radius: f64) {
