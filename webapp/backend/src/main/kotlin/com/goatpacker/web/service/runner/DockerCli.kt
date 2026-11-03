@@ -33,8 +33,21 @@ class DockerCli {
             error("Docker termination timed out")
         }
         if (process.exitValue() != 0) {
-            check(!containerExists(idOrName)) { "Native container termination not confirmed" }
+            check(awaitGone(idOrName)) { "Native container termination not confirmed" }
         }
+    }
+
+    /**
+     * `docker rm -f` also fails while a `--rm` container is already being removed (the export
+     * helper right after its run): it is still listed for a moment. Production v0.6.0 failed a
+     * finished schedule job this way once the probe-cache export added one more helper run.
+     */
+    private fun awaitGone(idOrName: String): Boolean {
+        repeat(REMOVAL_POLLS) {
+            if (!containerExists(idOrName)) return true
+            Thread.sleep(REMOVAL_POLL_MILLIS)
+        }
+        return !containerExists(idOrName)
     }
 
     private fun containerExists(idOrName: String): Boolean =
@@ -46,6 +59,8 @@ class DockerCli {
         const val COMMAND_TIMEOUT_SECONDS = 60L
         const val OUTPUT_DRAIN_SECONDS = 5L
         const val REMOVE_TIMEOUT_SECONDS = 15L
+        const val REMOVAL_POLLS = 40
+        const val REMOVAL_POLL_MILLIS = 250L
         const val MAX_OUTPUT_BYTES = 65_536
         const val MAX_ERROR_CHARS = 1000
     }
