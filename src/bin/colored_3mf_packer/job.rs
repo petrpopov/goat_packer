@@ -62,6 +62,9 @@ pub struct Job {
 impl Job {
     pub fn open(args: Args) -> AppResult<Job> {
         let mut profile = load_printer_profile(&args.profile_path)?;
+        if let Some(kind) = &args.slicer {
+            profile = profile.for_slicer(kind)?;
+        }
         apply_edge_margin(&mut profile, args.edge_margin);
         validate_source_printer(&args.source_3mf, &profile)?;
         let source_count = object_count_3mf(&args.source_3mf)?;
@@ -136,8 +139,10 @@ fn apply_edge_margin(profile: &mut PrinterProfile, edge_margin: Option<f64>) {
     }
 }
 
-/// The GUI the owner opens the plate in: the project's `Application`, else the profile's
-/// `gui_flavour`, else the family of its `slicer_kind` (design §5.3).
+/// The GUI the owner opens the plate in: with `--slicer`, that slicer's GUI from the profile's
+/// `slicers` (explicit: the user said what they print with); else the project's
+/// `Application`, else the profile's `gui_flavour`, else the family of its `slicer_kind`
+/// (design §5.3).
 fn resolve_flavour(args: &Args, profile: &PrinterProfile) -> AppResult<ResolvedFlavour> {
     let application = source_application(&args.source_3mf);
     let by_kind = match profile.slicer_kind.as_str() {
@@ -148,8 +153,9 @@ fn resolve_flavour(args: &Args, profile: &PrinterProfile) -> AppResult<ResolvedF
         .gui_flavour
         .as_ref()
         .map_or_else(|| by_kind.name().to_owned(), ToString::to_string);
+    let explicit = args.slicer.as_ref().map(|_| profile_name.as_str());
     Ok(Flavour::resolve(
-        None,
+        explicit,
         application.as_deref(),
         Some(&profile_name),
     )?)

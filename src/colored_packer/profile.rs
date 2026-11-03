@@ -1,6 +1,6 @@
 //! The printer profile (`profiles/*.json`): the only source of printer geometry.
 
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -72,9 +72,64 @@ pub struct PrinterProfile {
     /// fallback, and the only source an STL job has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gui_flavour: Option<GuiFlavour>,
+    /// The slicers a user may print this printer with, by `slicer_kind`, each with the GUI it
+    /// targets (`{"bambu": "bambu-02.08", "orca": "orca-2.4"}`; Snapmaker printers
+    /// `{"orca": "snapmaker-orca-2.4"}`: the server slices them in vanilla Orca on purpose, the
+    /// user opens the plate in Snapmaker Orca). Written by `printer_catalog slicers` from the
+    /// runner images' preset trees: a kind is listed only when its tree has the machine with
+    /// the same bed and start G-code the profile was qualified on. `slicer_kind` is the
+    /// default and always listed. Absent = only `slicer_kind`, targeting `gui_flavour`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub slicers: BTreeMap<String, GuiFlavour>,
 }
 
+/// Where the runner images put every slicer (`/opt/slicers/<kind>/AppRun`); catalog profiles
+/// carry these paths and the webapp rewrites them for local runs.
+const RUNNER_SLICER_PREFIX: &str = "/opt/slicers/";
+const RUNNER_SLICER_EXECUTABLE: &str = "/AppRun";
+
 impl PrinterProfile {
+    /// The slicer kinds this printer may be sliced with (`slicers`, else `slicer_kind`).
+    pub fn offered_slicers(&self) -> Vec<&str> {
+        if self.slicers.is_empty() {
+            vec![self.slicer_kind.as_str()]
+        } else {
+            self.slicers.keys().map(String::as_str).collect()
+        }
+    }
+
+    /// This profile switched to the slicer `kind` the user prints with (`--slicer`): its
+    /// `slicer_kind`, the target GUI (`gui_flavour`) from `slicers` and a runner-image
+    /// `slicer_path` for that kind. A local `slicer_path` (hand-made profiles) names one
+    /// slicer only, so switching away from it is an error; the webapp writes the job's
+    /// profile with the chosen kind and path already in place.
+    pub fn for_slicer(&self, kind: &str) -> Result<PrinterProfile, String> {
+        let offered = self.offered_slicers();
+        if !offered.contains(&kind) {
+            return Err(format!(
+                "profile '{}' cannot be sliced with '{kind}'; it offers {}",
+                self.id,
+                offered.join(", ")
+            ));
+        }
+        let mut profile = self.clone();
+        if let Some(flavour) = self.slicers.get(kind) {
+            profile.gui_flavour = Some(flavour.clone());
+        }
+        if kind != self.slicer_kind {
+            if !self.slicer_path.starts_with(RUNNER_SLICER_PREFIX) {
+                return Err(format!(
+                    "profile '{}' slicer_path {} is a {} binary, not a runner-image path; give a \
+                     profile copy with slicer_kind '{kind}' and its slicer_path",
+                    self.id, self.slicer_path, self.slicer_kind
+                ));
+            }
+            profile.slicer_kind = kind.to_owned();
+            profile.slicer_path = format!("{RUNNER_SLICER_PREFIX}{kind}{RUNNER_SLICER_EXECUTABLE}");
+        }
+        Ok(profile)
+    }
+
     pub fn printable_bed(&self) -> Rect {
         Rect::new(
             self.printable_area[0],
@@ -145,8 +200,32 @@ pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> 
         .map_err(|error| format!("failed to read printer profile {}: {error}", path.display()))?;
     let profile: PrinterProfile = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid printer profile {}: {error}", path.display()))?;
-    if profile.slicer_kind != "bambu" && profile.slicer_kind != "orca" {
-        return Err(format!("unsupported slicer kind: {}", profile.slicer_kind).into());
+    for kind in std::iter::once(&profile.slicer_kind).chain(profile.slicers.keys()) {
+        if !SLICER_KINDS.contains(&kind.as_str()) {
+            return Err(format!("unsupported slicer kind: {kind}").into());
+        }
+    }
+    if !profile.slicers.is_empty() {
+        match profile.slicers.get(&profile.slicer_kind) {
+            None => {
+                return Err(format!(
+                    "printer profile {}: slicers must list the default slicer_kind '{}'",
+                    path.display(),
+                    profile.slicer_kind
+                )
+                .into());
+            }
+            Some(flavour) if profile.gui_flavour.as_ref().is_some_and(|own| own != flavour) => {
+                return Err(format!(
+                    "printer profile {}: slicers.{} targets {flavour}, gui_flavour says {}",
+                    path.display(),
+                    profile.slicer_kind,
+                    profile.gui_flavour.as_ref().map(ToString::to_string).unwrap_or_default()
+                )
+                .into());
+            }
+            Some(_) => {}
+        }
     }
     if profile.tower_line_width_mm <= 0.0 {
         return Err("tower_line_width_mm must be positive".into());
@@ -160,6 +239,9 @@ pub fn load_printer_profile(path: &Path) -> ColoredPackerResult<PrinterProfile> 
     }
     Ok(profile)
 }
+
+/// The slicers the runner images carry (`goat-packer-runner-<kind>`).
+pub const SLICER_KINDS: [&str; 2] = ["bambu", "orca"];
 
 const SLICER_KIND_BY_PRINTER_SUBSTRING: &[(&str, &str)] =
     &[("Bambu Lab", "bambu"), ("Snapmaker", "orca")];
@@ -219,7 +301,71 @@ mod tests {
             heat_zones: vec![],
             bed_rules: None,
             gui_flavour: None,
+            slicers: BTreeMap::new(),
         }
+    }
+
+    fn two_slicer_profile() -> PrinterProfile {
+        let mut profile = corner_bed_profile();
+        profile.slicer_path = "/opt/slicers/bambu/AppRun".to_owned();
+        profile.gui_flavour = Some(GuiFlavour::try_from("bambu-02.08".to_owned()).unwrap());
+        profile.slicers = BTreeMap::from([
+            ("bambu".to_owned(), GuiFlavour::try_from("bambu-02.08".to_owned()).unwrap()),
+            ("orca".to_owned(), GuiFlavour::try_from("orca-2.4".to_owned()).unwrap()),
+        ]);
+        profile
+    }
+
+    #[test]
+    fn a_profile_without_slicers_offers_its_own_kind_only() {
+        let profile = corner_bed_profile();
+        assert_eq!(profile.offered_slicers(), vec!["bambu"]);
+        let same = profile.for_slicer("bambu").unwrap();
+        assert_eq!((same.slicer_kind.as_str(), same.slicer_path.as_str()), ("bambu", ""));
+        assert!(profile.for_slicer("orca").unwrap_err().contains("offers bambu"));
+    }
+
+    #[test]
+    fn switching_the_slicer_moves_kind_path_and_target_gui() {
+        let profile = two_slicer_profile();
+        assert_eq!(profile.offered_slicers(), vec!["bambu", "orca"]);
+        let orca = profile.for_slicer("orca").unwrap();
+        assert_eq!(orca.slicer_kind, "orca");
+        assert_eq!(orca.slicer_path, "/opt/slicers/orca/AppRun");
+        assert_eq!(orca.gui_flavour.as_ref().unwrap().to_string(), "orca-2.4");
+        // Idempotent: the webapp's job profile already carries the choice.
+        let again = orca.for_slicer("orca").unwrap();
+        assert_eq!((again.slicer_path, again.gui_flavour), (orca.slicer_path, orca.gui_flavour));
+    }
+
+    #[test]
+    fn a_local_slicer_path_cannot_be_switched_to_another_kind() {
+        let mut profile = two_slicer_profile();
+        profile.slicer_path = "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio".to_owned();
+        assert!(profile.for_slicer("orca").unwrap_err().contains("not a runner-image path"));
+        assert!(profile.for_slicer("bambu").is_ok());
+    }
+
+    #[test]
+    fn slicers_must_list_the_default_kind_with_its_gui() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |profile: &PrinterProfile| {
+            let path = dir.path().join("p.json");
+            fs::write(&path, serde_json::to_vec(profile).unwrap()).unwrap();
+            load_printer_profile(&path)
+        };
+        let mut profile = two_slicer_profile();
+        profile.tower_line_width_mm = 0.5;
+        assert!(write(&profile).is_ok());
+        let mut missing = profile.clone();
+        missing.slicers.remove("bambu");
+        assert!(write(&missing).unwrap_err().to_string().contains("default slicer_kind"));
+        let mut wrong = profile.clone();
+        wrong.gui_flavour = Some(GuiFlavour::try_from("orca-2.4".to_owned()).unwrap());
+        assert!(write(&wrong).unwrap_err().to_string().contains("gui_flavour says"));
+        let mut unknown = profile;
+        unknown.slicers.insert("prusa".to_owned(), GuiFlavour::try_from("orca-2.4".to_owned()).unwrap());
+        assert!(write(&unknown).unwrap_err().to_string().contains("unsupported slicer kind: prusa"));
     }
 
     /// Regression (goat3_v4 P1S, 2026-09-14): the bottom-row goats' silhouettes cleared the

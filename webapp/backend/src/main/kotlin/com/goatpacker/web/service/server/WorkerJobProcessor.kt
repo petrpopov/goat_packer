@@ -147,6 +147,7 @@ class WorkerJobProcessor(
                     sourceCommand = sourceCommand,
                     finalSlice = request.finalSlice,
                     finishState = request.finishStateBlobId?.let { Path.of(JobArtifacts.FINISH_STATE) },
+                    slicer = request.slicer,
                 ),
             )
 

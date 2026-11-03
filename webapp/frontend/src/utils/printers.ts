@@ -2,7 +2,7 @@
  * Каталог принтеров для выбора в PrinterPicker: группировка по производителю и поиск.
  * Чистые функции — без React, покрыты tests/printers.test.ts.
  */
-import type { PrinterProfile, ProjectBed } from '../api/types';
+import type { PrinterProfile, ProjectBed, SlicerOption } from '../api/types';
 import { pluralRu } from './format';
 
 /** Минимум полей профиля, который нужен группировке (PrinterProfile подходит целиком). */
@@ -134,3 +134,23 @@ export function foundPrintersMessage(count: number): string {
 
 /** STL — по имени файла (так же решает бэкенд). */
 export const isStlName = (name: string) => name.trim().toLowerCase().endsWith('.stl');
+
+/** Слайсеры принтера для STL: из профиля, у старого ответа — только его slicerKind. */
+export function slicerOptions(profile: Pick<PrinterProfile, 'slicerKind' | 'slicers'>): SlicerOption[] {
+  return profile.slicers && profile.slicers.length > 0 ? profile.slicers : [{ kind: profile.slicerKind, gui: '' }];
+}
+
+/**
+ * Подпись слайсера — по GUI, в котором открывают стол (у Snapmaker это Snapmaker Orca, хотя сервер
+ * режет ванильным Orca), без GUI — по виду.
+ */
+export function slicerLabel(option: SlicerOption): string {
+  if (option.gui.startsWith('snapmaker-orca')) return 'Snapmaker Orca';
+  if (option.gui.startsWith('bambu') || (option.gui === '' && option.kind === 'bambu')) return 'Bambu Studio';
+  return 'OrcaSlicer';
+}
+
+/** Слайсер STL-задачи: выбранный, если принтер его предлагает, иначе умолчание принтера (первый). */
+export function effectiveSlicer(options: SlicerOption[], chosen: string): string {
+  return options.some((option) => option.kind === chosen) ? chosen : (options[0]?.kind ?? '');
+}

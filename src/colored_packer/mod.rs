@@ -13,4 +13,6 @@ pub type ColoredPackerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 pub use cli_settings::{apply_cli_settings_workarounds, normalize_flush_volumes_matrix};
 pub use prime_tower::{PrimeTowerBounds, parse_prime_tower_bounds};
-pub use profile::{PrinterProfile, detect_slicer_kind_from_printer_model, load_printer_profile};
+pub use profile::{
+    PrinterProfile, SLICER_KINDS, detect_slicer_kind_from_printer_model, load_printer_profile,
+};

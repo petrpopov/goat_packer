@@ -79,6 +79,17 @@ pub fn gui_flavour_for_vendor(vendor: &str) -> GuiFlavour {
     }
 }
 
+/// The GUI a user printing with slicer `kind` opens the plate in (`slicers` map): BambuStudio
+/// for `bambu`; for `orca` the vendor's Orca line (Snapmaker printers: Snapmaker Orca, sliced
+/// by vanilla Orca on the server on purpose), vanilla Orca for Bambu printers.
+pub fn target_gui(kind: &str, vendor: &str) -> GuiFlavour {
+    match (kind, vendor) {
+        ("bambu", _) => GuiFlavour::new(GuiFamily::Bambu, BAMBU_GUI_VERSION),
+        (_, BAMBU_VENDOR) => GuiFlavour::new(GuiFamily::Orca, ORCA_GUI_VERSION),
+        _ => gui_flavour_for_vendor(vendor),
+    }
+}
+
 /// Bed exclusions are hard and exact (the slicer tests part hulls against them and never clips
 /// copies' supports); detected purges are soft strips in the G-code frame; a purge hidden in a
 /// firmware macro is a hard edge band, because where the macro draws its line is unknown; the

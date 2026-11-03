@@ -106,12 +106,16 @@ object StlInputs {
      * Команда source_project: [bin] — путь к бинарнику (в docker-режиме важно только имя).
      * `--edge-margin` — edge_margin_mm профиля: модель, не влезающая в стол за вычетом кромки,
      * отсекается до экспорта (пакер всё равно её не разместил бы).
+     * `--gui-flavour` — gui_flavour снимка профиля (после выбора слайсера): проект штампуется для GUI,
+     * в котором его откроют (Snapmaker Orca, Bambu Studio), и пакер берёт тот же целевой GUI.
      */
     fun command(bin: String, presets: String, slicer: String, profile: JsonNode): List<String> {
         val margin = profile.path("edge_margin_mm").asDouble(0.0).takeIf { it.isFinite() && it > 0 }
+        val guiFlavour = profile.path("gui_flavour").asText("").trim().takeIf { it.isNotEmpty() }
         return listOf(bin, "--stl", INPUT_STL, "--presets", presets, "--orca", slicer) +
             printerArgs(profile) +
             (margin?.let { listOf("--edge-margin", number(it)) } ?: emptyList()) +
+            (guiFlavour?.let { listOf("--gui-flavour", it) } ?: emptyList()) +
             listOf("--output", INPUT_3MF, "--work-dir", WORK_DIR)
     }
 

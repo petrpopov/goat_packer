@@ -10,6 +10,11 @@
 //!     [--packer colored_3mf_packer] [--verify verify_outputs]
 //!   printer_catalog relabel [--profiles profiles/]
 //!   printer_catalog annotate --orca <checkout>/resources/profiles [--profiles profiles/]
+//!   printer_catalog slicers --orca <checkout>/resources/profiles
+//!     --bambu <BambuStudio 02.08.02.61>/resources/profiles [--profiles profiles/]
+//!
+//! `slicers` writes which slicers the user may print a printer with (`slicers` map, the webapp's
+//! slicer choice for STL uploads; rule in `slicers.rs`).
 //!
 //! `vendor` stays the Orca vendor folder (`BBL`): qualify and STL builds look presets up by it.
 //! The picker groups by `vendor_display` (`Bambu Lab`), the leading words every model of the
@@ -39,6 +44,7 @@ mod profile_text;
 mod qualify;
 mod relabel;
 mod rules;
+mod slicers;
 mod util;
 
 use std::error::Error;
@@ -59,6 +65,7 @@ fn run() -> AppResult<()> {
         Some("qualify") => qualify::qualify(args.collect()),
         Some("relabel") => relabel::relabel(args.collect()),
         Some("annotate") => annotate::annotate(args.collect()),
-        _ => Err("usage: printer_catalog extract|qualify|relabel|annotate ...".into()),
+        Some("slicers") => slicers::slicers(args.collect()),
+        _ => Err("usage: printer_catalog extract|qualify|relabel|annotate|slicers ...".into()),
     }
 }

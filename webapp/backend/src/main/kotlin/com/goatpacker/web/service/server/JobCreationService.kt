@@ -1,6 +1,7 @@
 package com.goatpacker.web.service.server
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.goatpacker.web.config.AppProperties
 import com.goatpacker.web.config.PlatformProperties
 import com.goatpacker.web.dto.CreatedJobDto
@@ -34,6 +35,7 @@ import com.goatpacker.web.repository.UploadRepository
 import com.goatpacker.web.security.Secrets
 import com.goatpacker.web.service.CustomProfile
 import com.goatpacker.web.service.ProfileService
+import com.goatpacker.web.service.SlicerChoice
 import com.goatpacker.web.service.StlInputs
 import com.goatpacker.web.service.runner.JobArtifacts
 import com.goatpacker.web.util.SECONDS_PER_DAY
@@ -66,6 +68,9 @@ class JobCreationService(
     /** Вход задачи: блоб с файлом, имя для результатов и (если файл загружен) сама загрузка. */
     private class JobInput(val blobId: String, val originalName: String, val upload: UploadEntity?, val isStl: Boolean)
 
+    /** Снимок профиля задачи и действующий слайсер STL (null — вход 3MF). */
+    private data class ProfileSnapshot(val dto: ProfileDto, val json: String, val slicer: String?)
+
     /** Ставит задачу в очередь. Повтор с тем же ключом идемпотентности и теми же параметрами возвращает ту же задачу. */
     @Transactional
     fun create(ownerId: String, key: String, request: JobRequest): CreatedJobDto {
@@ -81,7 +86,7 @@ class JobCreationService(
         val input = resolveInput(request, kind, ownerId)
         limitJobsPerDay(owner)
         val budgetDay = admission.admit(owner)
-        val (profile, profileJson) = snapshotProfile(request, input)
+        val (profile, profileJson, slicer) = snapshotProfile(request, input)
         requireOptionsSupported(request, kind, profile, owner)
 
         val token = Secrets.token()
@@ -93,7 +98,8 @@ class JobCreationService(
                 originalName = input.originalName,
                 profileId = profile.id,
                 profileJson = profileJson,
-                paramsJson = mapper.writeValueAsString(request),
+                // Слайсер STL — действующий (выбранный или умолчание профиля): воркер передаёт его пакеру.
+                paramsJson = mapper.writeValueAsString(request.copy(slicer = slicer)),
                 requestKey = key,
                 requestHash = hash,
                 readTokenHash = Secrets.hash(token),
@@ -227,21 +233,25 @@ class JobCreationService(
 
     /**
      * Профиль собирается при постановке и хранится снимком в задаче (воркер лишь пишет его в profile.json):
-     * каталожный — как есть, свой стол — разовый профиль из размеров пользователя и стола проекта.
+     * каталожный — как есть, свой стол — разовый профиль из размеров пользователя и стола проекта; для STL —
+     * под выбранный слайсер ([SlicerChoice]).
      */
-    private fun snapshotProfile(request: JobRequest, input: JobInput): Pair<ProfileDto, String> {
+    private fun snapshotProfile(request: JobRequest, input: JobInput): ProfileSnapshot {
         val profile = request.customBed?.let { bed ->
             val projectBed = input.upload?.projectBedJson?.let { mapper.readValue(it, ProjectBed::class.java) }
             val printerModel = if (input.isStl) CustomProfile.NAME else input.upload?.printerModel
             profiles.custom(bed, projectBed, printerModel).let { it.dto to it.json }
         } ?: profiles.require(request.profileId).let { it.dto to Files.readString(it.file) }
+        // Слайсер STL-задачи — в снимок: по нему воркер берёт образ, source_project штампует проект.
+        val slicer = SlicerChoice.resolve(profile.first, request.slicer, input.isStl)
+        val node = mapper.readTree(profile.second) as ObjectNode
+        val snapshot = if (slicer != null && SlicerChoice.apply(node, slicer)) mapper.writeValueAsString(node) else profile.second
         // Принтер без пресета машины (orca_machine) из STL не собрать — отказ сразу, а не в воркере.
         if (input.isStl) {
-            val node = mapper.readTree(profile.second)
             StlInputs.printerArgs(node)
             if (props.localRunner) StlInputs.localTools(app, node)
         }
-        return profile
+        return ProfileSnapshot(profile.first, snapshot, slicer)
     }
 
     private fun requireOptionsSupported(request: JobRequest, kind: JobKind, profile: ProfileDto, owner: PrincipalEntity) {

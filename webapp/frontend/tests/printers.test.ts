@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { customPrinterProfile, filterPrinters, foundPrintersMessage, groupPrinters, vendorOf } from '../src/utils/printers';
+import {
+  customPrinterProfile,
+  effectiveSlicer,
+  filterPrinters,
+  foundPrintersMessage,
+  groupPrinters,
+  slicerLabel,
+  slicerOptions,
+  vendorOf,
+} from '../src/utils/printers';
 
 const p = (id: string, name: string, vendor: string) => ({ id, name, vendor });
 const list = [p('b', 'Gamma Works GW4', 'Gamma Works'), p('a', 'Alpha Labs A100', 'Alpha Labs'), p('c', 'Gamma Works CORE', 'Gamma Works'), p('d', 'Zed-3 V3 SE', 'Beta Forge')];
@@ -45,5 +54,30 @@ describe('printers', () => {
     expect(profile.exclusionRectangles).toEqual([[0, 0, 20, 30]]);
     expect(profile.edgeMarginMm).toBe(7);
     expect(customPrinterProfile({ width: 300, depth: 200, height: 220, margin: 5 }).printableArea).toEqual([0, 0, 300, 200]);
+  });
+});
+
+describe('slicer choice for STL', () => {
+  const bambu = {
+    slicerKind: 'bambu',
+    slicers: [
+      { kind: 'bambu', gui: 'bambu-02.08' },
+      { kind: 'orca', gui: 'orca-2.4' },
+    ],
+  };
+  test('options come from the profile, default first; an old answer offers its own kind', () => {
+    expect(slicerOptions(bambu).map((o) => o.kind)).toEqual(['bambu', 'orca']);
+    expect(slicerOptions({ slicerKind: 'orca' })).toEqual([{ kind: 'orca', gui: '' }]);
+  });
+  test('labels follow the GUI: Snapmaker printers open in Snapmaker Orca', () => {
+    expect(slicerLabel({ kind: 'bambu', gui: 'bambu-02.08' })).toBe('Bambu Studio');
+    expect(slicerLabel({ kind: 'orca', gui: 'orca-2.4' })).toBe('OrcaSlicer');
+    expect(slicerLabel({ kind: 'orca', gui: 'snapmaker-orca-2.4' })).toBe('Snapmaker Orca');
+    expect(slicerLabel({ kind: 'bambu', gui: '' })).toBe('Bambu Studio');
+  });
+  test('a choice the printer does not offer falls back to its default', () => {
+    expect(effectiveSlicer(bambu.slicers, 'orca')).toBe('orca');
+    expect(effectiveSlicer(bambu.slicers, '')).toBe('bambu');
+    expect(effectiveSlicer([{ kind: 'orca', gui: 'snapmaker-orca-2.4' }], 'bambu')).toBe('orca');
   });
 });

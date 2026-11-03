@@ -10,13 +10,11 @@ use goat_packer::{
     colored_packer::{PrinterProfile, detect_slicer_kind_from_printer_model},
     embedded_mesh::{embedded_mesh_triangles, write_binary_stl},
     orca_project,
+    project_application::project_application,
 };
 use zip::ZipArchive;
 
 use crate::AppResult;
-
-const CORE_MODEL_ENTRY: &str = "3D/3dmodel.model";
-const APPLICATION_TAG: &str = "<metadata name=\"Application\">";
 
 /// `Metadata/project_settings.config` of the source project.
 pub fn source_project_settings(source: &Path) -> AppResult<serde_json::Value> {
@@ -39,7 +37,11 @@ pub fn validate_source_printer(source: &Path, profile: &PrinterProfile) -> AppRe
         .into());
     }
     match detect_slicer_kind_from_printer_model(printer) {
-        Some(detected) if detected != profile.slicer_kind => {
+        // A printer the profile offers in another slicer too (`slicers`: a Bambu printer the
+        // user prints from OrcaSlicer) may run with that one.
+        Some(detected)
+            if detected != profile.slicer_kind && !profile.offered_slicers().contains(&detected) =>
+        {
             return Err(format!(
                 "printer_model '{printer}' implies slicer '{detected}', but profile '{}' is \
                  configured for slicer '{}'",
@@ -101,13 +103,10 @@ pub fn source_entry(source: &Path, name: &str) -> AppResult<Vec<u8>> {
 }
 
 /// The `Application` metadata of the source's core model (the GUI that saved the project).
+/// An OrcaSlicer export reads as `OrcaSlicer-<version>`, not as the BambuStudio compatibility
+/// string it writes into `Application` (`project_application::model_generator`).
 pub fn source_application(source: &Path) -> Option<String> {
-    let model = source_entry(source, CORE_MODEL_ENTRY).ok()?;
-    let text = String::from_utf8_lossy(&model);
-    let start = text.find(APPLICATION_TAG)? + APPLICATION_TAG.len();
-    let end = text[start..].find("</metadata>")? + start;
-    let value = quick_xml::escape::unescape(text[start..end].trim()).ok()?;
-    (!value.is_empty()).then(|| value.into_owned())
+    project_application(source)
 }
 
 #[cfg(test)]
@@ -128,5 +127,20 @@ mod tests {
         mismatched.slicer_kind = "orca".to_owned();
         let error = validate_source_printer(source, &mismatched).unwrap_err();
         assert!(error.to_string().contains("slicer"));
+
+        // The same Bambu printer offered in OrcaSlicer too, switched to it by `--slicer orca`.
+        let flavour = |name: &str| goat_packer::colored_packer::bed_rules::GuiFlavour::try_from(name.to_owned()).unwrap();
+        let mut both = profile.clone();
+        both.slicer_path = "/opt/slicers/bambu/AppRun".to_owned();
+        both.gui_flavour = Some(flavour("bambu-02.08"));
+        both.slicers = [("bambu".to_owned(), flavour("bambu-02.08")), ("orca".to_owned(), flavour("orca-2.4"))].into();
+        validate_source_printer(source, &both.for_slicer("orca").unwrap()).unwrap();
+    }
+
+    #[test]
+    fn source_application_reads_an_orca_export_as_orca() {
+        // The fixture is a BambuStudio-stamped project without Orca's tag.
+        let source = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bambu.3mf"));
+        assert_eq!(source_application(source).as_deref(), Some("BambuStudio-02.00.00.00"));
     }
 }

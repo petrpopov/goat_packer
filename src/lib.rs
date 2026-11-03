@@ -57,6 +57,7 @@ pub mod print_time;
 pub mod process_output;
 pub mod project_settings_edit;
 pub mod progress;
+pub mod project_application;
 pub mod purge_detect;
 pub mod scheduler;
 pub mod slicer_cli;

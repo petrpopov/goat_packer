@@ -1,6 +1,7 @@
 package com.goatpacker.web.service.local
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.goatpacker.web.config.AppProperties
 import com.goatpacker.web.dto.CustomBed
 import com.goatpacker.web.dto.JobCreatedDto
@@ -14,9 +15,11 @@ import com.goatpacker.web.model.PackDefaults
 import com.goatpacker.web.model.PackParams
 import com.goatpacker.web.model.ResolvedProfile
 import com.goatpacker.web.service.CustomProfile
+import com.goatpacker.web.service.LocalSlicer
 import com.goatpacker.web.service.NozzleCleanSpec
 import com.goatpacker.web.service.ProfileService
 import com.goatpacker.web.service.Project3mf
+import com.goatpacker.web.service.SlicerChoice
 import com.goatpacker.web.service.StlInputs
 import com.goatpacker.web.service.runner.JobArtifacts
 import com.goatpacker.web.service.runner.JobRunner
@@ -70,7 +73,9 @@ class PackService(
 
         val jobId = UUID.randomUUID().toString()
         val directory = properties.jobsRootPath.resolve(jobId)
-        val prepared = prepareProfile(profileId, customBed, inspection, directory)
+        val chosen = prepareProfile(profileId, customBed, inspection, directory)
+        val slicer = SlicerChoice.resolve(chosen.resolved.dto, form.slicer, isStl)
+        val prepared = withSlicer(chosen, slicer, directory)
         val profile = prepared.resolved
         val sourceCommand = if (isStl) stlSourceCommand(prepared.json) else null
         val nozzleClean = form.nozzleClean?.trim().orEmpty()
@@ -97,6 +102,7 @@ class PackService(
             sourceCommand = sourceCommand,
             finalSlice = form.finalSlice ?: true,
             customBed = customBed,
+            slicer = slicer,
         )
         val job = Job(id = jobId, kind = JobKind.PACK, directory = directory, createdAt = OffsetDateTime.now())
         submitter.submit(
@@ -131,6 +137,18 @@ class PackService(
         val localCopy = profileService.localSlicerCopy(catalog)
             ?: return PreparedProfile(catalog, Files.readString(catalog.file), needsCopy = false)
         return PreparedProfile(ResolvedProfile(catalog.dto, jobProfileFile), localCopy, needsCopy = true)
+    }
+
+    /**
+     * Профиль под слайсер STL-задачи ([SlicerChoice]): другой вид, чем у профиля, — копия в каталоге джоба
+     * с его slicer_kind, GUI и слайсером из настроек; иначе профиль как был.
+     */
+    private fun withSlicer(prepared: PreparedProfile, slicer: String?, directory: Path): PreparedProfile {
+        val node = objectMapper.readTree(prepared.json) as ObjectNode
+        if (slicer == null || !SlicerChoice.apply(node, slicer)) return prepared
+        LocalSlicer.localize(properties, node)
+        val file = directory.resolve(JobArtifacts.PROFILE_FILE)
+        return PreparedProfile(ResolvedProfile(prepared.resolved.dto, file), objectMapper.writeValueAsString(node), needsCopy = true)
     }
 
     private fun customProfile(customBed: CustomBed, inspection: Inspection?): BuiltProfile {

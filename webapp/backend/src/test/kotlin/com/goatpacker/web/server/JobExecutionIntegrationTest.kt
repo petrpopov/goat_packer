@@ -52,6 +52,19 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
                     assertEquals("SUCCEEDED", response["status"].asText(), response.toString())
                     assertTrue(response["artifacts"][0]["name"].asText().startsWith("cat_"), response.toString())
                 }
+                // Слайсер STL: принтер Bambu в OrcaSlicer — снимок профиля под Orca (образ, GUI), параметры с выбором;
+                // умолчание пишется явно. Другой гость: суточный бюджет первого занят упаковками выше и расписанием ниже.
+                val other = Client()
+                other.guest()
+                val otherFile = other.uploadRaw("cat.stl", "solid cat\nfacet normal 0 0 1\nendsolid cat\n".toByteArray())["fileId"].asText()
+                val orca = other.send(mapOf("fileId" to otherFile, "profileId" to "test_corner_bed", "slicer" to "orca"), 200)["jobId"].asText()
+                val orcaJob = jobs.findById(orca).orElseThrow()
+                val snapshot = json.readTree(orcaJob.profileJson)
+                assertEquals(listOf("orca", "orca-2.4"), listOf(snapshot["slicer_kind"].asText(), snapshot["gui_flavour"].asText()))
+                assertEquals("orca", json.readTree(orcaJob.paramsJson)["slicer"].asText())
+                assertEquals("orca", json.readTree(jobs.findById(catalog).orElseThrow().paramsJson)["slicer"].asText())
+                worker.runUntilSettled(orca)
+                assertEquals("SUCCEEDED", other.call("GET", "/api/v2/jobs/$orca")["status"].asText())
                 // «В расписание» после упаковки STL: источник — packed.3mf, т. е. проект. Имя становится .3mf, и
                 // воркер кладёт его как input.3mf (раньше — input.stl, и daily_scheduler не находил вход).
                 // Профиль каталога несёт слайсер образа: локальный раннер подменяет его (иначе фейк отказывает).

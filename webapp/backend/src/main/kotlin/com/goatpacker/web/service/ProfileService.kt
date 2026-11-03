@@ -180,6 +180,7 @@ class ProfileService(
             name = node.path("printer_name").asText(""),
             vendor = vendorOf(node),
             slicerKind = node.path("slicer_kind").asText(""),
+            slicers = SlicerChoice.offered(node),
             bedWidthMm = area.get(2).asDouble() - area.get(0).asDouble(),
             bedDepthMm = area.get(3).asDouble() - area.get(1).asDouble(),
             edgeMarginMm = node.path("edge_margin_mm").asDouble(0.0),
@@ -195,7 +196,7 @@ class ProfileService(
                 ?.takeIf { it.isNumber && it.asDouble().isFinite() && it.asDouble() >= 0 }
                 ?.asDouble(),
         )
-        require(dto.id.isNotBlank() && dto.name.isNotBlank() && dto.slicerKind in SlicerKind.ALL) {
+        require(dto.id.isNotBlank() && dto.name.isNotBlank() && SlicerKind.ALL.containsAll(dto.slicers.map { it.kind })) {
             "Профиль без id, имени или поддерживаемого слайсера"
         }
         require(

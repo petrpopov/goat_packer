@@ -35,7 +35,18 @@ data class ProfileDto(
      * прописан явно — для многословных моделей правило «минус слово» ошиблось бы).
      */
     val vendor: String = "",
+    /**
+     * Слайсеры, в которых можно печатать STL на этом принтере (`slicers` профиля, умолчание
+     * [slicerKind] первым); один — выбор на форме зафиксирован.
+     */
+    val slicers: List<SlicerOptionDto> = listOf(SlicerOptionDto(slicerKind, "")),
 )
+
+/**
+ * Слайсер принтера: [kind] — bambu|orca (бинарник и runner-образ), [gui] — GUI, в котором открывают стол
+ * (`bambu-02.08`, `orca-2.4`, `snapmaker-orca-2.4`; пусто — профиль его не называет).
+ */
+data class SlicerOptionDto(val kind: String, val gui: String)
 
 /** Ответ на создание джоба. */
 data class JobCreatedDto(
@@ -204,6 +215,8 @@ data class PackParamsDto(
     val changeSeconds: Double?,
     val supportOverlapMm: Double?,
     val customBed: CustomBed?,
+    /** Слайсер STL-задачи (bambu|orca); null — вход 3MF. */
+    val slicer: String? = null,
 )
 
 /** Статусная сводка джоба — то, что фронтенд поллит раз в секунду. */

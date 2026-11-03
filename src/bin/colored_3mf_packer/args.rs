@@ -3,7 +3,10 @@
 use std::path::PathBuf;
 
 use goat_packer::{
-    ForeignGaps, colored_packer::PrinterProfile, nozzle_clean::NozzleCleanSpec, print_time::TimeCorrection,
+    ForeignGaps,
+    colored_packer::{PrinterProfile, SLICER_KINDS},
+    nozzle_clean::NozzleCleanSpec,
+    print_time::TimeCorrection,
 };
 
 use crate::AppResult;
@@ -78,6 +81,11 @@ pub struct Args {
     pub keep_own_gap: bool,
     /// `--finish-state PATH`: skip modelling and packing, verify the plate of a saved state.
     pub finish_state: Option<PathBuf>,
+    /// `--slicer bambu|orca`: the slicer the user prints with, one of the profile's `slicers`
+    /// (`PrinterProfile::for_slicer`): it picks the slicer binary and makes that slicer's GUI
+    /// the explicit target flavour. `None` = the profile's own `slicer_kind`, and the target
+    /// GUI comes from the project's `Application`.
+    pub slicer: Option<String>,
 }
 
 /// Time-model options (spec 2026-10-26-time-model-and-window-design). Without
@@ -210,6 +218,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
     let mut finish_state = None;
+    let mut slicer = None;
     let mut keep_own_gap = false;
     let mut foreign_gap_floor = ForeignGaps::default();
     let mut foreign_gaps = parse_foreign_gaps(DEFAULT_FOREIGN_GAPS)?;
@@ -282,6 +291,16 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--foreign-gap-floor" => foreign_gap_floor = parse_foreign_pair(&option, &value)?,
             "--foreign-gaps" => foreign_gaps = parse_foreign_gaps(&value)?,
             "--finish-state" => finish_state = Some(PathBuf::from(value)),
+            "--slicer" => {
+                if !SLICER_KINDS.contains(&value.as_str()) {
+                    return Err(format!(
+                        "--slicer {value}: expected one of {}",
+                        SLICER_KINDS.join(", ")
+                    )
+                    .into());
+                }
+                slicer = Some(value);
+            }
             "--support-overlap-mm" => {
                 support_overlap_mm =
                     Some(parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?);
@@ -320,6 +339,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         foreign_gap_floor,
         keep_own_gap,
         finish_state,
+        slicer,
     })
 }
 
@@ -338,6 +358,14 @@ mod tests {
         let mut list = REQUIRED.to_vec();
         list.extend_from_slice(extra);
         parse(&list)
+    }
+
+    #[test]
+    fn slicer_is_optional_and_one_of_the_runner_kinds() {
+        assert_eq!(parse(&REQUIRED).unwrap().slicer, None);
+        assert_eq!(parse_with(&["--slicer", "orca"]).unwrap().slicer.as_deref(), Some("orca"));
+        assert_eq!(parse_with(&["--slicer", "bambu"]).unwrap().slicer.as_deref(), Some("bambu"));
+        assert!(parse_with(&["--slicer", "prusa"]).is_err());
     }
 
     #[test]

@@ -156,6 +156,9 @@
   ],
   "slicer_kind": "orca",
   "slicer_path": "/opt/slicers/orca/AppRun",
+  "slicers": {
+    "orca": "orca-2.4"
+  },
   "source": {
     "imported": "2026-11-01",
     "notes": [
