@@ -65,7 +65,9 @@ bun run dev
   (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
   (0–50 %, дефолт CLI 10), `supportOverlapMm` (0–20 мм; пусто — без ограничений, флаг
   `--support-overlap-mm` не передаётся) → `{"jobId"}`. В результате `pack.time` — оценка времени стола
-  с коррекцией, `pack.supportsDetected`/`pack.supportOverlapMm` — из отчёта (могут отсутствовать).
+  с коррекцией, `pack.supportsDetected`/`pack.supportOverlapMm` — из отчёта (могут отсутствовать),
+  `pack.tower` — угол (`anchorXMm`/`anchorYMm`) и размер башни очистки из `tower` отчёта (null — башни нет);
+  по нему страница задачи предупреждает, что Bambu Studio / Snapmaker Orca сдвинут башню при открытии.
 - `POST /api/calibration/jobs` — multipart: `file` (свой проект .3mf, ≥ 2 филаментов) + `profileId`,
   `variant` (`normal` — 10 смен, `perfectionist` — 30) → `{"jobId"}`. Запускает `ams_calibration`
   (`--out-dir out`, 1–2 мин); принтер без `filamentChangeSeconds` — 400 «для этого принтера калибровка

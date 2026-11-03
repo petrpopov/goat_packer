@@ -7,6 +7,7 @@ import com.goatpacker.web.model.CalibrationParams
 import com.goatpacker.web.model.PackJobResult
 import com.goatpacker.web.model.PackParams
 import com.goatpacker.web.model.PackTimeResult
+import com.goatpacker.web.model.PackTowerResult
 import com.goatpacker.web.model.PlateRecord
 import com.goatpacker.web.model.ScheduleJobRecord
 import com.goatpacker.web.model.ScheduleJobResult
@@ -37,7 +38,17 @@ class JobReportParser(private val mapper: ObjectMapper) {
             supportOverlapMm = report?.get("support_overlap_mm")?.takeIf { it.isNumber }?.asDouble(),
             // Старый пакер поля не пишет — он всегда резал стол целиком.
             finalSliced = report?.get("final_sliced")?.takeIf { it.isBoolean }?.asBoolean() ?: true,
+            tower = report?.get("tower")?.let(::parsePackTower),
         )
+    }
+
+    /** Блок `tower` отчёта (`anchor` {x, y} и `size` [w, d], мм) → [PackTowerResult]; null/без угла — башни нет. */
+    private fun parsePackTower(node: JsonNode): PackTowerResult? {
+        val anchor = node.get("anchor")?.takeIf { it.isObject } ?: return null
+        val x = anchor.get("x")?.takeIf { it.isNumber }?.asDouble() ?: return null
+        val y = anchor.get("y")?.takeIf { it.isNumber }?.asDouble() ?: return null
+        val size = node.get("size")?.takeIf { it.isArray && it.size() == 2 && it.all(JsonNode::isNumber) }
+        return PackTowerResult(anchorXMm = x, anchorYMm = y, widthMm = size?.get(0)?.asDouble(), depthMm = size?.get(1)?.asDouble())
     }
 
     /** calibration.json → [CalibrationJobResult]; инструкция читается целиком (единицы КБ). Бросает при битом отчёте. */

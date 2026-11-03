@@ -277,6 +277,11 @@ class PackJobFlowTest(
         val packed = mockMvc.awaitJobCompletion(packId)
         assertTrue("--verify" !in packerArgs(packId))
         assertEquals(false, packed["pack"]["finalSliced"].asBoolean())
+        // Башня из отчёта (tower.anchor/size): по ней фронт просит вернуть башню в угол после открытия в GUI.
+        val tower = packed["pack"]["tower"]
+        assertEquals(10.0, tower["anchorXMm"].asDouble(), 1e-9)
+        assertEquals(10.0, tower["anchorYMm"].asDouble(), 1e-9)
+        assertEquals(20.0, tower["widthMm"].asDouble(), 1e-9)
         assertTrue(packed["artifacts"].any { it["name"].asText() == "pack_state.json" }, packed["artifacts"].toString())
 
         // Проверка нарезкой остаётся внутри упаковки: id тот же, внутренняя задача наружу не светится.

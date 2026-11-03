@@ -16,6 +16,19 @@ data class PackJobResult(
     val supportOverlapMm: Double? = null,
     /** `final_sliced` отчёта: false — полная нарезка стола ещё не запускалась («Нарезать стол»). */
     val finalSliced: Boolean = true,
+    /** `tower` отчёта: башня очистки, которую пакер поставил на стол; null — башни нет (или старый пакер). */
+    val tower: PackTowerResult? = null,
+)
+
+/**
+ * Башня очистки стола (`tower.anchor`/`tower.size` отчёта, мм, координаты стола). Bambu Studio и
+ * Snapmaker Orca при открытии проекта сдвигают башню, поэтому интерфейс просит вернуть её сюда.
+ */
+data class PackTowerResult(
+    val anchorXMm: Double,
+    val anchorYMm: Double,
+    val widthMm: Double?,
+    val depthMm: Double?,
 )
 
 /** Сводка блока `time` отчёта упаковщика (секунды). */

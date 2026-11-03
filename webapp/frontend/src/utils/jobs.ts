@@ -45,3 +45,19 @@ export function errorMessage(error: unknown, fallback: string): string {
 
 /** Подсказка к предварительному числу объектов: раскладка готова, но пакер ещё может её изменить. */
 export const PRELIMINARY_HINT = 'Предварительно: по последней раскладке, после нарезок число может измениться';
+
+/**
+ * Bambu Studio и Snapmaker Orca при открытии проекта сами переставляют башню очистки (GUI зажимает её
+ * в свой диапазон), и она может встать на объекты. Пакер оставил место под башню в выбранном углу —
+ * пользователь возвращает её туда руками.
+ */
+export const TOWER_GUI_WARNING =
+  'При открытии в Bambu Studio или Snapmaker Orca башня очистки сдвинется — перетащите её обратно в угол, где она стоит на этом столе: место под неё оставлено.';
+
+/** Предупреждение про башню у готового стола; null — задача не завершилась или башни на столе нет. */
+export function towerWarning(
+  status: JobStatus | null | undefined,
+  result: { tower?: unknown } | null | undefined
+): string | null {
+  return status === 'SUCCEEDED' && result?.tower ? TOWER_GUI_WARNING : null;
+}
