@@ -49,12 +49,13 @@ use std::time::Instant;
 
 /// The members `pack` runs on fixed rotation classes. `Mixed` needs a footprint that may
 /// turn freely, so only the legacy search runs it.
-pub const DEFAULT_MEMBERS: [Member; 5] = [
+pub const DEFAULT_MEMBERS: [Member; 6] = [
     Member::Lattice,
     Member::DoubleLattice,
     Member::TwoBlock,
     Member::Sweep,
     Member::Rows,
+    Member::Improve,
 ];
 
 /// The published layout of a run and how it was found.
@@ -69,6 +70,8 @@ pub struct PackOutcome {
     pub key: RankKey,
     /// The most copies each member placed (before validation), in run order.
     pub member_counts: Vec<MemberCount>,
+    /// Per member whose layouts `Improve` took as a start, the best count it reached.
+    pub improved_counts: Vec<MemberCount>,
     pub validation: ValidationReport,
     /// Wall-clock time per stage, for benchmarks only (never part of a result).
     #[serde(skip)]
@@ -130,6 +133,7 @@ pub fn pack_members(
     let started = Instant::now();
     let candidates = member_candidates(&ctx, members, options);
     let member_counts = best_counts(members, &candidates);
+    let improved_counts = improve::improved_counts(&candidates);
     let members_s = started.elapsed().as_secs_f64();
     let started = Instant::now();
     let checks = Checks::new(prints, rules, options, &ctx)?;
@@ -143,6 +147,7 @@ pub fn pack_members(
         member: winner.key.tie.member,
         key: winner.key,
         member_counts,
+        improved_counts,
         validation,
         timings: StageTimes {
             context_s,

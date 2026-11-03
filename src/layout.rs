@@ -6,7 +6,7 @@ use crate::kind_masks::OriginGrid;
 
 /// One placed copy: its rotation class (an index the run defines) and the pixel origin of
 /// the class's frame. Placing a class is a pure translation (see `object_print::ObjectPrint`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PixelPlacement {
     pub(crate) class: usize,
     pub(crate) x: i32,

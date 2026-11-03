@@ -2,8 +2,10 @@
 //! runs at which tower anchor and class, and how their work is split over threads.
 
 use super::context::Ctx;
+use super::improve;
 use super::lattice::{double, single, two_block};
-use super::select::{Candidate, Member};
+use super::robustness;
+use super::select::{Candidate, Member, SHORTLIST_LEN};
 use super::{rows, sweep};
 use crate::options::PackOptions;
 use rayon::prelude::*;
@@ -54,6 +56,15 @@ pub(super) fn member_candidates(
         candidates.extend(two_block::two_block(ctx, &ranked, &slots, budget, cap));
     }
     candidates.extend(greedy_candidates(ctx, members, &slots, effort, cap));
+    if members.contains(&Member::Improve) {
+        let improved = improve::improve_candidates(ctx, &candidates, effort, cap);
+        candidates.extend(improved);
+    }
+    robustness::annotate(ctx, &mut candidates, SHORTLIST_LEN);
+    if members.contains(&Member::Improve) {
+        let polished = improve::polish_candidates(ctx, &candidates);
+        candidates.extend(polished);
+    }
     candidates
 }
 

@@ -249,14 +249,23 @@ fn report(outcome: &PackOutcome, seconds: f64, options_resolution: f64) {
         .map(|m| format!("{:?} {}", m.member, m.count))
         .collect();
     println!("portfolio: {}", counts.join(", "));
+    let improved: Vec<String> = outcome
+        .improved_counts
+        .iter()
+        .map(|m| format!("{:?} {}", m.member, m.count))
+        .collect();
+    if !improved.is_empty() {
+        println!("improved starts: {}", improved.join(", "));
+    }
     let anchor = outcome
         .tower_anchor
         .map_or("none".to_owned(), |a| format!("({:.2}, {:.2})", a.x, a.y));
     println!(
-        "chosen: {:?} {:?}, {} objects, tower anchor {anchor}, box {} px, {}",
+        "chosen: {:?} {:?}, {} objects, tower anchor {anchor}, slack {} quarter mm, box {} px, {}",
         outcome.member,
         outcome.key.tie.detail,
         outcome.placements.len(),
+        outcome.key.robustness_quarter_mm,
         outcome.key.bbox_area_px,
         times(outcome, seconds)
     );
