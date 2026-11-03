@@ -25,7 +25,7 @@ pub fn cache_key(job: &Job, rotation_deg: f64, centre: Point) -> String {
     for value in job.frame.source.iter().chain(&[job.frame.origin.0, job.frame.origin.1]) {
         hash.update(value.to_le_bytes());
     }
-    hash_bytes(&mut hash, &job.settings_bytes);
+    hash_bytes(&mut hash, &settings_identity(&job.settings_bytes));
     // The probe copy is edited when the gap is forced; hashed only then, so a plate that
     // slices with its project's own value keeps the keys (and cache entries) it always had.
     if job.own_gap.edits_project() {
@@ -39,6 +39,48 @@ pub fn cache_key(job: &Job, rotation_deg: f64, centre: Point) -> String {
         hash.update(value.to_le_bytes());
     }
     format!("{:x}", hash.finalize())
+}
+
+/// The project settings as the slicer reads them: JSON with sorted keys and without
+/// `version` (the GUI build that last saved the project; the probe slices with our own
+/// binary, hashed separately). A GUI re-save that only rewrites that field or reorders keys
+/// keeps the key, so a re-saved project still hits the cache. Unparsable bytes hash as they are.
+fn settings_identity(bytes: &[u8]) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return bytes.to_vec();
+    };
+    if let Some(map) = value.as_object_mut() {
+        map.remove("version");
+    }
+    let mut out = Vec::new();
+    write_canonical(&value, &mut out);
+    out
+}
+
+fn write_canonical(value: &serde_json::Value, out: &mut Vec<u8>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push(b'{');
+            for key in keys {
+                out.extend_from_slice(serde_json::to_string(key).unwrap_or_default().as_bytes());
+                out.push(b':');
+                write_canonical(&map[key], out);
+                out.push(b',');
+            }
+            out.push(b'}');
+        }
+        serde_json::Value::Array(items) => {
+            out.push(b'[');
+            for item in items {
+                write_canonical(item, out);
+                out.push(b',');
+            }
+            out.push(b']');
+        }
+        other => out.extend_from_slice(other.to_string().as_bytes()),
+    }
 }
 
 /// Length-prefixed, so two byte strings never run into each other.
@@ -101,6 +143,16 @@ pub fn store(dir: &Path, key: &str, probe: &ClassProbe) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_identity_ignores_key_order_and_the_saving_gui_version() {
+        let saved = br#"{"version":"02.08.02.61","layer_height":"0.28","support_type":"tree(auto)"}"#;
+        let resaved = br#"{"support_type":"tree(auto)","layer_height":"0.28","version":"02.09.00.10"}"#;
+        let changed = br#"{"support_type":"tree(auto)","layer_height":"0.2","version":"02.08.02.61"}"#;
+        assert_eq!(settings_identity(saved), settings_identity(resaved));
+        assert_ne!(settings_identity(saved), settings_identity(changed));
+        assert_eq!(settings_identity(b"not json"), b"not json".to_vec());
+    }
 
     #[test]
     fn a_stored_probe_comes_back_and_another_key_misses() {
