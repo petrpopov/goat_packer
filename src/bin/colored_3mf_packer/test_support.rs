@@ -63,6 +63,9 @@ pub fn test_args(work_dir: &Path) -> Args {
         time: TimeOptions::default(),
         rotations: vec![0.0, 180.0],
         cache_dir: None,
+        support_source: Default::default(),
+        support_orders: vec![goat_packer::support_model::merge::MergeOrder::Along],
+        support_margins: None,
         verify: false,
         support_overlap_mm: None,
         // One rung, the library defaults: the plain single-pack behaviour of the tests.

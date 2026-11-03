@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub use checks::check_supported;
 pub use config::{LayerRange, ProjectConfig};
-pub use derived::{Derived, FillParameters};
+pub use derived::{Derived, FillParameters, MINIMUM_ROOF_AREA_MM2};
 
 /// The keys `SupportSettings` reads: the support-relevant part of a project, for the cache
 /// key of design §5.6 (with the layer ranges and the stored layer profile).
@@ -40,6 +40,8 @@ pub const SUPPORT_KEYS: &[&str] = &[
     "line_width",
     "support_line_width",
     "outer_wall_line_width",
+    "initial_layer_line_width",
+    "raft_first_layer_expansion",
     "enable_support",
     "support_type",
     "support_style",
@@ -140,6 +142,8 @@ pub struct SupportSettings {
     pub line_width: Width,
     pub support_line_width: Width,
     pub outer_wall_line_width: Width,
+    /// `initial_layer_line_width`: the first layer's flow width, the base's step count.
+    pub first_layer_line_width: Width,
     // Overhang detection (spec 01 §3).
     pub enable_support: bool,
     pub support_type: String,
@@ -171,6 +175,9 @@ pub struct SupportSettings {
     pub independent_support_layer_height: bool,
     pub on_build_plate_only: bool,
     pub support_expansion: f64,
+    /// `raft_first_layer_expansion`: how far the first-layer support base grows (B reads -1
+    /// as an automatic 2 mm, Orca builds as none).
+    pub first_layer_expansion: f64,
     // Interfaces and fill.
     pub interface_top_layers: i64,
     pub interface_bottom_layers: i64,
@@ -245,6 +252,7 @@ impl SupportSettings {
             line_width: width("line_width")?,
             support_line_width: width("support_line_width")?,
             outer_wall_line_width: width("outer_wall_line_width")?,
+            first_layer_line_width: width("initial_layer_line_width")?,
             enable_support: flag("enable_support", false)?,
             support_type: config.text_or("support_type", "normal(auto)"),
             support_style: config.text_or("support_style", "default"),
@@ -272,6 +280,7 @@ impl SupportSettings {
             independent_support_layer_height: flag("independent_support_layer_height", false)?,
             on_build_plate_only: flag("support_on_build_plate_only", false)?,
             support_expansion: number("support_expansion", 0.0)?,
+            first_layer_expansion: number("raft_first_layer_expansion", -1.0)?,
             interface_top_layers: integer("support_interface_top_layers", 3)?,
             interface_bottom_layers: integer("support_interface_bottom_layers", -1)?,
             interface_spacing: number("support_interface_spacing", 0.5)?,

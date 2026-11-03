@@ -135,8 +135,9 @@ fn on_segment_box(a: IntPoint, b: IntPoint, p: IntPoint) -> bool {
     a.x.min(b.x) <= p.x && p.x <= a.x.max(b.x) && a.y.min(b.y) <= p.y && p.y <= a.y.max(b.y)
 }
 
-/// Even-odd inside test where the boundary counts as inside (spec 02 §5.5).
-fn inside_even_odd(rings: &[Ring], point: IntPoint) -> bool {
+/// Even-odd inside test where the boundary counts as inside (spec 02 §5.5); the membership
+/// rule of every point-in-polygon-list query of the tree generator (spec 01 §5.6).
+pub fn inside_even_odd(rings: &[Ring], point: IntPoint) -> bool {
     let mut crossings = 0usize;
     for ring in rings {
         match ring_winding(ring, point) {

@@ -197,6 +197,16 @@ impl Flavour {
         self != Flavour::Orca250
     }
 
+    /// The direction of the roof tip lines, degrees from +X. The behaviour spec says 135° for
+    /// every build (spec 01 §5.5 item 1), but the corpus says Orca builds lay them at 45°: on
+    /// deterministic vanilla Orca slices (flat bridge, T-bar, goat) the model's feet match
+    /// better (U1 sets: L1 symmetric difference -11 %), on the owner's Snapmaker GUI plates
+    /// the largest miss falls from 1.53 to 0.95 mm (L1) and 2.65 to 1.94 mm (bands), while
+    /// Bambu's slices keep matching at 135° (45° costs +30 % there).
+    pub fn roof_line_angle_degrees(self) -> f64 {
+        if self.is_bambu() { 135.0 } else { 45.0 }
+    }
+
     pub fn exclusion_encoding(self) -> ExclusionEncoding {
         if self.is_bambu() {
             ExclusionEncoding::Rectangles

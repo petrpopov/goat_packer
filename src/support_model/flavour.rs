@@ -195,28 +195,52 @@ impl Flavour {
         })
     }
 
-    /// Initial support-envelope margins until the first calibration (design §5.5). They
-    /// cover the corpus distances, not a model fit, and are known to miss the packing
-    /// targets; calibration (WP S4, I6) replaces them.
-    pub fn initial_margins(self) -> Margins {
+    /// The first-layer margin δ_L1 of the support envelope, mm (design §5.5): the largest
+    /// distance any recorded realization of the build's corpus lies outside the model's
+    /// ensemble union at rotations 0° and 180°, plus 0.1 mm (`examples/support_corpus.rs`,
+    /// campaign of 2026-11-03).
+    pub fn first_layer_margin_mm(self) -> f64 {
         match self {
-            // P1S CLI plates and samples lie 2.4 mm (L1, one plate 3.0) and 4.4 mm (bands)
-            // outside the 5-run single-object union (M §2.3, §5.2).
-            Flavour::Bambu0208 => Margins {
-                first_layer_mm: 3.1,
-                band_mm: 4.5,
-            },
-            // Owner Snapmaker GUI plates lie 0.7-4.1 / 1.5-5.4 mm outside the R CLI union, the
-            // only S data (M §2.4); O has no support slices yet and borrows S's values.
-            Flavour::Snapmaker240 | Flavour::Orca242 => Margins {
-                first_layer_mm: 4.2,
-                band_mm: 5.5,
-            },
-            // R gave one realization in 30 rotation-0 observations, full plates included.
-            Flavour::Orca250 => Margins {
-                first_layer_mm: 0.1,
-                band_mm: 0.1,
-            },
+            // P1S and A2L: 70 observations (CLI runs at all rotations, GUI runs, plates; Along-only
+            // 45-degree roof lines): worst 3.46 mm (A2L, 0 degrees).
+            Flavour::Bambu0208 => 3.6,
+            // The owner's Snapmaker GUI plates (4 plates, 8 observations): worst 1.57 mm. O has
+            // no support slices of its own and takes S's values.
+            Flavour::Snapmaker240 | Flavour::Orca242 => 1.7,
+            // Vanilla Orca CLI on the U1 (40 observations): worst 4.85 mm over 40 observations at all rotations. R is
+            // deterministic, so this is model error, not slicer noise.
+            Flavour::Orca250 => 5.0,
+        }
+    }
+
+    /// The band margin δ_band per absolute 2 mm band, mm (the last entry repeats above): the
+    /// per-band worst exceedance of the same campaign plus 0.1 mm, made non-increasing with
+    /// height (a trunk that is off low is off by less near its tip).
+    pub fn band_margins_mm(self) -> &'static [f64] {
+        match self {
+            Flavour::Bambu0208 => &[
+                5.47, 5.47, 5.47, 5.38, 5.16, 5.01, 4.58, 3.03, 2.21, 1.74, 1.28, 1.19, 0.76,
+            ],
+            Flavour::Snapmaker240 | Flavour::Orca242 => &[
+                2.23, 1.65, 1.42, 1.42, 1.42, 1.42, 1.42, 1.42, 1.42, 1.39, 1.08, 0.57, 0.48,
+            ],
+            Flavour::Orca250 => &[
+                7.34, 7.34, 7.34, 5.87, 5.06, 3.89, 2.3, 1.71, 1.71, 1.33, 1.16, 0.63, 0.5,
+            ],
+        }
+    }
+
+    /// δ_band of absolute band `band`.
+    pub fn band_margin_mm(self, band: usize) -> f64 {
+        let table = self.band_margins_mm();
+        table[band.min(table.len() - 1)]
+    }
+
+    /// The margins as one pair: the first layer's and the largest band's.
+    pub fn margins(self) -> Margins {
+        Margins {
+            first_layer_mm: self.first_layer_margin_mm(),
+            band_mm: self.band_margins_mm().iter().copied().fold(0.0, f64::max),
         }
     }
 }

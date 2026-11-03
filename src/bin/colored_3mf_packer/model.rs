@@ -4,7 +4,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
+use crate::args::SupportSource;
 use crate::class_print::class_print;
+use crate::from_model::modelled_plate;
 use crate::job::Job;
 use crate::plan::{PackPlan, plan_of};
 use crate::probe::probe_class;
@@ -30,10 +32,20 @@ pub struct Modelled {
     pub summaries: Vec<ClassSummary>,
     /// Seconds of slicing the probes took (0 when cached): scales later progress estimates.
     pub probe_seconds: f64,
+    /// Seconds the support model took (0 for probes; the cache's own time on a hit).
+    pub model_seconds: f64,
 }
 
-/// Probes every rotation class in turn (one live slicer at a time) and builds the plan.
+/// Builds the plan with the supports the job asks for: the support model (no slicer call), or
+/// probes of every rotation class in turn (one live slicer at a time).
 pub fn model_plate(job: &Job) -> AppResult<Modelled> {
+    match job.args.support_source {
+        SupportSource::Model => modelled_plate(job),
+        SupportSource::Probe => probed_plate(job),
+    }
+}
+
+fn probed_plate(job: &Job) -> AppResult<Modelled> {
     let mut probes = Vec::new();
     let mut prints = Vec::new();
     let mut summaries = Vec::new();
@@ -61,5 +73,6 @@ pub fn model_plate(job: &Job) -> AppResult<Modelled> {
         plan: plan_of(job, prints, tower),
         summaries,
         probe_seconds,
+        model_seconds: 0.0,
     })
 }

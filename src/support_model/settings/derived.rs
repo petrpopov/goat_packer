@@ -27,6 +27,9 @@ const FOOT_GROWTH_ANGLE: f64 = 0.7;
 const MIN_HEIGHT_TO_MODEL_MM: f64 = 1.0;
 const MAX_MODEL_DIAMETER_GROWTH_MM: f64 = 1.0;
 
+/// The automatic first-layer flow width, in nozzle diameters.
+const AUTO_FIRST_LAYER_WIDTH_FACTOR: f64 = 1.25;
+
 /// The roof stack ends where the area left is below this (spec 01 §4 "minimum roof area").
 pub const MINIMUM_ROOF_AREA_MM2: f64 = 1.0;
 
@@ -121,6 +124,10 @@ pub struct Derived {
     pub circle_half_line_change: i64,
     pub tip_dedup_cell: i64,
     pub fill: FillParameters,
+    /// `raft_first_layer_expansion` as written (B reads a negative value as automatic).
+    pub first_layer_expansion_mm: f64,
+    /// The first-layer flow width, mm (the base's step count).
+    pub first_layer_width_mm: f64,
 }
 
 impl Derived {
@@ -238,6 +245,8 @@ impl Derived {
             circle_half_line_change: circle_half_line_change(grid, tip_radius, line_width),
             tip_dedup_cell: (tip_radius + 1) / 10,
             fill: fill_parameters(settings, grid, flow_width, branch_distance_mm),
+            first_layer_expansion_mm: settings.first_layer_expansion,
+            first_layer_width_mm: first_layer_width(settings),
         }
     }
 
@@ -395,5 +404,17 @@ fn fill_parameters(
         roof_line_spacing: grid.length(f64::from(spacing) / f64::from(interface_density)),
         base_angle: angle(settings.support_angle),
         interface_angle: angle(settings.support_angle + 90.0),
+    }
+}
+
+/// The first-layer line width in mm; automatic (0) is 1.25 nozzle diameters.
+fn first_layer_width(settings: &SupportSettings) -> f64 {
+    let width = settings
+        .first_layer_line_width
+        .absolute(settings.nozzle_diameter);
+    if width > 0.0 {
+        width
+    } else {
+        AUTO_FIRST_LAYER_WIDTH_FACTOR * settings.nozzle_diameter
     }
 }
