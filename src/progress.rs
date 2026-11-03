@@ -10,7 +10,6 @@ use serde_json::json;
 pub enum Stage {
     ProbeSlice,
     Packing,
-    SampleSlice,
     Assembling,
     FinalSlice,
     GcodeCheck,
@@ -24,7 +23,6 @@ impl Stage {
         match self {
             Stage::ProbeSlice => "probe_slice",
             Stage::Packing => "packing",
-            Stage::SampleSlice => "sample_slice",
             Stage::Assembling => "assembling",
             Stage::FinalSlice => "final_slice",
             Stage::GcodeCheck => "gcode_check",
@@ -35,32 +33,19 @@ impl Stage {
     }
 }
 
-/// Why a repack runs; the webapp names it in the status line.
+/// Why a repack runs; the webapp names it in the status line (its labels for the reasons of
+/// older packers stay, so old job histories still read).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepackReason {
-    /// The final tower outgrew the probe keepout and reaches a placement.
-    TowerGrown,
-    /// Supports touched a foreign body: the support patch was widened to the printed one.
+    /// A verification slice showed supports touching a foreign body, material past the plate or
+    /// a wider tower: the plan learned what the slice printed.
     SupportContact,
-    /// Still touching after learning: the strict silhouette rule.
-    SupportStrict,
-    /// The slicer rejected the plate with the tower in a bed corner: back to the source spot.
-    TowerCornerFailed,
-    /// Supports touched a foreign body: only the touching objects moved apart, no repack.
-    SupportNudge,
-    /// Supports printed past the plate edge: the support patch was widened to the printed one.
-    SupportOffPlate,
 }
 
 impl RepackReason {
     pub fn id(self) -> &'static str {
         match self {
-            RepackReason::TowerGrown => "tower_grown",
             RepackReason::SupportContact => "support_contact",
-            RepackReason::SupportStrict => "support_strict",
-            RepackReason::TowerCornerFailed => "tower_corner_failed",
-            RepackReason::SupportNudge => "support_nudge",
-            RepackReason::SupportOffPlate => "support_off_plate",
         }
     }
 }

@@ -12,7 +12,9 @@ use crate::geometry::{Point, Rect};
 use crate::object_print::band_z_range;
 use serde::{Deserialize, Serialize};
 
-pub use matrix::{Gap, PairRule, Permission, ZoneClass, pair_gap, pair_rules, permission};
+pub use matrix::{
+    Gap, PairRule, Permission, SUPPORT_BASE_GAP_MM, ZoneClass, pair_gap, pair_rules, permission,
+};
 pub use rules::{BodyRule, PlateRules};
 
 /// What a zone forbids, in decreasing strictness (the matrix columns for profile zones).

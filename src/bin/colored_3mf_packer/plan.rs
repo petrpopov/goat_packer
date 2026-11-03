@@ -1,385 +1,186 @@
-//! The plan a layout is packed against, and one packing pass.
+//! What a layout is packed against, one packing pass, and the state a packed plate leaves
+//! behind for `--finish-state`.
 
 use goat_packer::{
-    Footprint, PackOptions, PackResult, Point, Rect,
-    colored_packer::{PrimeTowerBounds, PrinterProfile},
-    grid_layout, grow_beyond, pack_footprint,
-    plate_centre::RelocatedTower,
+    PackOptions, PlateRules, Point, PrintPlacement,
+    object_print::ObjectPrint,
+    pack::{PackOutcome, TowerSpec, pack},
     print_time::TimeSample,
-    validate_result,
+    validate_vector, LayoutRules,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
-use crate::args::{Args, LayoutMode};
-use crate::assembly::build_colored_project;
-use crate::job::Job;
-use crate::placement::layout_world_bounds;
+use crate::args::Args;
+use crate::model::ClassSummary;
+use crate::order::Canonical;
 
-/// Which pair rule the packer applies between two objects' supports and bodies.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SupportRule {
-    /// A foreign patch must not touch the first-layer body (`support_landing_loops`);
-    /// silhouettes keep clearance from each other.
-    Landing,
-    /// The plain two-zone rule: a foreign patch must not touch the whole silhouette. Used
-    /// for support-free footprints and as the fallback when the landing rule fails the
-    /// final G-code check twice.
-    Silhouette,
-}
+/// The state file format. Version 1 held a slicer-learned `Footprint`; its plan, support rule
+/// and sample slice no longer exist.
+pub const STATE_VERSION: u32 = 2;
 
-/// What `--no-final-slice` leaves behind (`<output>.state.json`) and `--finish-state` reads
-/// back: the packed plate and everything the final slice's checks and fallbacks need.
-#[derive(Deserialize, Serialize)]
-pub struct PackState {
-    pub plan: PackPlan,
-    pub packed: PackResult,
-    pub probe_tower: Option<PrimeTowerBounds>,
-    pub probe_seconds: f64,
-    pub tower_from_contest: bool,
-    /// The centre-out target and the probe's time sample (time-window plates).
-    pub centre: Option<(f64, f64)>,
-    pub probe_sample: Option<TimeSample>,
-}
-
-/// Everything one packing pass depends on; the verify loop mutates it between passes
-/// (grown tower, learned support patch, strict rule).
-#[derive(Deserialize, Serialize)]
+/// Everything one packing pass depends on; the verify loop widens it between passes.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PackPlan {
-    pub footprint: Footprint,
-    pub lock_orientation: bool,
-    /// Bed exclusion corners and purge-line strips: the full-extent bbox must clear them.
-    pub fixed_keepouts: Vec<Rect>,
-    /// The reserved prime-tower area: only the model body must clear it (supports purge with
-    /// the tower area, see `PackOptions::body_exclusions`).
-    pub tower_keepout: Option<Rect>,
-    /// Set when the tower moves (centre-out plate or a better bed corner): the keepout the
-    /// final slice is checked against and the `wipe_tower_x/y` shift.
-    pub relocation: Option<RelocatedTower>,
-    pub rule: SupportRule,
-    pub patch_learned: bool,
-    /// The bare mesh outline of a support-carrying (locked) footprint. Until a sample slice
-    /// measures supports by height, the body zone also carries the probe's support interfaces
-    /// (they print ~2 mm past the overhangs, at the overhang's height). Once `layer_zones`
-    /// check supports against foreign bodies band by band, the rule's body zone is this
-    /// outline (`rule_footprint`): interfaces in it also kept neighbours' INTERFACES apart
-    /// (supports may touch supports), which rejected a hand-made U1 brick plate (40 mm pitch,
-    /// 48 goats) that printed with no support touching a foreign body. Empty = keep the body.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mesh_silhouette: Vec<Vec<Point>>,
-    /// The bed-edge reserve of this plan's supports (`support_edge_reserve_mm`); saved so a
-    /// `--finish-state` repack uses the same one. Older states had the default.
-    #[serde(default = "default_support_edge_reserve")]
-    pub support_edge_reserve_mm: f64,
+    /// One print per rotation class, class index = position.
+    pub prints: Vec<ObjectPrint>,
+    pub rules: PlateRules,
+    pub tower: Option<TowerSpec>,
 }
 
-fn default_support_edge_reserve() -> f64 {
-    SUPPORT_EDGE_RESERVE_MM
+/// What `--finish-state` reads back: the plan, the layout in 3MF order and what the time
+/// window needs again.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PackState {
+    pub version: u32,
+    pub plan: PackPlan,
+    /// In object order of the written 3MF: canonical copies first, centre-out on window plates.
+    pub placements: Vec<PrintPlacement>,
+    pub tower_anchor: Option<Point>,
+    pub centre: Option<(f64, f64)>,
+    pub probe_seconds: f64,
+    pub probe_sample: Option<TimeSample>,
+    pub summary: PackSummary,
 }
 
-/// The reserve for a profile: its calibrated `support_edge_margin_mm` already is the distance
-/// the slicer needs (U1 in Snapmaker Orca: a hand-made 48-goat plate printed support bases
-/// 0.7 mm from the edge, and a full-plate Orca slice printed the supports inside the learned
-/// patch at the bed edges, unlike BambuStudio's 0.5 mm drift), so no drift reserve is added on
-/// top; without one the default reserve applies.
-pub fn support_edge_reserve_mm(profile: &PrinterProfile) -> f64 {
-    if profile.support_edge_margin_mm.is_some() {
-        0.0
-    } else {
-        SUPPORT_EDGE_RESERVE_MM
+/// What the run found besides the layout, for the report.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PackSummary {
+    pub probes: Vec<ClassSummary>,
+    /// The packing member that won and the best count each member reached.
+    pub member: String,
+    pub member_counts: Vec<MemberResult>,
+    pub canonical: Vec<Canonical>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemberResult {
+    pub member: String,
+    pub count: usize,
+}
+
+impl PackState {
+    /// Parses a state file, naming the problem for one that predates version 2.
+    pub fn from_json(bytes: &[u8]) -> AppResult<PackState> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        let version = value.get("version").and_then(serde_json::Value::as_u64);
+        if version != Some(u64::from(STATE_VERSION)) {
+            return Err(format!(
+                "pack state version {version:?} is not readable: only version {STATE_VERSION} \
+                 (probe-based supports) is; pack the plate again"
+            )
+            .into());
+        }
+        Ok(serde_json::from_value(value)?)
     }
 }
-
-/// How much farther than the learned patch a later slice may print a support, at the bed
-/// edges and exclusion areas (`PackPlan::rule_footprint`). The patch comes from the probe and
-/// the 3-object sample; a 44-goat P1S plate packed with its patch flush on the bed edge
-/// (x 255.84 of 256) printed every goat's first-layer support base 0.5 mm wider in the full
-/// plate's slice, and the base's G3 arcs reached x = 256.34: BambuStudio's GUI refused the
-/// plate ("G-code path goes beyond plate boundaries") on the three rightmost goats. The CLI
-/// has no such check. Three times the measured drift; bodies keep the plain edge margin. A
-/// profile's calibrated `support_edge_margin_mm` replaces it (`support_edge_reserve_mm`).
-const SUPPORT_EDGE_RESERVE_MM: f64 = 1.5;
 
 impl PackPlan {
-    /// The footprint every layout is packed and validated against: the learned one, plus the
-    /// strict rule's empty landing (the landing zone is the whole silhouette again) and the
-    /// bed-edge reserve for supports. The reserve lives only here, never in `self.footprint`:
-    /// learning a patch unions `bed_loops` into the collision patch, and a grown bed zone must
-    /// not leak into object-vs-object clearance.
-    pub fn rule_footprint(&self) -> Footprint {
-        let mut footprint = self.interface_body_footprint();
-        if self.body_is_bare_outline() {
-            footprint.body_loops = self.mesh_silhouette.clone();
-        }
-        footprint
-    }
-
-    /// `rule_footprint` with the probe's interfaces kept in the body zone: a stricter rule, so
-    /// its layouts are valid under `rule_footprint` too.
-    fn interface_body_footprint(&self) -> Footprint {
-        let mut footprint = self.footprint.clone();
-        if self.rule == SupportRule::Silhouette {
-            footprint.support_landing_loops.clear();
-        }
-        if self.lock_orientation && !footprint.body_loops.is_empty() {
-            let bed = footprint.printed_extent_loops();
-            footprint.bed_loops = Some(grow_beyond(
-                &bed,
-                &footprint.body_loops,
-                self.support_edge_reserve_mm,
-            ));
-        }
-        footprint
-    }
-
-    /// Supports are checked by height, so the rule's body zone is the bare mesh outline.
-    fn body_is_bare_outline(&self) -> bool {
-        !self.footprint.layer_zones.is_empty() && !self.mesh_silhouette.is_empty()
-    }
-
-    fn keepouts(&self) -> Vec<Rect> {
-        self.fixed_keepouts
-            .iter()
-            .copied()
-            .chain(self.tower_keepout)
-            .collect()
-    }
-
-    pub fn pack(&self, job: &Job) -> AppResult<PackResult> {
-        self.pack_at(job, self.tower_keepout, true)
-    }
-
-    /// Packs with the tower keepout at `tower_keepout` under the rule, and — when its body
-    /// zone is the bare outline — also under the stricter interface body, keeping whichever
-    /// places more. The search is a heuristic, not monotone in the rule: on the same learned
-    /// plan the looser rule packed a P1S goat plate 41 instead of 43 and a U1 plate 47 instead
-    /// of 49, and another U1 plan 48 instead of 47. The stricter layouts are valid under the
-    /// rule, so the better of the two never loses.
-    pub fn pack_at(
-        &self,
-        job: &Job,
-        tower_keepout: Option<Rect>,
-        verbose: bool,
-    ) -> AppResult<PackResult> {
-        let rule = self.rule_footprint();
-        let pack_with = |footprint: &Footprint, verbose: bool| {
-            pack(
-                &job.args,
-                &job.profile,
-                footprint,
-                self.lock_orientation,
-                &self.fixed_keepouts,
-                tower_keepout,
-                verbose,
-            )
-        };
-        let packed = pack_with(&rule, verbose)?;
-        if !self.body_is_bare_outline() {
-            return Ok(packed);
-        }
-        let strict = pack_with(&self.interface_body_footprint(), false)?;
-        if strict.placements.len() <= packed.placements.len() {
-            return Ok(packed);
-        }
-        let options = pack_options(
-            &job.args,
-            &job.profile,
-            self.lock_orientation,
-            &self.fixed_keepouts,
-            tower_keepout,
-        )?;
-        validate_result(&rule, &options, &strict)?;
-        if verbose {
-            eprintln!(
-                "layout: {} objects with the support interfaces in the body zone (bare outline: {})",
-                strict.placements.len(),
-                packed.placements.len()
-            );
-        }
-        Ok(strict)
-    }
-
-    /// Writes the 3MF for `packed` to the job's output path.
-    pub fn build(&self, job: &Job, packed: &PackResult) -> AppResult<()> {
-        // Final publication gate, including resumed/manual states and tower relocations.
-        // Search-time validation alone does not cover changes made after packing.
-        let options = pack_options(
-            &job.args,
-            &job.profile,
-            self.lock_orientation,
-            &self.fixed_keepouts,
-            self.tower_keepout,
-        )?;
-        validate_result(&self.rule_footprint(), &options, packed)?;
-        build_colored_project(
-            job,
-            &self.footprint,
-            packed,
-            &self.keepouts(),
-            self.relocation.map(|relocated| relocated.shift),
-        )
-    }
-}
-
-/// The packing options of one pass; also what a nudged layout is validated against.
-pub fn pack_options(
-    args: &Args,
-    profile: &PrinterProfile,
-    lock_orientation: bool,
-    fixed_keepouts: &[Rect],
-    tower_keepout: Option<Rect>,
-) -> AppResult<PackOptions> {
-    // A profile with its own support margin lets the patch use more of the bed than the
-    // model: the edge margin then binds the body only (`PackOptions::body_bed`).
-    let (bed, body_bed) = match profile.support_edge_margin_mm {
-        Some(_) => (profile.support_bed()?, Some(profile.usable_bed()?)),
-        None => (profile.usable_bed()?, None),
-    };
-    Ok(PackOptions {
-        body_bed,
-        body_exclusions: tower_keepout.into_iter().collect(),
-        bed,
-        exclusions: fixed_keepouts.to_vec(),
-        resolution: args.resolution,
-        clearance: args.clearance,
-        angle_step_deg: args.angle_step,
-        attempts: args.attempts,
-        candidates_per_step: args.candidates,
-        max_objects: args.max_objects,
-        // The probe-derived patch is only valid at the orientation it was sliced at; rotating
-        // it would let the slicer's rebuilt tree supports wander outside the reserved area.
-        lock_orientation,
-        stall_attempts: args.stall,
-        seed: args.seed,
-        // Only bites when the footprint has a support zone (the locked patch ∪ silhouette
-        // branch); a silhouette footprint has body == full and the option is a no-op.
-        support_overlap_mm: args.support_overlap_mm,
-        plate_rules: None,
-    })
-}
-
-/// One packing pass: the deterministic grid as a floor, then (`--layout search`) the search.
-/// `verbose` = log the grid baseline and layout bounds (off for the tower-position contest,
-/// whose candidates print one line each).
-pub fn pack(
-    args: &Args,
-    profile: &PrinterProfile,
-    footprint: &Footprint,
-    lock_orientation: bool,
-    fixed_keepouts: &[Rect],
-    tower_keepout: Option<Rect>,
-    verbose: bool,
-) -> AppResult<PackResult> {
-    let options = pack_options(
-        args,
-        profile,
-        lock_orientation,
-        fixed_keepouts,
-        tower_keepout,
-    )?;
-    // The deterministic grid runs first as a floor score: small models tile as densely as
-    // their bounding boxes allow, and the deterministic search only wins when it beats that.
-    // Taking the grid on a tie keeps the layout reproducible. `--layout grid` stops right
-    // here — no deterministic search at all.
-    let grid = grid_layout(footprint, &options);
-    let result = match args.layout {
-        LayoutMode::Grid => {
-            if verbose {
-                eprintln!(
-                    "grid layout: {} objects (deterministic search skipped)",
-                    grid.placements.len()
-                );
-            }
-            grid
-        }
-        LayoutMode::Search => {
-            if verbose {
-                eprintln!(
-                    "grid baseline: {} objects; deterministic search needs more to win",
-                    grid.placements.len()
-                );
-            }
-            let searched = pack_footprint(footprint, &options);
-            if searched.placements.len() > grid.placements.len() {
-                searched
-            } else {
-                grid
-            }
-        }
-    };
-    validate_result(footprint, &options, &result)?;
-    if verbose {
-        log_layout(args, footprint, &options, &result);
-    }
-    Ok(result)
-}
-
-fn log_layout(args: &Args, footprint: &Footprint, options: &PackOptions, result: &PackResult) {
-    let bounds = layout_world_bounds(footprint, result);
-    eprintln!(
-        "layout: {} objects within x [{:.1}, {:.1}], y [{:.1}, {:.1}] (bed {:.1}..{:.1} x \
-         {:.1}..{:.1}); per-object positions: {}",
-        result.placements.len(),
-        bounds.min_x,
-        bounds.max_x,
-        bounds.min_y,
-        bounds.max_y,
-        options.bed.min_x,
-        options.bed.max_x,
-        options.bed.min_y,
-        options.bed.max_y,
-        args.work_dir.join("placements.json").display(),
-    );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::{test_args, test_profile};
-    use goat_packer::extract_footprint;
-
-    #[test]
-    fn build_validates_modified_layout_before_writing_any_artifact() {
-        let dir = tempfile::tempdir().unwrap();
-        let job = crate::test_support::test_job(dir.path());
-        let plan = crate::test_support::test_plan(&job);
-        let mut packed = plan.pack(&job).unwrap();
-        packed.placements.push(packed.placements[0].clone());
-        let error = plan.build(&job, &packed).unwrap_err().to_string();
-        assert!(error.contains("overlap"), "{error}");
-        assert!(!job.args.output.exists());
-    }
-
-    #[test]
-    fn pack_returns_a_layout_that_independently_passes_validate_result() {
-        let dir = tempfile::tempdir().unwrap();
-        let stl = crate::test_support::square_stl(dir.path());
-        let profile = test_profile();
-        let args = test_args(dir.path());
-
-        let footprint = extract_footprint(&stl).unwrap();
-        let result = pack(&args, &profile, &footprint, false, &[], None, true).unwrap();
-        assert!(!result.placements.is_empty());
-
-        let footprint = extract_footprint(&stl).unwrap();
-        let options = PackOptions {
+    /// The packing options of a run. The bed fields belong to the legacy search; the plate
+    /// comes from `rules`.
+    pub fn options(&self, args: &Args) -> PackOptions {
+        let printable = self.rules.printable_area;
+        PackOptions {
+            bed: printable,
             body_bed: None,
+            exclusions: Vec::new(),
             body_exclusions: Vec::new(),
-            bed: profile.usable_bed().unwrap(),
-            exclusions: vec![],
             resolution: args.resolution,
             clearance: args.clearance,
             angle_step_deg: args.angle_step,
             attempts: args.attempts,
             candidates_per_step: args.candidates,
-            max_objects: 0,
-            lock_orientation: false,
             stall_attempts: args.stall,
+            max_objects: args.max_objects,
+            lock_orientation: false,
             seed: args.seed,
-            support_overlap_mm: None,
-            plate_rules: None,
-        };
-        validate_result(&footprint, &options, &result).unwrap();
+            support_overlap_mm: args.support_overlap_mm,
+            plate_rules: Some(self.rules.clone()),
+        }
+    }
+
+    /// One packing pass of the portfolio over every class.
+    pub fn pack(&self, args: &Args) -> AppResult<PackOutcome> {
+        Ok(pack(&self.prints, &self.rules, self.tower.as_ref(), &self.options(args))?)
+    }
+
+    /// The exact check of a layout, the gate every plate passes before it is written: the
+    /// plate's zones plus the tower at `anchor` against every copy.
+    pub fn validate(
+        &self,
+        args: &Args,
+        placements: &[PrintPlacement],
+        anchor: Option<Point>,
+    ) -> AppResult<()> {
+        let mut rules = LayoutRules::new(&self.rules, None, args.clearance, args.support_overlap_mm)?;
+        if let (Some(spec), Some(anchor)) = (&self.tower, anchor) {
+            rules.zones.extend(spec.zones(anchor));
+        }
+        validate_vector(&self.prints, placements, &rules)?;
+        Ok(())
+    }
+
+    /// The hard zones' barrier list for the canonical-copy order: the plate and the tower.
+    pub fn zones(&self, anchor: Option<Point>) -> AppResult<Vec<goat_packer::kind_masks::PlateZone>> {
+        let mut zones = goat_packer::kind_masks::plate_zones(&self.rules, None)?;
+        if let (Some(spec), Some(anchor)) = (&self.tower, anchor) {
+            zones.extend(spec.zones(anchor));
+        }
+        Ok(zones)
+    }
+}
+
+/// The plan of a job's modelled classes and tower.
+pub fn plan_of(job: &crate::job::Job, prints: Vec<ObjectPrint>, tower: Option<TowerSpec>) -> PackPlan {
+    PackPlan {
+        prints,
+        rules: job.rules.clone(),
+        tower,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{test_job, test_plan, test_state};
+
+    #[test]
+    fn a_state_of_another_version_is_refused_with_the_way_out() {
+        let error = PackState::from_json(br#"{"plan": {}, "packed": {}}"#).unwrap_err().to_string();
+        assert!(error.contains("pack the plate again"), "{error}");
+    }
+
+    #[test]
+    fn a_state_survives_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let mut state = test_state(test_plan(&job, 2));
+        let outcome = state.plan.pack(&job.args).unwrap();
+        state.placements = outcome.placements;
+        let back = PackState::from_json(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(back.placements, state.placements);
+        assert_eq!(back.plan.prints, state.plan.prints);
+    }
+
+    #[test]
+    fn two_classes_fill_a_small_plate_and_pass_the_exact_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let plan = test_plan(&job, 2);
+        let outcome = plan.pack(&job.args).unwrap();
+        // 60 x 60 mm, 10 mm squares with 0.5 mm clearance: at least a 5 x 5 grid.
+        assert!(outcome.placements.len() >= 25, "{}", outcome.placements.len());
+        assert!(outcome.placements.iter().all(|placement| placement.print < 2));
+        plan.validate(&job.args, &outcome.placements, outcome.tower_anchor).unwrap();
+    }
+
+    #[test]
+    fn a_layout_with_a_doubled_copy_fails_the_exact_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let plan = test_plan(&job, 1);
+        let mut placements = plan.pack(&job.args).unwrap().placements;
+        placements.push(placements[0]);
+        assert!(plan.validate(&job.args, &placements, None).is_err());
     }
 }

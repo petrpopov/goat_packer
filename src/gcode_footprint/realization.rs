@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 
 use geo::Polygon;
 
-use crate::gcode_collisions::{KeptLine, LAYER_BAND_MM, object_lines};
+use crate::gcode_collisions::{KeptLine, object_lines};
 use crate::geometry::{strip_polygon, union_exterior_loops};
-use crate::object_print::{Loops, MemberId, Realization};
+use crate::object_print::{Loops, MemberId, Realization, layer_bands};
 
 /// One object to read a realization of: its label in the sliced plate (`None` = the plate's
 /// only object) and where its placement put the object's frame origin on the plate.
@@ -19,7 +19,8 @@ pub struct SlicedObject {
 
 /// What the slicer printed as supports for one object of a sliced plate (verification and
 /// calibration compare it with the support model): the first-layer support as `base`, the
-/// supports above it per absolute `LAYER_BAND_MM` band, and the interface part of each band.
+/// support of every printed layer per absolute `LAYER_BAND_MM` band under the band rule
+/// (`layer_bands`; band 0 includes the base), and the interface part of each band.
 /// `label` picks the object (`None` = the plate's only object).
 ///
 /// The loops are in the object's plate-aligned frame for its rotation class: the slicer printed
@@ -70,7 +71,8 @@ fn object_index(labels: &[String], label: Option<&str>) -> Result<usize, String>
     }
 }
 
-/// The support lines of object `index` moved into its frame and unioned per kind. Only
+/// The support lines of object `index` (and its first-layer body lines) moved into its frame
+/// and unioned per kind. Only
 /// exterior rings are kept: the gaps between support lines are no room for a neighbour (as in
 /// the learned patch and the sample's bands). Empty bands keep their index, and the support and
 /// interface lists have the same length.
@@ -81,12 +83,11 @@ fn realization_of(
     member: MemberId,
 ) -> Realization {
     let mut base = Vec::new();
+    let mut landing = Vec::new();
     let mut support: BTreeMap<usize, Vec<Polygon>> = BTreeMap::new();
+    let mut above_base: BTreeMap<usize, Vec<Polygon>> = BTreeMap::new();
     let mut interface: BTreeMap<usize, Vec<Polygon>> = BTreeMap::new();
-    for line in lines
-        .iter()
-        .filter(|line| line.object == index && line.strip.support)
-    {
+    for line in lines.iter().filter(|line| line.object == index) {
         let (from, to) = (line.strip.from, line.strip.to);
         let polygon = strip_polygon(
             from.0 - origin.0,
@@ -95,20 +96,33 @@ fn realization_of(
             to.1 - origin.1,
             line.strip.width,
         );
-        if line.layer <= 1 {
-            base.push(polygon);
+        if !line.strip.support {
+            if line.layer == 1 {
+                landing.push(polygon);
+            }
             continue;
         }
-        let band = (line.z.max(0.0) / LAYER_BAND_MM) as usize;
-        if line.interface {
-            interface.entry(band).or_default().push(polygon.clone());
+        if line.layer == 1 {
+            base.push(polygon.clone());
         }
-        support.entry(band).or_default().push(polygon);
+        // The band rule (design §4.1): a layer occupying (z_bottom, z] feeds every band it
+        // overlaps with positive length; layer 0 is in band 0 as well as in the base.
+        for band in layer_bands(line.z_bottom, line.z) {
+            if line.interface {
+                interface.entry(band).or_default().push(polygon.clone());
+            }
+            if line.layer > 1 {
+                above_base.entry(band).or_default().push(polygon.clone());
+            }
+            support.entry(band).or_default().push(polygon.clone());
+        }
     }
     let bands = support.keys().next_back().map_or(0, |last| last + 1);
     Realization {
         member,
+        landing: union_exterior_loops(&landing),
         base: union_exterior_loops(&base),
+        above_base: band_loops(above_base, bands),
         support: band_loops(support, bands),
         interface: band_loops(interface, bands),
     }

@@ -14,7 +14,7 @@ profile=""
 source_file=""
 window_hours=""
 support_overlap=""
-final_slice=true
+verify=false
 finish_state=""
 
 while [[ $# -gt 0 ]]; do
@@ -24,11 +24,14 @@ while [[ $# -gt 0 ]]; do
     --output) output="$2"; shift 2;;
     --time-window-hours) window_hours="$2"; shift 2;;
     --support-overlap-mm) support_overlap="$2"; shift 2;;
-    --no-final-slice) final_slice=false; shift;;
-    --finish-state) finish_state="$2"; shift 2;;
+    --verify) verify=true; shift;;
+    --finish-state) finish_state="$2"; verify=true; shift 2;;
     *) shift;;
   esac
 done
+
+# Окно времени нарезает пластины всегда.
+if [[ -n "$window_hours" ]]; then verify=true; fi
 
 verification="${output%.3mf}.verification.json"
 
@@ -43,7 +46,7 @@ if [[ "${GOAT_LOG_FORMAT:-}" == "json" ]]; then
   echo '{"event":"layout","source":"pack","objects":2,"bed":[0,0,256,256],"keepouts":[],"tower":null,"footprint":[[[-5,-5],[5,-5],[5,5],[-5,5],[-5,-5]]],"placements":[[20,20,0],[40,20,90]]}' >&2
 fi
 echo "packed 30 objects; assembling 3MF..."
-echo "slicing final plate (30 objects)..."
+if [[ "$verify" == "true" ]]; then echo "slicing final plate (30 objects)..."; fi
 
 mkdir -p "$(dirname "$output")"
 printf 'fake packed 3mf content for tests\n' > "$output"
@@ -62,8 +65,8 @@ if [[ -n "$support_overlap" ]]; then
 fi
 # --finish-state: состояние родителя обязано лежать рядом (его кладёт бэкенд).
 if [[ -n "$finish_state" && ! -f "$finish_state" ]]; then echo "error: no state $finish_state" >&2; exit 1; fi
-# --no-final-slice: стол без полной нарезки — состояние рядом с --output, времени нет.
-if [[ "$final_slice" == "false" ]]; then
+# Без --verify: стол без нарезки — состояние рядом с --output, времени нет.
+if [[ "$verify" != "true" ]]; then
   printf '{"fake": "state"}\n' > "${output%.3mf}.state.json"
   time_block=null
   supports_block="$supports_block"', "final_sliced": false'

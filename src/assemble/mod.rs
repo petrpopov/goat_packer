@@ -16,6 +16,7 @@ mod archive;
 mod bed;
 mod core_model;
 mod format;
+mod frame;
 mod mesh_parts;
 mod metadata;
 mod preview;
@@ -41,7 +42,8 @@ use metadata::{
 };
 use preview::{placed_polygons, write_previews};
 
-pub use core_model::source_model_center;
+pub use core_model::{source_item_transform_of, source_model_center};
+pub use frame::ItemFrame;
 
 /// Everything the assembler needs besides the template itself.
 #[derive(Clone, Debug)]
@@ -66,6 +68,13 @@ pub struct AssembleOptions {
     /// polygons must show what was packed, or the plate thumbnails lie about collisions.
     /// `None` derives the projection from `stl_path` as before.
     pub footprint_override: Option<Footprint>,
+    /// Builds every clone from the source item's own transform (`ItemFrame::clone_transform`;
+    /// each placement's `angle_deg` is its rotation class). `None` = the legacy transform of
+    /// rotation and translation compensated by the STL's bbox centre.
+    pub frame: Option<ItemFrame>,
+    /// What the previews and the plate JSON show per placement, in bed coordinates; `None`
+    /// = `footprint_override` (or the STL's projection) rotated and moved per placement.
+    pub world_polygons: Option<Vec<Vec<Vec<crate::Point>>>>,
 }
 
 /// Clones `options.placements` into `template` and writes the packed project to `output`.
@@ -85,13 +94,18 @@ pub fn assemble_project(
     let (printable, exclusions) = parse_bed_geometry(settings)?;
 
     let core = entry_bytes(&entries, CORE_MODEL_ENTRY)?.to_vec();
-    let footprint = footprint_of(options)?;
-    let footprint_center = embedded_mesh::stl_xy_center(&options.stl_path)
-        .map_err(|error| format!("cannot read {:?}: {error}", options.stl_path))?;
+    let (world_polygons, footprint_center) = match &options.world_polygons {
+        Some(polygons) => (polygons.clone(), (0.0, 0.0)),
+        None => {
+            let footprint = footprint_of(options)?;
+            let center = embedded_mesh::stl_xy_center(&options.stl_path)
+                .map_err(|error| format!("cannot read {:?}: {error}", options.stl_path))?;
+            (placed_polygons(&footprint.loops, &options.placements), center)
+        }
+    };
     // Contract 3: the source item's z translation becomes the clones' item z offset, keeping
     // the packed objects at the same on-bed height the source project sliced at.
     let z_offset = source_z_offset(&core)?;
-    let world_polygons = placed_polygons(&footprint.loops, &options.placements);
 
     rewrite_core_model(&mut entries, &core, options, z_offset, footprint_center)?;
     rewrite_metadata(&mut entries, options, z_offset, &world_polygons)?;
@@ -152,6 +166,7 @@ fn rewrite_core_model(
         reuse_source_object_instances: options.reuse_source_object_instances,
         z_offset,
         footprint_center,
+        frame: options.frame,
     }
     .apply(core)?;
     set_entry(entries, CORE_MODEL_ENTRY, rebuilt);

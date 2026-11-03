@@ -24,7 +24,7 @@ use super::area::{
 use super::offset::offset_area;
 use super::section::raw_rings;
 use crate::embedded_mesh::{ObjectMesh, Part};
-use crate::gcode_collisions::LAYER_BAND_MM;
+use crate::object_print::LAYER_BAND_MM;
 use crate::object_print::Loops;
 
 /// Mitre limit of the bulge growth. Any limit keeps the growth conservative: a mitre or its

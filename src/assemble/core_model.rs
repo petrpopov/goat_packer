@@ -7,6 +7,7 @@ use super::format::{clone_object_id, number, stable_uuid};
 use super::xml::{
     attribute_value, child_spans, element_is, parse_events, root_span, set_attribute, write_events,
 };
+use super::frame::ItemFrame;
 use crate::PackedPlacement;
 
 /// Builds the build-item `transform` attribute for one placement.
@@ -21,7 +22,12 @@ pub(super) fn item_transform(
     placement: &PackedPlacement,
     z_offset: f64,
     footprint_center: (f64, f64),
+    frame: Option<&ItemFrame>,
 ) -> String {
+    if let Some(frame) = frame {
+        let values = frame.clone_transform(placement.angle_deg, (placement.x_mm, placement.y_mm));
+        return values.iter().map(|value| number(*value)).collect::<Vec<_>>().join(" ");
+    }
     let angle = placement.angle_deg.to_radians();
     let (s, c) = angle.sin_cos();
     let (center_x, center_y) = footprint_center;
@@ -132,6 +138,12 @@ pub fn source_model_center(core: &[u8], center: (f64, f64, f64)) -> Result<(f64,
     ))
 }
 
+/// `source_item_transform` of a whole 3MF's core model, for callers building an `ItemFrame`.
+pub fn source_item_transform_of(core: &[u8]) -> Result<[f64; 12], String> {
+    let values = source_item_transform(core)?;
+    Ok(std::array::from_fn(|index| values[index]))
+}
+
 /// The source build item's z translation (transform value 11): the on-bed height the clones
 /// keep.
 pub(super) fn source_z_offset(core: &[u8]) -> Result<f64, String> {
@@ -148,6 +160,7 @@ pub(super) struct CoreRebuild<'a> {
     pub reuse_source_object_instances: bool,
     pub z_offset: f64,
     pub footprint_center: (f64, f64),
+    pub frame: Option<ItemFrame>,
 }
 
 impl CoreRebuild<'_> {
@@ -248,6 +261,7 @@ impl CoreRebuild<'_> {
                     &self.placements[index],
                     self.z_offset,
                     self.footprint_center,
+                    self.frame.as_ref(),
                 )
             })
             .collect();
@@ -282,13 +296,14 @@ fn build_item_event(
     placement: &PackedPlacement,
     z_offset: f64,
     footprint_center: (f64, f64),
+    frame: Option<&ItemFrame>,
 ) -> Event<'static> {
     let mut item = BytesStart::new("item");
     item.push_attribute(("objectid", object_id));
     item.push_attribute(("p:UUID", stable_uuid("build-item", index).as_str()));
     item.push_attribute((
         "transform",
-        item_transform(placement, z_offset, footprint_center).as_str(),
+        item_transform(placement, z_offset, footprint_center, frame).as_str(),
     ));
     item.push_attribute(("printable", "1"));
     Event::Empty(item)

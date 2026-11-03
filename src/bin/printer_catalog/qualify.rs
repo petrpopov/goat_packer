@@ -310,7 +310,11 @@ fn pack_with_workarounds(
             .arg("--output")
             .arg(&packed)
             .arg("--work-dir")
-            .arg(&packer_work);
+            .arg(&packer_work)
+            // The qualification wants the slicer's own verdict on a plate of the new profile:
+            // the packer verifies by slicing only on request. One class: the probe is a cube.
+            .arg("--verify")
+            .args(["--rotations", "0"]);
         match run_logged(&mut command, &dir.join("packer.log"), "packer") {
             Ok(()) => {
                 return Ok(PackedProbe {

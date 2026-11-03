@@ -18,7 +18,7 @@ object JobArtifacts {
     /** Отчёт пакера: пишется рядом с `--output` как `packed.verification.json` (with_extension). */
     const val PACKED_REPORT = "packed.verification.json"
 
-    /** Состояние упаковки без полной нарезки (`--no-final-slice`), как его пишет пакер. */
+    /** Состояние упаковки (пакер пишет его всегда; без `--verify` по нему идёт доводка), как его пишет пакер. */
     const val PACKED_STATE = "packed.state.json"
 
     /** Публичное имя состояния упаковки (`packed.state.json` пакера). */

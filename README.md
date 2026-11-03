@@ -42,6 +42,11 @@ configured in the printer profile for probing/final slicing.
 | `--profile` | — | printer profile JSON (`profiles/`) |
 | `--output` | — | packed 3MF to write |
 | `--work-dir` | `<output>.work` | scratch dir for slicer runs |
+| `--rotations` | `0,180` | rotation classes the layout may use, degrees about the object's centre; supports are probed per class |
+| `--cache-dir` | off | keeps the support probes between runs (key: meshes, paint, project settings, slicer binary, rotation); a hit runs no slicer |
+| `--verify` | off | slice the assembled plate and check it (support contacts, GUI rules, bed, tower); learns once and repacks, leftovers are fatal. A time window and `--finish-state` imply it |
+| `--finish-state` | — | verify the plate of a saved `<output>.state.json` without packing again |
+| `--no-final-slice` | — | accepted, does nothing (the default job slices no plate) |
 | `--clearance` | `0.7` | gap between objects, mm |
 | `--resolution` | `0.25` | raster cell size, mm |
 | `--angle-step` | `2.0` | rotation step, degrees |
@@ -56,23 +61,27 @@ configured in the printer profile for probing/final slicing.
 | `--change-seconds` | profile | real duration of one filament change, s (0–600); implies `--ams-correction` |
 | `--time-margin-pct` | `10` | safety margin on the corrected time, % (0–50) |
 | `--prep-min` | `0` | fixed per-plate preparation time (bed swap, loading), minutes |
-| `--no-centre` | off | with a time window: keep the corner layout and the source tower position instead of gathering objects and tower around the plate centre |
+| `--no-centre` | off | with a time window: keep the packing order instead of gathering objects around the plate centre |
 
-Writes `<output>.verification.json` with the object count and prime tower bounds, plus
-`supports_detected` (the probe patch reaches past the silhouette, orientation locked) and the
-echoed `support_overlap_mm`, the support check (`support_rule`, `support_patch_learned`,
-`support_collisions`), `tower_relocated_to` when the tower moved, and a `time` block (measured
-samples, chosen count, corrected seconds; with a window also `heat_zone`).
+The default job slices **no plate**. It slices one object per rotation class (3 to 8 times, until the
+printed supports stop growing), packs with the support geometry it measured plus a safety margin,
+and writes the 3MF, `<output>.state.json` and `<output>.verification.json`: the object count,
+`final_sliced: false`, `support_source: "probe"`, the probe runs per class and cache hits, the margins,
+the chosen packing member, per-class counts, the tower anchor and size, the canonical (first)
+copy of each class, plus `supports_detected`, the echoed `support_overlap_mm` and, after
+`--verify` or with a time window, `verification`, `support_collisions` and a `time` block (measured
+samples, chosen count, corrected seconds; with a window also `heat_zone`). A second run with the
+same `--cache-dir` makes no slicer call.
 
 ### Supports and the prime tower
 
-With supports detected, a neighbour's supports may reach under an object's silhouette but never
-onto what it prints on the bed (its first-layer body); silhouettes keep `--clearance` from each
-other, and supports may enter the tower area (bodies may not). After the final slice the packer
-checks every layer of the G-code for supports touching a foreign body; on contact it widens the
-reserved support patch to what the slicer really printed and repacks, then falls back to the
-strict rule (supports off foreign silhouettes). Without a time window the tower position is
-chosen among the source position and the four bed corners, whichever packs most objects.
+A neighbour's supports may touch an object's first-layer body (a support base may touch, never
+overlap, a neighbour's first layer) but keep 0.5 mm from its body above layer 0; silhouettes keep
+`--clearance` from each other. The packer picks the tower position inside the range the slicer GUI
+keeps for the project (it differs per slicer), and the copy of each rotation class with the most room
+around it is the first in the 3MF: the slicer prints one set of supports per class under the first
+copy's conditions. With `--verify` the packer slices the plate, checks every layer for supports
+touching a foreign body and the GUI rules, learns what it printed on a failure and repacks once.
 
 ### Time window
 
@@ -81,9 +90,8 @@ Corrected time = `(slicer estimate + changes × (real change − slicer's assume
 aims at the window along the line through the 1-object probe and the full plate, slices that
 prefix, and shrinks (along the line through the measured window plate and the full plate) while
 it is over; at most 4 extra slices. The kept objects are the ones closest to the plate centre
-(the smallest profile heat zone, A2L), and the prime tower moves there too (`wipe_tower_x/y`);
-`--no-centre` turns both off. The run fails if even one object exceeds the window, if the
-slicer ignored the tower move, or if the moved tower would land on a printer keep-out area.
+(the smallest profile heat zone, A2L); `--no-centre` turns that off. The tower is not moved to the
+centre. The run fails if even one object exceeds the window.
 
 Profiles with `blank_start_gcode_for_cli` (Snapmaker U1) slice with the start G-code blanked, so
 their estimates and the window time exclude the start sequence (homing, heating, purge); cover it
@@ -92,7 +100,7 @@ with `--prep-min`.
 An independent exact-geometry check on any output: `./target/release/verify_outputs <stl>
 <placements.json> <packed.3mf>` (minimum gap, edge margin, purge-line gap, keepouts, transforms,
 ZIP CRC). It measures gaps between the objects' mesh silhouettes, not `--support-overlap-mm`
-(printed supports): support overlap is verified only by the packer's own `validate_result`.
+(printed supports): support overlap is verified only by the packer's own checks.
 
 ## Nozzle clean
 

@@ -1,184 +1,164 @@
-//! From the source project to a first packed plate: probe, footprint, tower position, packing
-//! and the support sample.
+//! From the source project to a packed plate: modelling, packing and ordering.
 
 use goat_packer::{
-    PackResult, Rect,
-    colored_packer::PrimeTowerBounds,
-    extract_footprint,
-    plate_centre::{RelocatedTower, ensure_relocated_tower_clear, plate_centre, relocate_keepout},
-    progress::{self, Stage},
+    PackedPlacement, PrintPlacement,
+    pack::PackOutcome,
+    plate_centre::plate_centre,
+    progress::{self, LayoutSource, Stage},
 };
 
 use crate::AppResult;
+use crate::assembly::tower_rect;
 use crate::job::Job;
-use crate::plan::{PackPlan, PackState, SupportRule, support_edge_reserve_mm};
-use crate::probe::{footprint_from_probe, probe_source};
-use crate::source::model_center_on_bed;
-use crate::support_learning::sample_supports;
-use crate::tower::{choose_tower_position, keep_in_gui_range};
+use crate::model::model_plate;
+use crate::order::{BAMBU_OBSTACLE_MM, barriers, canonical_first, centre_out};
+use crate::plan::{MemberResult, PackPlan, PackState, PackSummary, STATE_VERSION};
+use crate::probe::time_probe;
+use goat_packer::support_model::flavour::Family;
 
-/// Probes the source, packs the plate and learns the supports from a sample slice.
+/// Models the plate (probes, tower), packs it and orders the copies.
 pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
-    let args = &job.args;
-    let profile = &job.profile;
-    let probe = probe_source(job)?;
-    let silhouette = extract_footprint(&job.footprint_stl)?;
-    let model_world_center = model_center_on_bed(&args.source_3mf, &job.footprint_stl);
-    let found = footprint_from_probe(job, &probe, &silhouette, model_world_center)?;
-    // Centre-out time-window plate (spec 2026-10-26-centre-out-zones-tower-design): the kept
-    // objects gather around the smallest heat zone's centre, and the tower moves there too so
-    // every colour change travels a short way. The tower's size does not depend on its
-    // position, so the probe keepout shifted by the same vector is the reservation — no
-    // re-probe; the first final slice verifies the slicer really moved it.
-    let centre = if args.time.centre_out() {
-        Some(plate_centre(&profile.heat_zones, profile.usable_bed()?))
+    // A single object that already overruns a time window fails before anything else costs time.
+    let probe_sample = match job.window_s {
+        Some(window_s) => Some(time_probe(job, window_s)?),
+        None => None,
+    };
+    let modelled = model_plate(job)?;
+    // Centre-out time-window plate: the kept objects gather around the smallest heat zone's
+    // centre (any prefix of a valid layout is valid, so the order is all it takes).
+    let centre = if job.args.time.centre_out() {
+        Some(plate_centre(&job.profile.heat_zones, job.profile.usable_bed()?))
     } else {
         None
     };
-    let fixed_keepouts = profile.fixed_keepouts(found.purge_tip_overshoot)?;
-    let centre_relocation = relocate_to_centre(job, centre, probe.tower, &fixed_keepouts)?;
-    let mut footprint = found.footprint;
-    // Bed bounds and the prime-tower keepout follow the patch UNION the whole-model
-    // silhouette: the slicer's bed-collision warning measures the full model extent, which
-    // hangs below the printed patch on a lying animal (its tail), silently eating the edge
-    // margin — the manual 3.5/4.0 mm gap complaint. Every branch of `footprint_from_probe`
-    // has already set bed_loops to that union: with rotations allowed the patch carries the
-    // measured tip overshoot (~2 mm of Arachne miter past the silhouette at thin tips), and a
-    // layout whose silhouette clears the bed edge can still print outside it — BambuStudio
-    // then refuses the whole final slice with "too close to exclusion area" / "no object fully
-    // inside it" (a real 17-object P1S goat plate died at mesh x=0.06 and x=255.7 on a 256 mm
-    // bed this way).
-    if footprint.bed_loops.is_none() {
-        footprint.bed_loops = Some(footprint.loops.clone());
-    }
-    let lock_orientation = found.lock_orientation;
-    let mut plan = PackPlan {
-        footprint,
-        lock_orientation,
-        fixed_keepouts,
-        tower_keepout: centre_relocation
-            .map(|relocated| relocated.keepout)
-            .or(probe.tower.map(|tower| tower.keepout)),
-        relocation: centre_relocation,
-        rule: if lock_orientation {
-            SupportRule::Landing
-        } else {
-            SupportRule::Silhouette
+    let mut state = PackState {
+        version: STATE_VERSION,
+        plan: modelled.plan,
+        placements: Vec::new(),
+        tower_anchor: None,
+        centre,
+        probe_seconds: modelled.probe_seconds,
+        probe_sample,
+        summary: PackSummary {
+            probes: modelled.summaries,
+            ..PackSummary::default()
         },
-        patch_learned: false,
-        mesh_silhouette: if lock_orientation {
-            silhouette.loops.clone()
-        } else {
-            Vec::new()
-        },
-        support_edge_reserve_mm: support_edge_reserve_mm(profile),
     };
+    arrange(job, &mut state)?;
+    Ok(state)
+}
+
+/// Packs the plan, orders the copies (centre-out on window plates, then the canonical copy of
+/// each class first) and records the outcome in `state`.
+pub fn arrange(job: &Job, state: &mut PackState) -> AppResult<()> {
+    let args = &job.args;
     progress::stage(
         Stage::Packing,
-        &format!(
-            "packing ({} attempts, seed {})...",
-            args.attempts, args.seed
-        ),
+        &format!("packing ({} attempts, seed {})...", args.attempts, args.seed),
         None,
         None,
     );
-    let (mut packed, mut tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
-    if sample_learned(job, &mut plan, &packed)? {
-        (packed, tower_from_contest) = first_pack(job, &mut plan, centre, probe.tower)?;
+    let outcome = state.plan.pack(args)?;
+    log_outcome(&outcome);
+    let mut placements = outcome.placements.clone();
+    if let Some(centre) = state.centre {
+        centre_out(&state.plan.prints, &mut placements, centre);
     }
-    Ok(PackState {
-        plan,
-        packed,
-        probe_tower: probe.tower,
-        probe_seconds: probe.seconds,
-        tower_from_contest,
-        centre,
-        probe_sample: probe.sample,
-    })
-}
-
-/// Where the tower goes on a centre-out plate: next to the objects, inside the range the
-/// slicer GUI keeps, clear of the fixed keepouts. `None` without a centre or a tower.
-fn relocate_to_centre(
-    job: &Job,
-    centre: Option<(f64, f64)>,
-    probe_tower: Option<PrimeTowerBounds>,
-    fixed_keepouts: &[Rect],
-) -> AppResult<Option<RelocatedTower>> {
-    let usable_bed = job.profile.usable_bed()?;
-    match (centre, probe_tower) {
-        (Some(centre), Some(tower)) => {
-            let moved = keep_in_gui_range(
-                relocate_keepout(tower.keepout, centre, usable_bed),
-                job.gui_tower
-                    .map(|range| range.keepout_min_range(tower.keepout)),
-            );
-            // The clamp only knows the bed; a centre near an exclusion corner or purge line
-            // would put the printed tower on it.
-            ensure_relocated_tower_clear(moved.keepout, fixed_keepouts)?;
-            println!(
-                "centre-out plate around ({:.1}, {:.1}): prime tower moves by ({:+.1}, {:+.1}) mm; \
-                 keepout {:.2},{:.2} → {:.2},{:.2}",
-                centre.0,
-                centre.1,
-                moved.shift.0,
-                moved.shift.1,
-                moved.keepout.min_x,
-                moved.keepout.min_y,
-                moved.keepout.max_x,
-                moved.keepout.max_y
-            );
-            Ok(Some(moved))
-        }
-        (Some(centre), None) => {
-            println!(
-                "centre-out plate around ({:.1}, {:.1}); no tower to relocate",
-                centre.0, centre.1
-            );
-            Ok(None)
-        }
-        (None, _) => Ok(None),
-    }
-}
-
-/// The first layout. Without centre-out the tower may move: the source position competes with
-/// the bed corners and the densest plate wins (spec 2026-10-31 rule 3). Also tells whether the
-/// tower came from that contest.
-fn first_pack(
-    job: &Job,
-    plan: &mut PackPlan,
-    centre: Option<(f64, f64)>,
-    probe_tower: Option<PrimeTowerBounds>,
-) -> AppResult<(PackResult, bool)> {
-    let (None, Some(tower)) = (centre, probe_tower) else {
-        return Ok((plan.pack(job)?, false));
+    let zones = state.plan.zones(outcome.tower_anchor)?;
+    let near_edge_mm = match job.flavour.flavour.family() {
+        Family::Bambu => BAMBU_OBSTACLE_MM,
+        Family::Orca | Family::SnapmakerOrca => 0.0,
     };
-    let (relocation, packed) = choose_tower_position(
-        job,
-        plan,
-        tower.keepout,
-        job.gui_tower
-            .map(|range| range.keepout_min_range(tower.keepout)),
-    )?;
-    plan.tower_keepout = Some(relocation.map_or(tower.keepout, |relocated| relocated.keepout));
-    plan.relocation = relocation;
-    Ok((packed, relocation.is_some()))
+    state.summary.canonical =
+        canonical_first(&state.plan.prints, &barriers(&zones), near_edge_mm, &mut placements);
+    state.summary.member = format!("{:?}", outcome.member);
+    state.summary.member_counts = outcome
+        .member_counts
+        .iter()
+        .map(|result| MemberResult {
+            member: format!("{:?}", result.member),
+            count: result.count,
+        })
+        .collect();
+    state.placements = placements;
+    state.tower_anchor = outcome.tower_anchor;
+    Ok(())
 }
 
-/// The one-object probe comes from the source project; the slicer builds the supports of the
-/// assembled plate a little differently (up to 0.4 mm wider bases, interfaces past the ears).
-/// A few objects of the first layout, sliced as an assembled plate, print exactly what every
-/// object of the full plate will (identical within 0.1 mm, sample vs plate within 0.5 mm); the
-/// plate is packed again against those supports, height band by band — the tower contest
-/// included: on a U1 job the bottom-left corner won the contest before the sample (48) and
-/// packed 47 after it; the contest runs again on the learned supports. `true` when the
-/// supports were learned.
-fn sample_learned(job: &Job, plan: &mut PackPlan, packed: &PackResult) -> AppResult<bool> {
-    if !(plan.lock_orientation && job.args.sample_objects > 0 && packed.placements.len() > 1) {
-        return Ok(false);
+fn log_outcome(outcome: &PackOutcome) {
+    let counts: Vec<String> = outcome
+        .member_counts
+        .iter()
+        .map(|result| format!("{:?} {}", result.member, result.count))
+        .collect();
+    eprintln!(
+        "packed {} objects with {:?} ({}); tower anchor {:?}",
+        outcome.placements.len(),
+        outcome.member,
+        counts.join(", "),
+        outcome.tower_anchor.map(|anchor| (anchor.x, anchor.y)),
+    );
+}
+
+/// Tells the webapp which layout is being built: the first class's silhouette and first-layer
+/// support once, and every copy as the placement it is (class rotation about its origin).
+pub fn show_layout(state: &PackState, source: LayoutSource) {
+    let plan: &PackPlan = &state.plan;
+    let outline = plan.prints.first().map(|print| {
+        print.silhouette.iter().chain(&print.support_base).cloned().collect::<Vec<_>>()
+    });
+    let placements: Vec<PackedPlacement> = state
+        .placements
+        .iter()
+        .map(|placement: &PrintPlacement| PackedPlacement {
+            x_mm: placement.x_mm,
+            y_mm: placement.y_mm,
+            angle_deg: plan.prints[placement.print].rotation_deg,
+        })
+        .collect();
+    progress::layout(
+        source,
+        &outline.unwrap_or_default(),
+        &placements,
+        plan.rules.printable_area,
+        &[],
+        tower_rect(plan, state.tower_anchor),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{test_job, test_plan, test_state};
+
+    #[test]
+    fn arranging_records_the_layout_the_canonical_copies_and_the_members() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let mut state = test_state(test_plan(&job, 2));
+        arrange(&job, &mut state).unwrap();
+        assert!(state.placements.len() >= 25);
+        assert!(!state.summary.member.is_empty() && !state.summary.member_counts.is_empty());
+        // One canonical copy per class in use, and it stands first among its class.
+        for canonical in &state.summary.canonical {
+            let class = state.placements[canonical.index].print;
+            assert_eq!(state.plan.prints[class].rotation_deg, canonical.rotation_deg);
+            assert!(state.placements[..canonical.index].iter().all(|p| p.print != class));
+        }
+        assert_eq!(state.tower_anchor, None);
     }
-    // A failed measurement is not evidence of safe supports. Do not publish a degraded
-    // layout as success, particularly when no full-plate slice will follow.
-    sample_supports(job, plan, packed)?;
-    Ok(true)
+
+    #[test]
+    fn a_window_plate_is_ordered_from_the_centre_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = test_job(dir.path());
+        let mut state = test_state(test_plan(&job, 1));
+        state.centre = Some((30.0, 30.0));
+        arrange(&job, &mut state).unwrap();
+        let distance = |p: &PrintPlacement| (p.x_mm - 30.0).hypot(p.y_mm - 30.0);
+        // The first copy of the class is the canonical one and may be swapped in; the rest
+        // follow the centre-out order.
+        let rest: Vec<f64> = state.placements[1..].iter().map(distance).collect();
+        assert!(rest.windows(2).all(|pair| pair[0] <= pair[1] + 1e-9), "{rest:?}");
+    }
 }

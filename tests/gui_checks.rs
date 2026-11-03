@@ -7,9 +7,9 @@ use goat_packer::gcode_collisions::gui_checks::{
     GUI_BED_EPSILON_MM, GuiRules, PartEdgeIssue, Party, check_plate, part_edge_hits,
     placed_part_boxes,
 };
-use goat_packer::gcode_collisions::{ConflictKind, analyze_plate, layer_zones_from_sample};
+use goat_packer::gcode_collisions::{ConflictKind, analyze_plate};
 use goat_packer::{
-    Footprint, ObjectPrint, PackedPlacement, Point, Rect, realization_from_gcode,
+    ObjectPrint, Point, Rect, realization_from_gcode,
     realizations_from_gcode,
 };
 
@@ -25,18 +25,6 @@ fn rules(exclusions: Vec<Vec<Point>>) -> GuiRules {
         printable: BED,
         exclusions,
     }
-}
-
-fn square_ring(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<Point> {
-    [
-        (min_x, min_y),
-        (max_x, min_y),
-        (max_x, max_y),
-        (min_x, max_y),
-    ]
-    .into_iter()
-    .map(|(x, y)| Point { x, y })
-    .collect()
 }
 
 /// A closed square walked with G1 moves, `E` 1 per move.
@@ -95,37 +83,6 @@ fn bambu_single_object_without_start_labels_is_one_object() {
     let first = &analysis.first_layer[0];
     assert!(first.strips.iter().any(|strip| strip.support));
     assert!(first.strips.iter().any(|strip| !strip.support));
-}
-
-/// The P1S/A2L probe failed with "incomplete or ambiguous sample object coverage" because the
-/// unlabelled single object was never attributed: the probe must now learn its bands.
-#[test]
-fn bambu_single_object_probe_learns_its_height_bands() {
-    let plate = bambu_single_plate();
-    let footprint = Footprint {
-        loops: vec![square_ring(-5.0, -5.0, 5.0, 5.0)],
-        body_loops: Vec::new(),
-        support_landing_loops: Vec::new(),
-        bed_loops: None,
-        layer_zones: Vec::new(),
-        width: 10.0,
-        height: 10.0,
-        min_z: 0.0,
-        max_z: 0.0,
-        triangle_count: 0,
-    };
-    let placement = PackedPlacement {
-        x_mm: 100.0,
-        y_mm: 100.0,
-        angle_deg: 0.0,
-    };
-    let (zones, analysis) =
-        layer_zones_from_sample(&[plate.as_bytes()], &footprint, &[placement]).unwrap();
-    assert_eq!(analysis.extents.len(), 1);
-    // z 2.4 is band 1; band 0 keeps its index (first-layer lines are band 0 too).
-    assert_eq!(zones.len(), 2);
-    assert!(!zones[1].support_loops.is_empty());
-    assert!(!zones[1].body_loops.is_empty());
 }
 
 #[test]
@@ -403,7 +360,8 @@ fn the_snapmaker_band_uses_part_boxes_and_equality_passes() {
 }
 
 /// A single object (BambuStudio `; OBJECT_ID:`) with a first-layer support foot, a support at
-/// z 2.4 (band 1) and an interface at z 4.2 (band 2), placed at (100, 100).
+/// layer topped at z 2.4 (bands 0-1) and an interface layer topped at z 4.2 (bands 1-2), placed
+/// at (100, 100).
 fn supported_plate() -> String {
     "; CHANGE_LAYER\n; Z_HEIGHT: 0.2\n; OBJECT_ID: 9\n; FEATURE: Outer wall\n; LINE_WIDTH: 0.4\n\
      G1 X95 Y95\nG1 X105 Y95 E1\n; FEATURE: Support\nG1 X110 Y90\nG1 X110 Y110 E1\n\
@@ -427,11 +385,19 @@ fn realization_from_gcode_reads_base_bands_and_interfaces_in_the_object_frame() 
         near(base.min_y, -10.0) && near(base.max_y, 10.0),
         "{base:?}"
     );
+    // The band rule (design §4.1): a layer occupying (z_bottom, z] feeds every band it meets.
+    // Layer 2 here spans (0.2, 2.4], layer 3 spans (2.4, 4.2], so bands 0-1 and 1-2.
     assert_eq!(realization.support.len(), 3);
+    assert_eq!(realization.above_base.len(), 3);
     assert_eq!(realization.interface.len(), 3);
-    assert!(realization.support[0].is_empty());
-    assert!(!realization.support[1].is_empty() && realization.interface[1].is_empty());
-    assert!(!realization.support[2].is_empty() && !realization.interface[2].is_empty());
+    // Band 0 holds the base foot (layer 0 is in band 0 too) and layer 2's strip; the support
+    // above the base leaves the foot out.
+    let band_0 = Rect::of_points(realization.support[0].iter().flatten());
+    assert!(near(band_0.min_x, 7.8) && near(band_0.max_x, 10.2), "{band_0:?}");
+    let above = Rect::of_points(realization.above_base[0].iter().flatten());
+    assert!(near(above.min_x, 7.8) && near(above.max_x, 8.2), "{above:?}");
+    assert!(realization.interface[0].is_empty());
+    assert!(!realization.interface[1].is_empty() && !realization.interface[2].is_empty());
     let band_2 = Rect::of_points(realization.interface[2].iter().flatten());
     assert!(
         near(band_2.min_x, 5.8) && near(band_2.max_y, 4.0),

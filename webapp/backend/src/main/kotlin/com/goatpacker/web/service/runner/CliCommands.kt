@@ -35,7 +35,8 @@ object CliCommands {
         params.timeMarginPct?.let { addOption("--time-margin-pct", it) }
         // Пусто = без ограничений (поведение до флага), поэтому передаём только заданное.
         params.supportOverlapMm?.let { addOption("--support-overlap-mm", it) }
-        if (!params.finalSlice) add("--no-final-slice")
+        // Пакер по умолчанию стол не режет; --verify — нарезка и проверки (доводка по состоянию тоже).
+        if (params.finalSlice) add("--verify")
         params.finishState?.let { addOption("--finish-state", it.toString()) }
     }
 

@@ -142,6 +142,8 @@ fn gaps_resolve_to_the_job_clearance_and_the_support_gap() {
     assert_eq!(Clearance.mm(0.7), 0.7);
     assert_eq!(Support.mm(0.7), SUPPORT_BODY_GAP_MM);
     assert_eq!(SUPPORT_BODY_GAP_MM, 0.5);
+    // A support base may touch a neighbour's landing (printed-OK plates).
+    assert_eq!(Gap::SupportBase.mm(0.7), 0.0);
 }
 
 /// §7.3: forbidden pairs with their gap, both directions.
@@ -149,7 +151,7 @@ fn gaps_resolve_to_the_job_clearance_and_the_support_gap() {
 fn pair_table_forbids_exactly_the_listed_pairs() {
     let forbidden_pairs = [
         (Silhouette, Silhouette, Clearance),
-        (SupportBase, Landing, Support),
+        (SupportBase, Landing, Gap::SupportBase),
         (SupportBand, BodyBand, Support),
         (InterfaceBand, BodyBand, Support),
     ];

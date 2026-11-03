@@ -7,14 +7,16 @@ use std::{
 };
 
 use goat_packer::{
-    assemble::source_model_center,
     colored_packer::{PrinterProfile, detect_slicer_kind_from_printer_model},
-    embedded_mesh::{embedded_mesh_triangles, stl_center_3d, write_binary_stl},
+    embedded_mesh::{embedded_mesh_triangles, write_binary_stl},
     orca_project,
 };
 use zip::ZipArchive;
 
 use crate::AppResult;
+
+const CORE_MODEL_ENTRY: &str = "3D/3dmodel.model";
+const APPLICATION_TAG: &str = "<metadata name=\"Application\">";
 
 /// `Metadata/project_settings.config` of the source project.
 pub fn source_project_settings(source: &Path) -> AppResult<serde_json::Value> {
@@ -73,41 +75,39 @@ pub fn paint_attribute_count(source: &Path) -> AppResult<usize> {
     Ok(String::from_utf8_lossy(&mesh).matches("paint_color").count())
 }
 
-/// Writes the collision STL: the 3MF's own embedded mesh with the component's transform baked
-/// in (see the call site in `run` for why a separately exported STL cannot be trusted).
+/// Writes the collision STL `verify_outputs` reads as its second opinion: the 3MF's own
+/// embedded mesh with the component's transform baked in. The packer itself collides against
+/// `Job::mesh`, which comes from the same file.
 pub fn derive_embedded_stl(source_3mf: &Path, output_stl: &Path) -> AppResult<()> {
-    let triangles = embedded_mesh_triangles(source_3mf).map_err(|error| {
-        format!("failed to derive collision STL from embedded mesh: {error}")
-    })?;
-    // The Python exporter refused to write an STL with no triangles; keep that loud failure.
+    let triangles = embedded_mesh_triangles(source_3mf)
+        .map_err(|error| format!("failed to derive the embedded STL: {error}"))?;
     if triangles.is_empty() {
-        return Err(
-            "failed to derive collision STL from embedded mesh: embedded mesh has no triangles"
-                .into(),
-        );
+        return Err("failed to derive the embedded STL: the embedded mesh has no triangles".into());
     }
-    write_binary_stl(output_stl, &triangles).map_err(|error| {
-        format!("failed to derive collision STL from embedded mesh: {error}")
-    })?;
+    write_binary_stl(output_stl, &triangles)
+        .map_err(|error| format!("failed to derive the embedded STL: {error}"))?;
     Ok(())
 }
 
-/// The source model's bbox center in bed coordinates: the baked STL's center transformed by
-/// the source 3MF's build item. Falls back to None (patch centers itself) when the archive
-/// cannot be read — the probe slice still packs, just with the strip-center caveat.
-pub fn model_center_on_bed(source_3mf: &Path, baked_stl: &Path) -> Option<(f64, f64)> {
-    let (cx, cy, cz) = stl_center_3d(baked_stl).ok()?;
-    let core = read_core_entry(source_3mf).ok()?;
-    source_model_center(&core, (cx, cy, cz)).ok()
+/// One entry of the source archive, byte for byte.
+pub fn source_entry(source: &Path, name: &str) -> AppResult<Vec<u8>> {
+    let mut archive = ZipArchive::new(fs::File::open(source)?)?;
+    let mut bytes = Vec::new();
+    archive
+        .by_name(name)
+        .map_err(|error| format!("{} has no {name}: {error}", source.display()))?
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
-fn read_core_entry(source_3mf: &Path) -> AppResult<Vec<u8>> {
-    let file = fs::File::open(source_3mf)?;
-    let mut archive = ZipArchive::new(file)?;
-    let mut entry = archive.by_name("3D/3dmodel.model")?;
-    let mut bytes = Vec::new();
-    entry.read_to_end(&mut bytes)?;
-    Ok(bytes)
+/// The `Application` metadata of the source's core model (the GUI that saved the project).
+pub fn source_application(source: &Path) -> Option<String> {
+    let model = source_entry(source, CORE_MODEL_ENTRY).ok()?;
+    let text = String::from_utf8_lossy(&model);
+    let start = text.find(APPLICATION_TAG)? + APPLICATION_TAG.len();
+    let end = text[start..].find("</metadata>")? + start;
+    let value = quick_xml::escape::unescape(text[start..end].trim()).ok()?;
+    (!value.is_empty()).then(|| value.into_owned())
 }
 
 #[cfg(test)]

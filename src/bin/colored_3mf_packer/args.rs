@@ -8,9 +8,9 @@ use goat_packer::{
 
 use crate::AppResult;
 
-/// Default `--sample-objects`: the centre object and its two nearest neighbours.
-pub const SAMPLE_OBJECTS: usize = 3;
-
+/// Default `--rotations`: every goat prints one realization per rotation class, and the
+/// half-turn class lets neighbours interlock (design §14 Q13).
+const DEFAULT_ROTATIONS: &str = "0,180";
 const DEFAULT_CLEARANCE_MM: f64 = 0.7;
 const DEFAULT_RESOLUTION_MM: f64 = 0.25;
 const DEFAULT_ANGLE_STEP_DEG: f64 = 2.0;
@@ -42,21 +42,20 @@ pub struct Args {
     /// Overrides the profile's edge margin (Snapmaker Orca's spiral lifting warns unless the
     /// gap is strictly above 3.5 mm, which a 3.5 margin hits exactly).
     pub edge_margin: Option<f64>,
-    /// `search` runs the full deterministic packing; `grid` places the deterministic grid only
-    /// and skips the search — faster, perfectly uniform, a bit sparser.
-    pub layout: LayoutMode,
     pub nozzle_clean: Option<NozzleCleanSpec>,
     pub time: TimeOptions,
+    /// `--rotations`: the rotation classes (degrees about the frame centre, in `[0, 360)`) the
+    /// layout may use; the first is class 0. Supports are predicted per class.
+    pub rotations: Vec<f64>,
+    /// `--cache-dir`: where the per-class support probes are kept between runs.
+    pub cache_dir: Option<PathBuf>,
+    /// `--verify` (or a time window, or `--finish-state`): slice the assembled plate and run
+    /// the GUI, support and plate checks; a failure is learned once and repacked.
+    pub verify: bool,
     /// `--support-overlap-mm`: how far the supports of different objects may overlap
     /// (`PackOptions::support_overlap_mm`); `None` = unlimited, the plain two-zone rule.
     pub support_overlap_mm: Option<f64>,
-    /// `--sample-objects`: how many objects of the first layout are sliced as the support
-    /// sample (`Footprint::layer_zones`); 0 = no sample, the probe's zones only.
-    pub sample_objects: usize,
-    /// `--no-final-slice` clears it: write the packed 3MF and `<output>.state.json` without
-    /// slicing the whole plate; a time window needs the slices and keeps it on.
-    pub final_slice: bool,
-    /// `--finish-state PATH`: skip probing and packing, slice and check the plate of a state.
+    /// `--finish-state PATH`: skip modelling and packing, verify the plate of a saved state.
     pub finish_state: Option<PathBuf>,
 }
 
@@ -112,12 +111,6 @@ impl TimeOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LayoutMode {
-    Search,
-    Grid,
-}
-
 pub fn parse_args() -> AppResult<Args> {
     parse_args_from(std::env::args().skip(1))
 }
@@ -142,6 +135,26 @@ fn parse_time_value(
     Ok(parsed)
 }
 
+/// `0,180` as degrees in `[0, 360)`: finite, distinct, at least one.
+fn parse_rotations(text: &str) -> AppResult<Vec<f64>> {
+    let mut rotations: Vec<f64> = Vec::new();
+    for part in text.split(',') {
+        let degrees: f64 = part
+            .trim()
+            .parse()
+            .map_err(|error| format!("invalid rotation {part:?} in --rotations: {error}"))?;
+        if !degrees.is_finite() {
+            return Err(format!("--rotations must be finite; got {part:?}").into());
+        }
+        let degrees = degrees.rem_euclid(360.0);
+        if rotations.contains(&degrees) {
+            return Err(format!("--rotations lists {degrees} twice").into());
+        }
+        rotations.push(degrees);
+    }
+    Ok(rotations)
+}
+
 pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args> {
     let mut source_3mf = None;
     let mut profile_path = None;
@@ -155,13 +168,13 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut stall = None;
     let mut max_objects = 0usize;
     let mut edge_margin: Option<f64> = None;
-    let mut layout = LayoutMode::Search;
+    let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
+    let mut cache_dir = None;
+    let mut verify = false;
     let mut seed = DEFAULT_SEED;
     let mut nozzle_clean = None;
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
-    let mut sample_objects = SAMPLE_OBJECTS;
-    let mut final_slice = true;
     let mut finish_state = None;
     while let Some(option) = args.next() {
         // The valueless switches; every other option consumes the next argument.
@@ -173,8 +186,13 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             time.no_centre = true;
             continue;
         }
+        if option == "--verify" {
+            verify = true;
+            continue;
+        }
+        // The default job no longer slices the plate, so the old switch has nothing to turn
+        // off; the webapp and old scripts may still pass it.
         if option == "--no-final-slice" {
-            final_slice = false;
             continue;
         }
         let value = args
@@ -193,13 +211,13 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--stall" => stall = Some(value.parse()?),
             "--max-objects" => max_objects = value.parse()?,
             "--edge-margin" => edge_margin = Some(value.parse()?),
-            "--layout" => {
-                layout = match value.as_str() {
-                    "search" => LayoutMode::Search,
-                    "grid" => LayoutMode::Grid,
-                    other => return Err(format!("unknown layout mode: {other}").into()),
-                };
-            }
+            // Compatibility: the portfolio always runs every member.
+            "--layout" => match value.as_str() {
+                "search" | "grid" => {}
+                other => return Err(format!("unknown layout mode: {other}").into()),
+            },
+            "--rotations" => rotations = parse_rotations(&value)?,
+            "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
             "--seed" => seed = value.parse()?,
             "--nozzle-clean" => {
                 nozzle_clean = Some(NozzleCleanSpec::parse(&value)?);
@@ -219,7 +237,6 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--prep-min" => {
                 time.prep_min = parse_time_value(&option, &value, 0.0, f64::INFINITY, false)?;
             }
-            "--sample-objects" => sample_objects = value.parse()?,
             "--finish-state" => finish_state = Some(PathBuf::from(value)),
             "--support-overlap-mm" => {
                 support_overlap_mm =
@@ -247,12 +264,12 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         max_objects,
         seed,
         edge_margin,
-        layout,
         nozzle_clean,
         time,
+        rotations,
+        cache_dir,
+        verify,
         support_overlap_mm,
-        sample_objects,
-        final_slice,
         finish_state,
     })
 }
@@ -315,18 +332,28 @@ mod tests {
     }
 
     #[test]
-    fn final_slice_and_sample_flags_parse() {
+    fn verify_rotations_and_cache_flags_parse() {
         let defaults = parse(&REQUIRED).unwrap();
-        assert!(defaults.final_slice);
+        assert!(!defaults.verify);
         assert_eq!(defaults.finish_state, None);
-        assert_eq!(defaults.sample_objects, SAMPLE_OBJECTS);
-        assert!(!parse_with(&["--no-final-slice"]).unwrap().final_slice);
+        assert_eq!(defaults.rotations, vec![0.0, 180.0]);
+        assert_eq!(defaults.cache_dir, None);
+        assert!(parse_with(&["--verify"]).unwrap().verify);
+        // The old switch is accepted and changes nothing.
+        assert!(!parse_with(&["--no-final-slice"]).unwrap().verify);
         assert_eq!(
             parse_with(&["--finish-state", "out.state.json"]).unwrap().finish_state,
             Some(PathBuf::from("out.state.json"))
         );
-        assert_eq!(parse_with(&["--sample-objects", "0"]).unwrap().sample_objects, 0);
-        assert!(parse_with(&["--sample-objects", "x"]).is_err());
+        assert_eq!(parse_with(&["--rotations", "0, 90,-90"]).unwrap().rotations, vec![0.0, 90.0, 270.0]);
+        assert_eq!(
+            parse_with(&["--cache-dir", "c"]).unwrap().cache_dir,
+            Some(PathBuf::from("c"))
+        );
+        for bad in ["", "0,0", "0,360", "x", "NaN"] {
+            assert!(parse_with(&["--rotations", bad]).is_err(), "{bad:?}");
+        }
+        assert!(parse_with(&["--sample-objects", "3"]).is_err());
     }
 
     #[test]

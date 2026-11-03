@@ -275,7 +275,7 @@ class PackJobFlowTest(
             .andReturn()
         val packId = json.readTree(create.response.contentAsString)["jobId"].asText()
         val packed = mockMvc.awaitJobCompletion(packId)
-        assertTrue("--no-final-slice" in packerArgs(packId))
+        assertTrue("--verify" !in packerArgs(packId))
         assertEquals(false, packed["pack"]["finalSliced"].asBoolean())
         assertTrue(packed["artifacts"].any { it["name"].asText() == "pack_state.json" }, packed["artifacts"].toString())
 
@@ -300,7 +300,7 @@ class PackJobFlowTest(
         assertTrue(check["artifacts"].all { it["downloadUrl"].asText().startsWith("/api/jobs/$packId/check/artifacts/") }, check.toString())
         val args = packerArgs(checkId)
         assertEquals("finish.state.json", args[args.indexOf("--finish-state") + 1])
-        assertTrue("--no-final-slice" !in args, args.toString())
+        assertTrue("--verify" in args, args.toString())
         // Артефакт проверки скачивается по id упаковки; внутренняя задача по своему id не видна.
         mockMvc.perform(get(check["artifacts"][0]["downloadUrl"].asText())).andExpect(status().isOk)
         mockMvc.perform(get("/api/jobs/$checkId")).andExpect(status().isNotFound)

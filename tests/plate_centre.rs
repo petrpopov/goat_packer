@@ -4,10 +4,8 @@ use goat_packer::{
     Point, Rect,
     colored_packer::PrinterProfile,
     plate_centre::{
-        HeatZone, centre_out_order, ensure_relocated_tower_clear, loops_bounds, plate_centre,
-        relocate_keepout,
-        relocate_wipe_tower_in_3mf, shift_wipe_tower_settings, smallest_containing_zone,
-        tower_corner_error_mm, free_tower_spot,
+        HeatZone, centre_out_order, loops_bounds, plate_centre, relocate_wipe_tower_in_3mf,
+        shift_wipe_tower_settings, smallest_containing_zone,
     },
 };
 use serde_json::json;
@@ -75,46 +73,6 @@ fn centre_comes_from_the_smallest_zone_regardless_of_profile_order() {
 }
 
 // ---- keepout shift + clamp -----------------------------------------------------------------
-
-#[test]
-fn keepout_moves_its_centre_onto_the_target() {
-    let bed = Rect::new(0.0, 0.0, 330.0, 320.0);
-    let probe = Rect::new(280.0, 260.0, 320.0, 310.0); // centre (300, 285)
-    let moved = relocate_keepout(probe, (165.0, 160.0), bed);
-    assert_rect(moved.keepout, [145.0, 135.0, 185.0, 185.0]);
-    assert_close(moved.shift.0, -135.0);
-    assert_close(moved.shift.1, -125.0);
-}
-
-#[test]
-fn clamp_shrinks_the_shift_never_the_keepout() {
-    let bed = Rect::new(0.0, 0.0, 330.0, 320.0);
-    let probe = Rect::new(100.0, 100.0, 140.0, 150.0); // 40 x 50
-    // Target near the top-right corner: the keepout would overhang by 20 mm in x and 15 in y.
-    let moved = relocate_keepout(probe, (330.0, 310.0), bed);
-    assert_rect(moved.keepout, [290.0, 270.0, 330.0, 320.0]);
-    assert_close(moved.shift.0, 190.0);
-    assert_close(moved.shift.1, 170.0);
-    // And towards the origin.
-    let moved = relocate_keepout(probe, (5.0, 5.0), bed);
-    assert_rect(moved.keepout, [0.0, 0.0, 40.0, 50.0]);
-    assert_close(moved.shift.0, -100.0);
-    assert_close(moved.shift.1, -100.0);
-}
-
-#[test]
-fn relocated_tower_must_not_overlap_a_fixed_keepout() {
-    let tower = Rect::new(145.0, 135.0, 185.0, 185.0);
-    // Exclusion corner and a purge strip elsewhere: clear. Edge contact is not an overlap.
-    let clear = [Rect::new(0.0, 0.0, 20.0, 20.0), Rect::new(185.0, 0.0, 300.0, 5.0)];
-    assert!(ensure_relocated_tower_clear(tower, &clear).is_ok());
-    let blocked = [Rect::new(0.0, 0.0, 20.0, 20.0), Rect::new(180.0, 100.0, 200.0, 140.0)];
-    let error = ensure_relocated_tower_clear(tower, &blocked).unwrap_err();
-    assert_eq!(
-        error,
-        "relocated wipe tower would overlap a printer keep-out area; rerun with --no-centre"
-    );
-}
 
 // ---- settings patch ------------------------------------------------------------------------
 
@@ -226,82 +184,5 @@ fn smallest_zone_does_not_depend_on_profile_order() {
 
 // ---- tower verification --------------------------------------------------------------------
 
-#[test]
-fn tower_corner_error_is_the_min_corner_distance() {
-    let target = Rect::new(145.0, 135.0, 185.0, 185.0);
-    assert_close(tower_corner_error_mm(target, target), 0.0);
-    let measured = Rect::new(148.0, 139.0, 188.0, 189.0); // corner moved by (3, 4)
-    assert_close(tower_corner_error_mm(measured, target), 5.0);
-}
-
-#[test]
-fn tower_corner_error_ignores_one_sided_growth() {
-    // wipe_tower_x/y anchors the min corner; a full plate's tower grows away from it (here 30 mm
-    // in y). The centre moves 15 mm, the anchor does not move at all.
-    let target = Rect::new(145.0, 135.0, 185.0, 185.0);
-    let grown = Rect::new(145.0, 135.0, 185.0, 215.0);
-    assert_close(tower_corner_error_mm(grown, target), 0.0);
-}
-
 // ---- free tower spot -----------------------------------------------------------------------
 
-fn square(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<Vec<Point>> {
-    vec![vec![
-        Point { x: min_x, y: min_y },
-        Point { x: max_x, y: min_y },
-        Point { x: max_x, y: max_y },
-        Point { x: min_x, y: max_y },
-        Point { x: min_x, y: min_y },
-    ]]
-}
-
-fn grown(rect: Rect, margin: f64) -> Rect {
-    Rect::new(rect.min_x - margin, rect.min_y - margin, rect.max_x + margin, rect.max_y + margin)
-}
-
-#[test]
-fn free_tower_spot_moves_the_tower_off_a_patch_to_the_nearest_free_place() {
-    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
-    let current = Rect::new(60.0, 60.0, 80.0, 80.0);
-    let objects = vec![square(10.0, 10.0, 70.0, 70.0)];
-    let spot = free_tower_spot(current, (20.0, 20.0), area, &objects, &[], 1.0).unwrap();
-
-    assert_close(spot.max_x - spot.min_x, 20.0);
-    assert_close(spot.max_y - spot.min_y, 20.0);
-    assert!(spot.min_x >= 0.0 && spot.min_y >= 0.0 && spot.max_x <= 100.0 && spot.max_y <= 100.0);
-    assert!(!goat_packer::loops_touch_rect(&objects[0], grown(spot, 1.0)), "{spot:?}");
-    // Right or up by 11 mm clears the square with 1 mm clearance; the raster may add ~1 mm.
-    let shift = (spot.min_x - current.min_x).hypot(spot.min_y - current.min_y);
-    assert!(shift <= 12.5, "shift {shift}, spot {spot:?}");
-}
-
-#[test]
-fn free_tower_spot_respects_fixed_keepouts() {
-    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
-    let current = Rect::new(60.0, 60.0, 80.0, 80.0);
-    let objects = vec![square(10.0, 10.0, 70.0, 70.0)];
-    // The whole top band is a printer exclusion: only the right column is left.
-    let fixed = [Rect::new(0.0, 72.0, 100.0, 100.0)];
-    let spot = free_tower_spot(current, (20.0, 20.0), area, &objects, &fixed, 1.0).unwrap();
-    assert!(spot.max_y <= 72.0 + 1e-9, "{spot:?}");
-    assert!(spot.min_x >= 71.0 - 1e-9, "{spot:?}");
-    assert!(ensure_relocated_tower_clear(spot, &fixed).is_ok());
-}
-
-#[test]
-fn free_tower_spot_is_none_when_nothing_fits() {
-    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
-    let current = Rect::new(60.0, 60.0, 80.0, 80.0);
-    let objects = vec![square(5.0, 5.0, 95.0, 95.0)];
-    assert_eq!(free_tower_spot(current, (20.0, 20.0), area, &objects, &[], 1.0), None);
-}
-
-#[test]
-fn free_tower_spot_reads_every_object_as_solid() {
-    // One object per loop set: the same square passed twice must block like one square.
-    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
-    let current = Rect::new(40.0, 40.0, 50.0, 50.0);
-    let objects = vec![square(30.0, 30.0, 60.0, 60.0), square(30.0, 30.0, 60.0, 60.0)];
-    let spot = free_tower_spot(current, (10.0, 10.0), area, &objects, &[], 1.0).unwrap();
-    assert!(!goat_packer::loops_touch_rect(&objects[0], grown(spot, 1.0)), "{spot:?}");
-}

@@ -1,12 +1,12 @@
-//! The verification report written next to the packed 3MF.
+//! The report written next to the packed 3MF (`<output>.verification.json`) and the state a
+//! later `--finish-state` run continues from (`<output>.state.json`).
 
 use std::{fs, path::PathBuf};
 
 use goat_packer::{
-    PackResult,
-    colored_packer::PrimeTowerBounds,
+    Point, Rect,
     gcode_collisions::SupportCollision,
-    plate_centre::RelocatedTower,
+    pack::TowerSpec,
     print_time::TimeSample,
     progress::{self, Stage},
 };
@@ -14,8 +14,14 @@ use serde::Serialize;
 
 use crate::AppResult;
 use crate::job::Job;
-use crate::plan::{PackPlan, PackState, SupportRule};
+use crate::margins::{DELTA_BAND_MM, DELTA_FIRST_LAYER_MM};
+use crate::order::Canonical;
+use crate::plan::{MemberResult, PackState};
+use crate::model::ClassSummary;
 use crate::source::paint_attribute_count;
+
+/// Where the supports of the plate came from.
+const SUPPORT_SOURCE: &str = "probe";
 
 #[derive(Debug, Serialize)]
 pub struct ColoredPackReport {
@@ -24,45 +30,84 @@ pub struct ColoredPackReport {
     pub profile: String,
     pub object_count: usize,
     pub clearance_mm: f64,
-    pub probe_tower: Option<PrimeTowerBounds>,
-    pub final_tower: Option<PrimeTowerBounds>,
-    pub repacked: bool,
     pub paint_color_attribute_mentions: usize,
-    /// Corrected print time of the written plate; `None` only when no window was requested
-    /// and the slicer estimate could not be read (the plate itself is still valid).
-    pub time: Option<TimeReport>,
-    /// Smallest profile heat zone holding the kept objects plus the tower keepout; `None`
-    /// without a time window, without profile zones, or when no zone contains the plate.
-    pub heat_zone: Option<String>,
-    /// Centre of the relocated tower keepout (centre-out window plates with a tower).
-    pub tower_relocated_to: Option<[f64; 2]>,
-    /// Measured distance of the first final slice's tower keepout min corner from the relocated
-    /// keepout's min corner (the corner `wipe_tower_x/y` anchors; growth is one-sided).
-    pub tower_relocation_error_mm: Option<f64>,
-    /// The probe's first-layer patch reaches past the mesh silhouette (supports/brim), so the
-    /// orientation is locked to the sliced one.
+    /// `probe`: slicer probes of one object per rotation class (a cache hit counts as one).
+    pub support_source: &'static str,
+    pub slicer_flavour: String,
+    pub flavour_approximated: bool,
+    /// Per rotation class: runs sliced, whether the last runs added nothing, cache hit.
+    pub probes: Vec<ClassSummary>,
+    pub margins_mm: Margins,
+    /// Copies per rotation class, in `--rotations` order.
+    pub class_counts: Vec<ClassCount>,
+    /// The packing member that won and the best count each member reached.
+    pub member: String,
+    pub member_counts: Vec<MemberResult>,
+    pub tower: Option<TowerReport>,
+    pub canonical_objects: Vec<Canonical>,
+    pub canonical_near_edge: bool,
+    pub bed_rules: Vec<BedRule>,
+    /// The supports of a first-layer probe reach past the mesh outline.
     pub supports_detected: bool,
     /// Echo of `--support-overlap-mm`; `null` = unlimited.
     pub support_overlap_mm: Option<f64>,
-    /// Which pair rule packed the written plate: `landing` (foreign supports may reach under
-    /// a silhouette, not onto its first-layer body), `silhouette` (the strict two-zone rule:
-    /// no supports, or the fallback after the landing rule failed the G-code check).
-    pub support_rule: SupportRule,
-    /// The reserved support patch was widened to what the final slice really printed.
-    pub support_patch_learned: bool,
     /// Supports touching a foreign body (empty in successful reports; remaining contacts fail).
     pub support_collisions: Vec<SupportCollision>,
-    /// The whole plate was sliced and checked. `false` (`--no-final-slice`): the plate is
-    /// packed against the sample slice's supports, the final checks wait for `--finish-state`
-    /// with `state_path`; no final tower, time or collisions yet.
+    /// The plate was repacked once after a verification learned the realized geometry.
+    pub repacked: bool,
+    /// The assembled plate was sliced and checked (`--verify`, a time window).
     pub final_sliced: bool,
+    pub verification: Option<Verification>,
+    /// Corrected print time of the plate; with a window, the window search.
+    pub time: Option<TimeReport>,
+    /// Smallest profile heat zone holding the kept objects plus the tower (window plates).
+    pub heat_zone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_path: Option<String>,
 }
 
-/// `time` block of the verification report. `samples` lists every plate whose time was
-/// measured: without a window just the final plate; with one the probe (1 object), the max
-/// plate and each window slice in order. `chosen_count`/`corrected_s` describe the written plate.
+#[derive(Debug, Serialize)]
+pub struct Margins {
+    pub first_layer: f64,
+    pub bands: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClassCount {
+    pub rotation_deg: f64,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TowerReport {
+    pub anchor: Point,
+    /// Column size, mm.
+    pub size: [f64; 2],
+    pub brim_mm: f64,
+    pub chamfer_rings: usize,
+    /// The union of the probes' towers and the GUI's tower model.
+    pub source: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BedRule {
+    pub id: String,
+    pub class: String,
+}
+
+/// What the slicer and the GUI-equivalent checks said about the assembled plate.
+#[derive(Debug, Serialize)]
+pub struct Verification {
+    pub slicer: String,
+    pub layers: usize,
+    /// Tower extent of the slice, plate coordinates.
+    pub tower: Option<Rect>,
+    pub gui_checks: &'static str,
+}
+
+/// `time` block of the report. `samples` lists every plate whose time was measured: without
+/// a window just the plate; with one the probe (1 object), the max plate and each window
+/// slice in order. `chosen_count`/`corrected_s` describe the written plate.
 #[derive(Debug, Serialize)]
 pub struct TimeReport {
     pub window_hours: Option<f64>,
@@ -76,103 +121,112 @@ pub struct TimeReport {
 }
 
 impl ColoredPackReport {
-    /// The report of a packed plate whose final slice has not happened (yet): everything the
-    /// slice would measure is empty. The sliced plate's report fills those fields in.
-    pub fn of_packed_plate(
-        job: &Job,
-        plan: &PackPlan,
-        packed: &PackResult,
-        probe_tower: Option<PrimeTowerBounds>,
-        repacked: bool,
-    ) -> AppResult<Self> {
+    /// The report of a packed plate that has not been sliced; verification fills in the rest.
+    pub fn of_packed_plate(job: &Job, state: &PackState) -> AppResult<Self> {
         let args = &job.args;
+        let summary = &state.summary;
+        let class_counts = state
+            .plan
+            .prints
+            .iter()
+            .enumerate()
+            .map(|(class, print)| ClassCount {
+                rotation_deg: print.rotation_deg,
+                count: state.placements.iter().filter(|p| p.print == class).count(),
+            })
+            .collect();
         Ok(Self {
             source_3mf: args.source_3mf.display().to_string(),
             output_3mf: args.output.display().to_string(),
             profile: job.profile.id.clone(),
-            object_count: packed.placements.len(),
+            object_count: state.placements.len(),
             clearance_mm: args.clearance,
-            probe_tower,
-            final_tower: None,
-            repacked,
             paint_color_attribute_mentions: paint_attribute_count(&args.source_3mf)?,
+            support_source: SUPPORT_SOURCE,
+            slicer_flavour: job.flavour.flavour.name().to_owned(),
+            flavour_approximated: job.flavour.approximated,
+            probes: summary.probes.clone(),
+            margins_mm: Margins {
+                first_layer: DELTA_FIRST_LAYER_MM,
+                bands: DELTA_BAND_MM,
+            },
+            class_counts,
+            member: summary.member.clone(),
+            member_counts: summary.member_counts.clone(),
+            tower: tower_report(state.tower_anchor, state.plan.tower.as_ref()),
+            canonical_near_edge: summary.canonical.iter().any(|c| c.near_edge),
+            canonical_objects: summary.canonical.clone(),
+            bed_rules: bed_rules(job),
+            supports_detected: state.plan.prints.iter().any(|p| !p.support_base.is_empty()),
+            support_overlap_mm: args.support_overlap_mm,
+            support_collisions: Vec::new(),
+            repacked: false,
+            final_sliced: false,
+            verification: None,
             time: None,
             heat_zone: None,
-            tower_relocated_to: plan.relocation.map(tower_centre),
-            tower_relocation_error_mm: None,
-            // lock_orientation is set exactly in the "patch past silhouette (supports/brim)"
-            // branch: the patch carries a support zone beyond the body.
-            supports_detected: plan.lock_orientation,
-            support_overlap_mm: args.support_overlap_mm,
-            support_rule: plan.rule,
-            support_patch_learned: plan.patch_learned,
-            support_collisions: Vec::new(),
-            final_sliced: false,
             state_path: None,
         })
     }
 }
 
-fn tower_centre(relocated: RelocatedTower) -> [f64; 2] {
-    [
-        (relocated.keepout.min_x + relocated.keepout.max_x) * 0.5,
-        (relocated.keepout.min_y + relocated.keepout.max_y) * 0.5,
-    ]
+fn tower_report(anchor: Option<Point>, spec: Option<&TowerSpec>) -> Option<TowerReport> {
+    let (anchor, spec) = (anchor?, spec?);
+    Some(TowerReport {
+        anchor,
+        size: [spec.body.max_x - spec.body.min_x, spec.body.max_y - spec.body.min_y],
+        brim_mm: spec.brim_l0_mm,
+        chamfer_rings: spec.chamfer.len(),
+        source: "probe+model",
+    })
+}
+
+fn bed_rules(job: &Job) -> Vec<BedRule> {
+    job.rules
+        .keepouts
+        .iter()
+        .map(|keepout| BedRule {
+            id: keepout.id.clone(),
+            class: format!("{:?}", keepout.class).to_lowercase(),
+        })
+        .collect()
 }
 
 fn report_path(job: &Job) -> PathBuf {
     job.args.output.with_extension("verification.json")
 }
 
-/// `--no-final-slice`: the packed 3MF is already written; saves the state for `--finish-state`
-/// and a report that says the plate was not sliced.
-pub fn write_unsliced_plate(job: &Job, state: PackState, repacked: bool) -> AppResult<()> {
-    progress::stage(
-        Stage::Writing,
-        "writing the packed plate (final slice skipped)...",
-        None,
-        None,
-    );
-    let state_path = job.args.output.with_extension("state.json");
-    fs::write(&state_path, serde_json::to_vec(&state)?)?;
-    let mut report = ColoredPackReport::of_packed_plate(
-        job,
-        &state.plan,
-        &state.packed,
-        state.probe_tower,
-        repacked,
-    )?;
-    report.state_path = Some(state_path.display().to_string());
-    let report_path = report_path(job);
-    fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
-    println!(
-        "note: geometry checked against measured support envelopes; a future slicer may generate different supports or tower geometry"
-    );
-    println!(
-        "packed {} colored objects without the final slice; wrote {}\nreport: {}\nstate: {}",
-        report.object_count,
-        job.args.output.display(),
-        report_path.display(),
-        state_path.display()
-    );
-    Ok(())
+pub fn state_path(job: &Job) -> PathBuf {
+    job.args.output.with_extension("state.json")
 }
 
-/// The report of a sliced and checked plate.
-pub fn write_final_report(job: &Job, report: &ColoredPackReport) -> AppResult<()> {
-    progress::stage(
-        Stage::Writing,
-        "writing the verification report...",
-        None,
-        None,
-    );
-    let report_path = report_path(job);
-    fs::write(&report_path, serde_json::to_vec_pretty(report)?)?;
+/// Writes the state a later `--finish-state` run reads.
+pub fn write_state(job: &Job, state: &PackState) -> AppResult<PathBuf> {
+    let path = state_path(job);
+    fs::write(&path, serde_json::to_vec(state)?)?;
+    Ok(path)
+}
+
+/// Writes the report and tells the operator where everything is.
+pub fn write_report(job: &Job, report: &ColoredPackReport) -> AppResult<()> {
+    progress::stage(Stage::Writing, "writing the verification report...", None, None);
+    let path = report_path(job);
+    fs::write(&path, serde_json::to_vec_pretty(report)?)?;
+    let verified = if report.final_sliced { "verified by slicing" } else { "without slicing the plate" };
     println!(
-        "packed {} colored objects; wrote {}\nreport: {}",
+        "packed {} colored objects {verified}; wrote {}\nreport: {}",
         report.object_count,
         job.args.output.display(),
-        report_path.display()
+        path.display()
     );
+    if let Some(state) = &report.state_path {
+        println!("state: {state}");
+    }
+    if !report.final_sliced {
+        println!(
+            "note: the layout is safe against the measured support envelope plus its margins; a \
+             later slice may print different supports. --verify slices the plate and checks it"
+        );
+    }
     Ok(())
 }

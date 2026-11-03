@@ -18,15 +18,13 @@
 //! (prime tower, purge, skirt) are ignored.
 //!
 //! Modules: `reader` (walks the G-code; `labels` names the objects), `parser` (every object's
-//! lines), `touching` (the per-layer geometry), `types` (the report), `learning` (what a sample
-//! slice teaches the packer), `nudge` (moving contacts apart), `gui_checks` (what the slicer
-//! GUI would refuse, with `conflicts`, `part_edges` and `plane`).
+//! lines), `touching` (the per-layer geometry), `types` (the report), `tower_layers` (the
+//! prime tower per layer), `gui_checks` (what the slicer GUI would refuse, with `conflicts`,
+//! `part_edges` and `plane`).
 
 mod conflicts;
 pub mod gui_checks;
 mod labels;
-mod learning;
-mod nudge;
 mod parser;
 mod part_edges;
 mod plane;
@@ -34,6 +32,7 @@ mod reader;
 #[cfg(test)]
 mod tests;
 mod touching;
+mod tower_layers;
 mod types;
 
 use parser::{extents_of, parse};
@@ -41,8 +40,7 @@ use parser::{extents_of, parse};
 pub use conflicts::ConflictKind;
 pub(crate) use parser::{KeptLine, object_lines};
 
-pub use learning::{LAYER_BAND_MM, layer_zones_from_sample, learn_support_patch, match_placements};
-pub use nudge::{NUDGE_MARGIN_MM, nudge_apart};
+pub use tower_layers::{TowerLayer, tower_layers};
 pub use types::{ObjectFirstLayer, PlateAnalysis, Strip, SupportCollision};
 
 /// Parses a sliced plate once: support-vs-foreign-body collisions on every layer plus every

@@ -3,9 +3,14 @@
 //! is a statement about kinds (`keepout::matrix`), so a kind is the unit the packer masks,
 //! dilates and compares.
 
-use crate::gcode_collisions::LAYER_BAND_MM;
 use crate::geometry::{Point, Rect};
 use serde::{Deserialize, Serialize};
+use std::ops::RangeInclusive;
+
+/// Height of one absolute band, mm. A band unions what its layers print, so a support and a
+/// body in the same band but on different layers count as meeting: coarser bands are safer and
+/// cost a little density; 2 mm keeps a 45 mm goat at ~23 bands.
+pub const LAYER_BAND_MM: f64 = 2.0;
 
 /// Closed rings in the footprint frame, mm. Several rings follow the even-odd rule, so holes
 /// are just more rings (`ObjectPrint::part_hulls` is the exception: one ring per part).
@@ -130,9 +135,17 @@ fn band_loops(bands: &[Loops], band: usize) -> &[Vec<Point>] {
 /// What one slicer run (or one ensemble member) printed for an object: the raw input of the
 /// envelope, whether it came from the support model or from G-code.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default)]
 pub struct Realization {
     pub member: MemberId,
+    /// The first-layer body the slicer printed (walls and infill, no support): the measured
+    /// landing, to cross-check `first_layer::landing`.
+    pub landing: Loops,
     pub base: Loops,
+    /// `support` without layer 0: what a neighbour's body keeps `SUPPORT_BODY_GAP_MM` from.
+    /// The base has its own, looser rule against the landing, which band 0 would undo if it
+    /// carried the base too (the pair table tests `support[k]` against `body[k]`).
+    pub above_base: Vec<Loops>,
     pub support: Vec<Loops>,
     pub interface: Vec<Loops>,
 }
@@ -143,4 +156,35 @@ pub fn band_z_range(band: usize) -> (f64, f64) {
         band as f64 * LAYER_BAND_MM,
         (band + 1) as f64 * LAYER_BAND_MM,
     )
+}
+
+/// Slack of the band edges, mm: a layer top printed as 2.0000001 does not reach the next band.
+const BAND_EDGE_EPS_MM: f64 = 1e-6;
+
+/// The absolute bands a layer occupying `(z_bottom, z_top]` belongs to (design §4.1, the band
+/// rule of every kind): each band it overlaps with positive length. A layer topping exactly on
+/// a band boundary belongs only to the lower band; one starting exactly on it, only to the upper
+/// (the P1S layer on (1.88, 2.16] is in bands 0 and 1).
+pub fn layer_bands(z_bottom: f64, z_top: f64) -> RangeInclusive<usize> {
+    let first = libm::floor((z_bottom + BAND_EDGE_EPS_MM) / LAYER_BAND_MM).max(0.0) as usize;
+    let last = (libm::ceil((z_top - BAND_EDGE_EPS_MM) / LAYER_BAND_MM).max(1.0) as usize) - 1;
+    first..=last.max(first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::layer_bands;
+
+    #[test]
+    fn a_layer_belongs_to_every_band_it_overlaps_with_positive_length() {
+        let bands = |bottom, top| layer_bands(bottom, top).collect::<Vec<_>>();
+        assert_eq!(bands(0.0, 0.2), vec![0]);
+        assert_eq!(bands(1.88, 2.16), vec![0, 1]);
+        // Topping exactly on the boundary: lower band only; starting on it: upper only.
+        assert_eq!(bands(1.72, 2.0), vec![0]);
+        assert_eq!(bands(2.0, 2.28), vec![1]);
+        assert_eq!(bands(3.8, 4.1), vec![1, 2]);
+        // A thick layer spans three bands.
+        assert_eq!(bands(1.9, 4.1), vec![0, 1, 2]);
+    }
 }

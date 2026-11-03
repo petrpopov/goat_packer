@@ -24,7 +24,7 @@ pub(super) struct Parser {
     first_strips: Vec<Vec<Strip>>,
     pub(super) labelled_lines: usize,
     pub(super) extents: Vec<Option<Rect>>,
-    /// Every labelled line with its layer height, kept only for `layer_zones_from_sample` and
+    /// Every labelled line with its layer height, kept only for
     /// `gcode_footprint::realization_from_gcode`.
     keep_lines: bool,
     pub(super) kept: Vec<KeptLine>,
@@ -38,8 +38,9 @@ pub(crate) struct KeptLine {
     /// 1-based layer; 1 is the printed first layer.
     pub(crate) layer: usize,
     pub(crate) z: f64,
+    /// The previous layer's height: the layer occupies `(z_bottom, z]`.
+    pub(crate) z_bottom: f64,
     pub(crate) strip: Strip,
-    pub(crate) infill: bool,
     pub(crate) interface: bool,
 }
 
@@ -103,8 +104,8 @@ impl Parser {
                 object,
                 layer: extrusion.layer,
                 z: extrusion.z,
+                z_bottom: extrusion.z_bottom,
                 strip,
-                infill: matches!(extrusion.role, Role::Body { infill: true }),
                 interface: extrusion.role == Role::SupportInterface,
             });
         }

@@ -91,6 +91,8 @@ pub(super) struct Extrusion<'a> {
     pub(super) layer: usize,
     /// The layer's print height (`; Z_HEIGHT:` / `;Z:`), 0 until the first one.
     pub(super) z: f64,
+    /// The previous layer's print height (0 for the first): the layer occupies `(z_bottom, z]`.
+    pub(super) z_bottom: f64,
     pub(super) role: Role,
     /// Index into the plate's labels of the object printing it; `None` for plate material and
     /// unlabelled lines.
@@ -157,6 +159,7 @@ struct Walk {
     sole: Option<usize>,
     layer: usize,
     z: f64,
+    z_bottom: f64,
     /// Current feature, lowercase.
     feature: String,
     width: f64,
@@ -167,6 +170,9 @@ struct Walk {
     last_e: f64,
     tower_section: bool,
     tower_brim_section: bool,
+    /// Between `WIPE_START` and `WIPE_END`: the nozzle wipe the U1 tool change makes at a
+    /// garbage point far from the tower, still inside the tower section. It is not tower.
+    nozzle_wipe: bool,
     path: Vec<(f64, f64)>,
 }
 
@@ -180,6 +186,7 @@ impl Walk {
             sole: None,
             layer: 0,
             z: 0.0,
+            z_bottom: 0.0,
             feature: String::new(),
             width: DEFAULT_LINE_WIDTH_MM,
             x: 0.0,
@@ -189,6 +196,7 @@ impl Walk {
             last_e: 0.0,
             tower_section: false,
             tower_brim_section: false,
+            nozzle_wipe: false,
             path: Vec::new(),
         }
     }
@@ -206,6 +214,7 @@ impl Walk {
     fn line(&mut self, line: &str, sink: &mut impl ExtrusionSink) {
         if is_layer_change(line) {
             sink.layer_done(self.layer);
+            self.z_bottom = self.z;
             self.layer += 1;
         } else if let Some(z) = layer_height(line) {
             self.z = z;
@@ -232,6 +241,8 @@ impl Walk {
             self.end_weak_label();
         } else if body.contains("WIPE_TOWER_END") {
             self.tower_section = false;
+        } else if body == "WIPE_START" || body == "WIPE_END" {
+            self.nozzle_wipe = body == "WIPE_START";
         } else if let Some(feature) = feature_label(line) {
             self.feature = feature.to_lowercase();
             if self.feature == "custom" {
@@ -317,6 +328,9 @@ impl Walk {
             self.path.push(to);
         }
         let role = Role::of(&self.feature, self.tower_section, self.tower_brim_section);
+        if self.nozzle_wipe && role.is_tower() {
+            return;
+        }
         let object = if role.belongs_to_plate() {
             None
         } else {
@@ -325,6 +339,7 @@ impl Walk {
         sink.extrusion(&Extrusion {
             layer: self.layer,
             z: self.z,
+            z_bottom: self.z_bottom,
             role,
             object,
             width: self.width,

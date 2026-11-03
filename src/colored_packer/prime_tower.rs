@@ -166,10 +166,3 @@ fn nozzle_wipe_marker(line: &str) -> Option<bool> {
         _ => None,
     }
 }
-
-pub fn tower_repack_required(reserved_keepout: Rect, final_tower: PrimeTowerBounds) -> bool {
-    final_tower.keepout.min_x < reserved_keepout.min_x
-        || final_tower.keepout.min_y < reserved_keepout.min_y
-        || final_tower.keepout.max_x > reserved_keepout.max_x
-        || final_tower.keepout.max_y > reserved_keepout.max_y
-}

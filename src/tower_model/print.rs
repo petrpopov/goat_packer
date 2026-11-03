@@ -13,9 +13,8 @@ use super::schedule::ToolSchedule;
 use super::settings::TowerSettings;
 use super::type2::type2_column;
 use crate::first_layer::{ProjectSettings, SlicerBuild, Unsupported, bead_spacing, subtract_loops};
-use crate::gcode_collisions::LAYER_BAND_MM;
 use crate::geometry::{Point, Rect};
-use crate::object_print::{Loops, PrintKind};
+use crate::object_print::{Loops, PrintKind, layer_bands};
 
 /// Material past the wall and loop centre lines: half the tower line plus 0.1 mm (lead
 /// decision, 04 §9 item 2). The 0.1 mm covers every measured residual: Bambu rib towers reach
@@ -185,10 +184,7 @@ impl TowerZone {
     /// its layer interval `(z_bottom, z_top]` overlaps with positive length, so a chamfer ring
     /// on (1.88, 2.16] is in bands 0 and 1 and one ending exactly at 2.0 only in band 0.
     pub fn bands(&self) -> RangeInclusive<usize> {
-        let (from, to) = self.z_range;
-        let first = libm::floor(from / LAYER_BAND_MM) as usize;
-        let last = (libm::ceil(to / LAYER_BAND_MM) as usize).saturating_sub(1);
-        first..=last.max(first)
+        layer_bands(self.z_range.0, self.z_range.1)
     }
 }
 

@@ -1,109 +1,232 @@
-//! The probe: one object sliced from the source project, and what it shows — the prime tower,
-//! the time of a single object and the footprint the object really prints.
+//! The support probe of one rotation class: the source object turned by the class angle,
+//! alone at the bed centre (interior, so the slicer clips and bends nothing), sliced a few
+//! times with the profile's slicer. What the slicer printed (supports, first-layer body,
+//! prime tower) is read from the G-code and unioned over the runs: tree supports differ
+//! between slices, so the union stands for the family, and the runs stop once more of them
+//! add nothing (design §3.2, `ensemble` of the slicer-free plan, with real slices as members).
+
+use std::{path::PathBuf, time::Instant};
 
 use goat_packer::{
-    Footprint,
-    colored_packer::PrimeTowerBounds,
-    first_layer_footprint_of,
+    PackedPlacement, Point,
+    assemble::{AssembleOptions, assemble_project},
+    gcode_collisions::{TowerLayer, tower_layers},
     nozzle_clean::inject_nozzle_clean,
-    patch_overshoot_mm, patch_within_silhouette,
+    object_print::{Loops, Realization},
     print_time::TimeSample,
     progress::{self, Stage},
-    support_interface_loops_of, union_loops,
+    realization_from_gcode,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
 use crate::job::Job;
-use crate::slicing::{SliceOutput, slice_runs};
+use crate::loops_ops::{area_mm2, union};
+use crate::probe_cache::{cache_key, load, store};
+use crate::slicing::slice_project;
 use crate::time_window::{even_one_exceeds, hours, time_sample};
-use crate::tower::probe_tower_of;
 
-/// Supports and brim legitimately add a few mm, but a patch far larger than the silhouette
-/// means foreign extrusions (prime tower, purge line) leaked into the parsed first layer —
-/// every clone would reserve them and the layout would come out sparse with no other error.
-/// This caught the Bambu dialect bug where the tower inflated a 54 mm goat to a 97.5 mm patch.
-const FOREIGN_EXTRUSION_EXCESS_MM: f64 = 15.0;
+/// Fewest slices of a class: two runs agreeing says little about a family of realizations.
+pub const MIN_RUNS: usize = 3;
+/// Most slices of a class, saturated or not (a slice of one goat takes 10-25 s).
+pub const MAX_RUNS: usize = 8;
+/// A run adds nothing when it grows no band by this much, mm².
+const SATURATION_MM2: f64 = 1.0;
+/// Consecutive runs that must add nothing before the probe stops.
+const QUIET_RUNS: usize = 2;
 
-/// A patch that stays inside the mesh outline plus this much carries no supports or brim
-/// beyond the model. The tolerance absorbs wall-bead artifacts (miter on sharp tips ~1 mm;
-/// arachne slivers along a curved belly up to ~1.6 mm, 2.45 mm² total on the P1S goat); real
-/// supports wander 3-5 mm past the outline with hundreds of mm².
-const SILHOUETTE_TOLERANCE_MM: f64 = 2.0;
-
-/// The probe slices (several runs, see `slicing::slice_runs`) and what they show.
-pub struct Probe {
-    pub runs: Vec<SliceOutput>,
-    /// How long the slicing took: scales the expected duration of every later slice.
+/// What the probes of one rotation class measured, in the class's plate-aligned frame (the
+/// frame origin at 0, supports not rotated back).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ClassProbe {
+    pub rotation_deg: f64,
+    pub runs: usize,
+    /// The last `QUIET_RUNS` runs added nothing (false: the run limit stopped it).
+    pub saturated: bool,
+    /// First-layer body the slicer printed (unioned over the runs).
+    pub landing: Loops,
+    pub base: Loops,
+    /// Support of the layers above layer 0 per absolute band (`Realization::above_base`).
+    pub above_base: Vec<Loops>,
+    pub interface: Vec<Loops>,
+    /// The tower layer by layer, plate coordinates, unioned over the runs.
+    pub tower: Vec<TowerLayer>,
+    /// The largest band growth each run caused, mm².
+    pub growth_mm2: Vec<f64>,
     pub seconds: f64,
-    pub tower: Option<PrimeTowerBounds>,
-    /// The corrected time of one object, when a time window needs it.
-    pub sample: Option<TimeSample>,
+    /// The cache key the probe was stored under (recorded in the print's provenance).
+    pub cache_key: String,
+    /// Served from the cache: no slicer ran. Not stored.
+    #[serde(skip)]
+    pub cached: bool,
 }
 
-impl Probe {
-    fn gcodes(&self) -> Vec<&[u8]> {
-        self.runs.iter().map(|run| run.gcode.as_slice()).collect()
+/// Where the probe object stands: the printable area's centre.
+pub fn probe_centre(job: &Job) -> Point {
+    let bed = job.profile.printable_bed();
+    Point {
+        x: (bed.min_x + bed.max_x) * 0.5,
+        y: (bed.min_y + bed.max_y) * 0.5,
     }
 }
 
-/// Slices one object of the source project and reads the prime tower and the time off it.
-pub fn probe_source(job: &Job) -> AppResult<Probe> {
-    let args = &job.args;
-    // With --nozzle-clean the probe slices a copy carrying the same wipe injection as every
-    // final plate, so its time (and tower) is comparable to theirs; the wipe block is gated on
-    // `layer_num > 0`, so the first-layer patch parsed later is unaffected. The probe still
-    // prints the tower at the source position (the relocation is decided from this very
-    // slice); the window's shrink step uses the window-vs-max secant, which cancels that.
-    let probe_project = match &args.nozzle_clean {
-        Some(spec) => {
-            let copy = args.work_dir.join("probe_source.3mf");
-            inject_nozzle_clean(&job.profile, &args.source_3mf, &copy, spec)
-                .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
-            copy
-        }
-        None => args.source_3mf.clone(),
-    };
+/// The probe of `rotation_deg`: from the cache when `--cache-dir` has it, else sliced.
+pub fn probe_class(job: &Job, rotation_deg: f64) -> AppResult<ClassProbe> {
+    let centre = probe_centre(job);
+    let key = cache_key(job, rotation_deg, centre);
+    if let Some(dir) = &job.args.cache_dir
+        && let Some(mut hit) = load(dir, &key)
+    {
+        println!("support probe of rotation {rotation_deg}°: cache hit ({} runs)", hit.runs);
+        hit.cached = true;
+        return Ok(hit);
+    }
+    let probe = slice_class(job, rotation_deg, centre, &key)?;
+    if let Some(dir) = &job.args.cache_dir {
+        store(dir, &key, &probe)?;
+    }
+    Ok(probe)
+}
+
+fn slice_class(job: &Job, rotation_deg: f64, centre: Point, key: &str) -> AppResult<ClassProbe> {
+    let project = write_copy(job, rotation_deg, centre)?;
     progress::stage(
         Stage::ProbeSlice,
-        "probing prime tower position (slicing 1 object)...",
+        &format!("probing prime tower position and supports (rotation {rotation_deg}°)..."),
         None,
         Some(1),
     );
-    let started = std::time::Instant::now();
-    let runs = slice_runs(&job.profile, &probe_project, 1, &args.work_dir, "probe")?;
-    let seconds = started.elapsed().as_secs_f64();
-    let sample = single_object_sample(job, &runs[0])?;
-    let gcodes: Vec<&[u8]> = runs.iter().map(|run| run.gcode.as_slice()).collect();
-    let tower = probe_tower_of(&gcodes, &job.profile, args.clearance);
-    match tower {
-        Some(tower) => println!(
-            "probe tower keepout: {:.2},{:.2} → {:.2},{:.2}",
-            tower.keepout.min_x, tower.keepout.min_y, tower.keepout.max_x, tower.keepout.max_y
-        ),
-        None => println!(
-            "no prime/wipe tower markers in source slice (single material/color); packing \
-             without a tower keepout"
-        ),
+    let started = Instant::now();
+    let mut probe = ClassProbe {
+        rotation_deg,
+        cache_key: key.to_owned(),
+        ..ClassProbe::default()
+    };
+    while probe.runs < MAX_RUNS && !is_saturated(&probe.growth_mm2) {
+        let label = format!("probe_{}_{}", rotation_deg.to_string().replace('.', "_"), probe.runs + 1);
+        let slice = slice_project(&job.profile, &project, 1, &job.args.work_dir, &label)?;
+        let realization = realization_from_gcode(&slice.gcode, None, (centre.x, centre.y), probe.runs as u32)
+            .map_err(|error| format!("probe slice {label}: {error}"))?;
+        let growth = probe.absorb(&realization, tower_layers(&slice.gcode));
+        println!("{label}: union grew by {growth:.2} mm²");
     }
-    Ok(Probe {
-        runs,
-        seconds,
-        tower,
-        sample,
-    })
+    probe.saturated = is_saturated(&probe.growth_mm2);
+    probe.seconds = started.elapsed().as_secs_f64();
+    Ok(probe)
 }
 
-/// Spec step 1: with a window, a single object that already overruns it fails here, before
-/// the expensive packing.
-fn single_object_sample(job: &Job, probe: &SliceOutput) -> AppResult<Option<TimeSample>> {
-    let Some(window_s) = job.window_s else {
-        return Ok(None);
+/// Enough runs, and the last `QUIET_RUNS` of them added less than `SATURATION_MM2` each.
+fn is_saturated(growth_mm2: &[f64]) -> bool {
+    growth_mm2.len() >= MIN_RUNS
+        && growth_mm2[growth_mm2.len() - QUIET_RUNS..]
+            .iter()
+            .all(|growth| *growth < SATURATION_MM2)
+}
+
+impl ClassProbe {
+    /// Unions one run in; returns the most any band grew, mm² (the first run: its own area).
+    fn absorb(&mut self, run: &Realization, tower: Vec<TowerLayer>) -> f64 {
+        let mut growth = merge(&mut self.base, &run.base);
+        let bands = run.above_base.len().max(self.above_base.len());
+        self.above_base.resize(bands, Loops::new());
+        self.interface.resize(bands, Loops::new());
+        for band in 0..bands {
+            let empty = Loops::new();
+            let band_of = |bands: &'_ [Loops]| bands.get(band).unwrap_or(&empty).clone();
+            growth = growth.max(merge(&mut self.above_base[band], &band_of(&run.above_base)));
+            merge(&mut self.interface[band], &band_of(&run.interface));
+        }
+        merge(&mut self.landing, &run.landing);
+        merge_tower(&mut self.tower, tower);
+        self.runs += 1;
+        self.growth_mm2.push(growth);
+        growth
+    }
+}
+
+/// `into` united with `new`; how much area that added, mm².
+fn merge(into: &mut Loops, new: &Loops) -> f64 {
+    let merged = union(&[into, new]);
+    let growth = area_mm2(&merged) - area_mm2(into);
+    *into = merged;
+    growth
+}
+
+/// The tower of a run into the union: per layer, the union of the extents.
+fn merge_tower(tower: &mut Vec<TowerLayer>, run: Vec<TowerLayer>) {
+    for layer in run {
+        match tower.iter_mut().find(|known| known.layer == layer.layer) {
+            Some(known) => known.extent = known.extent.union(layer.extent),
+            None => tower.push(layer),
+        }
+    }
+    tower.sort_by_key(|layer| layer.layer);
+}
+
+/// A one-object copy of the source: turned by `rotation_deg` about its frame centre, which
+/// stands at `centre`. Built by the same assembler as the final plate, so the probe differs
+/// from a clone in nothing but its number.
+fn write_copy(job: &Job, rotation_deg: f64, centre: Point) -> AppResult<PathBuf> {
+    let path = job
+        .args
+        .work_dir
+        .join(format!("probe_{}.3mf", rotation_deg.to_string().replace('.', "_")));
+    let (min, max) = job.mesh.rotated(rotation_deg).normal_bounds();
+    let corner = |x: f64, y: f64| Point { x: centre.x + x, y: centre.y + y };
+    let outline = vec![
+        corner(min[0], min[1]),
+        corner(max[0], min[1]),
+        corner(max[0], max[1]),
+        corner(min[0], max[1]),
+        corner(min[0], min[1]),
+    ];
+    let options = AssembleOptions {
+        placements: vec![PackedPlacement {
+            x_mm: centre.x,
+            y_mm: centre.y,
+            angle_deg: rotation_deg,
+        }],
+        stl_path: PathBuf::new(),
+        edge_margin: 0.0,
+        purge_lines: Vec::new(),
+        keepouts: Vec::new(),
+        duplicate_mesh_per_object: false,
+        reuse_source_object_instances: false,
+        inline_colored_mesh_objects: false,
+        footprint_override: None,
+        frame: Some(job.frame),
+        world_polygons: Some(vec![vec![outline]]),
     };
-    let estimate = probe
+    assemble_project(&job.args.source_3mf, &path, &options)
+        .map_err(|error| format!("probe copy for rotation {rotation_deg}°: {error}"))?;
+    Ok(path)
+}
+
+/// The corrected time of one object, for a time window's first aim. Sliced from the first
+/// class's probe copy with the same wipe injection as the final plate, so it is comparable
+/// to the window slices; a single object that already overruns the window fails here, before
+/// the packing.
+pub fn time_probe(job: &Job, window_s: f64) -> AppResult<TimeSample> {
+    let rotation = job.args.rotations[0];
+    let mut project = write_copy(job, rotation, probe_centre(job))?;
+    if let Some(spec) = &job.args.nozzle_clean {
+        let injected = job.args.work_dir.join("probe_time.3mf");
+        inject_nozzle_clean(&job.profile, &project, &injected, spec)
+            .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
+        project = injected;
+    }
+    progress::stage(
+        Stage::ProbeSlice,
+        "probing prime tower position for the time window (slicing 1 object)...",
+        None,
+        Some(1),
+    );
+    let slice = slice_project(&job.profile, &project, 1, &job.args.work_dir, "probe_time")?;
+    let estimate = slice
         .estimate
-        .as_ref()
         .map_err(|error| format!("probe slice time estimate unavailable: {error}"))?;
-    let sample = time_sample(1, estimate, job.slicer_change_s, &job.correction);
+    let sample = time_sample(1, &estimate, job.slicer_change_s, &job.correction);
     if sample.corrected_s > window_s {
         return Err(even_one_exceeds(sample.corrected_s, window_s).into());
     }
@@ -113,202 +236,39 @@ fn single_object_sample(job: &Job, probe: &SliceOutput) -> AppResult<Option<Time
         hours(sample.corrected_s),
         sample.changes
     );
-    Ok(Some(sample))
-}
-
-/// The footprint the packer works with, and how it constrains the layout.
-pub struct ProbeFootprint {
-    pub footprint: Footprint,
-    pub lock_orientation: bool,
-    /// How far the first layer overshoots the silhouette at thin tips: widens the purge-line
-    /// keepout only.
-    pub purge_tip_overshoot: f64,
-}
-
-/// The probe slice already shows the object exactly as it prints — body, tree supports,
-/// brim. Packing against that first-layer patch stops supports from touching neighbouring
-/// bodies, which the pure mesh projection could not promise (tree supports wander several
-/// mm past the silhouette on a real lying-animal plate). `model_center` is where the model's
-/// bbox center sits in the probe slice: the layer-1 patch must be centered exactly there to
-/// stay in the assembler's placement frame.
-pub fn footprint_from_probe(
-    job: &Job,
-    probe: &Probe,
-    silhouette: &Footprint,
-    model_center: Option<(f64, f64)>,
-) -> AppResult<ProbeFootprint> {
-    let gcodes = probe.gcodes();
-    let center =
-        model_center.ok_or("cannot establish probe geometry frame; refusing unverified packing")?;
-    let patch = first_layer_footprint_of(&gcodes, Some(center))
-        .ok_or("probe has no object extrusions; refusing mesh-only fallback")?;
-    report_patch(&patch, silhouette, &probe.runs[0].gcode);
-    // First-layer containment does NOT prove absence of upper supports. Learn every height
-    // before choosing rotation freedom, even when the optional multi-object sample is off.
-    let placement = goat_packer::PackedPlacement {
-        x_mm: center.0,
-        y_mm: center.1,
-        angle_deg: 0.0,
-    };
-    let (zones, _) =
-        goat_packer::gcode_collisions::layer_zones_from_sample(&gcodes, &patch, &[placement])
-            .map_err(|e| format!("probe support geometry: {e}"))?;
-    let has_supports = zones.iter().any(|z| !z.support_loops.is_empty());
-    let resolution = job.args.resolution;
-    let mut found = if !has_supports
-        && patch_within_silhouette(&patch, silhouette, resolution, SILHOUETTE_TOLERANCE_MM)
-    {
-        silhouette_footprint(&patch, silhouette, resolution)
-    } else {
-        patch_footprint(&patch, silhouette, &gcodes, Some(center), resolution)
-    };
-    found.footprint.merge_layer_zones(&zones);
-    Ok(found)
-}
-
-fn report_patch(patch: &Footprint, silhouette: &Footprint, probe_gcode: &[u8]) {
-    eprintln!(
-        "probe slice's first layer: patch {:.1}x{:.1} mm, mesh silhouette {:.1}x{:.1} mm",
-        patch.width, patch.height, silhouette.width, silhouette.height
-    );
-    // Arc-fitted probes parse differently from straight-line ones (the patch is rebuilt from
-    // flattened G2/G3 sweeps); the count tells the operator which kind of gcode the patch
-    // below came from when a layout surprises them.
-    let arc_moves = probe_gcode
-        .split(|&byte| byte == b'\n')
-        .filter(|line| line.starts_with(b"G2 ") || line.starts_with(b"G3 "))
-        .count();
-    if arc_moves > 0 {
-        eprintln!("probe gcode carries {arc_moves} G2/G3 arc moves; the patch flattens them");
-    }
-    if patch.width > silhouette.width + FOREIGN_EXTRUSION_EXCESS_MM
-        || patch.height > silhouette.height + FOREIGN_EXTRUSION_EXCESS_MM
-    {
-        eprintln!(
-            "WARNING: first-layer patch {:.1}x{:.1} mm exceeds the mesh silhouette \
-             {:.1}x{:.1} mm by more than {FOREIGN_EXTRUSION_EXCESS_MM} mm — foreign \
-             extrusions (prime tower / purge line) probably leaked into the patch; \
-             expecting a sparse layout",
-            patch.width, patch.height, silhouette.width, silhouette.height
-        );
-    }
-}
-
-/// The patch stays inside the silhouette: pack the silhouette, rotations allowed.
-fn silhouette_footprint(
-    patch: &Footprint,
-    silhouette: &Footprint,
-    resolution: f64,
-) -> ProbeFootprint {
-    eprintln!(
-        "patch fits inside the mesh silhouette (+{SILHOUETTE_TOLERANCE_MM:.1} mm) — no supports \
-         or brim reach past the model; packing the silhouette with rotations allowed"
-    );
-    // Within tolerance is not within: Arachne thin-tip lines print past the mesh outline
-    // (measured up to 1.66 mm on a P1S goat's legs), and the prime line is machine start gcode
-    // — nothing routes it around objects, so a goat whose silhouette cleared the purge-line
-    // keepout printed its leg tips straight through the line. The measured overshoot widens
-    // the PURGE-LINE keepout only: the tower and exclusion corner keep their own validated
-    // safeties, and object-vs-object clearance is untouched.
-    let overshoot = patch_overshoot_mm(patch, silhouette, resolution);
-    if overshoot > 0.0 {
-        eprintln!(
-            "first layer overshoots the mesh silhouette by up to {overshoot:.1} mm at thin \
-             tips; the purge-line keepout keeps that standoff"
-        );
-    }
-    // Bed bounds still measure the printed patch: the overshoot at thin tips is real ink past
-    // the silhouette, and a silhouette that clears the bed edge can print outside it (see the
-    // bed_loops note in `prepare::prepare_plate`).
-    let mut footprint = silhouette.clone();
-    // Measured wall/bead overshoot also matters between objects, not only at bed edges.
-    footprint.loops = union_loops(patch, silhouette);
-    footprint.body_loops = footprint.loops.clone();
-    footprint.bed_loops = Some(footprint.loops.clone());
-    ProbeFootprint {
-        footprint,
-        lock_orientation: false,
-        purge_tip_overshoot: overshoot,
-    }
-}
-
-/// The patch reaches past the silhouette (supports/brim): pack patch ∪ silhouette with the
-/// orientation locked to the sliced one.
-fn patch_footprint(
-    patch: &Footprint,
-    silhouette: &Footprint,
-    gcodes: &[&[u8]],
-    model_center: Option<(f64, f64)>,
-    resolution: f64,
-) -> ProbeFootprint {
-    // How far the patch actually sticks out separates the two realities this branch exists
-    // for: real supports/brim wander whole millimetres, while a fraction of a millimetre is a
-    // parse artifact (a stray chord, a mitered tip) worth a second look before accepting the
-    // locked-orientation layout.
-    let overshoot = patch_overshoot_mm(patch, silhouette, resolution);
-    eprintln!(
-        "patch reaches past the mesh silhouette by up to {overshoot:.1} mm \
-         (supports/brim) — packing the patch ∪ silhouette, orientation locked to \
-         the sliced one"
-    );
-    // Collisions must respect BOTH truths: the printed patch (supports/brim beyond the
-    // outline) AND the mesh body where layer 1 prints nothing (a lying animal's raised horns;
-    // on P1S the patch is inset ~0.4 mm per side, so a bare-patch layout glued 24 goat pairs
-    // by up to 1.7 mm²). The body zone is the mesh outline — walls and walls' strips are all
-    // inset representations of the same body — and silhouettes keep clearance from each
-    // other. A neighbour's supports only must not land on what this object prints on the bed:
-    // its first-layer body (`support_landing_loops`; see the field for the 40-goat plate that
-    // proved the silhouette rule too strict).
-    let mut combined = patch.clone();
-    combined.loops = union_loops(patch, silhouette);
-    combined.body_loops = silhouette.loops.clone();
-    // Support interfaces print up to ~2 mm past the overhangs they carry, at the overhang's
-    // height: they belong to this object's 3D extent, so they join the silhouette that keeps
-    // clearance from the neighbours' silhouettes (four P1S goat pairs touched a neighbour's
-    // wall at z ≈ 23 mm without this, and the strict-rule fallback cost the plate 4 goats).
-    if let Some(center) = model_center {
-        let interfaces = support_interface_loops_of(gcodes, center);
-        if !interfaces.is_empty() {
-            let mut interface_zone = silhouette.clone();
-            interface_zone.loops = interfaces;
-            let overshoot = patch_overshoot_mm(&interface_zone, silhouette, resolution);
-            eprintln!(
-                "support interfaces reach past the mesh silhouette by up to \
-                 {overshoot:.1} mm; the silhouette zone includes them"
-            );
-            combined.body_loops = union_loops(silhouette, &interface_zone);
-        }
-    }
-    combined.support_landing_loops = patch.body_loops.clone();
-    // The patch is the measured print (tips included), so purge checks run against its real
-    // extent already — no extra overshoot.
-    ProbeFootprint {
-        footprint: combined,
-        lock_orientation: true,
-        purge_tip_overshoot: 0.0,
-    }
+    Ok(sample)
 }
 
 #[cfg(test)]
-mod safety_tests {
+mod tests {
     use super::*;
-    use crate::test_support::test_job;
 
     #[test]
-    fn unreadable_probe_does_not_silently_fall_back_to_mesh_packing() {
-        let dir = tempfile::tempdir().unwrap();
-        let job = test_job(dir.path());
-        let silhouette = goat_packer::extract_footprint(&job.footprint_stl).unwrap();
-        let probe = Probe {
-            runs: vec![SliceOutput {
-                gcode: vec![],
-                estimate: Err("empty".into()),
-            }],
-            seconds: 0.0,
-            tower: None,
-            sample: None,
+    fn the_probe_stops_after_two_quiet_runs_but_never_before_the_third() {
+        assert!(!is_saturated(&[]));
+        assert!(!is_saturated(&[0.0, 0.0]));
+        assert!(is_saturated(&[50.0, 0.2, 0.9]));
+        assert!(!is_saturated(&[50.0, 12.0, 0.9]));
+        assert!(!is_saturated(&[50.0, 0.5, 4.0]));
+        assert!(is_saturated(&[50.0, 8.0, 3.0, 0.1, 0.0]));
+    }
+
+    #[test]
+    fn a_run_of_new_geometry_grows_the_union_and_a_repeat_adds_nothing() {
+        let square = |x: f64| {
+            let p = |dx: f64, dy: f64| Point { x: x + dx, y: dy };
+            vec![vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0), p(0.0, 0.0)]]
         };
-        assert!(footprint_from_probe(&job, &probe, &silhouette, Some((5.0, 5.0))).is_err());
-        assert!(footprint_from_probe(&job, &probe, &silhouette, None).is_err());
+        let run = |x: f64| Realization {
+            base: square(x),
+            above_base: vec![square(x)],
+            ..Realization::default()
+        };
+        let mut probe = ClassProbe::default();
+        assert!((probe.absorb(&run(0.0), Vec::new()) - 100.0).abs() < 1e-6);
+        assert!(probe.absorb(&run(0.0), Vec::new()).abs() < 1e-6);
+        assert!((probe.absorb(&run(5.0), Vec::new()) - 50.0).abs() < 1e-6);
+        assert_eq!(probe.runs, 3);
+        assert_eq!(probe.growth_mm2.len(), 3);
     }
 }

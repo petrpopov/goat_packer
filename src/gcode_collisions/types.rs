@@ -63,26 +63,6 @@ pub struct PlateAnalysis {
 }
 
 impl PlateAnalysis {
-    /// Fail closed when a final/prefix slice cannot be certified. Repairing callers may
-    /// inspect these conditions separately, but publication must not downgrade them.
-    pub fn require_safe(&self, expected: usize, bed: Rect) -> Result<(), String> {
-        self.require_object_coverage(expected)?;
-        let outside = self.off_plate(bed);
-        if !outside.is_empty() {
-            return Err(format!(
-                "{} object(s) print past the plate boundary",
-                outside.len()
-            ));
-        }
-        if !self.collisions.is_empty() {
-            return Err(format!(
-                "{} support/body collision(s) remain in the slice",
-                self.collisions.len()
-            ));
-        }
-        Ok(())
-    }
-
     /// A partial/unlabelled slice cannot certify a full plate. This checks coverage, not
     /// collision freedom; callers must still inspect collisions and bed extents.
     pub fn require_object_coverage(&self, expected: usize) -> Result<(), String> {

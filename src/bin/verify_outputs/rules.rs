@@ -39,12 +39,18 @@ pub enum Gap {
     Zero,
     /// `--minimum-gap`: body to body.
     Clearance,
-    /// A support to a foreign body.
+    /// A support above layer 0 to a foreign body.
     Support,
+    /// A support base to a foreign landing.
+    SupportBase,
 }
 
 /// A support keeps this far from a foreign body (mm): the packer's `SUPPORT_BODY_GAP_MM`.
 pub const SUPPORT_GAP_MM: f64 = 0.5;
+
+/// A support base keeps this far from a foreign landing (mm): the packer's
+/// `SUPPORT_BASE_GAP_MM` (touching allowed; evidence at its definition).
+pub const SUPPORT_BASE_GAP_MM: f64 = 0.0;
 
 impl Gap {
     pub fn mm(self, clearance_mm: f64) -> f64 {
@@ -52,6 +58,7 @@ impl Gap {
             Gap::Zero => 0.0,
             Gap::Clearance => clearance_mm,
             Gap::Support => SUPPORT_GAP_MM,
+            Gap::SupportBase => SUPPORT_BASE_GAP_MM,
         }
     }
 }
@@ -106,7 +113,7 @@ pub fn pair_gap(a: Kind, b: Kind, bands: bool) -> Option<Gap> {
     };
     let pairs = [
         (body, body, Gap::Clearance),
-        (Kind::SupportBase, Kind::Landing, Gap::Support),
+        (Kind::SupportBase, Kind::Landing, Gap::SupportBase),
         (Kind::SupportBand, Kind::BodyBand, Gap::Support),
         (Kind::InterfaceBand, Kind::BodyBand, Gap::Support),
     ];
@@ -148,6 +155,7 @@ mod tests {
             keepout::Gap::Zero => Gap::Zero,
             keepout::Gap::Clearance => Gap::Clearance,
             keepout::Gap::Support => Gap::Support,
+            keepout::Gap::SupportBase => Gap::SupportBase,
         }
     }
 
@@ -178,6 +186,7 @@ mod tests {
     #[test]
     fn the_pair_table_copy_agrees_with_the_packer_both_body_rules() {
         assert_eq!(SUPPORT_GAP_MM, goat_packer::SUPPORT_BODY_GAP_MM);
+        assert_eq!(SUPPORT_BASE_GAP_MM, keepout::SUPPORT_BASE_GAP_MM);
         for (bands, body_rule) in [(false, BodyRule::Silhouette), (true, BodyRule::Bands)] {
             for (a, print_a) in KINDS {
                 for (b, print_b) in KINDS {

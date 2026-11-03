@@ -86,6 +86,8 @@ fn base_options(stl: &Path) -> AssembleOptions {
         reuse_source_object_instances: false,
         inline_colored_mesh_objects: false,
         footprint_override: None,
+        frame: None,
+        world_polygons: None,
     }
 }
 
@@ -460,7 +462,7 @@ fn item_transform_rotates_the_footprint_center_out_of_the_translation() {
         angle_deg: 0.0,
     };
     assert_eq!(
-        item_transform(&placement, 0.5, (15.0, 25.0)),
+        item_transform(&placement, 0.5, (15.0, 25.0), None),
         "1 0 0 0 1 0 0 0 1 45 45 0.5"
     );
     // cos(90°) is ~6e-17 and must print as "0", keeping the attribute clean.
@@ -469,7 +471,7 @@ fn item_transform_rotates_the_footprint_center_out_of_the_translation() {
         y_mm: 160.0,
         angle_deg: 90.0,
     };
-    let values = transform_values(&item_transform(&rotated, 0.5, (15.0, 25.0)));
+    let values = transform_values(&item_transform(&rotated, 0.5, (15.0, 25.0), None));
     let expected = [
         0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 175.0, 145.0, 0.5,
     ];

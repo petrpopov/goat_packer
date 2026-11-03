@@ -6,6 +6,15 @@ use super::{BodyRule, KeepoutClass};
 use crate::footprint::SUPPORT_BODY_GAP_MM;
 use crate::object_print::PrintKind::{self, *};
 
+/// How far a support base keeps from a neighbour's landing (mm). Zero: they may touch, never
+/// overlap. Evidence (owner, 2026-11-02): the plates that printed fine (U1 48 goats, A2L 70,
+/// P1S 43) have realized support bases touching neighbours' first-layer bodies at -0.04..-0.09 mm
+/// with the supports fused to each other and never to a goat, and the owner knows no minimum
+/// gap ("what is in these files prints fine"). Supports above layer 0 keep
+/// `SUPPORT_BODY_GAP_MM` from a neighbour's body: that one is the sample-versus-plate drift
+/// of the band tests, which the first layer does not share (its patch is learned exactly).
+pub const SUPPORT_BASE_GAP_MM: f64 = 0.0;
+
 /// How far apart two things must stay. Symbolic, because the numbers belong to the job.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Gap {
@@ -13,8 +22,10 @@ pub enum Gap {
     Zero,
     /// `PackOptions::clearance`: body to body.
     Clearance,
-    /// `SUPPORT_BODY_GAP_MM`: a support to a body ("never touch").
+    /// `SUPPORT_BODY_GAP_MM`: a support above layer 0 to a body ("never touch").
     Support,
+    /// `SUPPORT_BASE_GAP_MM`: a support base to a neighbour's landing.
+    SupportBase,
 }
 
 impl Gap {
@@ -23,6 +34,7 @@ impl Gap {
             Gap::Zero => 0.0,
             Gap::Clearance => clearance_mm,
             Gap::Support => SUPPORT_BODY_GAP_MM,
+            Gap::SupportBase => SUPPORT_BASE_GAP_MM,
         }
     }
 }
@@ -132,7 +144,7 @@ const fn pair(a: PrintKind, b: PrintKind, gap: Gap) -> PairRule {
 /// The pairs with silhouettes as the body rule.
 const SILHOUETTE_PAIRS: [PairRule; 4] = [
     pair(Silhouette, Silhouette, Gap::Clearance),
-    pair(SupportBase, Landing, Gap::Support),
+    pair(SupportBase, Landing, Gap::SupportBase),
     pair(SupportBand, BodyBand, Gap::Support),
     pair(InterfaceBand, BodyBand, Gap::Support),
 ];
@@ -140,7 +152,7 @@ const SILHOUETTE_PAIRS: [PairRule; 4] = [
 /// The same with per-band bodies: physically valid for FDM, looser than the silhouette.
 const BAND_PAIRS: [PairRule; 4] = [
     pair(BodyBand, BodyBand, Gap::Clearance),
-    pair(SupportBase, Landing, Gap::Support),
+    pair(SupportBase, Landing, Gap::SupportBase),
     pair(SupportBand, BodyBand, Gap::Support),
     pair(InterfaceBand, BodyBand, Gap::Support),
 ];
