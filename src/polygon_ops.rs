@@ -32,8 +32,8 @@ pub use boolean::{
 pub use grid::{Grid, MAX_COORDINATE};
 pub use offset::{DEFAULT_MITER_LIMIT, Join, offset};
 pub use query::{
-    Containment, IntBox, area, bbox, containment, contains, distance_to_boundary, nearest_boundary,
-    nearest_inside, ring_doubled_area,
+    Containment, IntBox, area, bbox, containment, contains, distance_to_boundary,
+    inside_even_odd, nearest_boundary, nearest_inside, ring_doubled_area,
 };
 pub use simplify::{douglas_peucker, simplify};
 
