@@ -46,30 +46,42 @@ impl Budget {
 }
 
 /// A lattice with its best phases.
-struct Scored {
+pub(crate) struct Scored {
     lattice: Hnf,
     phases: Vec<Phase>,
 }
 
-/// Single-lattice candidates of `class` (local id) over every tower anchor of `ctx`: one
-/// completed layout per (lattice, phase), in rank order.
-pub(crate) fn single_lattice(
+/// The best lattices of `class` with their best phases (member A's ranking). Members that
+/// reuse the ranking (two blocks) take it from here instead of running it again.
+pub(crate) fn rank_class(ctx: &Ctx, class: usize, budget: Budget) -> Vec<Scored> {
+    ctx.prepare_no_fit();
+    ranked_lattices(ctx, class, budget)
+}
+
+/// Single-lattice candidates of `class` (local id) over every tower anchor of `ctx` from its
+/// ranking: one completed layout per (lattice, phase), in rank order.
+pub(crate) fn complete_ranked(
     ctx: &Ctx,
     class: usize,
+    scored: &[Scored],
     budget: Budget,
     cap: usize,
 ) -> Vec<Candidate> {
-    ctx.prepare_no_fit();
-    let scored = ranked_lattices(ctx, class, budget);
     let triples: Vec<(Hnf, Phase)> = scored
-        .into_iter()
+        .iter()
         .take(budget.lattices)
-        .flat_map(|s| s.phases.into_iter().map(move |p| (s.lattice, p)))
+        .flat_map(|s| s.phases.iter().map(move |p| (s.lattice, *p)))
         .collect();
     triples
         .par_iter()
         .map(|(lattice, phase)| complete(ctx, class, lattice, phase, cap))
         .collect()
+}
+
+impl Scored {
+    pub(crate) fn lattice(&self) -> Hnf {
+        self.lattice
+    }
 }
 
 /// Lattices scored per parallel step. A constant, not the thread count, so the set of
@@ -134,7 +146,7 @@ fn kth_score(scores: &[(usize, u32)], k: usize) -> Option<u32> {
 
 /// The layout of one lattice phase at its anchor, completed from the corners.
 fn complete(ctx: &Ctx, class: usize, lattice: &Hnf, phase: &Phase, cap: usize) -> Candidate {
-    let seed = lattice_points(ctx, class, lattice, phase, cap);
+    let seed = lattice_points(ctx, class, lattice, phase.coset, phase.anchor, cap);
     let filled = edge_fill(ctx, phase.anchor, &seed, cap);
     let detail = [
         class as i32,
@@ -152,21 +164,22 @@ fn complete(ctx: &Ctx, class: usize, lattice: &Hnf, phase: &Phase, cap: usize) -
     )
 }
 
-/// The phase's points the class may take (base map minus the tower), rows from the bottom,
+/// The coset's points the class may take (base map minus the tower), rows from the bottom,
 /// at most `cap` of them when set.
-fn lattice_points(
+pub(super) fn lattice_points(
     ctx: &Ctx,
     class: usize,
     lattice: &Hnf,
-    phase: &Phase,
+    coset: usize,
+    anchor: Option<usize>,
     cap: usize,
 ) -> Vec<PixelPlacement> {
     let Some(bounds) = ctx.origins(class).bounds() else {
         return Vec::new();
     };
-    let tower = phase.anchor.map(|a| ctx.towers()[a].forbidden(class));
+    let tower = anchor.map(|a| ctx.towers()[a].forbidden(class));
     let free = lattice
-        .points_in(phase.coset, bounds)
+        .points_in(coset, bounds)
         .into_iter()
         .filter(|&(x, y)| ctx.origins(class).contains(x, y))
         .filter(|&(x, y)| tower.is_none_or(|set| !set.contains(x, y)))

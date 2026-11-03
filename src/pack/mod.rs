@@ -17,6 +17,7 @@ pub mod edge_fill;
 pub mod free_map;
 pub mod improve;
 pub mod lattice;
+mod members;
 pub(crate) mod legacy;
 pub mod no_fit;
 pub mod robustness;
@@ -40,7 +41,7 @@ use crate::options::PackOptions;
 use crate::validation::{
     LayoutRules, PrintPlacement, RasterValidator, VectorValidator, check_prints,
 };
-use lattice::single;
+use members::member_candidates;
 use rayon::prelude::*;
 use select::{Candidate, choose, failure_summary};
 use serde::Serialize;
@@ -48,7 +49,13 @@ use std::time::Instant;
 
 /// The members `pack` runs on fixed rotation classes. `Mixed` needs a footprint that may
 /// turn freely, so only the legacy search runs it.
-pub const DEFAULT_MEMBERS: [Member; 3] = [Member::Lattice, Member::Sweep, Member::Rows];
+pub const DEFAULT_MEMBERS: [Member; 5] = [
+    Member::Lattice,
+    Member::DoubleLattice,
+    Member::TwoBlock,
+    Member::Sweep,
+    Member::Rows,
+];
 
 /// The published layout of a run and how it was found.
 #[derive(Clone, Debug, Serialize)]
@@ -194,86 +201,6 @@ fn fixed_context<'a>(
         ctx.add_towers(anchors.iter().map(|&a| (a, spec.zones(a))).collect());
     }
     Ok(ctx)
-}
-
-/// Tower anchors the greedy members (sweeps, rows) run at when no lattice ranked them: the
-/// source and the corners of the range, which `scan_anchors` lists first.
-const GREEDY_ANCHORS: usize = 5;
-
-/// One unit of greedy member work: a member at one tower anchor, for one class where the
-/// member runs per class.
-type Unit = (Member, Option<usize>, Option<usize>);
-
-/// Every member's candidates. The lattice runs first, per class, over every scanned anchor;
-/// the greedy members cost a full run per anchor, so they run at the source anchor and the
-/// anchors of the best lattice candidates.
-fn member_candidates(ctx: &Ctx, members: &[Member], options: &PackOptions) -> Vec<Candidate> {
-    let effort = options.attempts.clamp(1, sweep::MAX_SWEEP_VARIANTS);
-    let cap = options.max_objects;
-    let mut candidates: Vec<Candidate> = Vec::new();
-    if members.contains(&Member::Lattice) {
-        let budget = single::Budget::for_effort(effort);
-        for class in 0..ctx.classes() {
-            candidates.extend(single::single_lattice(ctx, class, budget, cap));
-        }
-    }
-    let slots = greedy_slots(ctx, &single::best_anchors(&candidates));
-    candidates.extend(greedy_candidates(ctx, members, &slots, effort, cap));
-    candidates
-}
-
-/// The anchor slots of the greedy members: the source (slot 0), the lattice's best anchors,
-/// and without a lattice result the corners too; ascending, no repeats.
-fn greedy_slots(ctx: &Ctx, ranked: &[usize]) -> Vec<Option<usize>> {
-    let slots = ctx.anchor_slots();
-    if slots[0].is_none() {
-        return slots;
-    }
-    let mut chosen: Vec<usize> = vec![0];
-    if ranked.is_empty() {
-        chosen.extend(1..GREEDY_ANCHORS.min(slots.len()));
-    }
-    chosen.extend_from_slice(ranked);
-    chosen.sort_unstable();
-    chosen.dedup();
-    chosen.into_iter().map(Some).collect()
-}
-
-fn greedy_candidates(
-    ctx: &Ctx,
-    members: &[Member],
-    slots: &[Option<usize>],
-    variants: usize,
-    cap: usize,
-) -> Vec<Candidate> {
-    let mut units: Vec<Unit> = Vec::new();
-    for &member in members {
-        for &anchor in slots {
-            match member {
-                Member::Rows => units.extend((0..ctx.classes()).map(|c| (member, anchor, Some(c)))),
-                Member::Sweep => units.push((member, anchor, None)),
-                _ => {}
-            }
-        }
-    }
-    units
-        .par_iter()
-        .map(|&(member, anchor, class)| match (member, class) {
-            (Member::Rows, Some(class)) => {
-                let (layout, shift) = rows::brick_rows(ctx, class, anchor, cap);
-                ctx.candidate(
-                    member,
-                    anchor,
-                    vec![class as i64, i64::from(shift)],
-                    &layout,
-                )
-            }
-            _ => {
-                let run = sweep::sweeps(ctx, anchor, variants, cap);
-                ctx.candidate(member, anchor, vec![run.variant as i64], &run.layout)
-            }
-        })
-        .collect()
 }
 
 fn best_counts(members: &[Member], candidates: &[Candidate]) -> Vec<MemberCount> {

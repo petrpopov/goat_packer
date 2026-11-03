@@ -34,11 +34,13 @@ pub enum Member {
 
 impl Member {
     /// The members this package implements, in run order.
-    pub const AVAILABLE: [Member; 4] = [
+    pub const AVAILABLE: [Member; 6] = [
         Member::Sweep,
         Member::Mixed,
         Member::Rows,
         Member::Lattice,
+        Member::DoubleLattice,
+        Member::TwoBlock,
     ];
 }
 
