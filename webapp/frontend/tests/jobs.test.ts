@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PackJobInfo } from '../src/api/types';
-import { TOWER_GUI_WARNING, towerWarning } from '../src/utils/jobs';
+import { SNAPMAKER_TOWER_CONFLICT_NOTE, TOWER_GUI_WARNING, snapmakerTowerNote, towerWarning } from '../src/utils/jobs';
 
 const packed = (tower: PackJobInfo['tower']): PackJobInfo => ({
   objectCount: 30,
@@ -25,5 +25,27 @@ describe('prime tower warning on the pack result', () => {
     expect(towerWarning('RUNNING', packed(tower))).toBeNull();
     expect(towerWarning('FAILED', packed(tower))).toBeNull();
     expect(towerWarning(undefined, packed(tower))).toBeNull();
+  });
+});
+
+describe('Snapmaker tower conflict note on the pack result', () => {
+  const tower = { anchorXMm: 10, anchorYMm: 10, widthMm: 20, depthMm: 20 };
+  const snapmaker = { name: 'Snapmaker U1', vendor: 'Snapmaker' };
+
+  test('a finished Snapmaker plate with a tower says how to resolve the first-layer conflict', () => {
+    expect(snapmakerTowerNote('SUCCEEDED', packed(tower), snapmaker)).toBe(SNAPMAKER_TOWER_CONFLICT_NOTE);
+    expect(SNAPMAKER_TOWER_CONFLICT_NOTE).toContain('Snapmaker Orca');
+    expect(SNAPMAKER_TOWER_CONFLICT_NOTE).toContain('1–2 мм');
+  });
+
+  test('the vendor is also taken from the name when the profile has none', () => {
+    expect(snapmakerTowerNote('SUCCEEDED', packed(tower), { name: 'Snapmaker J1' })).toBe(SNAPMAKER_TOWER_CONFLICT_NOTE);
+  });
+
+  test('other vendors, no tower or an unfinished job show nothing', () => {
+    expect(snapmakerTowerNote('SUCCEEDED', packed(tower), { name: 'Bambu Lab P1S', vendor: 'Bambu Lab' })).toBeNull();
+    expect(snapmakerTowerNote('SUCCEEDED', packed(null), snapmaker)).toBeNull();
+    expect(snapmakerTowerNote('RUNNING', packed(tower), snapmaker)).toBeNull();
+    expect(snapmakerTowerNote('SUCCEEDED', packed(tower), null)).toBeNull();
   });
 });

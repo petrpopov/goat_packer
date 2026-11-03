@@ -2,6 +2,7 @@
 
 import { ApiError } from '../api/http';
 import type { JobStatus } from '../api/types';
+import { type PrinterLike, vendorOf } from './printers';
 
 /** Задача ещё не завершилась: опрашиваем, форма заблокирована, удалить нельзя. */
 export const ACTIVE_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
@@ -60,4 +61,22 @@ export function towerWarning(
   result: { tower?: unknown } | null | undefined
 ): string | null {
   return status === 'SUCCEEDED' && result?.tower ? TOWER_GUI_WARNING : null;
+}
+
+/**
+ * Snapmaker Orca при нарезке сравнивает линии подставок с линиями юбки башни очистки на первом слое; подставки в его окне
+ * чуть отличаются от тех, по которым пакер оставил зазор, и одна из фигурок у башни может дать «Serious warning:
+ * Conflicts of G-code paths … (WipeTower …)». Пакер из-за этого фигурки не убирает — пользователю говорим, что делать.
+ */
+export const SNAPMAKER_TOWER_CONFLICT_NOTE =
+  'Snapmaker Orca может предупредить о конфликте башни очистки с соседней фигуркой на первом слое. Если так — сдвиньте башню на 1–2 мм от фигурки или удалите ближайшую фигурку.';
+
+/** Подсказка про конфликт башни в Snapmaker Orca у готового стола; null — другой производитель, задача не завершилась или башни нет. */
+export function snapmakerTowerNote(
+  status: JobStatus | null | undefined,
+  result: { tower?: unknown } | null | undefined,
+  profile: PrinterLike | null | undefined
+): string | null {
+  if (status !== 'SUCCEEDED' || !result?.tower || !profile) return null;
+  return vendorOf(profile).toLowerCase() === 'snapmaker' ? SNAPMAKER_TOWER_CONFLICT_NOTE : null;
 }

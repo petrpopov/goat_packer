@@ -54,3 +54,26 @@ exactly Snapmaker's recorded lines.
 - Not modelled: Orca tower type 1 selected by the project (`wipe_tower_type`); it would read as
   Bambu. The owner's earlier remark that supports and tower brims may overlap holds for Orca type 2
   only (nothing is recorded); Bambu and Snapmaker both flag a crossing.
+
+## The Spiral-lift warning is not a setting check (2026-11-03, Snapmaker Orca 2.4.0 and 2.4.1)
+
+"Model too close to bed boundary. Disable spiral lifting or keep at least 3.5mm gap to avoid collision."
+(serious warning) is a purely geometric canvas check (`GLVolumeCollection::check_outside_state`): for a
+rectangular bed, for every printable object fully inside the plate, the object's world bounding box must be
+at least 3.5 mm from each edge of the plate shape's bbox (`printable_area`), strict `<`. It never reads
+`z_hop_types`, `filament_z_hop_types` or any per-object key, so setting Normal lift anywhere does not clear it.
+Only the margin does: on the owner's U1 56 plate the lowest mesh bbox is 4.18 mm from the y = 1 edge, so a
+shift of 0.7 mm or more toward -Y raises it; 0.65 mm is the largest safe shift (3.53 mm).
+
+## Why the conflict survives the Snapmaker tower model
+
+The model matches the GUI's G-code (checked on the 40- and 48-goat Snapmaker GUI plates: brim loops 4.91 mm
+per side from the wall centre line, anchor = wall bbox minimum, depth 16.1 at width 20 and 19.7 at width 16,
+cone 3.52 mm at layer 1 shrinking 0.44 mm per layer). The GUI clamps the anchor to
+`plate max - width - 1 - brim` and `plate max - depth - 1 - brim`; the packer's (244.5, 248.9) is exactly
+that corner. What is left is the support realization: vanilla CLI keeps the nearest goat's first-layer
+support 1.66 mm (centre line to the outermost brim loop) from the tower, while the GUI's supports exceed
+the vanilla union by 0.7 to 1.4 mm (4.1 mm in one 40-goat plate; `delta.md` section 2). A +1.5 mm reserve on
+the checked brim zone costs a goat (56 -> 55 and the tower leaves the corner), so the packer does not apply
+it; the webapp tells the user instead. The hand-made 48-goat GUI plate that printed fine has 8 support/brim
+line crossings of its own at layer 0.
