@@ -162,6 +162,21 @@ impl Flavour {
             });
         }
         if let Some((flavour, exact)) = application.and_then(Flavour::from_application) {
+            // An Orca export also writes `Application = BambuStudio-<compat>` and differs only
+            // by its `OrcaSlicer` tag, which a project keeps after a later BambuStudio save (the
+            // owner's P1S project: BambuStudio-02.08.02.61 plus OrcaSlicer 2.5.0-dev, printed
+            // from BambuStudio). On a printer whose profile targets BambuStudio the profile
+            // decides; an Orca user there passes `--slicer orca`.
+            let profile_is_bambu = gui_flavour
+                .and_then(Flavour::from_name)
+                .is_some_and(|profile| profile.family() == Family::Bambu);
+            if flavour.family() == Family::Orca && profile_is_bambu {
+                return Ok(ResolvedFlavour {
+                    flavour: Flavour::Bambu0208,
+                    source: FlavourSource::Profile,
+                    approximated: false,
+                });
+            }
             return Ok(ResolvedFlavour {
                 flavour,
                 source: FlavourSource::Application,
@@ -251,6 +266,17 @@ fn nearest_orca(parts: &[u32]) -> (Flavour, bool) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_orca_tagged_project_on_a_bambu_profile_targets_bambu_studio() {
+        let resolved = Flavour::resolve(None, Some("OrcaSlicer-2.5.0-dev"), Some("bambu-02.08")).unwrap();
+        assert_eq!(resolved.flavour, Flavour::Bambu0208);
+        assert_eq!(resolved.source, FlavourSource::Profile);
+        let orca_profile = Flavour::resolve(None, Some("OrcaSlicer-2.4.2"), Some("orca-2.4")).unwrap();
+        assert_eq!(orca_profile.flavour.family(), Family::Orca);
+        let explicit = Flavour::resolve(Some("orca-2.4"), Some("OrcaSlicer-2.5.0-dev"), Some("bambu-02.08")).unwrap();
+        assert_eq!(explicit.flavour, Flavour::Orca242);
+    }
     use super::*;
 
     #[test]
