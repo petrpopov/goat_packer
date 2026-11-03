@@ -59,6 +59,24 @@ impl GuiFlavour {
     }
 }
 
+impl GuiFlavour {
+    /// The most a profile may ask for with `max_support_clip_mm`: how far past the printable edge the flavour's slicer is known to cut the shared support
+    /// of a class (it clips the support areas of the first copy by the bed polygon). BambuStudio
+    /// 02.08: the owner's printed GUI plate (P1S 43) lost 3.96 mm of every goat's support at
+    /// the top edge and printed clean; 4.0 is that evidence rounded. Orca and Snapmaker Orca
+    /// run the same clip in their sources but no printed plate confirms it yet (the U1 keeps
+    /// its calibrated edge rule), so they stay at 0 until one does.
+    pub fn support_clip_cap_mm(&self) -> f64 {
+        match self.family {
+            GuiFamily::Bambu => BAMBU_SUPPORT_CLIP_MM,
+            GuiFamily::Orca | GuiFamily::SnapmakerOrca => 0.0,
+        }
+    }
+}
+
+/// See [`GuiFlavour::support_clip_cap_mm`].
+pub const BAMBU_SUPPORT_CLIP_MM: f64 = 4.0;
+
 impl fmt::Display for GuiFlavour {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}-{}", self.family.name(), self.version)

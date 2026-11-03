@@ -49,6 +49,15 @@ impl PrintKind {
         PrintKind::TowerBody,
         PrintKind::TowerBrim,
     ];
+
+    /// Support material: the kinds the slicer clips at the bed and the bed rule may let
+    /// cross the printable edge (`PlateRules::support_clip_mm`).
+    pub const fn is_support(self) -> bool {
+        matches!(
+            self,
+            PrintKind::SupportBase | PrintKind::SupportBand | PrintKind::InterfaceBand
+        )
+    }
 }
 
 /// Who produced a print and with which margins; kept so a state file says what its supports

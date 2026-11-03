@@ -23,7 +23,7 @@ use super::PrinterProfile;
 use crate::gcode_frame::extruder_offset;
 use crate::keepout::{BodyRule, PlateRules};
 
-pub use flavour::{GuiFamily, GuiFlavour};
+pub use flavour::{BAMBU_SUPPORT_CLIP_MM, GuiFamily, GuiFlavour};
 pub use legacy::{LEGACY_EXCLUSION_GROWTH_MM, legacy_bed_rules, old_field_mismatches};
 pub use schema::{ProfileBedRules, ProfileKeepout};
 pub use zone_check::{ZoneHit, zone_hits};
@@ -82,10 +82,16 @@ pub fn plate_rules(profile: &PrinterProfile, project: &ProjectBed) -> Result<Pla
         .gui_flavour
         .as_ref()
         .map_or(0.0, GuiFlavour::body_edge_band_mm);
+    let clip_cap = profile
+        .gui_flavour
+        .as_ref()
+        .map_or(0.0, GuiFlavour::support_clip_cap_mm);
     Ok(PlateRules {
         printable_area: profile.printable_bed(),
         body_edge_band_mm: declared.body_edge_band_mm.max(gui_band),
         print_edge_reserve_mm: declared.print_edge_reserve_mm,
+        support_clip_mm: declared.max_support_clip_mm.map_or(0.0, |own| own.min(clip_cap)),
+        support_clip_sides: [true; 4],
         keepouts: declared
             .keepouts
             .iter()

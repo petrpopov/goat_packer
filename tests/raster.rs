@@ -317,6 +317,8 @@ mod zones {
             printable_area: Rect::new(0.0, 0.0, 40.0, 40.0),
             body_edge_band_mm: 0.0,
             print_edge_reserve_mm: 0.0,
+            support_clip_mm: 0.0,
+            support_clip_sides: [true; 4],
             keepouts,
             body_rule: BodyRule::Silhouette,
         }
@@ -411,6 +413,29 @@ mod zones {
         assert!(error.contains("SupportBand"), "{error}");
         // The body alone may reach the printable edge.
         assert_eq!(conflict(&masks(false), &zones, 38.0, 20.0), None);
+    }
+
+    #[test]
+    fn the_support_clip_lets_support_material_cross_the_edge_and_nothing_else() {
+        let mut plate = rules(vec![]);
+        plate.support_clip_mm = 2.0;
+        let zones = plate_zones(&plate, None).unwrap();
+        let supported = masks(true);
+        // Same fixture as the reserve test: the band-1 support reaches x + 4, the body x + 2,
+        // the edge is 40. Without a clip the support stops the origin at 36; with 2 mm it may
+        // hang over, and the body (edge at origin 38) is what stops it.
+        assert!(conflict(&supported, &plate_zones(&rules(vec![]), None).unwrap(), 36.25, 20.0).is_some());
+        assert_eq!(conflict(&supported, &zones, 36.25, 20.0), None);
+        assert_eq!(conflict(&supported, &zones, 38.0, 20.0), None);
+        let error = conflict(&supported, &zones, 38.25, 20.0).unwrap();
+        assert!(error.contains("body leaves"), "{error}");
+        // A clip shorter than the overhang still binds: 1 mm lets the support reach 41 only.
+        let mut short = rules(vec![]);
+        short.support_clip_mm = 1.0;
+        let zones = plate_zones(&short, None).unwrap();
+        assert_eq!(conflict(&supported, &zones, 37.0, 20.0), None);
+        let error = conflict(&supported, &zones, 37.25, 20.0).unwrap();
+        assert!(error.contains("Support"), "{error}");
     }
 
     fn tower(class: ZoneClass, rect: Rect, z: Option<[f64; 2]>) -> PlateZone {

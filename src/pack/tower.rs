@@ -166,6 +166,7 @@ impl TowerSpec {
                 let ZoneArea::Outside {
                     inside,
                     material_inset_mm,
+                    ..
                 } = zone.area
                 else {
                     continue;
@@ -239,6 +240,7 @@ fn breaks(rect: Rect, area: &ZoneArea) -> bool {
         ZoneArea::Outside {
             inside,
             material_inset_mm,
+            ..
         } => rect.sticks_out_of(inside.grown(-material_inset_mm), FIT_EPS_MM),
         ZoneArea::Rect(zone) => {
             rect.min_x < zone.max_x - FIT_EPS_MM

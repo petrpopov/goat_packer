@@ -21,6 +21,15 @@ pub struct ProfileBedRules {
     /// Supports and the tower stay inside the printable area inset by this.
     #[serde(default)]
     pub print_edge_reserve_mm: f64,
+    /// Longest stretch of support material that may be cut off by the bed edge, mm: the
+    /// slicer clips the shared support at the printable area, so the packer lets support
+    /// material reach this far past it (never a body, never the tower). Opt-in: absent = 0,
+    /// supports stay inside. Present = the smaller of this and what the GUI flavour is known
+    /// to clip (`GuiFlavour::support_clip_cap_mm`; 0 for flavours no printed plate confirmed),
+    /// so a profile can never loosen the flavour. Each open edge costs one more packing pass
+    /// (`prepare::clip_configurations`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_support_clip_mm: Option<f64>,
     #[serde(default)]
     pub keepouts: Vec<ProfileKeepout>,
 }
@@ -63,6 +72,9 @@ impl ProfileBedRules {
     pub fn validate(&self) -> Result<(), String> {
         non_negative("body_edge_band_mm", self.body_edge_band_mm)?;
         non_negative("print_edge_reserve_mm", self.print_edge_reserve_mm)?;
+        if let Some(clip) = self.max_support_clip_mm {
+            non_negative("max_support_clip_mm", clip)?;
+        }
         let mut ids = BTreeSet::new();
         for keepout in &self.keepouts {
             keepout

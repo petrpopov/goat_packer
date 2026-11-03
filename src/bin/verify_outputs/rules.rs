@@ -81,6 +81,20 @@ impl Gap {
     }
 }
 
+/// Whether the kind may reach past the printable edge (up to the flavour's clip): support
+/// material only. The matrix cell stays `Forbidden(Zero)`; the clip is a separate allowance
+/// because the slicer cuts the shared support at the bed, never a body or the tower.
+pub const fn may_cross_bed_edge(kind: Kind) -> bool {
+    matches!(kind, Kind::SupportBase | Kind::SupportBand | Kind::InterfaceBand)
+}
+
+/// How far the named GUI family's slicer is known to cut supports at the bed edge, mm: the
+/// packer's `GuiFlavour::support_clip_cap_mm` (BambuStudio 02.08 only; every other family
+/// stays at 0 until a printed plate confirms its clip).
+pub fn support_clip_cap_mm(family: &str) -> f64 {
+    if family == "bambu" { 4.0 } else { 0.0 }
+}
+
 /// What one kind may do against one zone class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Rule {
@@ -200,6 +214,25 @@ mod tests {
                     "{kind:?} against {zone:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_support_clip_copy_agrees_with_the_packer() {
+        for (kind, print_kind) in KINDS {
+            assert_eq!(may_cross_bed_edge(kind), print_kind.is_support(), "{kind:?}");
+            // The matrix cell itself is unchanged: the clip is a separate allowance.
+            let cell = rule(kind, Zone::Boundary);
+            assert_eq!(cell, rule_of(keepout::permission(print_kind, ZoneClass::Boundary)));
+        }
+        let flavours = [
+            ("bambu", "bambu-02.08"),
+            ("orca", "orca-2.4"),
+            ("snapmaker-orca", "snapmaker-orca-2.4"),
+        ];
+        for (family, text) in flavours {
+            let flavour = goat_packer::colored_packer::bed_rules::GuiFlavour::try_from(text.to_owned()).unwrap();
+            assert_eq!(support_clip_cap_mm(family), flavour.support_clip_cap_mm(), "{family}");
         }
     }
 

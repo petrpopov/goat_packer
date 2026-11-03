@@ -72,6 +72,8 @@ fn plate(keepouts: Vec<Keepout>, body_edge_band_mm: f64) -> PlateRules {
         printable_area: Rect::new(0.0, 0.0, 100.0, 100.0),
         body_edge_band_mm,
         print_edge_reserve_mm: 0.0,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts,
         body_rule: BodyRule::Silhouette,
     }

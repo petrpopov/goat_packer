@@ -5,16 +5,20 @@
 
 use crate::geometry::{Point, Rect};
 use crate::keepout::{Keepout, KeepoutFrame, KeepoutShape, PlateRules, ZoneClass};
-use crate::object_print::{Loops, band_z_range};
+use crate::object_print::{Loops, PrintKind, band_z_range};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ZoneArea {
     /// Everything outside `inside`: the printable boundary and edge bands. Rules about
     /// material keep it inside `inside` shrunk by `material_inset_mm` (the print edge
-    /// reserve, boundary only); part boxes use `inside` itself.
+    /// reserve, boundary only); part boxes use `inside` itself. Support material (and only
+    /// it) may reach `support_clip_mm` past that line, because the slicer clips supports at
+    /// the bed (`PlateRules::support_clip_mm`).
     Outside {
         inside: Rect,
         material_inset_mm: f64,
+        /// Per edge: min x, min y, max x, max y.
+        support_clip_mm: [f64; 4],
     },
     Rect(Rect),
     /// Even-odd rings.
@@ -29,6 +33,30 @@ pub struct PlateZone {
     pub area: ZoneArea,
     /// `[from, to]` in mm; `None` = every height.
     pub z_range_mm: Option<[f64; 2]>,
+}
+
+impl ZoneArea {
+    /// The rectangle material of `kind` must stay inside for an `Outside` area: `inside` shrunk
+    /// by the print reserve, grown again by the clip for support material. `None` for the
+    /// other areas.
+    pub fn material_limit(&self, kind: PrintKind) -> Option<Rect> {
+        match self {
+            ZoneArea::Outside {
+                inside,
+                material_inset_mm,
+                support_clip_mm,
+            } => {
+                let clip = if kind.is_support() { *support_clip_mm } else { [0.0; 4] };
+                Some(Rect::new(
+                    inside.min_x - clip[0] + material_inset_mm,
+                    inside.min_y - clip[1] + material_inset_mm,
+                    inside.max_x + clip[2] - material_inset_mm,
+                    inside.max_y + clip[3] - material_inset_mm,
+                ))
+            }
+            ZoneArea::Rect(_) | ZoneArea::Loops(_) => None,
+        }
+    }
 }
 
 impl PlateZone {
@@ -55,6 +83,7 @@ pub fn plate_zones(
         area: ZoneArea::Outside {
             inside: printable,
             material_inset_mm: rules.print_edge_reserve_mm,
+            support_clip_mm: rules.support_clip_per_side(),
         },
         z_range_mm: None,
     }];
@@ -122,6 +151,7 @@ fn edge_band(printable: Rect, width: f64) -> Result<ZoneArea, String> {
     Ok(ZoneArea::Outside {
         inside: printable.inset(width)?,
         material_inset_mm: 0.0,
+        support_clip_mm: [0.0; 4],
     })
 }
 

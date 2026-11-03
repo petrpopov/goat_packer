@@ -122,6 +122,7 @@ pub fn derive(profile: &PrinterProfile, vendor: &str, facts: &PrinterFacts) -> D
     let bed_rules = ProfileBedRules {
         body_edge_band_mm: gui_flavour.body_edge_band_mm(),
         print_edge_reserve_mm: 0.0,
+        max_support_clip_mm: None,
         keepouts,
     };
     let edge_margin_mm = bed_rules.body_margin_mm(Some(&gui_flavour));

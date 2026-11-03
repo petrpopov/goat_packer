@@ -60,6 +60,8 @@ fn rules() -> PlateRules {
         printable_area: Rect::new(0.0, 0.0, 100.0, 100.0),
         body_edge_band_mm: 1.0,
         print_edge_reserve_mm: 0.0,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: vec![Keepout {
             id: "purge".to_owned(),
             class: KeepoutClass::Soft,

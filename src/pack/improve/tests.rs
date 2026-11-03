@@ -37,6 +37,8 @@ fn zones(width: f64, height: f64) -> Vec<PlateZone> {
         printable_area: Rect::new(0.0, 0.0, width, height),
         body_edge_band_mm: 0.0,
         print_edge_reserve_mm: 0.0,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts: Vec::new(),
         body_rule: Default::default(),
     };

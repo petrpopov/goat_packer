@@ -517,6 +517,13 @@ z-range overlaps band k (§4.1 band rule, the same positive-length overlap). Fir
 | tower body | inside the printable area | forbidden (validate error) | allowed | forbidden at L0 | — | — |
 | tower brim | inside the printable area (the GUI counts tower lines) | forbidden | allowed | allowed | — | — |
 
+Supports across the edge (2026-11-03, opt-in): `bed_rules.max_support_clip_mm` (capped by the flavour: Bambu 4.0,
+others 0) lets the support kinds (never body, landing or tower) reach that far past the printable edge, per open
+edge, because the slicer clips the one shared support at the FIRST copy's bed edge (`keepout::clip`). Safe only
+when the first copy of the class crosses every open edge at least as far as any other copy; the order step picks
+that copy instead of the interior one, and a layout without one is refused. Measured with the cap on: P1S 47, A2L 79
+(no gain); four edges open would give P1S 49 but has no such copy.
+
 Consequence of the band rule: `support[0]` contains the layer-0 base and is tested against the chamfer
 rings of band 0. So a support base may overlap only the part of the L0 tower brim that lies outside the
 layer-1 chamfer ring (P1S/B: the outer 2 of 7 loops, ≈ 0.9 mm; U1/S: the outer 3 of 11 loops, ≈ 1.4 mm).

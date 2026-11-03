@@ -63,6 +63,7 @@ pub fn legacy_bed_rules(
     ProfileBedRules {
         body_edge_band_mm,
         print_edge_reserve_mm,
+        max_support_clip_mm: None,
         keepouts,
     }
 }

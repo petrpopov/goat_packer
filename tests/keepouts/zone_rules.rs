@@ -51,6 +51,8 @@ fn rules(band: f64, reserve: f64, keepouts: Vec<Keepout>) -> PlateRules {
         printable_area: Rect::new(0.0, 0.0, 256.0, 256.0),
         body_edge_band_mm: band,
         print_edge_reserve_mm: reserve,
+        support_clip_mm: 0.0,
+        support_clip_sides: [true; 4],
         keepouts,
         body_rule: BodyRule::Silhouette,
     }
@@ -218,6 +220,50 @@ fn a_hard_zone_keeps_every_support_out() {
             hit("macro_purge", PrintKind::SupportBase, Some(0)),
             hit("macro_purge", PrintKind::SupportBand, Some(0)),
         ]
+    );
+}
+
+#[test]
+fn a_support_clip_lets_support_cross_the_edge_but_not_the_body() {
+    let clipped = |clip: f64| PlateRules {
+        support_clip_mm: clip,
+        support_clip_sides: [true; 4],
+        ..rules(0.0, 0.0, vec![])
+    };
+    // The base reaches 3 mm past the body: body on the edge, support 3 mm over it.
+    assert_eq!(
+        zone_hits(&clipped(0.0), &cube(), (3.0, 100.0)),
+        vec![]
+    );
+    assert_eq!(
+        zone_hits(&clipped(0.0), &cube(), (1.0, 100.0)),
+        vec![
+            hit("printable_area", PrintKind::SupportBase, Some(0)),
+            hit("printable_area", PrintKind::SupportBand, Some(0)),
+        ]
+    );
+    // With a 2 mm clip the base may hang 2 mm over (origin 1), not 3 mm (origin 0).
+    assert_eq!(zone_hits(&clipped(2.0), &cube(), (1.0, 100.0)), vec![]);
+    assert_eq!(
+        zone_hits(&clipped(2.0), &cube(), (0.0, 100.0)),
+        vec![hit("printable_area", PrintKind::SupportBase, Some(0))]
+    );
+    // A body past the edge is never excused by the clip.
+    assert_eq!(
+        zone_hits(&clipped(4.0), &cube(), (-1.0, 100.0)),
+        vec![hit("printable_area", PrintKind::Silhouette, None)]
+    );
+    // The reserve and the clip add: reserve 0.5, clip 2 lets the base reach 1.5 over.
+    let both = PlateRules {
+        print_edge_reserve_mm: 0.5,
+        support_clip_mm: 2.0,
+        support_clip_sides: [true; 4],
+        ..rules(0.0, 0.0, vec![])
+    };
+    assert_eq!(zone_hits(&both, &cube(), (1.5, 100.0)), vec![]);
+    assert_eq!(
+        zone_hits(&both, &cube(), (1.0, 100.0)),
+        vec![hit("printable_area", PrintKind::SupportBase, Some(0))]
     );
 }
 

@@ -6,7 +6,7 @@ use goat_packer::{
     object_print::ObjectPrint,
     pack::{LevelReport, PackOutcome, TowerSpec, pack, refine},
     print_time::TimeSample,
-    validate_vector, LayoutRules,
+    keepout::clip::check_first_copies, validate_vector, LayoutRules,
 };
 use serde::{Deserialize, Serialize};
 
@@ -162,6 +162,14 @@ impl PackPlan {
             rules.zones.extend(spec.zones(anchor));
         }
         validate_vector(&self.prints, placements, &rules)?;
+        let order: Vec<(usize, f64, f64)> =
+            placements.iter().map(|p| (p.print, p.x_mm, p.y_mm)).collect();
+        check_first_copies(
+            &self.prints,
+            &order,
+            self.rules.printable_area,
+            self.rules.support_clip_mm,
+        )?;
         Ok(())
     }
 

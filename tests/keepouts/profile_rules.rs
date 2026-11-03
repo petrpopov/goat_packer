@@ -158,6 +158,27 @@ fn declared_rules_win_and_only_gcode_zones_move() {
     );
 }
 
+/// Only the flavours whose clip a printed plate confirmed let supports cross the edge, and a
+/// profile can tighten the flavour's cap, never loosen it.
+#[test]
+fn the_support_clip_comes_from_the_flavour_and_a_profile_only_tightens_it() {
+    let clip = |fields: Value| plate_rules(&profile(fields), &SHIFTED).unwrap().support_clip_mm;
+    // Opt-in: a Bambu profile without the field keeps supports inside.
+    assert_eq!(clip(json!({"gui_flavour": "bambu-02.08", "bed_rules": {}})), 0.0);
+    assert_eq!(clip(json!({"gui_flavour": "bambu-02.08"})), 0.0);
+    assert_eq!(clip(json!({"gui_flavour": "snapmaker-orca-2.4", "bed_rules": {}})), 0.0);
+    assert_eq!(clip(json!({"gui_flavour": "orca-2.4", "bed_rules": {}})), 0.0);
+    assert_eq!(clip(json!({"bed_rules": {}})), 0.0);
+    let own = |value: f64, flavour: &str| {
+        clip(json!({"gui_flavour": flavour, "bed_rules": {"max_support_clip_mm": value}}))
+    };
+    assert_eq!(own(1.5, "bambu-02.08"), 1.5);
+    assert_eq!(own(9.0, "bambu-02.08"), 4.0);
+    assert_eq!(own(2.0, "snapmaker-orca-2.4"), 0.0);
+    let negative = profile(json!({"bed_rules": {"max_support_clip_mm": -1.0}}));
+    assert!(plate_rules(&negative, &SHIFTED).is_err());
+}
+
 #[test]
 fn a_snapmaker_orca_gui_widens_the_body_band_to_its_own() {
     let narrow = profile(json!({"gui_flavour": "snapmaker-orca-2.4", "bed_rules": {}}));
