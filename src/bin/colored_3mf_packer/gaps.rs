@@ -26,13 +26,16 @@ const DEFAULT_XY_MM: f64 = 0.35;
 /// Two gap values closer than this are the same setting (a project writes three decimals).
 const SAME_GAP_MM: f64 = 5e-4;
 
-/// Default `--foreign-gaps`, floor first, as `base:band` pairs. The floor (0:0.5, the former
-/// fixed rule) is what control full-plate slices passed with zero contacts; the ladder only
-/// goes UP from it, so spare room on the bed buys a wider margin and a stricter rung wins only
-/// when it packs at least as many copies. Every rung is packed (the search is not monotone in
-/// the rule); the best count wins and ties keep the larger gaps. Going below the floor needs
+/// Default `--foreign-gaps`: the floor only (0:0.5, the former fixed rule), what control
+/// full-plate slices passed with zero contacts. An upward ladder (`--foreign-gaps
+/// 0:0.5,0.25:0.75,0.5:1.0,0.75:1.5`, the default until 2026-11-04) spends spare room on a wider
+/// margin and wins only when a stricter rung packs at least as many copies; every rung is packed
+/// (the search is not monotone in the rule), the best count wins and ties keep the larger gaps.
+/// On the owner's plates the upper rungs never won (coarse U1 55/55/55/53, P1S 45/45/44/44,
+/// A2L 79/77/75/74; refined: the floor's count or fewer) and cost three extra packs, ~60 s at
+/// the server job's two cores, so they are opt-in. Going below the floor needs
 /// `--foreign-gap-floor` and is reported as a warning.
-pub const DEFAULT_FOREIGN_GAPS: &str = "0:0.5,0.25:0.75,0.5:1.0,0.75:1.5";
+pub const DEFAULT_FOREIGN_GAPS: &str = "0:0.5";
 
 /// Where the effective first-layer gap comes from (decided in `own_gap`).
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -303,7 +306,7 @@ mod tests {
         for bad in ["", "x", "-1", "0.5:-1", "0:0.5,0:0.5", "NaN:1", "1:2:3"] {
             assert!(parse_foreign_gaps(bad).is_err(), "{bad:?}");
         }
-        assert_eq!(parse_foreign_gaps(DEFAULT_FOREIGN_GAPS).unwrap().len(), 4);
+        assert_eq!(parse_foreign_gaps(DEFAULT_FOREIGN_GAPS).unwrap(), vec![ForeignGaps::default()]);
     }
 
     #[test]

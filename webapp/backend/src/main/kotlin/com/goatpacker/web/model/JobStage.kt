@@ -23,10 +23,27 @@ data class JobStage(
     val detail: String? = null,
     /** Все заходы в этапы по порядку (для списка пройденных этапов с длительностями после завершения). */
     val history: List<StageSpan> = emptyList(),
+    /**
+     * Живая подпись шага внутри этапа из `detail` stage-события («поворот 180° · прогон 3 (до 8)»,
+     * «вариант зазора 2 из 4 · сетка 0,25 мм»); null — пакер шагов не присылает.
+     */
+    val label: String? = null,
+    /** Этапы, которые пакер наметил на этот запуск (`plan`-событие); пусто — старый пакер, план не известен. */
+    val planned: List<String> = emptyList(),
 )
 
-/** Один заход в этап; [endedAtMs] null — этап ещё идёт (или задача кончилась, не закрыв его). */
-data class StageSpan(val id: String, val attempt: Int, val startedAtMs: Long, val endedAtMs: Long? = null)
+/**
+ * Один заход в этап; [endedAtMs] null — этап ещё идёт (или задача кончилась, не закрыв его).
+ * Подряд идущие stage-события одного этапа — один заход. [note] — короткий итог шагов этапа для
+ * «Инфо» («0°: 5 прогонов · 180°: из кэша», «сетка 0,25 → 0,2 мм»); null — шагов не было.
+ */
+data class StageSpan(
+    val id: String,
+    val attempt: Int,
+    val startedAtMs: Long,
+    val endedAtMs: Long? = null,
+    val note: String? = null,
+)
 
 /** Неизменяемый срез статусной сводки джоба — обновляется атомарно, гонок нет. */
 data class JobSnapshot(

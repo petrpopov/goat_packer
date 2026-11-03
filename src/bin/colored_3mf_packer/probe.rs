@@ -14,7 +14,7 @@ use goat_packer::{
     nozzle_clean::inject_nozzle_clean,
     object_print::{Loops, Realization},
     print_time::TimeSample,
-    progress::{self, Stage},
+    progress::{self, Stage, StageDetail},
     realization_from_gcode,
 };
 use serde::{Deserialize, Serialize};
@@ -72,32 +72,61 @@ pub fn probe_centre(job: &Job) -> Point {
     }
 }
 
+/// Which class of the rotation list a probe is (0-based `index` of `count`), for the progress
+/// events: the webapp shows one probe stage over all classes, its bar moving by slices.
+#[derive(Clone, Copy, Debug)]
+pub struct ClassStep {
+    pub index: usize,
+    pub count: usize,
+}
+
+impl ClassStep {
+    /// The stage detail of slice `run` (1-based) of this class; `cached`: no slicer runs. The
+    /// steps are counted as if every class took `MAX_RUNS`, so a saturated class jumps ahead.
+    pub fn detail(self, rotation_deg: f64, run: usize, cached: bool) -> StageDetail {
+        let step = if cached { (self.index + 1) * MAX_RUNS } else { self.index * MAX_RUNS + run - 1 };
+        StageDetail::new(step, self.count * MAX_RUNS)
+            .with("rotation_deg", rotation_deg)
+            .with("class", self.index + 1)
+            .with("classes", self.count)
+            .with("run", run)
+            .with("min_runs", MIN_RUNS)
+            .with("max_runs", MAX_RUNS)
+            .with("cached", cached)
+    }
+}
+
 /// The probe of `rotation_deg`: from the cache when `--cache-dir` has it, else sliced.
-pub fn probe_class(job: &Job, rotation_deg: f64) -> AppResult<ClassProbe> {
+pub fn probe_class(job: &Job, rotation_deg: f64, class: ClassStep) -> AppResult<ClassProbe> {
     let centre = probe_centre(job);
     let key = cache_key(job, rotation_deg, centre);
     if let Some(dir) = &job.args.cache_dir
         && let Some(mut hit) = load(dir, &key)
     {
-        println!("support probe of rotation {rotation_deg}°: cache hit ({} runs)", hit.runs);
+        progress::stage_step(
+            Stage::ProbeSlice,
+            &format!("support probe of rotation {rotation_deg}°: cache hit ({} runs)", hit.runs),
+            Some(1),
+            &class.detail(rotation_deg, hit.runs, true),
+        );
         hit.cached = true;
         return Ok(hit);
     }
-    let probe = slice_class(job, rotation_deg, centre, &key)?;
+    let probe = slice_class(job, rotation_deg, centre, &key, class)?;
     if let Some(dir) = &job.args.cache_dir {
         store(dir, &key, &probe)?;
     }
     Ok(probe)
 }
 
-fn slice_class(job: &Job, rotation_deg: f64, centre: Point, key: &str) -> AppResult<ClassProbe> {
+fn slice_class(
+    job: &Job,
+    rotation_deg: f64,
+    centre: Point,
+    key: &str,
+    class: ClassStep,
+) -> AppResult<ClassProbe> {
     let project = write_copy(job, rotation_deg, centre)?;
-    progress::stage(
-        Stage::ProbeSlice,
-        &format!("probing prime tower position and supports (rotation {rotation_deg}°)..."),
-        None,
-        Some(1),
-    );
     let started = Instant::now();
     let mut probe = ClassProbe {
         rotation_deg,
@@ -105,7 +134,16 @@ fn slice_class(job: &Job, rotation_deg: f64, centre: Point, key: &str) -> AppRes
         ..ClassProbe::default()
     };
     while probe.runs < MAX_RUNS && !is_saturated(&probe.growth_mm2) {
-        let label = format!("probe_{}_{}", rotation_deg.to_string().replace('.', "_"), probe.runs + 1);
+        let run = probe.runs + 1;
+        // The first line keeps its wording: the webapp's text fallback (no JSON events) starts
+        // the probe stage on "probing prime tower position".
+        let message = if run == 1 {
+            format!("probing prime tower position and supports (rotation {rotation_deg}°)...")
+        } else {
+            format!("probe slice {run} of at most {MAX_RUNS} (rotation {rotation_deg}°)...")
+        };
+        progress::stage_step(Stage::ProbeSlice, &message, Some(1), &class.detail(rotation_deg, run, false));
+        let label = format!("probe_{}_{}", rotation_deg.to_string().replace('.', "_"), run);
         let slice = slice_project(&job.profile, &project, 1, &job.args.work_dir, &label)?;
         let realization = realization_from_gcode(&slice.gcode, None, (centre.x, centre.y), probe.runs as u32)
             .map_err(|error| format!("probe slice {label}: {error}"))?;
@@ -219,11 +257,11 @@ pub fn time_probe(job: &Job, window_s: f64) -> AppResult<TimeSample> {
             .map_err(|error| format!("nozzle-clean injection failed: {error}"))?;
         project = injected;
     }
-    progress::stage(
+    progress::stage_step(
         Stage::ProbeSlice,
         "probing prime tower position for the time window (slicing 1 object)...",
-        None,
         Some(1),
+        &StageDetail::new(0, 1).with("purpose", "time"),
     );
     let slice = slice_project(&job.profile, &project, 1, &job.args.work_dir, "probe_time")?;
     let estimate = slice

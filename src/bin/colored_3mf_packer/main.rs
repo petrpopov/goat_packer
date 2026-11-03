@@ -21,6 +21,7 @@ mod loops_ops;
 mod margins;
 mod model;
 mod own_gap;
+mod pack_steps;
 mod order;
 mod plan;
 mod prepare;
@@ -37,6 +38,8 @@ mod tower;
 mod verify;
 
 use std::{error::Error, fs};
+
+use goat_packer::progress::{self, Stage};
 
 use args::parse_args;
 use job::Job;
@@ -57,6 +60,7 @@ fn main() {
 
 fn run() -> AppResult<()> {
     let job = Job::open(parse_args()?)?;
+    progress::plan(&stage_plan(&job));
     // `--finish-state`: the plate was packed by an earlier run; its plan and layout come back
     // from the state file and only the verification runs.
     let (state, verify) = match &job.args.finish_state {
@@ -73,6 +77,32 @@ fn run() -> AppResult<()> {
     } else {
         finish_unverified(&job, state)
     }
+}
+
+/// The stages this run enters, for the webapp's «этап N из M» (`progress::plan`). The plate
+/// slice and its check only when the run verifies (`--verify`, a time window, a finish-state
+/// check job): the default job never slices the plate and must not promise it. A repack after
+/// a failed check is not planned (it happens only on a finding).
+fn stage_plan(job: &Job) -> Vec<Stage> {
+    let finishing = job.args.finish_state.is_some();
+    let verify = finishing || job.args.verify || job.window_s.is_some();
+    let mut stages = Vec::new();
+    if !finishing {
+        stages.push(match job.args.support_source {
+            args::SupportSource::Probe => Stage::ProbeSlice,
+            args::SupportSource::Model => Stage::Modelling,
+        });
+        stages.push(Stage::Packing);
+    }
+    stages.push(Stage::Assembling);
+    if verify {
+        stages.extend([Stage::FinalSlice, Stage::GcodeCheck]);
+    }
+    if job.window_s.is_some() {
+        stages.push(Stage::WindowSlice);
+    }
+    stages.push(Stage::Writing);
+    stages
 }
 
 fn load_state(path: &std::path::Path) -> AppResult<PackState> {

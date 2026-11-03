@@ -120,7 +120,11 @@ function StageList({
       {rows.map((row, index) => (
         <li key={row.key} className={row.state}>
           {row.state === 'current' ? <span className="spin" aria-hidden="true" /> : <i aria-hidden="true" />}
-          {row.label}
+          {/* Шаг идущего этапа или итог пройденного — второй строкой, чтобы длинная подпись не теснила время. */}
+          <span className="stage-name">
+            {row.label}
+            {row.note ? <span className="stage-sub">{row.note}</span> : null}
+          </span>
           {index === lastLayoutRow && layoutObjects != null ? (
             <span className="stage-note" title={layoutPreliminary ? PRELIMINARY_HINT : undefined}>
               {layoutPreliminary ? '≈ ' : ''}

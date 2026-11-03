@@ -12,6 +12,7 @@ use goat_packer::{
 use crate::AppResult;
 use crate::assembly::tower_rect;
 use crate::gaps::{GapVariant, choose, floor_warning, refine_rungs};
+use crate::pack_steps::{PackSteps, ladder, refine_by_level};
 use crate::job::Job;
 use crate::model::{Modelled, model_plate};
 use crate::order::{BAMBU_OBSTACLE_MM, barriers, canonical_first, centre_out};
@@ -60,7 +61,9 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
 /// variant packed, for the report.
 fn pack_variants(job: &Job) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>)> {
     if let Some(warning) = floor_warning(job.args.foreign_gap_floor) {
-        progress::stage(Stage::Packing, &format!("warning: {warning}"), None, None);
+        // A plain line, not a packing stage event: it comes before the probes, and a packing
+        // event there would open the packing stage twice in the webapp's stage list.
+        eprintln!("warning: {warning}");
     }
     let mut model = model_plate(job)?;
     // Supports may cross the bed edge only where the layout has a first copy that the
@@ -68,12 +71,15 @@ fn pack_variants(job: &Job) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>
     // per open edge, and keep the layout with the most copies (supports inside on ties).
     let mut variants = Vec::new();
     let mut best: Option<(usize, PackPlan, PackOutcome)> = None;
-    for sides in clip_configurations(&model.plan.rules) {
+    let configurations = clip_configurations(&model.plan.rules);
+    let mut steps = PackSteps::new(configurations.len(), job.args.foreign_gaps.len(), ladder(&job.args));
+    for (configuration, sides) in configurations.into_iter().enumerate() {
         let mut plan = model.plan.clone();
         plan.rules.support_clip_sides = sides;
         let label = clip_label(&plan.rules);
+        steps.configuration = configuration;
         let (mut found, mut outcomes): (Vec<_>, Vec<_>) =
-            pack_foreign_pairs(job, &plan).into_iter().unzip();
+            pack_foreign_pairs(job, &plan, &steps).into_iter().unzip();
         for (variant, outcome) in found.iter_mut().zip(&mut outcomes) {
             variant.clip_edge.clone_from(&label);
             let usable = outcome.as_ref().is_none_or(|outcome| first_copy_exists(&plan, outcome));
@@ -147,22 +153,30 @@ fn first_copy_exists(plan: &PackPlan, outcome: &PackOutcome) -> bool {
 /// A pair that yields no valid layout is recorded with its error, not hidden. Every pair is
 /// packed at the coarsest resolution first; only the pairs near the best climb the finer
 /// levels (`gaps::REFINE_SLACK`).
-fn pack_foreign_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<PackOutcome>)> {
-    let mut packed = pack_coarse_pairs(job, plan);
+fn pack_foreign_pairs(
+    job: &Job,
+    plan: &PackPlan,
+    steps: &PackSteps,
+) -> Vec<(GapVariant, Option<PackOutcome>)> {
+    let mut packed = pack_coarse_pairs(job, plan, steps);
     let counts: Vec<Option<usize>> =
         packed.iter().map(|(v, o)| o.as_ref().map(|_| v.count)).collect();
-    for rung in refine_rungs(&counts) {
+    for (slot, rung) in refine_rungs(&counts).into_iter().enumerate() {
         let (variant, outcome) = &mut packed[rung];
         let Some(coarse) = outcome.take() else { continue };
         let started = Instant::now();
         let rung_plan = plan.with_foreign_gaps(variant.foreign());
-        let refined = match rung_plan.refine(&job.args, coarse.clone()) {
-            Ok(refined) => refined,
-            Err(error) => {
-                eprintln!("finer resolutions failed, coarse layout kept: {error}");
-                coarse
-            }
-        };
+        let refined = refine_by_level(&job.args, &rung_plan, coarse, |level, resolution_mm| {
+            progress::stage_step(
+                Stage::Packing,
+                &format!(
+                    "refining foreign gaps {}:{} at {resolution_mm} mm...",
+                    variant.foreign_base_mm, variant.foreign_band_mm
+                ),
+                None,
+                &steps.refine(rung, slot, level, resolution_mm, variant.foreign()),
+            );
+        });
         variant.wall_s += started.elapsed().as_secs_f64();
         variant.count = refined.placements.len();
         variant.levels = refined.levels.clone();
@@ -179,19 +193,24 @@ fn pack_foreign_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<Pac
 }
 
 /// The coarse pass of `pack_foreign_pairs`.
-fn pack_coarse_pairs(job: &Job, plan: &PackPlan) -> Vec<(GapVariant, Option<PackOutcome>)> {
+fn pack_coarse_pairs(
+    job: &Job,
+    plan: &PackPlan,
+    steps: &PackSteps,
+) -> Vec<(GapVariant, Option<PackOutcome>)> {
     job.args
         .foreign_gaps
         .iter()
-        .map(|&foreign| {
-            progress::stage(
+        .enumerate()
+        .map(|(rung, &foreign)| {
+            progress::stage_step(
                 Stage::Packing,
                 &format!(
                     "packing (foreign gaps base {} band {}; {} attempts, seed {})...",
                     foreign.base_mm, foreign.band_mm, job.args.attempts, job.args.seed
                 ),
                 None,
-                None,
+                &steps.coarse(rung, job.args.resolution, foreign),
             );
             let started = Instant::now();
             let result = plan.with_foreign_gaps(foreign).pack_coarse(&job.args);
@@ -391,7 +410,8 @@ mod tests {
             ForeignGaps { base_mm: 0.0, band_mm: 0.5 },
             ForeignGaps { base_mm: 0.0, band_mm: 0.25 },
         ];
-        let packed = pack_foreign_pairs(&job, &supported_plan(&job));
+        let steps = PackSteps::new(1, job.args.foreign_gaps.len(), ladder(&job.args));
+        let packed = pack_foreign_pairs(&job, &supported_plan(&job), &steps);
         let counts: Vec<usize> = packed.iter().map(|(variant, _)| variant.count).collect();
         assert!(counts[0] < counts[1], "a 6 mm base gap costs copies: {counts:?}");
         // No band supports here: the band gap does not matter, so the two loose rungs tie and
@@ -400,6 +420,26 @@ mod tests {
         let variants: Vec<GapVariant> = packed.into_iter().map(|(variant, _)| variant).collect();
         assert_eq!(choose(&variants), Some(1));
         assert!(variants.iter().all(|v| v.error.is_none() && v.wall_s >= 0.0));
+    }
+
+    #[test]
+    fn climbing_the_ladder_level_by_level_equals_one_pack_over_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut job = test_job(dir.path());
+        job.args.resolutions = vec![job.args.resolution, job.args.resolution * 0.8, job.args.resolution * 0.6];
+        let plan = supported_plan(&job);
+        let whole = plan.pack(&job.args).unwrap();
+        let mut announced = Vec::new();
+        let coarse = plan.pack_coarse(&job.args).unwrap();
+        let stepped = refine_by_level(&job.args, &plan, coarse, |level, resolution| announced.push((level, resolution)));
+        let resolutions = |outcome: &PackOutcome| outcome.levels.iter().map(|l| l.resolution_mm).collect::<Vec<_>>();
+        assert_eq!(resolutions(&stepped), resolutions(&whole));
+        assert_eq!(stepped.placements.len(), whole.placements.len());
+        assert_eq!(stepped.resolution_mm, whole.resolution_mm);
+        let at = |outcome: &PackOutcome| outcome.placements.iter().map(|p| (p.x_mm, p.y_mm)).collect::<Vec<_>>();
+        assert_eq!(at(&stepped), at(&whole), "the same layout, not just the same count");
+        // A ladder that stops at its bound announces fewer levels; it never announces the coarse one.
+        assert!(announced.len() <= 2 && announced.iter().all(|(level, _)| *level >= 1), "{announced:?}");
     }
 
     #[test]

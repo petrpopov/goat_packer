@@ -364,4 +364,130 @@ class PackStageProgressTest {
         assertEquals(packing.phaseMessage, event.phaseMessage)
         assertEquals(layout, t.onLine(stage("assembling", null, 2)).layout, "раскладка живёт до следующей")
     }
+
+    private fun probeRun(rotation: Int, run: Int, step: Int, cached: Boolean = false): String =
+        """{"event":"stage","stage":"probe_slice","message":"probe","expected_s":null,"objects":1,""" +
+            """"detail":{"step":$step,"steps":16,"rotation_deg":$rotation.0,"class":${if (rotation == 0) 1 else 2},""" +
+            """"classes":2,"run":$run,"min_runs":3,"max_runs":8,"cached":$cached}}"""
+
+    private fun packStep(step: Int, steps: Int, phase: String, variant: Int, variants: Int, resolution: Double): String =
+        """{"event":"stage","stage":"packing","message":"packing","expected_s":null,"objects":null,""" +
+            """"detail":{"step":$step,"steps":$steps,"phase":"$phase","variant":$variant,"variants":$variants,""" +
+            """"base_mm":0.0,"band_mm":0.5,"resolution_mm":$resolution,"level":1,"levels":2}}"""
+
+    @Test
+    fun `прогоны пробы по обоим поворотам — один этап с живой подписью и итогом в истории`() {
+        val clock = FakeClock()
+        val t = tracker(clock)
+        val start = clock.now
+        val first = t.onLine(probeRun(0, 1, 0))
+        assertEquals("поворот 0° · прогон 1 (до 8)", first.stage?.label)
+        assertEquals("Пробная нарезка 1 объекта · поворот 0° · прогон 1 (до 8)", first.phaseMessage)
+
+        var previous = first.progressPercent
+        for (run in 2..5) {
+            clock.advance(30.0)
+            val event = t.onLine(probeRun(0, run, run - 1))
+            assertTrue(event.progressPercent >= previous, "шкала движется внутри этапа: $previous → ${event.progressPercent}")
+            previous = event.progressPercent
+        }
+        // Поворот 0° насытился на 5-м прогоне: 180° начинается с шага 8 (скачок, не замер).
+        clock.advance(30.0)
+        val second = t.onLine(probeRun(180, 1, 8))
+        assertEquals("поворот 180° · прогон 1 (до 8)", second.stage?.label)
+        // Половина шагов пройдена: ~ середина полосы пробы.
+        val middle = PackStage.PROBE_SLICE.bandStart + (PackStage.PROBE_SLICE.bandEnd - PackStage.PROBE_SLICE.bandStart) / 2
+        assertTrue(second.progressPercent in middle - 1..middle + 1, "$second")
+        // Внутри прогона шкала ползёт по среднему прошедших прогонов (30 с).
+        clock.advance(15.0)
+        val heartbeat = t.onLine(heartbeat(15_000))
+        assertTrue(heartbeat.progressPercent >= second.progressPercent)
+
+        val stage = heartbeat.stage!!
+        assertEquals(1, stage.attempt)
+        assertEquals(start, stage.startedAtMs, "время этапа считается от первого прогона")
+        assertEquals(listOf(StageSpan("probe_slice", 1, start, null, "0°: 5 прогонов · 180°: 1 прогон")), stage.history)
+
+        clock.advance(15.0)
+        val packing = t.onLine(packStep(0, 2, "coarse", 1, 1, 0.25))
+        assertEquals("0°: 5 прогонов · 180°: 1 прогон", packing.stage!!.history.first().note)
+        assertEquals(start + 180_000, packing.stage!!.history.first().endedAtMs)
+    }
+
+    @Test
+    fun `проба из кэша — подпись и итог «из кэша»`() {
+        val t = tracker(FakeClock())
+        t.onLine(probeRun(0, 5, 8, cached = true))
+        val event = t.onLine(probeRun(180, 8, 16, cached = true))
+
+        assertEquals("поворот 180° · из кэша", event.stage?.label)
+        assertEquals("0°: из кэша · 180°: из кэша", event.stage?.history?.single()?.note)
+    }
+
+    @Test
+    fun `варианты зазора и уровни сетки — одна строка «Раскладка» с подписью шага`() {
+        val clock = FakeClock()
+        val t = tracker(clock)
+        t.onLine(probeRun(0, 1, 0))
+        clock.advance(10.0)
+        val coarse = t.onLine(packStep(1, 6, "coarse", 2, 4, 0.25))
+        assertEquals("вариант зазора 2 из 4 · сетка 0,25 мм", coarse.stage?.label)
+        assertEquals("Раскладка объектов · вариант зазора 2 из 4 · сетка 0,25 мм", coarse.phaseMessage)
+        clock.advance(10.0)
+        val refine = t.onLine(packStep(4, 6, "refine", 1, 4, 0.2))
+        assertEquals("вариант зазора 1 из 4 · уточнение · сетка 0,2 мм", refine.stage?.label)
+        assertTrue(refine.progressPercent > coarse.progressPercent, "$coarse → $refine")
+        assertTrue(refine.progressPercent < PackStage.PACKING.bandEnd)
+
+        val spans = refine.stage!!.history
+        assertEquals(listOf("probe_slice", "packing"), spans.map { it.id })
+        assertEquals("4 варианта зазора · сетка 0,25 → 0,2 мм", spans.last().note)
+
+        // Единственный вариант зазора — без «вариант 1 из 1».
+        val single = tracker(FakeClock()).onLine(packStep(0, 2, "coarse", 1, 1, 0.25))
+        assertEquals("сетка 0,25 мм", single.stage?.label)
+    }
+
+    @Test
+    fun `события одного этапа без detail (старый пакер) — тоже один заход`() {
+        val clock = FakeClock()
+        val t = tracker(clock)
+        t.onLine(stage("probe_slice", null, 1))
+        clock.advance(30.0)
+        t.onLine(stage("probe_slice", null, 1))
+        t.onLine(stage("packing"))
+        val event = t.onLine(stage("packing"))
+
+        assertEquals(listOf("probe_slice" to 1, "packing" to 1), event.stage!!.history.map { it.id to it.attempt })
+        assertNull(event.stage?.label)
+        assertEquals("Пробная нарезка 1 объекта: ищу место башни очистки", tracker(clock).onLine(stage("probe_slice")).phaseMessage)
+    }
+
+    @Test
+    fun `plan-событие — намеченные этапы в статусе, итоговая нарезка только если она будет`() {
+        val t = tracker(FakeClock())
+        val plan = t.onLine("""{"event":"plan","stages":["probe_slice","packing","assembling","writing"]}""")
+        assertNull(plan.stage, "план — не этап")
+        assertEquals("", plan.phaseMessage)
+
+        val event = t.onLine(probeRun(0, 1, 0))
+        assertEquals(listOf("probe_slice", "packing", "assembling", "writing"), event.stage?.planned)
+        assertEquals(emptyList<String>(), tracker(FakeClock()).onLine(stage("probe_slice")).stage?.planned)
+    }
+
+    @Test
+    fun `подписи шагов — градусы и миллиметры по-русски, склонение`() {
+        assertEquals("180°", StageLabels.degrees(180.0))
+        assertEquals("22,5°", StageLabels.degrees(22.5))
+        assertEquals("0,25", StageLabels.millimetres(0.25))
+        assertEquals("0,2", StageLabels.millimetres(0.2))
+        assertEquals("1 прогон", StageLabels.plural(1, "прогон", "прогона", "прогонов"))
+        assertEquals("3 прогона", StageLabels.plural(3, "прогон", "прогона", "прогонов"))
+        assertEquals("11 прогонов", StageLabels.plural(11, "прогон", "прогона", "прогонов"))
+        val notes = StageNotes()
+        for (rotation in listOf(0, 180)) notes.add(PackStage.MODELLING, ObjectMapper().readTree("""{"step":0,"steps":2,"rotation_deg":$rotation}"""))
+        assertEquals("повороты 0°, 180°", notes.note(PackStage.MODELLING))
+        val time = ObjectMapper().readTree("""{"step":0,"steps":1,"purpose":"time"}""")
+        assertEquals("оценка времени печати", StageLabels.label(PackStage.PROBE_SLICE, time))
+    }
 }

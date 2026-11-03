@@ -23,6 +23,9 @@ enum class PackStage(
     private val defaultSeconds: Double,
 ) {
     PROBE_SLICE("probe_slice", JobPhase.PROBE, 1, 15, 30.0),
+
+    /** Модель поддержек вместо пробы (`--support-source model`): та же полоса, слайсер не вызывается. */
+    MODELLING("modelling", JobPhase.PROBE, 1, 15, 30.0),
     PACKING("packing", JobPhase.PACKING, 15, 24, 60.0),
     SAMPLE_SLICE("sample_slice", JobPhase.SLICING, 24, 30, 30.0),
     ASSEMBLING("assembling", JobPhase.ASSEMBLING, 30, 33, 10.0),
@@ -40,7 +43,17 @@ enum class PackStage(
             defaultSeconds
         }
 
+    /**
+     * Ожидаемая длительность одного шага этапа (`detail.step`), пока ни один шаг не завершён: прогон
+     * пробы ~30 с (P1S на сервере, 2 ядра), уровень раскладки ~15 с. Дальше — среднее прошедших шагов.
+     */
+    val stepSeconds: Double
+        get() = if (this == PROBE_SLICE) PROBE_STEP_SECONDS else OTHER_STEP_SECONDS
+
     companion object {
+        private const val PROBE_STEP_SECONDS = 30.0
+        private const val OTHER_STEP_SECONDS = 15.0
+
         /** Типичная пробная нарезка одного объекта на сервере, с (из замеров дизайна). */
         private const val PROBE_SECONDS = 22.0
 

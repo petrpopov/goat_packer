@@ -138,6 +138,20 @@ class ProgressTracker(
     /** Сырая строка последнего layout-события: отдаётся как есть, разбирать её — дело сцены. */
     private var layoutJson: String? = null
 
+    // ── Шаги внутри этапа (`detail` stage-события): подряд идущие события одного этапа — один заход ──
+    /** Намеченные пакером этапы (`plan`-событие). */
+    private var planned: List<String> = emptyList()
+
+    /** Живая подпись текущего шага. */
+    private var label: String? = null
+    private var step: Int? = null
+    private var steps: Int? = null
+    private var stepStartedAt = 0L
+
+    /** Длительности завершённых шагов этапа, с: по их среднему идёт шкала внутри текущего шага. */
+    private val stepDurations = ArrayList<Double>()
+    private var notes = StageNotes()
+
     /** Текущий этап пакера (для статусной сводки); null — ещё не начался. */
     val currentStage: JobStage?
         get() = stage?.let {
@@ -150,6 +164,8 @@ class ProgressTracker(
                 visited = visited.toList(),
                 detail = detail,
                 history = historySnapshot(),
+                label = label,
+                planned = planned,
             )
         }
 
@@ -171,6 +187,10 @@ class ProgressTracker(
             // Раскладка — не этап и не сообщение: только запоминается (живёт до следующей).
             if (event != null && event.path("event").asText() == "layout") {
                 layoutJson = line.trim()
+                return snapshot()
+            }
+            if (event != null && event.path("event").asText() == "plan") {
+                planned = event.path("stages").filter { it.isTextual }.map { it.asText() }
                 return snapshot()
             }
             if (event != null) onPackEvent(event) else if (!looksLikeJson(line)) onPackText(line.trim())
@@ -225,16 +245,52 @@ class ProgressTracker(
         structured = true
         if (next == PackStage.REPACKING) repackReason = event.path("reason").takeIf { it.isTextual }?.asText()
 
+        val detailNode = event.path("detail").takeIf { it.isObject }
+
         // Тот же этап уже открыт текстовой строкой (строка пришла раньше события) — дополняем его
         // оценкой, а не перезапускаем: иначе потерялось бы прошедшее время.
         if (next == stage && !stageFromEvent && !wasStructured) {
             stageExpected = expected
             if (objects != null) stageObjects = objects
             stageFromEvent = true
+            applyDetail(next, detailNode)
+            message = describe()
+            return
+        }
+        // Следующее событие того же этапа — шаг внутри него (прогон пробы, вариант зазора, уровень
+        // сетки), а не новый заход: одна строка в «Инфо», время этапа не сбрасывается. Нарезки окна
+        // остаются отдельными попытками: у каждой своя оценка времени и свой номер в сообщении.
+        if (next == stage && stageFromEvent && next != PackStage.WINDOW_SLICE) {
+            if (objects != null) stageObjects = objects
+            applyDetail(next, detailNode)
             message = describe()
             return
         }
         enter(next, expected, objects, fromEvent = true)
+        applyDetail(next, detailNode)
+        message = describe()
+    }
+
+    /**
+     * Шаг внутри этапа из `detail`: подпись, итог для «Инфо» и доля `step / steps`. Длительность
+     * шага запоминается только при переходе ровно на следующий шаг: скачок (проба из кэша,
+     * насытившийся поворот) — не замер.
+     */
+    private fun applyDetail(current: PackStage, detail: JsonNode?) {
+        if (detail == null) return
+        val now = clock()
+        val nextStep = detail.path("step").takeIf { it.canConvertToInt() && it.isNumber }?.asInt()
+        val nextSteps = detail.path("steps").takeIf { it.canConvertToInt() && it.isNumber }?.asInt()?.takeIf { it > 0 }
+        if (nextStep != null && nextSteps != null) {
+            val previous = step
+            if (previous != null && nextStep == previous + 1) stepDurations.add((now - stepStartedAt) / MILLIS_PER_SECOND)
+            if (previous == null || nextStep != previous) stepStartedAt = now
+            step = nextStep.coerceIn(0, nextSteps)
+            steps = nextSteps
+        }
+        label = StageLabels.label(current, detail)
+        notes.add(current, detail)
+        history.lastOrNull()?.let { history[history.lastIndex] = it.copy(note = notes.note(current)) }
     }
 
     private fun onPackText(line: String) {
@@ -276,6 +332,12 @@ class ProgressTracker(
         visited.add(next.id)
         history.add(StageSpan(next.id, stageAttempt, now))
         attemptsFraction = 0.0
+        label = null
+        step = null
+        steps = null
+        stepStartedAt = now
+        stepDurations.clear()
+        notes = StageNotes()
         if (next == PackStage.PACKING || next == PackStage.REPACKING) bestSoFar = null
 
         bandStart = maxOf(next.bandStart.toDouble(), exactPercent)
@@ -288,7 +350,7 @@ class ProgressTracker(
         val current = stage ?: return
         val elapsed = (clock() - stageStartedAt).coerceAtLeast(0) / MILLIS_PER_SECOND
         val expected = stageExpected ?: current.fallbackSeconds(stageObjects)
-        var fraction = timeFraction(elapsed, expected)
+        var fraction = stepFraction(current) ?: timeFraction(elapsed, expected)
         if (current == PackStage.PACKING || current == PackStage.REPACKING) {
             fraction = maxOf(fraction, attemptsFraction * MAX_FRACTION)
         }
@@ -297,13 +359,31 @@ class ProgressTracker(
         percent = maxOf(percent, exactPercent.toInt()).coerceIn(0, MAX_RUNNING_PERCENT)
     }
 
+    /**
+     * Доля этапа по шагам: пройденные шаги + доля текущего по времени (по среднему прошедших шагов,
+     * до первого — по [PackStage.stepSeconds]); null — пакер шагов не присылает.
+     */
+    private fun stepFraction(current: PackStage): Double? {
+        val done = step ?: return null
+        val total = steps ?: return null
+        val elapsed = (clock() - stepStartedAt).coerceAtLeast(0) / MILLIS_PER_SECOND
+        val expected = stepDurations.takeIf { it.isNotEmpty() }?.average() ?: current.stepSeconds
+
+        return ((done + timeFraction(elapsed, expected)) / total).coerceIn(0.0, MAX_FRACTION)
+    }
+
     /** Русское описание текущего этапа для строки статуса. */
     private fun describe(): String {
         val objects = stageObjects?.let { " (${objectsText(it)})" }.orEmpty()
 
+        val sub = label?.let { " · $it" }.orEmpty()
+
         return when (stage) {
-            PackStage.PROBE_SLICE -> "Пробная нарезка 1 объекта: ищу место башни очистки"
-            PackStage.PACKING -> "Раскладка объектов" + bestSoFar?.let { ": лучший вариант — ${objectsText(it)}" }.orEmpty()
+            PackStage.PROBE_SLICE ->
+                if (label == null) "Пробная нарезка 1 объекта: ищу место башни очистки" else "Пробная нарезка 1 объекта$sub"
+            PackStage.MODELLING -> "Модель поддержек$sub"
+            PackStage.PACKING ->
+                "Раскладка объектов$sub" + bestSoFar?.let { ": лучший вариант — ${objectsText(it)}" }.orEmpty()
             PackStage.SAMPLE_SLICE -> "Пробная нарезка$objects: снимаю реальные поддержки"
             PackStage.ASSEMBLING -> "Сборка проекта$objects"
             PackStage.FINAL_SLICE ->

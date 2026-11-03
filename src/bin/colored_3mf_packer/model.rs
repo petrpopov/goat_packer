@@ -9,7 +9,7 @@ use crate::class_print::class_print;
 use crate::from_model::modelled_plate;
 use crate::job::Job;
 use crate::plan::{PackPlan, plan_of};
-use crate::probe::probe_class;
+use crate::probe::{ClassStep, probe_class};
 use crate::tower::tower_spec;
 
 /// What one class's probe did, for the report.
@@ -49,8 +49,9 @@ fn probed_plate(job: &Job) -> AppResult<Modelled> {
     let mut probes = Vec::new();
     let mut prints = Vec::new();
     let mut summaries = Vec::new();
-    for &rotation in &job.args.rotations {
-        let probe = probe_class(job, rotation)?;
+    let count = job.args.rotations.len();
+    for (index, &rotation) in job.args.rotations.iter().enumerate() {
+        let probe = probe_class(job, rotation, ClassStep { index, count })?;
         let (print, check) = class_print(job, &probe, &probe.cache_key)?;
         summaries.push(ClassSummary {
             rotation_deg: rotation,

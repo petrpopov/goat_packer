@@ -274,11 +274,15 @@ function useJobStripContent({ jobId, pack, now, infoOpen, onOpenInfo, onRepack, 
                 Упаковка · этап <Num>{strip.step}</Num> из <Num>{strip.steps}</Num>
               </>,
               lowerFirst(strip.label),
+              // Шаг внутри этапа (прогон пробы, вариант зазора): видно, что долгий этап движется.
+              ...(strip.sublabel ? [strip.sublabel] : []),
               stageClock(stage, job.receivedAtMs, now),
             ])
           : 'Запуск упаковки…',
       line: { kind: 'progress', percent: job.progressPercent },
-      lineLabel: strip ? `${strip.label}, этап ${strip.step} из ${strip.steps}` : undefined,
+      lineLabel: strip
+        ? `${strip.label}${strip.sublabel ? ` (${strip.sublabel})` : ''}, этап ${strip.step} из ${strip.steps}`
+        : undefined,
       actions: cancel,
     } satisfies StripContent;
   }

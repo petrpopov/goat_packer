@@ -6,7 +6,7 @@ use goat_packer::{
     first_layer::landing,
     mesh_section::{BodyBands, body_print},
     object_print::{Margins, ObjectPrint},
-    progress::{self, Stage},
+    progress::{self, Stage, StageDetail},
     support_model::{
         envelope::{envelope, envelope_banded},
         predict::{PredictInput, Prediction, predict},
@@ -40,12 +40,16 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     let mut prints = Vec::new();
     let mut summaries = Vec::new();
     let mut seconds = 0.0;
-    for &rotation in &job.args.rotations {
-        progress::stage(
+    let count = job.args.rotations.len();
+    for (index, &rotation) in job.args.rotations.iter().enumerate() {
+        progress::stage_step(
             Stage::Modelling,
             &format!("predicting supports (rotation {rotation}°)..."),
-            None,
             Some(1),
+            &StageDetail::new(index, count)
+                .with("rotation_deg", rotation)
+                .with("class", index + 1)
+                .with("classes", count),
         );
         let prediction = predict(&PredictInput {
             mesh: &job.mesh,

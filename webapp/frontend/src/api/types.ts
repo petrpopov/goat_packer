@@ -71,6 +71,7 @@ export type JobPhase =
 /** Этапы colored_3mf_packer (stage-события протокола прогресса). */
 export type PackStageId =
   | 'probe_slice'
+  | 'modelling'
   | 'packing'
   | 'sample_slice'
   | 'assembling'
@@ -86,6 +87,8 @@ export interface StageSpan {
   attempt: number;
   startedAtMs: number;
   endedAtMs: number | null;
+  /** Итог шагов этапа («0°: 5 прогонов · 180°: из кэша», «сетка 0,25 → 0,2 мм»); у старых задач нет. */
+  note?: string | null;
 }
 
 /** Этап упаковки: текущий, пока задача идёт, и последний — после её завершения. */
@@ -105,6 +108,10 @@ export interface JobStage {
   detail: string | null;
   /** Все заходы в этапы по порядку (у старых задач поля нет). */
   history?: StageSpan[];
+  /** Живая подпись шага внутри этапа («поворот 180° · прогон 3 (до 8)»); null — пакер шагов не шлёт. */
+  label?: string | null;
+  /** Этапы, намеченные пакером на этот запуск; пусто/нет — план не известен (старый пакер). */
+  planned?: string[];
 }
 
 export interface JobArtifact {

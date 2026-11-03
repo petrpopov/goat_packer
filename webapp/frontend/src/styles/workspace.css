@@ -166,6 +166,8 @@ output.input { display: flex; align-items: center; color: var(--muted); }
 .stage-list .done i { border-color: var(--signal); background: var(--signal); }
 .stage-list .current { color: var(--text); font-weight: 500; }
 .stage-list .stage-note { color: var(--dim); font: 400 12px var(--font-mono); }
+.stage-list .stage-name { display: grid; gap: 2px; min-width: 0; }
+.stage-list .stage-sub { color: var(--dim); font-size: 12px; font-weight: 400; }
 .stage-list .current i { border-color: var(--signal); box-shadow: 0 0 0 3px var(--accent-soft); }
 .stage-list .t { margin-left: auto; color: var(--dim); font: 12px var(--font-mono); white-space: nowrap; }
 .stage-list .failed { color: var(--crit); }

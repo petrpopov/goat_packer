@@ -21,8 +21,12 @@ const DEFAULT_ROTATIONS: &str = "0,180";
 const DEFAULT_CLEARANCE_MM: f64 = 0.7;
 /// The resolution ladder (`pack::ladder`): the coarse run, then finer ones. Research
 /// 2026-11-03: 0.2 / 0.15 mm gained U1 +1 and A2L +3..4 copies, P1S stayed; the whole ladder
-/// costs 3 / 3 / 10 s per foreign-gap rung on U1 / P1S / A2L (14 cores).
-const DEFAULT_RESOLUTIONS_MM: [f64; 3] = [0.25, 0.2, 0.15];
+/// costs 3 / 3 / 10 s per foreign-gap rung on U1 / P1S / A2L (14 cores). Measured again
+/// 2026-11-04 on the full pipeline (rotations 0/180, two rayon threads like a server job):
+/// U1 55/56/56, P1S 45/46/46, A2L 79/77/78 at 0.25/0.2/0.15: the 0.15 mm level never added a
+/// copy and was the slowest level (P1S 39 of 85 s of packing on the server's two cores), so
+/// it is opt-in (`--resolutions 0.25,0.2,0.15`).
+const DEFAULT_RESOLUTIONS_MM: [f64; 2] = [0.25, 0.2];
 const DEFAULT_ANGLE_STEP_DEG: f64 = 2.0;
 const DEFAULT_ATTEMPTS: usize = 16_000;
 const DEFAULT_CANDIDATES: usize = 2_400;
@@ -491,7 +495,7 @@ mod tests {
     #[test]
     fn resolutions_default_to_the_ladder_and_a_single_resolution_replaces_it() {
         let defaults = parse(&REQUIRED).unwrap();
-        assert_eq!(defaults.resolutions, vec![0.25, 0.2, 0.15]);
+        assert_eq!(defaults.resolutions, vec![0.25, 0.2]);
         assert_eq!(defaults.resolution, 0.25);
         let single = parse_with(&["--resolution", "0.5"]).unwrap();
         assert_eq!((single.resolution, single.resolutions), (0.5, vec![0.5]));
@@ -502,9 +506,9 @@ mod tests {
     }
 
     #[test]
-    fn gap_flags_default_to_an_upward_ladder_from_the_floor() {
+    fn gap_flags_default_to_the_floor_alone() {
         let defaults = parse(&REQUIRED).unwrap();
-        assert_eq!(defaults.foreign_gaps.len(), 4);
+        assert_eq!(defaults.foreign_gaps.len(), 1);
         assert_eq!(defaults.foreign_gaps[0], ForeignGaps::default());
         assert_eq!(defaults.foreign_gap_floor, ForeignGaps::default());
         let args = parse_with(&["--foreign-gaps", "0.5,0.1:0.7"]).unwrap();

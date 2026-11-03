@@ -178,3 +178,78 @@ describe('stageRows', () => {
     expect(rows.every((r) => r.seconds === null)).toBe(true);
   });
 });
+
+describe('stepped stages (probe runs, gap variants, grid levels)', () => {
+  test('the strip carries the live sub-label; the plan decides how many stages remain', () => {
+    const s = stripStage(
+      stage({
+        id: 'probe_slice',
+        visited: ['probe_slice'],
+        label: 'поворот 180° · прогон 3 (до 8)',
+        planned: ['probe_slice', 'packing', 'assembling', 'writing'],
+      })
+    );
+    // Задача без проверки нарезкой: итоговой нарезки в плане нет — «этап 1 из 4», не «из 5».
+    expect(s).toEqual({ label: 'Пробная нарезка 1 объекта', step: 1, steps: 4, sublabel: 'поворот 180° · прогон 3 (до 8)' });
+  });
+
+  test('a verifying plan lists the plate slice and its check as pending', () => {
+    const items = stageItems(
+      stage({
+        id: 'packing',
+        visited: ['probe_slice', 'packing'],
+        planned: ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'writing'],
+      })
+    );
+    expect(items.filter((i) => i.state === 'pending').map((i) => i.label)).toEqual([
+      'Сборка проекта',
+      'Нарезка итоговой пластины',
+      'Проверка поддержек по слоям',
+      'Запись результата',
+    ]);
+  });
+
+  test('Инфо: the running row shows the current step, a finished row its summary', () => {
+    const history = [
+      { id: 'probe_slice', attempt: 1, startedAtMs: 0, endedAtMs: 326_000, note: '0°: 8 прогонов · 180°: 3 прогона' },
+      { id: 'packing', attempt: 1, startedAtMs: 326_000, endedAtMs: null, note: 'сетка 0,25 мм' },
+    ];
+    const rows = stageRows(
+      stage({
+        id: 'packing',
+        visited: ['probe_slice', 'packing'],
+        history,
+        label: 'уточнение · сетка 0,2 мм',
+        planned: ['probe_slice', 'packing', 'assembling', 'writing'],
+      }),
+      { running: true, failed: false, elapsedNow: 12, finishedAtMs: null }
+    );
+    expect(rows.map((r) => [r.label, r.state, r.note])).toEqual([
+      ['Пробная нарезка 1 объекта', 'done', '0°: 8 прогонов · 180°: 3 прогона'],
+      ['Раскладка', 'current', 'уточнение · сетка 0,2 мм'],
+      ['Сборка проекта', 'pending', undefined],
+      ['Запись результата', 'pending', undefined],
+    ]);
+  });
+
+  test('old histories: consecutive probe and packing spans read as one row each', () => {
+    const history = [
+      { id: 'probe_slice', attempt: 1, startedAtMs: 0, endedAtMs: 240_000 },
+      { id: 'probe_slice', attempt: 2, startedAtMs: 240_000, endedAtMs: 326_000 },
+      { id: 'packing', attempt: 1, startedAtMs: 326_000, endedAtMs: 348_000 },
+      { id: 'packing', attempt: 2, startedAtMs: 348_000, endedAtMs: 366_000 },
+      { id: 'assembling', attempt: 1, startedAtMs: 366_000, endedAtMs: 370_000 },
+      { id: 'writing', attempt: 1, startedAtMs: 370_000, endedAtMs: null },
+    ];
+    const rows = stageRows(
+      stage({ id: 'writing', visited: ['probe_slice', 'packing', 'assembling', 'writing'], history }),
+      { running: false, failed: false, elapsedNow: 0, finishedAtMs: 371_000 }
+    );
+    expect(rows.map((r) => [r.label, r.seconds])).toEqual([
+      ['Пробная нарезка 1 объекта', 326],
+      ['Раскладка', 40],
+      ['Сборка проекта', 4],
+      ['Запись результата', 1],
+    ]);
+  });
+});

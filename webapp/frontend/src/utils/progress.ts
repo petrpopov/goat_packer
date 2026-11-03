@@ -1,11 +1,12 @@
 /** Этапы упаковки для шкалы и строки статуса (протокол stage-событий colored_3mf_packer). */
 
-import type { JobStage, PackStageId } from '../api/types';
+import type { JobStage, PackStageId, StageSpan } from '../api/types';
 import { formatDuration } from './format';
 
 /** Канонический порядок этапов; необязательные — те, в которые пакер заходит не всегда. */
 const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
   { id: 'probe_slice', label: 'Пробная нарезка 1 объекта', optional: false },
+  { id: 'modelling', label: 'Модель поддержек', optional: true },
   { id: 'packing', label: 'Раскладка', optional: false },
   { id: 'sample_slice', label: 'Пробная нарезка нескольких объектов', optional: true },
   { id: 'assembling', label: 'Сборка проекта', optional: false },
@@ -73,7 +74,15 @@ export interface StripStage {
   label: string;
   step: number;
   steps: number;
+  /** Живая подпись шага внутри этапа («поворот 180° · прогон 3 (до 8)»), если пакер её шлёт. */
+  sublabel?: string;
 }
+
+/**
+ * Этапы, которые пакер шлёт шагами (прогоны пробы, варианты зазора и уровни сетки): подряд идущие
+ * заходы — один этап. Старые задачи хранят каждый шаг отдельным заходом, поэтому они склеиваются и тут.
+ */
+const STEPPED: ReadonlySet<string> = new Set(['probe_slice', 'modelling', 'packing']);
 
 /** Пункт списка этапов в панели «этапы»: пройденные, текущий и ещё обязательные. */
 export interface StageItem {
@@ -92,7 +101,13 @@ function stagePlan(stage: JobStage) {
   // Повторный заход: после перепаковки пакер снова собирает, режет и проверяет.
   const repeat = (currentIndex >= 0 && furthest > currentIndex) || stage.attempt > 1;
   const from = Math.max(currentIndex, furthest);
-  const remaining = ORDER.filter((step, index) => index > from && !step.optional && !visited.includes(step.id));
+  // План пакера точен (итоговая нарезка — только если задача проверяет нарезкой); без плана (старый
+  // пакер) — обязательные этапы канонического порядка.
+  const planned = stage.planned?.length ? new Set(stage.planned) : null;
+  const remaining = ORDER.filter(
+    (step, index) =>
+      index > from && !visited.includes(step.id) && (planned ? planned.has(step.id) : !step.optional)
+  );
   const label =
     (repeat ? REPEAT_LABEL[stage.id as PackStageId] : undefined) ??
     ORDER.find((step) => step.id === stage.id)?.label ??
@@ -103,7 +118,7 @@ function stagePlan(stage: JobStage) {
 export function stripStage(stage: JobStage): StripStage {
   const { visited, repeat, remaining, label } = stagePlan(stage);
   const step = visited.length + (repeat ? Math.max(1, stage.attempt - 1) : 0);
-  return { label, step, steps: step + remaining.length };
+  return { label, step, steps: step + remaining.length, sublabel: stage.label ?? undefined };
 }
 
 export function stageItems(stage: JobStage): StageItem[] {
@@ -123,6 +138,20 @@ export interface StageRow {
   label: string;
   state: 'done' | 'current' | 'pending' | 'failed';
   seconds: number | null;
+  /** Подпись шагов: у идущего этапа — текущий шаг, у пройденного — итог («0°: 5 прогонов · 180°: из кэша»). */
+  note?: string;
+}
+
+/** Склеивает подряд идущие заходы пошаговых этапов ([STEPPED]) в один: начало первого, конец последнего. */
+function mergeSteps(history: StageSpan[]): StageSpan[] {
+  const merged: StageSpan[] = [];
+  for (const span of history) {
+    const last = merged.at(-1);
+    if (last && last.id === span.id && STEPPED.has(span.id)) {
+      merged[merged.length - 1] = { ...last, endedAtMs: span.endedAtMs, note: span.note ?? last.note };
+    } else merged.push(span);
+  }
+  return merged;
 }
 
 /**
@@ -140,7 +169,7 @@ export function stageRows(
     finishedAtMs,
   }: { running: boolean; failed: boolean; elapsedNow: number; finishedAtMs: number | null }
 ): StageRow[] {
-  const history = stage.history ?? [];
+  const history = mergeSteps(stage.history ?? []);
   if (!history.length) return stageItems(stage).map((item) => ({ ...item, seconds: null }));
   const labelOf = (id: string) => ORDER.find((step) => step.id === id)?.label ?? id;
   const seen = new Set<string>();
@@ -156,11 +185,14 @@ export function stageRows(
         : finishedAtMs != null
           ? (finishedAtMs - span.startedAtMs) / 1000
           : null;
+    const current = running && last;
+    const note = (current ? stage.label : null) ?? span.note ?? undefined;
     return {
       key: `${span.id}:${index}`,
       label: (repeat ? REPEAT_LABEL[span.id as PackStageId] : undefined) ?? labelOf(span.id),
-      state: running && last ? 'current' : failed && last ? 'failed' : 'done',
+      state: current ? 'current' : failed && last ? 'failed' : 'done',
       seconds: seconds == null ? null : Math.max(0, seconds),
+      ...(note ? { note } : {}),
     };
   });
   if (running)

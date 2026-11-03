@@ -96,6 +96,79 @@ pub fn stage(stage: Stage, message: &str, expected_s: Option<f64>, objects: Opti
     }
 }
 
+/// Where a long stage stands, sent as the event's `detail` object. Consecutive events of one
+/// stage id are ONE stage for the webapp (one row in «Инфо», one span in its history): each
+/// is a sub-step that names itself in the live sub-label and moves the bar inside the stage's
+/// band by `step / steps`. Ids and every older field stay as they were, so an older backend
+/// reads the events as before.
+///
+/// - every stage: `step` (sub-steps finished before this one) and `steps` (their total; an
+///   upper bound when the stage may stop early, e.g. a saturated probe);
+/// - `probe_slice`: `rotation_deg`, `class`/`classes` (1-based class of the rotation list),
+///   `run` (1-based slice of the class), `min_runs`, `max_runs`, `cached` (served from the
+///   probe cache, no slicer); the time-window probe sends `purpose: "time"` instead;
+/// - `packing`: `phase` (`coarse`: every foreign-gap rung at the first resolution, `refine`:
+///   a finer level of the ladder), `variant`/`variants` (1-based rung, over the clip-edge
+///   configurations too), `base_mm`/`band_mm` (the rung's foreign gaps), `resolution_mm`,
+///   `level`/`levels` (1-based level of the resolution ladder).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct StageDetail {
+    pub step: usize,
+    pub steps: usize,
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+impl StageDetail {
+    pub fn new(step: usize, steps: usize) -> StageDetail {
+        StageDetail { step: step.min(steps), steps, fields: serde_json::Map::new() }
+    }
+
+    /// Adds a field (`with("rotation_deg", 180.0)`).
+    pub fn with(mut self, key: &str, value: impl Into<serde_json::Value>) -> StageDetail {
+        self.fields.insert(key.to_owned(), value.into());
+        self
+    }
+}
+
+/// The JSON stage event with its `detail` (without printing it).
+pub fn stage_event_with_detail(
+    stage: Stage,
+    message: &str,
+    expected_s: Option<f64>,
+    objects: Option<usize>,
+    detail: &StageDetail,
+) -> serde_json::Value {
+    let mut event = stage_event(stage, message, expected_s, objects);
+    event["detail"] = serde_json::to_value(detail).expect("a stage detail serialises");
+    event
+}
+
+/// Announces a sub-step of a long stage (see `StageDetail`): the human line, then the event.
+pub fn stage_step(stage: Stage, message: &str, objects: Option<usize>, detail: &StageDetail) {
+    eprintln!("{message}");
+    if structured() {
+        eprintln!("{}", stage_event_with_detail(stage, message, None, objects, detail));
+    }
+}
+
+/// The `plan` event: the stages this run will enter, in order (optional ones only when the run
+/// takes them: a plate slice only when it verifies). The webapp counts «этап N из M» and lists
+/// the pending stages from it instead of guessing.
+pub fn plan_event(stages: &[Stage]) -> serde_json::Value {
+    json!({
+        "event": "plan",
+        "stages": stages.iter().map(|stage| stage.id()).collect::<Vec<_>>(),
+    })
+}
+
+/// Announces the stage plan (structured mode only: the human log needs no plan).
+pub fn plan(stages: &[Stage]) {
+    if structured() {
+        eprintln!("{}", plan_event(stages));
+    }
+}
+
 /// Rough slicing time of an `objects`-object plate from the one-object probe. The P1S goat
 /// measured 22 s → 317 s for 37 objects on the server (0.37 probe per extra object) but
 /// 4 s → 136 s for 43 on an M-series Mac (0.78): the probe is mostly start-up, so the ratio is
@@ -228,6 +301,28 @@ mod tests {
         assert_eq!(event["objects"], 37);
         let event = stage_event(Stage::ProbeSlice, "probing", None, None);
         assert!(event["expected_s"].is_null() && event["objects"].is_null());
+    }
+
+    #[test]
+    fn a_stage_step_carries_its_detail_flat_beside_step_and_steps() {
+        let detail = StageDetail::new(3, 16).with("rotation_deg", 180.0).with("run", 4).with("cached", false);
+        let event = stage_event_with_detail(Stage::ProbeSlice, "probe", None, Some(1), &detail);
+        assert_eq!(event["stage"], "probe_slice");
+        assert_eq!(event["objects"], 1);
+        assert_eq!(
+            event["detail"],
+            json!({"step": 3, "steps": 16, "rotation_deg": 180.0, "run": 4, "cached": false})
+        );
+        assert_eq!(StageDetail::new(9, 4).step, 4, "a step never passes the total");
+    }
+
+    #[test]
+    fn the_plan_event_lists_stage_ids_in_order() {
+        let event = plan_event(&[Stage::ProbeSlice, Stage::Packing, Stage::Assembling, Stage::Writing]);
+        assert_eq!(
+            event,
+            json!({"event": "plan", "stages": ["probe_slice", "packing", "assembling", "writing"]})
+        );
     }
 
     #[test]

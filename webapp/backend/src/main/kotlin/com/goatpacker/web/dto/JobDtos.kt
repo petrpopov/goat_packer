@@ -179,6 +179,10 @@ data class JobStageDto(
     val detail: String?,
     /** Все заходы в этапы по порядку; фронт показывает пройденные этапы с длительностями и после завершения. */
     val history: List<StageSpan> = emptyList(),
+    /** Живая подпись шага внутри этапа («поворот 180° · прогон 3 (до 8)»); null — шагов нет. */
+    val label: String? = null,
+    /** Намеченные пакером этапы запуска; пусто — план не известен (старый пакер). */
+    val planned: List<String> = emptyList(),
 ) {
     companion object {
         private const val MILLIS_PER_SECOND = 1000
@@ -193,6 +197,8 @@ data class JobStageDto(
             visited = stage.visited,
             detail = stage.detail,
             history = stage.history,
+            label = stage.label,
+            planned = stage.planned,
         )
     }
 }
