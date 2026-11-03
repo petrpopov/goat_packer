@@ -71,6 +71,11 @@ platform:
   user-active-jobs: ${USER_ACTIVE_JOBS:4}
   max-principals: ${MAX_PRINCIPALS:10000}
   max-active-uploads: ${MAX_ACTIVE_UPLOADS:2}
+  probe-cache-enabled: ${PROBE_CACHE_ENABLED:true}
+  probe-cache-entry-max-bytes: ${PROBE_CACHE_ENTRY_MAX_BYTES:16777216}
+  probe-cache-group-max-entries: ${PROBE_CACHE_GROUP_MAX_ENTRIES:16}
+  probe-cache-owner-max-bytes: ${PROBE_CACHE_OWNER_MAX_BYTES:268435456}
+  probe-cache-ttl-days: ${PROBE_CACHE_TTL_DAYS:30}
 logging:
   structured:
     format:

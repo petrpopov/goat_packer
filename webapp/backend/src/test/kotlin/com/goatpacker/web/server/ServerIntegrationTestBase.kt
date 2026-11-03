@@ -16,6 +16,7 @@ import com.goatpacker.web.repository.WorkerRepository
 import com.goatpacker.web.service.runner.JobRunner
 import com.goatpacker.web.service.runner.NativeLauncher
 import com.goatpacker.web.service.server.JobExecutionService
+import com.goatpacker.web.service.server.ProbeCacheService
 import com.goatpacker.web.service.server.QueueWorker
 import com.goatpacker.web.service.server.WorkerJobProcessor
 import com.goatpacker.web.service.server.WorkerNodeService
@@ -60,6 +61,7 @@ abstract class ServerIntegrationTestBase {
     @Autowired protected lateinit var launcher: NativeLauncher
     @Autowired protected lateinit var app: AppProperties
     @Autowired protected lateinit var props: PlatformProperties
+    @Autowired protected lateinit var probeCache: ProbeCacheService
 
     companion object {
         class Pg : PostgreSQLContainer<Pg>("postgres:17.0")
@@ -205,7 +207,7 @@ abstract class ServerIntegrationTestBase {
 
     @BeforeEach
     fun clearQueue() {
-        for (table in listOf("compute_budgets", "bot_challenges", "object_gc", "worker_nodes", "artifacts", "queue_jobs", "uploads", "blobs")) {
+        for (table in listOf("compute_budgets", "bot_challenges", "object_gc", "probe_cache_entries", "worker_nodes", "artifacts", "queue_jobs", "uploads", "blobs")) {
             jdbc.update("delete from $table")
         }
         jdbc.update("update platform_config set max_parallel=1,paused=false where id=1")
@@ -215,7 +217,7 @@ abstract class ServerIntegrationTestBase {
     protected fun newWorker() = QueueWorker(
         execution,
         nodeService,
-        WorkerJobProcessor(execution, blobs, gc, store, runner, launcher, app, props, json),
+        WorkerJobProcessor(execution, blobs, gc, store, runner, launcher, app, props, json, probeCache),
         launcher,
         app,
         props,

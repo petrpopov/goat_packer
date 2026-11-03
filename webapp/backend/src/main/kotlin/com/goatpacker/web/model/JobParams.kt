@@ -77,6 +77,8 @@ data class PackParams(
      * null — вход 3MF, слайсер и GUI берутся из проекта и профиля.
      */
     val slicer: String? = null,
+    /** --cache-dir: каталог кэша проб (относительный — в каталоге джоба; null — пакер пробует заново). */
+    val cacheDir: String? = null,
 )
 
 /** Параметры calibration-джоба — CLI-аргументы ams_calibration. */

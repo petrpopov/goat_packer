@@ -103,6 +103,7 @@ class PackService(
             finalSlice = form.finalSlice ?: true,
             customBed = customBed,
             slicer = slicer,
+            cacheDir = properties.probeCacheDir.takeIf { it.isNotBlank() },
         )
         val job = Job(id = jobId, kind = JobKind.PACK, directory = directory, createdAt = OffsetDateTime.now())
         submitter.submit(

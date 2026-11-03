@@ -50,6 +50,7 @@ bun run dev
 | `GOAT_SLICER_PRESETS` | дерево пресетов OrcaSlicer (`resources/profiles`, JSON — из исходников Orca, не из .app) для STL; пусто — STL-джобы отклоняются 400 | пусто |
 | `GOAT_BAMBU_PRESETS` | дерево пресетов Bambu Studio для STL на принтерах Bambu; пусто — экспорт Orca из `GOAT_SLICER_PRESETS` (у Orca нет A2L) | пусто |
 | `GOAT_ORCA_SLICER` / `GOAT_BAMBU_SLICER` | слайсеры для своего стола, экспорта STL и каталожных профилей (их `slicer_path` — путь runner-образа) | `/Applications/…` |
+| `GOAT_PROBE_CACHE_DIR` | каталог кэша проб пакера в локальном режиме одного пользователя (`--cache-dir`); пусто - без кэша. Серверный режим ведёт кэш в хранилище по владельцам: `PROBE_CACHE_*`, см. `deploy/README.md` | пусто |
 | `GOAT_JOBS_ROOT` | каталог джобов | `${java.io.tmpdir}/goat-packer-web/jobs` |
 | `PORT` | порт бэкенда | 19190 |
 

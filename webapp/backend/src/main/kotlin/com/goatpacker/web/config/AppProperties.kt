@@ -33,6 +33,8 @@ data class AppProperties(
     var bambuSlicer: String = "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio",
     var jobsRoot: String = "${System.getProperty("java.io.tmpdir")}/goat-packer-web/jobs",
     var jobTtlHours: Long = 12,
+    /** Каталог кэша проб пакера для локального (десктопного) режима одного пользователя; пусто — без кэша. */
+    var probeCacheDir: String = "",
     var allowedOrigins: List<String> = listOf("http://localhost:3007", "http://127.0.0.1:3007"),
 ) {
     lateinit var packerBinPath: Path

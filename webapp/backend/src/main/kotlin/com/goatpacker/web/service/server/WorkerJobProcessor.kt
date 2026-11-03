@@ -26,6 +26,7 @@ import com.goatpacker.web.service.StlInputs
 import com.goatpacker.web.service.runner.JobArtifacts
 import com.goatpacker.web.service.runner.JobRunner
 import com.goatpacker.web.service.runner.NativeLauncher
+import com.goatpacker.web.service.runner.ProbeCacheEntries
 import com.goatpacker.web.util.digest
 import com.goatpacker.web.util.safeName
 import org.slf4j.LoggerFactory
@@ -52,6 +53,7 @@ class WorkerJobProcessor(
     private val app: AppProperties,
     private val props: PlatformProperties,
     private val mapper: ObjectMapper,
+    private val probeCache: ProbeCacheService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -75,6 +77,8 @@ class WorkerJobProcessor(
             store.get(blobs.findById(blobId).orElseThrow().objectKey, job.directory.resolve(JobArtifacts.FINISH_STATE))
         }
 
+        val cacheGroup = restoreProbeCache(record, job, request, isStl)
+
         job.onUpdate = WorkerProgressReporter(execution, record, mapper)::report
         if (!execution.extendLease(record.id, record.fence)) {
             job.cancel()
@@ -84,7 +88,8 @@ class WorkerJobProcessor(
             "event=job_started jobId={} fence={} kind={} image={} cpu={} memoryMiB={}",
             record.id, record.fence, record.kind, job.runtimeImage, props.workerCpus, props.workerMemoryMib,
         )
-        run(record, job, request, if (isStl) sourceCommand(profile) else null)
+        run(record, job, request, if (isStl) sourceCommand(profile) else null, cacheGroup != null)
+        cacheGroup?.let { harvestProbeCache(record, job, it) }
 
         if (!launcher.terminate(job)) return CONTAINER_NOT_STOPPED
         if (job.cancelled) {
@@ -123,7 +128,29 @@ class WorkerJobProcessor(
         return StlInputs.command(app.sourceProjectBinPath.toString(), presets, slicer, profile)
     }
 
-    private fun run(record: QueueJobEntity, job: Job, request: JobRequest, sourceCommand: List<String>?) {
+    /**
+     * Кэш проб только у упаковки (доводка по состоянию не зондирует). Возвращает группу модели или null, если кэша нет.
+     * Сбой кэша не должен ронять джоб: без него пакер просто пробует заново.
+     */
+    private fun restoreProbeCache(record: QueueJobEntity, job: Job, request: JobRequest, isStl: Boolean): String? {
+        if (!probeCache.enabled || record.kind != JobKind.PACK || request.finishStateBlobId != null) return null
+        return runCatching {
+            val group = probeCache.groupOf(job.directory.resolve(if (isStl) StlInputs.INPUT_STL else StlInputs.INPUT_3MF))
+            val restored = probeCache.restore(record.ownerId, group, job.directory.resolve(ProbeCacheEntries.DIR))
+            log.info("event=probe_cache_restored jobId={} entries={}", record.id, restored)
+            group
+        }.onFailure { log.warn("event=probe_cache_restore_failed jobId={} reason={}", record.id, it.message) }.getOrNull()
+    }
+
+    private fun harvestProbeCache(record: QueueJobEntity, job: Job, group: String) {
+        if (job.cancelled) return
+        runCatching {
+            val stored = probeCache.harvest(record.ownerId, group, job.directory.resolve(ProbeCacheEntries.DIR))
+            log.info("event=probe_cache_stored jobId={} entries={}", record.id, stored)
+        }.onFailure { log.warn("event=probe_cache_store_failed jobId={} reason={}", record.id, it.message) }
+    }
+
+    private fun run(record: QueueJobEntity, job: Job, request: JobRequest, sourceCommand: List<String>?, useCache: Boolean) {
         val profilePath = Path.of(JobArtifacts.PROFILE_FILE)
         when (record.kind) {
             JobKind.PACK -> runner.runPackBlocking(
@@ -148,6 +175,7 @@ class WorkerJobProcessor(
                     finalSlice = request.finalSlice,
                     finishState = request.finishStateBlobId?.let { Path.of(JobArtifacts.FINISH_STATE) },
                     slicer = request.slicer,
+                    cacheDir = ProbeCacheEntries.DIR.takeIf { useCache },
                 ),
             )
 

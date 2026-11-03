@@ -19,6 +19,7 @@ class RetentionService(
     private val queueJobs: QueueJobSqlRepository,
     private val gc: ObjectGcRepository,
     private val config: PlatformRepository,
+    private val probeCache: ProbeCacheService,
 ) {
     /** Удаляет просроченные задачи, загрузки, блобы, сессии и прочее. */
     @Transactional
@@ -38,6 +39,7 @@ class RetentionService(
             gc.scheduleDeletion(blob.objectKey, blob.sizeBytes)
             retention.deleteBlob(blob.id)
         }
+        probeCache.expire()
         retention.deleteExpiredSessionsResetsAndGrants()
         retention.deleteIdleGuests(RetentionPolicy.IDLE_GUEST_DAYS)
         retention.deleteExpiredChallenges()

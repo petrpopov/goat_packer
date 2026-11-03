@@ -74,6 +74,7 @@ class ObjectGcRepository(private val jdbc: JdbcTemplate) {
            select g.object_key from object_gc g where not_before<now()
            and not exists(select 1 from artifacts a where a.object_key=g.object_key)
            and not exists(select 1 from blobs b where b.object_key=g.object_key)
+           and not exists(select 1 from probe_cache_entries p where p.object_key=g.object_key)
            order by g.object_key for update skip locked limit $limit) returning object_key""",
     ) { rs, _ -> rs.getString(1) }
 

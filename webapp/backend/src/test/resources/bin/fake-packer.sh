@@ -16,6 +16,7 @@ window_hours=""
 support_overlap=""
 verify=false
 finish_state=""
+cache_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
     --output) output="$2"; shift 2;;
     --time-window-hours) window_hours="$2"; shift 2;;
     --support-overlap-mm) support_overlap="$2"; shift 2;;
+    --cache-dir) cache_dir="$2"; shift 2;;
     --verify) verify=true; shift;;
     --finish-state) finish_state="$2"; verify=true; shift 2;;
     *) shift;;
@@ -34,6 +36,21 @@ done
 if [[ -n "$window_hours" ]]; then verify=true; fi
 
 verification="${output%.3mf}.verification.json"
+
+# --cache-dir: запись пробы под ключом от входа (как пакер — по точному ключу): есть — «cache hit», нет — «проба»
+# и запись. Подделку (неверный ключ внутри) пишем всегда: воркер обязан её отбросить. Итог — в cache-result.txt.
+if [[ -n "$cache_dir" ]]; then
+  key="$( (shasum -a 256 "$source_file" 2>/dev/null || sha256sum "$source_file") | cut -c1-64)"
+  entry="$cache_dir/probe-$key.json"
+  mkdir -p "$cache_dir"
+  if [[ -f "$entry" ]]; then
+    echo "support probe of rotation 0°: cache hit (3 runs)"; echo hit > cache-result.txt
+  else
+    echo "support probe of rotation 0°: slicing"; echo miss > cache-result.txt
+    printf '{"rotation_deg":0.0,"runs":3,"cache_key":"%s"}\n' "$key" > "$entry"
+  fi
+  printf '{"x":1}\n' > "$cache_dir/support-$(printf 'b%.0s' $(seq 64)).json"
+fi
 
 echo "probing prime tower position (slicing 1 object)..."
 echo "probe tower keepout: 10.00,10.00 → 30.00,30.00"
@@ -77,5 +94,5 @@ printf '{"object_count": %s, "output_3mf": "%s", "profile": "%s", "time": %s, "t
 
 echo "packed 30 colored objects; wrote $output"
 mkdir -p work
-printf '{"placements": []}\n' > work/placements.json
+printf '{"placements": [], "cache": "%s"}\n' "$(cat cache-result.txt 2>/dev/null || echo none)" > work/placements.json
 echo "report: $verification"

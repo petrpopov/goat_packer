@@ -23,3 +23,4 @@ app:
   bambu-slicer: ${GOAT_BAMBU_SLICER:/Applications/BambuStudio.app/Contents/MacOS/BambuStudio}
   jobs-root: ${GOAT_JOBS_ROOT:${java.io.tmpdir}/goat-packer-web/jobs}
   job-ttl-hours: 12
+  probe-cache-dir: ${GOAT_PROBE_CACHE_DIR:}

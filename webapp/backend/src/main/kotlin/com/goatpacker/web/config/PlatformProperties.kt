@@ -46,6 +46,16 @@ class PlatformProperties {
     var hostWorkRoot = "/srv/goat/scratch"
     var allowLocalRunner = false
     var production = false
+
+    /**
+     * Probe cache of the packer, kept by the worker per owner (see ProbeCacheService): off = every job probes anew.
+     * Limits: one entry, entries replayed into one job (per model), bytes per owner, days since last use.
+     */
+    var probeCacheEnabled = true
+    var probeCacheEntryMaxBytes = 16L * 1024 * 1024
+    var probeCacheGroupMaxEntries = 16
+    var probeCacheOwnerMaxBytes = 256L * 1024 * 1024
+    var probeCacheTtlDays = 30
     var requireChallenge = false
 
     /**

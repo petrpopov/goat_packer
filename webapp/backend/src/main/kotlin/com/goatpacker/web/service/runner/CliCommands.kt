@@ -40,6 +40,8 @@ object CliCommands {
         params.finishState?.let { addOption("--finish-state", it.toString()) }
         // Слайсер STL-задачи: пакер переключает профиль на него и берёт его GUI целевым.
         params.slicer?.let { addOption("--slicer", it) }
+        // Пробы одного класса поворота — самая долгая часть холодного запуска; кэш держит воркер, не раннер.
+        params.cacheDir?.let { addOption("--cache-dir", it) }
     }
 
     fun schedule(binary: String, params: ScheduleParams): List<String> = buildList {

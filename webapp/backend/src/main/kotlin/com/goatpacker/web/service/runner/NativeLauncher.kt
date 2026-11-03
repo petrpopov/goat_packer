@@ -77,6 +77,8 @@ class NativeLauncher(
             Files.createDirectories(target.parent)
             remaining -= exportFile(job, name, target, remaining)
         }
+        // Кэш проб не результат: его сбой не должен ронять джоб, а при ошибке пробы просто посчитаются заново.
+        runCatching { exportCache(job) }.onFailure { log.warn("event=probe_cache_export_failed jobId={} reason={}", job.id, it.message) }
         stop(job)
     }
 
@@ -167,10 +169,15 @@ class NativeLauncher(
         val input = if (isRegularFile(job.directory.resolve(INPUT_STL))) INPUT_STL else INPUT_3MF
         // Доводка «Нарезать стол» везёт ещё и состояние упаковки родителя.
         val finishState = JobArtifacts.FINISH_STATE.takeIf { isRegularFile(job.directory.resolve(it)) }
-        for (file in listOfNotNull(input, JobArtifacts.PROFILE_FILE, finishState)) {
+        // Кэш проб владельца (его кладёт воркер до запуска): имена из белого списка, в команду идут без экранирования.
+        val cache = job.directory.resolve(ProbeCacheEntries.DIR).takeIf { Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) }
+            ?.let { dir -> Files.list(dir).use { stream -> stream.toList() } }.orEmpty()
+            .filter { ProbeCacheEntries.isEntryName(it.fileName.toString()) && isRegularFile(it) }
+            .map { "${ProbeCacheEntries.DIR}/${it.fileName}" }
+        for (file in listOfNotNull(input, JobArtifacts.PROFILE_FILE, finishState) + cache) {
             val source = job.directory.resolve(file)
             check(isRegularFile(source))
-            val transfer = ProcessBuilder("docker", "exec", "-i", container, "/bin/sh", "-c", "cat > $WORK_DIR/$file")
+            val transfer = ProcessBuilder("docker", "exec", "-i", container, "/bin/sh", "-c", "mkdir -p $WORK_DIR/${file.substringBeforeLast('/', ".")} && cat > $WORK_DIR/$file")
                 .redirectInput(source.toFile())
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
@@ -208,6 +215,32 @@ class NativeLauncher(
             if (process.isAlive) process.destroyForcibly()
         }
         return copied
+    }
+
+    /**
+     * Забирает записи кэша проб из замороженного тома: обычные файлы каталога `cache` с именами из белого списка,
+     * каждый не больше лимита записи, всего не больше лимита группы; остальное (ссылки, каталоги, мусор) пропускается.
+     */
+    private fun exportCache(job: Job) {
+        if (!props.probeCacheEnabled) return
+        val target = Files.createDirectories(job.directory.resolve(ProbeCacheEntries.DIR))
+        val process = ProcessBuilder(exportCommand(job, ProbeCacheEntries.DIR)).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        try {
+            CompletableFuture.runAsync {
+                TarArchiveInputStream(process.inputStream).use { tar ->
+                    var budget = props.probeCacheEntryMaxBytes * props.probeCacheGroupMaxEntries
+                    repeat(MAX_CACHE_TAR_ENTRIES) {
+                        val entry = tar.nextEntry ?: return@use
+                        val name = entry.name.removePrefix("${ProbeCacheEntries.DIR}/")
+                        val wanted = entry.isFile && !entry.isLink && ProbeCacheEntries.isEntryName(name) &&
+                            entry.name == "${ProbeCacheEntries.DIR}/$name" && entry.size in 1..minOf(props.probeCacheEntryMaxBytes, budget)
+                        if (wanted) budget -= copyEntry(tar, target.resolve(name), entry.size)
+                    }
+                }
+            }.get(EXPORT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
     }
 
     private fun copyEntry(tar: TarArchiveInputStream, target: Path, limit: Long): Long {
@@ -249,6 +282,7 @@ class NativeLauncher(
         const val COPY_BUFFER_BYTES = 64 * 1024
         const val TRANSFER_TIMEOUT_SECONDS = 30L
         const val EXPORT_TIMEOUT_SECONDS = 30L
+        const val MAX_CACHE_TAR_ENTRIES = 256
         const val EXPORT_EXIT_TIMEOUT_SECONDS = 15L
 
         /** Файлы, которые выгружаются из тома раннера: результаты упаковки, расписания и калибровки (журнал пишет JobRunner). */
