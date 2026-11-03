@@ -18,11 +18,12 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 /// Members that run on the finer levels, when the caller asked for them.
-const FINE_MEMBERS: [Member; 4] = [
+const FINE_MEMBERS: [Member; 5] = [
     Member::Lattice,
     Member::DoubleLattice,
     Member::TwoBlock,
     Member::Improve,
+    Member::Exact,
 ];
 
 /// What one level of the ladder did.

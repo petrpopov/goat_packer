@@ -30,11 +30,14 @@ pub enum Member {
     TwoBlock,
     /// GLS insertion and ruin-and-recreate (member E, P6).
     Improve,
+    /// Exact lattice refinement of the best lattice candidates in vector geometry
+    /// (`pack::refine_exact`); its layouts are in millimetres, off the pixel grid.
+    Exact,
 }
 
 impl Member {
     /// The members this package implements, in run order.
-    pub const AVAILABLE: [Member; 7] = [
+    pub const AVAILABLE: [Member; 8] = [
         Member::Sweep,
         Member::Mixed,
         Member::Rows,
@@ -42,6 +45,7 @@ impl Member {
         Member::DoubleLattice,
         Member::TwoBlock,
         Member::Improve,
+        Member::Exact,
     ];
 }
 

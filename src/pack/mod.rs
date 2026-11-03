@@ -15,6 +15,7 @@
 pub mod bound;
 pub mod context;
 pub mod edge_fill;
+mod exact_stage;
 pub mod free_map;
 pub mod improve;
 pub mod ladder;
@@ -23,6 +24,7 @@ mod members;
 pub(crate) mod legacy;
 pub mod no_fit;
 pub mod robustness;
+pub(crate) mod refine_exact;
 pub(crate) mod rows;
 pub mod select;
 pub mod sweep;
@@ -53,13 +55,14 @@ use std::time::Instant;
 
 /// The members `pack` runs on fixed rotation classes. `Mixed` needs a footprint that may
 /// turn freely, so only the legacy search runs it.
-pub const DEFAULT_MEMBERS: [Member; 6] = [
+pub const DEFAULT_MEMBERS: [Member; 7] = [
     Member::Lattice,
     Member::DoubleLattice,
     Member::TwoBlock,
     Member::Sweep,
     Member::Rows,
     Member::Improve,
+    Member::Exact,
 ];
 
 /// The published layout of a run and how it was found.
@@ -107,7 +110,9 @@ pub struct StageTimes {
     /// The upper bound (`bound`).
     pub bound_s: f64,
     pub members_s: f64,
-    /// Ranking and both checks.
+    /// The exact lattice refinement (`refine_exact`).
+    pub exact_s: f64,
+    /// Ranking and both checks (the exact stage's time included).
     pub select_s: f64,
 }
 
@@ -215,11 +220,13 @@ fn pack_level(
     let members_s = started.elapsed().as_secs_f64();
     let started = Instant::now();
     let checks = Checks::new(prints, rules, options, &ctx)?;
+    let exact_started = Instant::now();
+    let exact = exact_stage::run(&ctx, &checks, &candidates, members, &capped)?;
+    let exact_s = exact_started.elapsed().as_secs_f64();
     let (winner, validation) = checks
         .choose(candidates)
         .map_err(|report| failure_summary(&report))?;
-    let select_s = started.elapsed().as_secs_f64();
-    Ok(PackOutcome {
+    let mut outcome = PackOutcome {
         placements: print_placements(&winner, &grid),
         tower_anchor: winner.anchor.map(|a| ctx.towers()[a].anchor),
         member: winner.key.tie.member,
@@ -231,13 +238,17 @@ fn pack_level(
         upper_bound: bounds.overall,
         class_bounds: bounds.per_class.clone(),
         levels: Vec::new(),
-        timings: StageTimes {
-            context_s,
-            bound_s,
-            members_s,
-            select_s,
-        },
-    })
+        timings: StageTimes::default(),
+    };
+    exact_stage::publish(exact, &ctx, &mut outcome);
+    outcome.timings = StageTimes {
+        context_s,
+        bound_s,
+        members_s,
+        exact_s,
+        select_s: started.elapsed().as_secs_f64(),
+    };
+    Ok(outcome)
 }
 
 /// The object cap the members get: the caller's (0 = none) lowered to the bound.
@@ -362,6 +373,11 @@ impl<'a> Checks<'a> {
             )?,
             towers: ctx.towers().iter().map(|t| t.zones.clone()).collect(),
         })
+    }
+
+    /// The vector check of the layouts at `anchor`.
+    fn vector(&self, anchor: Option<usize>) -> Result<VectorValidator, String> {
+        VectorValidator::new(self.prints, &self.rules(anchor))
     }
 
     /// The rules of a candidate at `anchor`: the plate plus that anchor's tower.

@@ -246,8 +246,8 @@ fn describe_tower(tower: &TowerSpec) -> String {
 fn times(outcome: &PackOutcome, seconds: f64) -> String {
     let t = outcome.timings;
     format!(
-        "{seconds:.3} s (context {:.3}, bound {:.3}, members {:.3}, select {:.3})",
-        t.context_s, t.bound_s, t.members_s, t.select_s
+        "{seconds:.3} s (context {:.3}, bound {:.3}, members {:.3}, exact {:.3}, select {:.3})",
+        t.context_s, t.bound_s, t.members_s, t.exact_s, t.select_s
     )
 }
 

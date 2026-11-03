@@ -3,7 +3,7 @@
 
 use goat_packer::keepout::{BodyRule, Keepout, KeepoutClass, KeepoutFrame, KeepoutShape};
 use goat_packer::kind_masks::{OriginGrid, plate_zones};
-use goat_packer::pack::{TowerSpec, anchor_candidates, pack};
+use goat_packer::pack::{Member, TowerSpec, anchor_candidates, pack};
 use goat_packer::{
     LayoutRules, ObjectPrint, PackOptions, PlateRules, Point, PrintPlacement, Rect,
     axis_aligned_line_keepout, validate_raster, validate_vector,
@@ -196,8 +196,12 @@ fn pack_keeps_the_layout_valid_around_the_tower_and_honours_the_cap() {
         outcome.placements.len()
     );
     validate_vector(&[print()], &outcome.placements, &rules).unwrap();
-    validate_raster(&[print()], &outcome.placements, &rules, grid).unwrap();
-    assert_eq!(outcome.validation.winner_rank, 0);
+    // The exact member's layouts sit at the exact contact, which the conservative raster
+    // rejects by design: the vector check is their gate (`pack::refine_exact`).
+    if outcome.member != Member::Exact {
+        validate_raster(&[print()], &outcome.placements, &rules, grid).unwrap();
+        assert_eq!(outcome.validation.winner_rank, 0);
+    }
     let zones = plate_zones(&plate, None).unwrap();
     assert!(
         anchor_candidates(&tower(), &zones)

@@ -104,10 +104,39 @@ impl VectorValidator {
                     x: at[index].x - at[previous].x,
                     y: at[index].y - at[previous].y,
                 };
-                self.pair_break(&self.classes[a.print], &self.classes[b.print], shift)
+                self.pair_break(&self.classes[a.print], &self.classes[b.print], shift, 0.0)
                     .map(|found| (index, pair_message(previous, index, &found)))
             });
         first_failure(zone_failure, pair_failure)
+    }
+
+    /// The pair rules alone, for a search that moves copies continuously: copies of classes
+    /// `a` and `b` with `b` at `shift` from `a` break no rule. The same predicate `check`
+    /// applies to every pair, so a layout whose pairs and zones pass here passes `check`.
+    pub fn pair_clear(&self, a: usize, b: usize, shift: Point) -> bool {
+        self.pair_clear_padded(a, b, shift, 0.0)
+    }
+
+    /// `pair_clear` with every gap `pad` mm wider: a continuous search stops `pad` short of
+    /// the exact contact, so float noise downstream cannot turn a touching pair into a break.
+    pub fn pair_clear_padded(&self, a: usize, b: usize, shift: Point, pad: f64) -> bool {
+        self.pair_break(&self.classes[a], &self.classes[b], shift, pad)
+            .is_none()
+    }
+
+    /// A copy of `class` at `at` breaks no plate-zone rule (the zone half of `check`).
+    pub fn zones_clear(&self, class: usize, at: Point) -> bool {
+        let class = &self.classes[class];
+        !self
+            .zones
+            .iter()
+            .any(|zone| breaks_zone(class, at, zone, self.clearance_mm, self.foreign))
+    }
+
+    /// Box around everything a copy of `class` prints, in its frame, grown by half the
+    /// widest pair gap: two copies whose boxes miss cannot break a pair rule.
+    pub fn reach_box(&self, class: usize) -> Rect {
+        self.classes[class].bounds.grown(self.widest_gap() * 0.5)
     }
 
     fn widest_gap(&self) -> f64 {
@@ -118,7 +147,13 @@ impl VectorValidator {
     }
 
     /// The first pair rule `a` and `b` (at `shift` from `a`) break, tested both ways.
-    fn pair_break(&self, a: &ClassShapes, b: &ClassShapes, shift: Point) -> Option<PairBreak> {
+    fn pair_break(
+        &self,
+        a: &ClassShapes,
+        b: &ClassShapes,
+        shift: Point,
+        pad: f64,
+    ) -> Option<PairBreak> {
         for rule in pair_rules(self.body_rule) {
             let banded = is_band_kind(rule.a) || is_band_kind(rule.b);
             let bands = if banded {
@@ -126,7 +161,7 @@ impl VectorValidator {
             } else {
                 1
             };
-            let gap = rule.gap.mm(self.clearance_mm, self.foreign);
+            let gap = rule.gap.mm(self.clearance_mm, self.foreign) + pad;
             for band in 0..bands {
                 let found = |flipped| PairBreak {
                     own: rule.a,
