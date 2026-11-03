@@ -164,8 +164,11 @@ abstract class ServerIntegrationTestBase {
             call("POST", "/api/v2/auth/login", mapOf("login" to name, "password" to pass), expected)
 
         /** Загружает проект принтера [printer] и проверяет, что он распознан как [profile]; возвращает id файла. */
-        fun upload(printer: String = "Test Corner Bed", profile: String = "test_corner_bed"): String {
-            val data = descriptorProject3mf(printer)
+        fun upload(
+            printer: String = "Test Corner Bed",
+            profile: String = "test_corner_bed",
+            data: ByteArray = descriptorProject3mf(printer),
+        ): String {
             val id = call("POST", "/api/v2/uploads", mapOf("name" to "cat.3mf", "sizeBytes" to data.size))["fileId"].asText()
             val uploaded = call("PUT", "/api/v2/uploads/$id/content", data, headers = mapOf("Origin" to ORIGIN))
             assertEquals(profile, uploaded["profileId"].asText())

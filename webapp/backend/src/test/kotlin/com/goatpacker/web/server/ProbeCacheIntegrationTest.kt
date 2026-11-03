@@ -1,5 +1,6 @@
 package com.goatpacker.web.server
 
+import com.goatpacker.web.descriptorProject3mf
 import com.goatpacker.web.repository.ProbeCacheRepository
 import com.goatpacker.web.service.server.QueueWorker
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -52,6 +53,36 @@ class ProbeCacheIntegrationTest : ServerIntegrationTestBase() {
             )
         }
     }
+
+    @Test fun `a re-saved copy of the project (other metadata and thumbnail, same mesh) hits the same group, another mesh does not`() {
+        val client = Client()
+        client.guest()
+        val original = client.upload(data = descriptorProject3mf("Test Corner Bed", model = meshModel("2026-10-31", "1.5")))
+        val resaved = client.upload(
+            data = descriptorProject3mf(
+                "Test Corner Bed",
+                model = meshModel("2026-11-03", "1.5", uuid = "00040000"),
+                extraEntries = mapOf("Metadata/plate_1.png" to "another thumbnail", "Metadata/model_settings.config" to "<config/>"),
+            ),
+        )
+        val edited = client.upload(data = descriptorProject3mf("Test Corner Bed", model = meshModel("2026-10-31", "1.75")))
+        withWorker { worker ->
+            assertEquals("miss", cacheVerdict(packOnce(worker, client, original)))
+            assertEquals("hit", cacheVerdict(packOnce(worker, client, resaved)))
+            assertEquals("miss", cacheVerdict(packOnce(worker, client, edited)))
+            assertEquals(2, jdbc.queryForObject("select count(distinct group_key) from probe_cache_entries", Int::class.java))
+        }
+    }
+
+    private fun meshModel(date: String, z: String, uuid: String = "00010000") = """<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">
+ <metadata name="ModificationDate">$date</metadata>
+ <resources><object id="1" p:UUID="$uuid-81cb" type="model"><mesh>
+  <vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="$z"/></vertices>
+  <triangles><triangle v1="0" v2="1" v3="2" paint_color="8"/></triangles>
+ </mesh></object></resources>
+ <build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 $date 0 0"/></build>
+</model>"""
 
     @Test fun `with the cache off no entry is stored and the packer gets no cache dir`() {
         props.probeCacheEnabled = false

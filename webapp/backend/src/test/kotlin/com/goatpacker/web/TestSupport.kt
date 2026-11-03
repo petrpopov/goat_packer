@@ -88,7 +88,12 @@ fun MockMvc.awaitJobCompletion(
  * Minimal central-directory ZIP with data descriptors, as emitted for slicer PNGs.
  * Deliberately NOT ZipOutputStream: that writer refuses this valid combination.
  */
-fun descriptorProject3mf(printerModel: String, settings: Map<String, Any> = emptyMap()): ByteArray {
+fun descriptorProject3mf(
+    printerModel: String,
+    settings: Map<String, Any> = emptyMap(),
+    model: String = "<model/>",
+    extraEntries: Map<String, String> = emptyMap(),
+): ByteArray {
     val out = ByteArrayOutputStream()
 
     fun word(value: Long, bytes: Int) {
@@ -99,9 +104,9 @@ fun descriptorProject3mf(printerModel: String, settings: Map<String, Any> = empt
 
     val contents = linkedMapOf(
         "Metadata/plate_1.png" to "synthetic preview",
-        "3D/3dmodel.model" to "<model/>",
+        "3D/3dmodel.model" to model,
         "Metadata/project_settings.config" to ObjectMapper().writeValueAsString(mapOf("printer_model" to printerModel) + settings),
-    )
+    ) + extraEntries
     val entries = contents.map { (name, text) ->
         val nameBytes = name.toByteArray()
         val data = text.toByteArray()

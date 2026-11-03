@@ -40,7 +40,13 @@ verification="${output%.3mf}.verification.json"
 # --cache-dir: запись пробы под ключом от входа (как пакер — по точному ключу): есть — «cache hit», нет — «проба»
 # и запись. Подделку (неверный ключ внутри) пишем всегда: воркер обязан её отбросить. Итог — в cache-result.txt.
 if [[ -n "$cache_dir" ]]; then
-  key="$( (shasum -a 256 "$source_file" 2>/dev/null || sha256sum "$source_file") | cut -c1-64)"
+  # Как у пакера, ключ — от сетки, а не от файла: вершины и треугольники проекта (нет сетки — весь файл).
+  mesh="$(unzip -p "$source_file" 3D/3dmodel.model 2>/dev/null | grep -oE '<(vertex|triangle) [^>]*>' || true)"
+  if [[ -n "$mesh" ]]; then
+    key="$(printf '%s' "$mesh" | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-64)"
+  else
+    key="$( (shasum -a 256 "$source_file" 2>/dev/null || sha256sum "$source_file") | cut -c1-64)"
+  fi
   entry="$cache_dir/probe-$key.json"
   mkdir -p "$cache_dir"
   if [[ -f "$entry" ]]; then

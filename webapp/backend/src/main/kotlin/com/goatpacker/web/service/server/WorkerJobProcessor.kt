@@ -135,7 +135,7 @@ class WorkerJobProcessor(
     private fun restoreProbeCache(record: QueueJobEntity, job: Job, request: JobRequest, isStl: Boolean): String? {
         if (!probeCache.enabled || record.kind != JobKind.PACK || request.finishStateBlobId != null) return null
         return runCatching {
-            val group = probeCache.groupOf(job.directory.resolve(if (isStl) StlInputs.INPUT_STL else StlInputs.INPUT_3MF))
+            val group = probeCache.groupOf(job.directory.resolve(if (isStl) StlInputs.INPUT_STL else StlInputs.INPUT_3MF), isStl)
             val restored = probeCache.restore(record.ownerId, group, job.directory.resolve(ProbeCacheEntries.DIR))
             log.info("event=probe_cache_restored jobId={} entries={}", record.id, restored)
             group

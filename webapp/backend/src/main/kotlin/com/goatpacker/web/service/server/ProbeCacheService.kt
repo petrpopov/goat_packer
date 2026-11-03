@@ -7,9 +7,7 @@ import com.goatpacker.web.repository.ObjectGcRepository
 import com.goatpacker.web.repository.ObjectStore
 import com.goatpacker.web.repository.ProbeCacheEntry
 import com.goatpacker.web.repository.ProbeCacheRepository
-import com.goatpacker.web.security.toHex
 import com.goatpacker.web.service.runner.ProbeCacheEntries
-import com.goatpacker.web.util.digest
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Service
@@ -22,7 +20,7 @@ import java.nio.file.Path
  * перед запуском кладёт в каталог джоба записи этого владельца для этой модели ([restore]), после —
  * проверяет и забирает новые ([harvest]). Ключ в хранилище `probe-cache/<владелец>/<модель>/<id>/<имя>`:
  * кэш одного владельца (гость — тоже владелец) недоступен чужой джобе, подмена записи вредит только себе.
- * «Модель» — SHA-256 входа (3MF/STL): пакер сам сверяет точный ключ записи (сетка, настройки, слайсер,
+ * «Модель» — отпечаток сеток входа ([ModelFingerprint]; STL — хеш байтов): пакер сам сверяет точный ключ записи (сетка, настройки, слайсер,
  * поворот), так что лишние записи группы безвредны, а пакеру не нужен режим «напечатать ключи».
  */
 @Service
@@ -38,8 +36,8 @@ class ProbeCacheService(
 
     val enabled: Boolean get() = props.probeCacheEnabled
 
-    /** Группа записей: хеш входа джоба. */
-    fun groupOf(input: Path): String = input.digest("SHA-256").toHex()
+    /** Группа записей: отпечаток модели входа ([ModelFingerprint]), а не хеш файла: пересохранение проекта его меняет. */
+    fun groupOf(input: Path, isStl: Boolean): String = ModelFingerprint.of(input, isStl)
 
     /** Кладёт записи владельца для группы в [dir]; возвращает их число. Сбой одной записи — просто промах. */
     fun restore(owner: String, group: String, dir: Path): Int {
