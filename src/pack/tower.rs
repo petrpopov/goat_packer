@@ -1,7 +1,8 @@
 //! The prime tower as plate zones whose position the search chooses (design 2026-11-02, §6,
 //! §9.3). `TowerSpec` is plain data (work package I3 derives it from the project settings);
-//! at an anchor it becomes a `TowerBody` zone and `TowerBrim` zones (layer-0 brim, chamfer
-//! rings), and what they forbid comes from `keepout::permission` like every other zone.
+//! at an anchor it becomes `TowerBody` zones (the column and the chamfer rings of layers >= 1,
+//! each with its z range) and the `TowerBrim` zone (the layer-0 brim only), and what they
+//! forbid comes from `keepout::permission` like every other zone.
 
 use crate::geometry::{Point, Rect, polygon_from_loop};
 use crate::keepout::{ForeignGaps, Permission, ZoneClass, permission};
@@ -26,6 +27,11 @@ pub struct TowerSpec {
     /// Chamfer rings above layer 0 as `[print z, width beyond the body]`, mm.
     #[serde(default)]
     pub chamfer: Vec<[f64; 2]>,
+    /// The target GUI's path-conflict check compares the layer-0 brim with an object's support
+    /// lines (`Flavour::conflict_tower_lines`): supports must keep out of the brim ring.
+    /// False = they may overlap it.
+    #[serde(default)]
+    pub brim_conflicts: bool,
     /// Top of the tower, mm: bodies above it may pass over the tower's footprint.
     pub top_z_mm: f64,
     /// Where the anchor may go (inclusive): the GUI re-clamps a stored anchor into this range
@@ -92,7 +98,9 @@ impl TowerSpec {
         for (index, &[z, width]) in self.chamfer.iter().enumerate() {
             parts.push(TowerPart {
                 id: format!("tower_chamfer#{index}"),
-                kind: PrintKind::TowerBrim,
+                // Tower BODY (design 4.2, Q18): only the layer-0 brim may be overlapped by
+                // supports; a ring on a later layer is printed material they would hit.
+                kind: PrintKind::TowerBody,
                 rect: self.body.grown(width),
                 z_range_mm: [z, z],
             });
@@ -102,13 +110,18 @@ impl TowerSpec {
 
     /// The tower's zones with its anchor at `anchor`, plate frame.
     pub fn zones(&self, anchor: Point) -> Vec<PlateZone> {
+        let brim_class = if self.brim_conflicts {
+            ZoneClass::TowerBrimChecked
+        } else {
+            ZoneClass::TowerBrim
+        };
         self.parts()
             .into_iter()
             .map(|part| PlateZone {
                 id: part.id,
                 class: match part.kind {
                     PrintKind::TowerBody => ZoneClass::TowerBody,
-                    _ => ZoneClass::TowerBrim,
+                    _ => brim_class,
                 },
                 area: ZoneArea::Rect(part.rect.translated(anchor.x, anchor.y)),
                 z_range_mm: Some(part.z_range_mm),
@@ -253,4 +266,70 @@ fn rect_ring(r: Rect) -> Vec<Point> {
     .iter()
     .map(|&(x, y)| Point { x, y })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keepout::Gap;
+
+    fn spec(brim_conflicts: bool) -> TowerSpec {
+        TowerSpec {
+            body: Rect::new(0.0, 0.0, 10.0, 8.0),
+            brim_l0_mm: 2.0,
+            chamfer: vec![[0.4, 1.5]],
+            brim_conflicts,
+            top_z_mm: 4.0,
+            anchor_range: Rect::new(0.0, 0.0, 50.0, 50.0),
+            source_anchor: Point { x: 20.0, y: 20.0 },
+        }
+    }
+
+    fn class_of(zones: &[PlateZone], id: &str) -> ZoneClass {
+        zones.iter().find(|zone| zone.id == id).unwrap().class
+    }
+
+    #[test]
+    fn chamfer_rings_are_tower_body_and_only_the_first_layer_brim_is_a_brim() {
+        let zones = spec(false).zones(Point { x: 0.0, y: 0.0 });
+        assert_eq!(class_of(&zones, "tower_chamfer#0"), ZoneClass::TowerBody);
+        assert_eq!(class_of(&zones, "tower_brim"), ZoneClass::TowerBrim);
+        // A support keeps out of a ring (printed material) but may overlap the brim.
+        let support = PrintKind::SupportBase;
+        assert_eq!(
+            permission(support, ZoneClass::TowerBody),
+            Permission::Forbidden { gap: Gap::Support }
+        );
+        assert_eq!(permission(support, ZoneClass::TowerBrim), Permission::Allowed);
+    }
+
+    #[test]
+    fn a_brim_the_gui_compares_keeps_supports_out_without_a_gap() {
+        let zones = spec(true).zones(Point { x: 0.0, y: 0.0 });
+        assert_eq!(class_of(&zones, "tower_brim"), ZoneClass::TowerBrimChecked);
+        assert_eq!(class_of(&zones, "tower_chamfer#0"), ZoneClass::TowerBody);
+        for kind in [
+            PrintKind::SupportBase,
+            PrintKind::SupportBand,
+            PrintKind::InterfaceBand,
+        ] {
+            assert_eq!(
+                permission(kind, ZoneClass::TowerBrimChecked),
+                Permission::Forbidden { gap: Gap::Zero }
+            );
+        }
+        // Object brims are trimmed by the slicer and never read by its conflict check.
+        assert_eq!(
+            permission(PrintKind::Brim, ZoneClass::TowerBrimChecked),
+            Permission::Allowed
+        );
+    }
+
+    #[test]
+    fn an_old_state_without_the_flag_keeps_supports_over_the_brim() {
+        let mut json = serde_json::to_value(spec(true)).unwrap();
+        json.as_object_mut().unwrap().remove("brim_conflicts");
+        let spec: TowerSpec = serde_json::from_value(json).unwrap();
+        assert!(!spec.brim_conflicts);
+    }
 }

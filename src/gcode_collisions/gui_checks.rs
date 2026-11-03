@@ -12,8 +12,10 @@
 //!   (BambuStudio tests every segment exactly; this check uses the exact polygons for every
 //!   flavour);
 //! - **conflicts**: the "G-code path conflicts" rule (`conflicts`) between objects, and between
-//!   an object and the tower. A support over the tower brim is reported as allowed: the GUI only
-//!   warns and the owner accepts it (the CLI refuses it without `--no-check`);
+//!   an object and the tower lines the target build compares (`GuiRules::tower_lines`). A
+//!   support line over a compared tower brim loop is a conflict like any other: Snapmaker
+//!   Orca 2.4.0 showed "Serious warning ... WipeTower <-> object" for it on the owner's U1
+//!   plate while the CLI slice of the same plate passed;
 //! - **part edge band**: Snapmaker Orca warns when a model part's bbox comes closer than
 //!   `SNAPMAKER_SPIRAL_LIFT_BAND_MM` to the printable edge (`part_edge_hits`, from the layout;
 //!   no G-code needed).
@@ -27,6 +29,7 @@ use std::fmt;
 use serde::Serialize;
 
 use super::conflicts::{ConflictKind, ConflictLine, HitKey, Owner, layer_conflicts};
+pub use super::conflicts::TowerLines;
 use super::plane::{Vec2, segment_meets_rect, segment_meets_ring};
 use super::reader::{Extrusion, ExtrusionSink, Role, read};
 use crate::geometry::{Point, Rect};
@@ -49,6 +52,8 @@ pub struct GuiRules {
     pub printable: Rect,
     /// Exclusion areas as closed rings (BambuStudio's rectangles, Orca's polygon).
     pub exclusions: Vec<Vec<Point>>,
+    /// Which tower lines the target build's path-conflict rule compares with the objects'.
+    pub tower_lines: TowerLines,
 }
 
 /// Who printed a line.
@@ -91,8 +96,6 @@ pub struct Conflict {
     pub second: Party,
     /// Of the first conflicting lines on the first layer.
     pub kind: ConflictKind,
-    /// A support over the tower brim: accepted (see the module comment).
-    pub allowed: bool,
     pub first_layer: usize,
     pub last_layer: usize,
     pub layers: usize,
@@ -112,8 +115,7 @@ pub struct GuiReport {
 }
 
 impl GuiReport {
-    /// Every finding that makes the plate unacceptable, as a message; allowed conflicts are
-    /// not among them.
+    /// Every finding that makes the plate unacceptable, as a message.
     pub fn errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
         if self.outside_plate
@@ -130,8 +132,7 @@ impl GuiReport {
                 hit.party, hit.exclusion, hit.first_layer, hit.segments, hit.at.0, hit.at.1
             )
         }));
-        let refused = self.conflicts.iter().filter(|conflict| !conflict.allowed);
-        errors.extend(refused.map(|conflict| {
+        errors.extend(self.conflicts.iter().map(|conflict| {
             format!(
                 "G-code path conflict ({:?}) between {} and {} on layers {}-{} ({} layers), \
                  first at {:.2}, {:.2}",
@@ -235,11 +236,16 @@ impl ExtrusionSink for PlateChecks<'_> {
         if extrusion.layer > 0
             && !extrusion.is_smear()
             && let Some(owner) = owner
-            && takes_part_in_conflicts(extrusion.role)
         {
             for pair in extrusion.path.windows(2) {
-                self.lines
-                    .push(self.conflict_line(owner, extrusion.role, pair[0], pair[1]));
+                if self.takes_part(extrusion.role, pair[0], pair[1]) {
+                    self.lines.push(ConflictLine {
+                        owner,
+                        from: pair[0],
+                        to: pair[1],
+                        support: extrusion.role.is_support(),
+                    });
+                }
             }
         }
     }
@@ -291,16 +297,23 @@ impl<'a> PlateChecks<'a> {
         }
     }
 
-    fn conflict_line(&self, owner: Owner, role: Role, from: Vec2, to: Vec2) -> ConflictLine {
-        let outside_body = self
-            .tower_body
-            .is_some_and(|body| !segment_meets_rect(from, to, body.grown(TOWER_BODY_TOLERANCE_MM)));
-        ConflictLine {
-            owner,
-            from,
-            to,
-            support: role.is_support(),
-            tower_brim: role == Role::TowerBrim || (role == Role::Tower && outside_body),
+    /// Whether the rule compares this segment: an object's walls, infill and supports always
+    /// (its brim and the skirt never), the tower's lines as far as the build's `TowerLines`
+    /// says. With `All` the tower's interior lines count too; that errs on the strict side and
+    /// no support can reach them without entering the column anyway.
+    fn takes_part(&self, role: Role, from: Vec2, to: Vec2) -> bool {
+        match role {
+            Role::Custom | Role::Skirt | Role::Brim => false,
+            Role::TowerBrim => self.rules.tower_lines != TowerLines::None,
+            Role::Tower => match self.rules.tower_lines {
+                TowerLines::None => false,
+                TowerLines::All => true,
+                // BambuStudio-style G-code does not mark the brim: tell it by distance.
+                TowerLines::BrimLoops => self.tower_body.is_some_and(|body| {
+                    !segment_meets_rect(from, to, body.grown(TOWER_BODY_TOLERANCE_MM))
+                }),
+            },
+            _ => true,
         }
     }
 
@@ -320,11 +333,10 @@ impl<'a> PlateChecks<'a> {
             },
         );
         let conflicts = self.conflicts.into_iter().map(
-            |((first, second, allowed), (kind, at, first_layer, last_layer, layers))| Conflict {
+            |((first, second), (kind, at, first_layer, last_layer, layers))| Conflict {
                 first: party(Some(first)),
                 second: party(Some(second)),
                 kind,
-                allowed,
                 first_layer,
                 last_layer,
                 layers,
@@ -349,9 +361,4 @@ fn owner_of(extrusion: &Extrusion) -> Option<Owner> {
         return Some(Owner::Tower);
     }
     extrusion.object.map(Owner::Object)
-}
-
-/// Walls, infill and supports of objects, and the tower; brims and the skirt take no part.
-fn takes_part_in_conflicts(role: Role) -> bool {
-    !matches!(role, Role::Custom | Role::Skirt | Role::Brim)
 }

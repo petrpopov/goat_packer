@@ -30,6 +30,8 @@ pub enum Zone {
     Soft,
     TowerBody,
     TowerBrim,
+    /// The tower brim where the target GUI compares it with supports.
+    TowerBrimChecked,
 }
 
 /// How far apart two things must stay, symbolically.
@@ -98,14 +100,14 @@ pub fn rule(kind: Kind, zone: Zone) -> Rule {
     use Gap::{Clearance, Support, Zero};
     use Rule::{Allowed, Forbidden, PartBox, PartHull};
     let row = match kind {
-        //                                 boundary         hard             restricted  soft             tower body           tower brim
-        Kind::Silhouette | Kind::BodyBand => [PartBox,         PartHull,        PartBox,    Allowed,         Forbidden(Clearance), Forbidden(Clearance)],
-        Kind::Landing                     => [Allowed,         Allowed,         Allowed,    Forbidden(Zero), Forbidden(Clearance), Forbidden(Clearance)],
-        Kind::Brim                        => [Allowed,         Allowed,         Allowed,    Allowed,         Allowed,              Allowed],
+        //                                 boundary         hard             restricted  soft             tower body           tower brim            checked brim
+        Kind::Silhouette | Kind::BodyBand => [PartBox,         PartHull,        PartBox,    Allowed,         Forbidden(Clearance), Forbidden(Clearance), Forbidden(Clearance)],
+        Kind::Landing                     => [Allowed,         Allowed,         Allowed,    Forbidden(Zero), Forbidden(Clearance), Forbidden(Clearance), Forbidden(Clearance)],
+        Kind::Brim                        => [Allowed,         Allowed,         Allowed,    Allowed,         Allowed,              Allowed,              Allowed],
         Kind::SupportBase | Kind::SupportBand | Kind::InterfaceBand
-                                          => [Forbidden(Zero), Forbidden(Zero), Allowed,    Allowed,         Forbidden(Support),   Allowed],
-        Kind::TowerBody                   => [Forbidden(Zero), Forbidden(Zero), Allowed,    Forbidden(Zero), Allowed,              Allowed],
-        Kind::TowerBrim                   => [Forbidden(Zero), Forbidden(Zero), Allowed,    Allowed,         Allowed,              Allowed],
+                                          => [Forbidden(Zero), Forbidden(Zero), Allowed,    Allowed,         Forbidden(Support),   Allowed,              Forbidden(Zero)],
+        Kind::TowerBody                   => [Forbidden(Zero), Forbidden(Zero), Allowed,    Forbidden(Zero), Allowed,              Allowed,              Allowed],
+        Kind::TowerBrim                   => [Forbidden(Zero), Forbidden(Zero), Allowed,    Allowed,         Allowed,              Allowed,              Allowed],
     };
     let column = match zone {
         Zone::Boundary => 0,
@@ -114,6 +116,7 @@ pub fn rule(kind: Kind, zone: Zone) -> Rule {
         Zone::Soft => 3,
         Zone::TowerBody => 4,
         Zone::TowerBrim => 5,
+        Zone::TowerBrimChecked => 6,
     };
     row[column]
 }
@@ -157,13 +160,14 @@ mod tests {
         (Kind::TowerBrim, PrintKind::TowerBrim),
     ];
 
-    const ZONES: [(Zone, ZoneClass); 6] = [
+    const ZONES: [(Zone, ZoneClass); 7] = [
         (Zone::Boundary, ZoneClass::Boundary),
         (Zone::Hard, ZoneClass::Hard),
         (Zone::Restricted, ZoneClass::Restricted),
         (Zone::Soft, ZoneClass::Soft),
         (Zone::TowerBody, ZoneClass::TowerBody),
         (Zone::TowerBrim, ZoneClass::TowerBrim),
+        (Zone::TowerBrimChecked, ZoneClass::TowerBrimChecked),
     ];
 
     fn gap_of(gap: keepout::Gap) -> Gap {

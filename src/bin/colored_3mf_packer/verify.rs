@@ -6,7 +6,7 @@
 use goat_packer::{
     PrintPlacement, Rect,
     gcode_collisions::{PlateAnalysis, SupportCollision, TowerLayer, analyze_plate, tower_layers},
-    gcode_collisions::gui_checks::{GuiRules, check_plate},
+    gcode_collisions::gui_checks::{GuiRules, TowerLines, check_plate},
     keepout::KeepoutShape,
     progress::{
         self, LayoutSource, RepackReason, Stage, expected_reslice_seconds, expected_slice_seconds,
@@ -203,7 +203,8 @@ impl<'a> PlateRun<'a> {
             _ => {}
         }
         let rules = &state.plan.rules;
-        let gui = check_plate(gcode, &gui_rules(rules.printable_area, rules));
+        let tower_lines = self.job.flavour.flavour.conflict_tower_lines();
+        let gui = check_plate(gcode, &gui_rules(rules.printable_area, rules, tower_lines));
         Ok(Findings {
             layers: analysis.layers,
             tower_box: outer_box(&layers),
@@ -278,7 +279,11 @@ fn outer_box(layers: &[TowerLayer]) -> Option<Rect> {
 
 /// The GUI's printable bbox and the plate's hard rectangles and polygons as exclusion areas
 /// (strips and edge bands are tested by the matrix rows, not by the GUI).
-pub fn gui_rules(printable: Rect, rules: &goat_packer::PlateRules) -> GuiRules {
+pub fn gui_rules(
+    printable: Rect,
+    rules: &goat_packer::PlateRules,
+    tower_lines: TowerLines,
+) -> GuiRules {
     let ring = |rect: Rect| {
         [(rect.min_x, rect.min_y), (rect.max_x, rect.min_y), (rect.max_x, rect.max_y), (rect.min_x, rect.max_y)]
             .map(|(x, y)| goat_packer::Point { x, y })
@@ -294,7 +299,11 @@ pub fn gui_rules(printable: Rect, rules: &goat_packer::PlateRules) -> GuiRules {
             KeepoutShape::Strips(_) | KeepoutShape::EdgeBand(_) => None,
         })
         .collect();
-    GuiRules { printable, exclusions }
+    GuiRules {
+        printable,
+        exclusions,
+        tower_lines,
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +361,7 @@ mod tests {
             body: Rect::new(0.0, 0.0, 10.0, 10.0),
             brim_l0_mm: 0.0,
             chamfer: Vec::new(),
+            brim_conflicts: false,
             top_z_mm: 5.0,
             anchor_range: Rect::new(0.0, 0.0, 40.0, 40.0),
             source_anchor: Point { x: 20.0, y: 20.0 },

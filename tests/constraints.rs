@@ -89,6 +89,7 @@ fn tower() -> TowerSpec {
         body: Rect::new(-0.25, -0.25, 8.0, 6.0),
         brim_l0_mm: 2.0,
         chamfer: vec![[0.5, 1.0]],
+        brim_conflicts: false,
         top_z_mm: 3.0,
         anchor_range: Rect::new(2.0, 2.0, 50.0, 30.0),
         source_anchor: Point { x: 70.0, y: 25.0 },
@@ -159,17 +160,19 @@ fn an_anchor_whose_tower_meets_a_hard_zone_is_dropped() {
 }
 
 #[test]
-fn bodies_keep_clearance_from_the_tower_while_supports_may_cross_its_brim() {
+fn bodies_keep_clearance_from_the_tower_while_supports_may_cross_only_its_first_layer_brim() {
     // Tower body x [29.75, 38], y [19.75, 26]; brim 2 mm around it at layer 0.
     let rules = tower_rules(&plate(vec![]), Point { x: 30.0, y: 20.0 });
     let check = |x: f64, y: f64| validate_vector(&[print()], &[at(x, y)], &rules);
-    // The support base lies on the brim and the chamfer ring (allowed), the body keeps
-    // 0.75 mm from the brim.
-    check(24.0, 22.0).unwrap();
-    // The support base keeps `SUPPORT_BODY_GAP_MM` (0.5) from the tower body: equality
-    // passes, 0.4 mm does not.
-    check(24.75, 22.0).unwrap();
-    assert!(check(24.85, 22.0).is_err());
+    // The support base lies on the layer-0 brim (allowed, x 27.75..), the body keeps
+    // 2 mm from the brim.
+    check(23.5, 22.0).unwrap();
+    // The chamfer ring (x 28.75..) is tower BODY (design 4.2, Q18): the base keeps
+    // `SUPPORT_BODY_GAP_MM` (0.5) from it, equality passes and 0.4 mm does not. Before the
+    // ring was typed as body the base could reach the tower column's own gap (29.25).
+    check(23.75, 22.0).unwrap();
+    assert!(check(23.85, 22.0).is_err());
+    assert!(check(24.75, 22.0).is_err());
     // A body beside the tower body but on its brim breaks the clearance (band 0 meets the
     // brim's layer 0); 0.75 mm off the brim it passes.
     check(32.0, 15.5).unwrap();
