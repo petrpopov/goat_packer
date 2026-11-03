@@ -5,6 +5,12 @@ use std::collections::{BTreeMap, HashMap};
 /// Edge gaps below this count as touching: absorbs float noise in the slicers' own
 /// rounding (a wall and a support at exactly the touching distance).
 pub(super) const TOUCH_EPSILON_MM: f64 = 0.01;
+/// How far a support base may press into a neighbour's first layer before it counts. The
+/// owner's A2L 70-goat plate (BambuStudio GUI G-code, printed fine) has base lines 0.088 mm
+/// into the neighbours' first-layer walls on 58 pairs, and the CLI slices the same; the
+/// packer's rule lets a base touch a foreign landing (`SUPPORT_BASE_GAP_MM` = 0). Above the
+/// first layer a support on a foreign body fuses to it, so there `TOUCH_EPSILON_MM` stays.
+pub(super) const FIRST_LAYER_BASE_OVERLAP_MM: f64 = 0.1;
 /// Spatial hash cell for the body lines of one layer.
 const CELL_MM: f64 = 2.0;
 

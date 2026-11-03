@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::reader::{Extrusion, ExtrusionSink, Role, read};
-use super::touching::{Line, layer_collisions};
+use super::touching::{FIRST_LAYER_BASE_OVERLAP_MM, Line, layer_collisions};
 use super::types::{ObjectFirstLayer, Strip, SupportCollision};
 use crate::geometry::Rect;
 
@@ -70,6 +70,9 @@ impl ExtrusionSink for Parser {
             return;
         }
         for (support_object, body_object, gap) in layer_collisions(&lines) {
+            if layer == 1 && gap >= -FIRST_LAYER_BASE_OVERLAP_MM {
+                continue;
+            }
             self.touching
                 .entry((support_object, body_object))
                 .and_modify(|seen| {

@@ -162,3 +162,34 @@ fn informational_orca_labels_do_not_count_as_extra_printed_objects() {
     assert_eq!(analysis.extents.len(), 1);
     assert!(analysis.require_object_coverage(1).is_ok());
 }
+
+/// Object 1's first-layer wall at y = 0 and object 2's first-layer support at y = `support_y`.
+fn first_layer_plate(support_y: f64) -> String {
+    format!(
+        "; CHANGE_LAYER\n\
+         ; start printing object, unique label id: 11\n\
+         ; FEATURE: Outer wall\n; LINE_WIDTH: 0.5\n\
+         G1 X0 Y0 F600\nG1 X10 Y0 E0.5\n\
+         ; stop printing object, unique label id: 11\n\
+         ; start printing object, unique label id: 22\n\
+         ; FEATURE: Support\n; LINE_WIDTH: 0.5\n\
+         G1 X0 Y{support_y}\nG1 X10 Y{support_y} E0.5\n\
+         ; stop printing object, unique label id: 22\n"
+    )
+}
+
+#[test]
+fn a_support_base_touching_a_foreign_first_layer_is_allowed() {
+    // Half widths 0.25 + 0.25: centre lines 0.412 apart overlap by 0.088, as on the owner's
+    // printed A2L plate.
+    let analysis = analyze_plate(first_layer_plate(0.412).as_bytes());
+    assert!(analysis.collisions.is_empty(), "{:?}", analysis.collisions.len());
+}
+
+#[test]
+fn a_support_base_pressed_into_a_foreign_first_layer_is_reported() {
+    // Overlap by 0.2: more than the first-layer allowance.
+    let analysis = analyze_plate(first_layer_plate(0.3).as_bytes());
+    assert_eq!(analysis.collisions.len(), 1);
+    assert_eq!(analysis.collisions[0].first_layer, 1);
+}
