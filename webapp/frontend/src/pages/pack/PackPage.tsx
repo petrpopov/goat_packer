@@ -9,7 +9,7 @@ import { useProfiles } from '@/hooks/useProfiles';
 import CalibrationPage from '@/pages/CalibrationPage';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
-import { apiErrorMessage, isActiveStatus } from '@/utils/jobs';
+import { apiErrorMessage, isActiveStatus, towerWarning } from '@/utils/jobs';
 import type { CustomBedInput } from '@/utils/printers';
 import { DEFAULT_PACK_FORM, EMPTY_BED, packFormData, packRequestParts, valuesFromParams } from './packFormValues';
 import type { PackFormValues } from './packFormValues';
@@ -129,6 +129,8 @@ export default function PackPage() {
   const closeInfo = useCallback(() => setInfoOpen(false), []);
   /** Принтер сцены: у открытой по ссылке задачи — её собственный (свой стол — тоже). */
   const sceneProfile = external ? (job?.profile ?? null) : selection.selectedProfile;
+  /** Готовый стол с башней: GUI слайсера при открытии её сдвинет — над сценой просим вернуть её в угол. */
+  const towerNotice = jobId !== null ? towerWarning(job?.status, pack.result) : null;
 
   /** Файл задачи не скачался (истёк срок хранения, нет сети): сцена без модели — сказать прямо. */
   const sceneFailed = external && pack.input.isError ? 'Файл задачи недоступен — стол без модели' : null;
@@ -199,6 +201,12 @@ export default function PackPage() {
             submitting={startMutation.isPending}
           />
         )}
+        {towerNotice ? (
+          <div className="warn-block tower-notice" role="note">
+            <Icon name="alert" />
+            {towerNotice}
+          </div>
+        ) : null}
         <PackScene
           profile={sceneProfile}
           model={preview.model}

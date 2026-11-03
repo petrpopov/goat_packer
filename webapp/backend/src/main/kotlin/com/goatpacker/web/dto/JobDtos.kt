@@ -80,6 +80,19 @@ data class PackInfoDto(
     val supportOverlapMm: Double? = null,
     /** false — стол упакован по пробной нарезке, полная нарезка ещё не запускалась. */
     val finalSliced: Boolean = true,
+    /** Башня очистки, поставленная пакером; null — башни нет. */
+    val tower: PackTowerDto? = null,
+)
+
+/**
+ * Угол башни очистки (`wipe_tower_x/y`) и её размер, мм. Не `xMm`: Jackson выводит имя из геттера
+ * `getXMm` и отдавал бы его как `xmm`.
+ */
+data class PackTowerDto(
+    val anchorXMm: Double,
+    val anchorYMm: Double,
+    val widthMm: Double?,
+    val depthMm: Double?,
 )
 
 /** Итог calibration-джоба: значения calibration.json и текст instructions.md. */

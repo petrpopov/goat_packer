@@ -226,6 +226,7 @@ mod tests {
             body: Rect::new(-0.25, -0.25, 9.0, 7.0),
             brim_l0_mm: 2.0,
             chamfer: Vec::new(),
+            brim_conflicts: false,
             top_z_mm: 5.0,
             anchor_range: Rect::new(5.0, 5.0, 61.0, 41.0),
             source_anchor: Point { x: 100.0, y: 3.0 },

@@ -97,19 +97,26 @@ pub enum ZoneClass {
     Hard,
     Restricted,
     Soft,
+    /// The tower column and its chamfer rings (layers >= 1), z-ranged (design 4.2, Q18).
     TowerBody,
-    /// Tower brim and chamfer rings.
+    /// The tower's layer-0 brim ring where the target GUI's path-conflict check does NOT
+    /// compare it with an object's support lines: supports may overlap it.
     TowerBrim,
+    /// The same ring where the GUI does compare it (`Flavour::conflict_tower_lines`): a
+    /// support line that crosses a brim loop raises "Conflicts of G-code paths", so supports
+    /// keep out.
+    TowerBrimChecked,
 }
 
 impl ZoneClass {
-    pub const ALL: [ZoneClass; 6] = [
+    pub const ALL: [ZoneClass; 7] = [
         ZoneClass::Boundary,
         ZoneClass::Hard,
         ZoneClass::Restricted,
         ZoneClass::Soft,
         ZoneClass::TowerBody,
         ZoneClass::TowerBrim,
+        ZoneClass::TowerBrimChecked,
     ];
 }
 
@@ -137,27 +144,29 @@ const fn forbidden(gap: Gap) -> Permission {
 /// the owner's rule, the rule follows the owner and the physics: the CLI accepts a copy's
 /// support 2 mm off the bed, but copies are not clipped, so the GUI would refuse the plate.
 #[rustfmt::skip]
-const fn row(kind: PrintKind) -> [Permission; 6] {
+const fn row(kind: PrintKind) -> [Permission; 7] {
     use Gap::{Clearance, Support, Zero};
     use Permission::{Allowed, PartBox, PartHull};
     match kind {
-        //                 boundary           hard                restricted  soft                tower body              tower brim
+        //                 boundary           hard                restricted  soft                tower body              tower brim              checked brim
         // Bodies: the tower brim only matters in the bands below its chamfer top (its z range).
         Silhouette | BodyBand
-                       => [PartBox,           PartHull,           PartBox,    Allowed,            forbidden(Clearance),   forbidden(Clearance)],
+                       => [PartBox,           PartHull,           PartBox,    Allowed,            forbidden(Clearance),   forbidden(Clearance),   forbidden(Clearance)],
         // The landing is body material (its thin-tip overshoot can leave the silhouette), so it
         // keeps the body clearance; boundary, hard and restricted are covered by the body rows.
-        Landing        => [Allowed,           Allowed,            Allowed,    forbidden(Zero),    forbidden(Clearance),   forbidden(Clearance)],
-        // The slicer clips and trims brims.
-        Brim           => [Allowed,           Allowed,            Allowed,    Allowed,            Allowed,                Allowed],
-        // Supports must stay inside the printable area inset by `print_edge_reserve_mm`; the
-        // tower brim may grow over them (owner; the GUI warns, the CLI conflicts without --no-check).
+        Landing        => [Allowed,           Allowed,            Allowed,    forbidden(Zero),    forbidden(Clearance),   forbidden(Clearance),   forbidden(Clearance)],
+        // The slicer clips and trims brims, and its conflict check never reads an object's brim.
+        Brim           => [Allowed,           Allowed,            Allowed,    Allowed,            Allowed,                Allowed,                Allowed],
+        // Supports must stay inside the printable area inset by `print_edge_reserve_mm`. The
+        // tower brim is grown over only where the GUI's conflict check ignores it; a support
+        // line crossing a checked brim loop is the "Serious warning ... WipeTower <-> object"
+        // of Snapmaker Orca 2.4.0 (owner, U1 56 plate), touching extents (gap 0) cannot cross.
         SupportBase | SupportBand | InterfaceBand
-                       => [forbidden(Zero),   forbidden(Zero),    Allowed,    Allowed,            forbidden(Support),     Allowed],
+                       => [forbidden(Zero),   forbidden(Zero),    Allowed,    Allowed,            forbidden(Support),     Allowed,                forbidden(Zero)],
         // Tower body at the soft zones means its layer 0.
-        TowerBody      => [forbidden(Zero),   forbidden(Zero),    Allowed,    forbidden(Zero),    Allowed,                Allowed],
+        TowerBody      => [forbidden(Zero),   forbidden(Zero),    Allowed,    forbidden(Zero),    Allowed,                Allowed,                Allowed],
         // The GUI counts tower lines against the printable area.
-        TowerBrim      => [forbidden(Zero),   forbidden(Zero),    Allowed,    Allowed,            Allowed,                Allowed],
+        TowerBrim      => [forbidden(Zero),   forbidden(Zero),    Allowed,    Allowed,            Allowed,                Allowed,                Allowed],
     }
 }
 

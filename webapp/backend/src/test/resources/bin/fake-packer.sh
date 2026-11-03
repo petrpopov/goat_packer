@@ -71,7 +71,9 @@ if [[ "$verify" != "true" ]]; then
   time_block=null
   supports_block="$supports_block"', "final_sliced": false'
 fi
-printf '{"object_count": %s, "output_3mf": "%s", "profile": "%s", "time": %s%s}\n' "$count" "$output" "$profile" "$time_block" "$supports_block" > "$verification"
+# Башня очистки (как в настоящем отчёте: угол wipe_tower_x/y и размер), совпадает с keepout пробы.
+tower_block='{"anchor": {"x": 10.0, "y": 10.0}, "size": [20.0, 20.0], "brim_mm": 3.0, "chamfer_rings": 0, "source": "probe+model"}'
+printf '{"object_count": %s, "output_3mf": "%s", "profile": "%s", "time": %s, "tower": %s%s}\n' "$count" "$output" "$profile" "$time_block" "$tower_block" "$supports_block" > "$verification"
 
 echo "packed 30 colored objects; wrote $output"
 mkdir -p work

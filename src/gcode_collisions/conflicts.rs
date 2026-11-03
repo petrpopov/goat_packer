@@ -6,7 +6,10 @@
 //!
 //! Lines of one owner never conflict, and two support lines never do (the slicers raise their
 //! crossing threshold for support pairs until it never fires; the owner allows supports to
-//! merge). Objects bring walls, infill and supports; brims and the skirt take no part.
+//! merge). Objects bring walls, infill and supports (a tree support's first-layer base and its
+//! brim-like expansion are support lines); object brims and the skirt take no part. Which of
+//! the tower's lines count differs between the slicer builds (`TowerLines`; behaviour in
+//! `docs/superpowers/specs/2026-11-03-gcode-conflict-check.md`).
 //!
 //! Two deliberate differences from the slicers, both on the strict side: the overlap of
 //! collinear lines is measured along the line (the slicers measure it along X, which divides by
@@ -33,6 +36,19 @@ const CELL_MM: f64 = 1.0;
 /// Shorter segments are points, which cannot cross anything.
 const MIN_SEGMENT_MM: f64 = 1e-6;
 
+/// Which of the prime tower's lines the slicer's rule compares with the objects' lines.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TowerLines {
+    /// The rule never sees the tower: the build leaves its fake tower empty (OrcaSlicer on a
+    /// machine that is not a Bambu one).
+    None,
+    /// Only the brim loops: the first layer's and every chamfer loop above it (Snapmaker Orca
+    /// 2.4.0). The tower's wall is not among them.
+    BrimLoops,
+    /// The wall of every layer and the brim loops (BambuStudio).
+    All,
+}
+
 /// Who printed a line.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum Owner {
@@ -53,13 +69,10 @@ pub(super) struct ConflictLine {
     pub(super) from: Vec2,
     pub(super) to: Vec2,
     pub(super) support: bool,
-    /// Tower brim or chamfer ring (outside the tower body).
-    pub(super) tower_brim: bool,
 }
 
-/// The two owners of a conflicting pair (ordered) and whether the pair is a support over the
-/// tower brim, which the owner accepts.
-pub(super) type HitKey = (Owner, Owner, bool);
+/// The two owners of a conflicting pair, ordered.
+pub(super) type HitKey = (Owner, Owner);
 
 /// The first conflicting pair of lines (lowest indices) of one key on one layer.
 #[derive(Clone, Copy, Debug)]
@@ -99,8 +112,7 @@ fn record_pair(lines: &[ConflictLine], i: usize, j: usize, hits: &mut BTreeMap<H
     let Some((kind, at)) = conflict_between(a.from, a.to, b.from, b.to) else {
         return;
     };
-    let allowed = (a.support && b.tower_brim) || (b.support && a.tower_brim);
-    let key = (a.owner.min(b.owner), a.owner.max(b.owner), allowed);
+    let key = (a.owner.min(b.owner), a.owner.max(b.owner));
     let hit = LayerHit {
         kind,
         at,

@@ -4,8 +4,8 @@
 //! Every G-code here is synthetic.
 
 use goat_packer::gcode_collisions::gui_checks::{
-    GUI_BED_EPSILON_MM, GuiRules, PartEdgeIssue, Party, check_plate, part_edge_hits,
-    placed_part_boxes,
+    GUI_BED_EPSILON_MM, GuiRules, PartEdgeIssue, Party, TowerLines, check_plate,
+    part_edge_hits, placed_part_boxes,
 };
 use goat_packer::gcode_collisions::{ConflictKind, analyze_plate};
 use goat_packer::{
@@ -24,6 +24,7 @@ fn rules(exclusions: Vec<Vec<Point>>) -> GuiRules {
     GuiRules {
         printable: BED,
         exclusions,
+        tower_lines: TowerLines::All,
     }
 }
 
@@ -215,11 +216,11 @@ fn two_objects(
     format!("; CHANGE_LAYER\n{}{}", object(1, a), object(2, b))
 }
 
-fn conflicts_of(gcode: &str) -> Vec<(ConflictKind, bool)> {
+fn conflicts_of(gcode: &str) -> Vec<ConflictKind> {
     check_plate(gcode.as_bytes(), &rules(vec![]))
         .conflicts
         .iter()
-        .map(|conflict| (conflict.kind, conflict.allowed))
+        .map(|conflict| conflict.kind)
         .collect()
 }
 
@@ -232,7 +233,6 @@ fn crossing_centre_lines_of_two_objects_conflict() {
     assert_eq!(report.conflicts.len(), 1);
     let conflict = &report.conflicts[0];
     assert_eq!(conflict.kind, ConflictKind::Crossing);
-    assert!(!conflict.allowed);
     assert_eq!(
         (&conflict.first, &conflict.second),
         (&Party::Object("1".into()), &Party::Object("2".into()))
@@ -250,7 +250,7 @@ fn a_crossing_at_a_segment_end_does_not_count() {
     let deeper = [("Outer wall", (5.0, 0.0), (5.0, 5.02))];
     assert_eq!(
         conflicts_of(&two_objects(&wall, &deeper)),
-        vec![(ConflictKind::Crossing, false)]
+        vec![ConflictKind::Crossing]
     );
 }
 
@@ -260,7 +260,7 @@ fn collinear_overlap_conflicts_and_vertical_lines_are_not_exempt() {
     let overlap = [("Sparse infill", (9.98, 5.0), (20.0, 5.0))];
     assert_eq!(
         conflicts_of(&two_objects(&wall, &overlap)),
-        vec![(ConflictKind::CollinearOverlap, false)]
+        vec![ConflictKind::CollinearOverlap]
     );
     let end_to_end = [("Sparse infill", (10.0, 5.0), (20.0, 5.0))];
     assert!(conflicts_of(&two_objects(&wall, &end_to_end)).is_empty());
@@ -268,7 +268,7 @@ fn collinear_overlap_conflicts_and_vertical_lines_are_not_exempt() {
     let vertical_overlap = [("Outer wall", (5.0, 9.0), (5.0, 20.0))];
     assert_eq!(
         conflicts_of(&two_objects(&vertical, &vertical_overlap)),
-        vec![(ConflictKind::CollinearOverlap, false)]
+        vec![ConflictKind::CollinearOverlap]
     );
 }
 
@@ -281,20 +281,31 @@ fn supports_of_two_objects_may_cross() {
     let wall = [("Outer wall", (5.0, 0.0), (5.0, 10.0))];
     assert_eq!(
         conflicts_of(&two_objects(&a, &wall)),
-        vec![(ConflictKind::Crossing, false)]
+        vec![ConflictKind::Crossing]
     );
 }
 
-/// A BambuStudio tower: the body square x/y 100..110 on every layer, plus an unmarked brim
-/// ring 2 mm out on the first layer. One object crosses the brim with a support line on layer
-/// 1 and with `feature` on layer `layer`.
-fn tower_plate(feature: &str, from: (f64, f64), to: (f64, f64), layer: usize) -> String {
+/// A tower: the body square x/y 100..110 on every layer, plus a brim ring 2 mm out on the first
+/// layer, unmarked (BambuStudio) or between Orca's brim markers. One object prints `feature`
+/// from `from` to `to` on layer `layer`.
+fn tower_plate_of(
+    feature: &str,
+    from: (f64, f64),
+    to: (f64, f64),
+    layer: usize,
+    marked_brim: bool,
+) -> String {
     let mut gcode = String::new();
     for index in 1..=6 {
         gcode += "; CHANGE_LAYER\n; FEATURE: Prime tower\n; WIPE_TOWER_START\n";
         gcode += &square_moves(105.0, 105.0, 5.0);
         if index == 1 {
-            gcode += &square_moves(105.0, 105.0, 7.0);
+            let ring = square_moves(105.0, 105.0, 7.0);
+            gcode += &if marked_brim {
+                format!("; WIPE_TOWER_BRIM_START\n{ring}; WIPE_TOWER_BRIM_END\n")
+            } else {
+                ring
+            };
         }
         gcode += "; WIPE_TOWER_END\n";
         if index == layer {
@@ -308,26 +319,62 @@ fn tower_plate(feature: &str, from: (f64, f64), to: (f64, f64), layer: usize) ->
     gcode
 }
 
+fn tower_plate(feature: &str, from: (f64, f64), to: (f64, f64), layer: usize) -> String {
+    tower_plate_of(feature, from, to, layer, false)
+}
+
+fn with_tower_lines(lines: TowerLines) -> GuiRules {
+    GuiRules {
+        tower_lines: lines,
+        ..rules(vec![])
+    }
+}
+
+fn conflicts_under(gcode: &str, lines: TowerLines) -> Vec<ConflictKind> {
+    let report = check_plate(gcode.as_bytes(), &with_tower_lines(lines));
+    report.conflicts.iter().map(|c| c.kind).collect()
+}
+
 #[test]
-fn a_support_over_the_tower_brim_is_reported_but_allowed() {
+fn a_support_over_the_tower_brim_conflicts_where_the_build_compares_the_brim() {
     // Crosses the brim ring (x = 98) but stops 1 mm short of the body (x = 100).
-    let gcode = tower_plate("Support", (95.0, 105.0), (99.0, 105.0), 1);
-    let report = check_plate(gcode.as_bytes(), &rules(vec![]));
+    let (from, to) = ((95.0, 105.0), (99.0, 105.0));
+    // Snapmaker Orca 2.4.0 (owner's U1 plate, "WipeTower <-> object" at layer 0): the marked
+    // brim loops are the tower lines it records.
+    let marked = tower_plate_of("Support", from, to, 1, true);
+    let report = check_plate(marked.as_bytes(), &with_tower_lines(TowerLines::BrimLoops));
     assert_eq!(report.conflicts.len(), 1, "{report:?}");
-    let conflict = &report.conflicts[0];
-    assert!(conflict.allowed);
-    assert_eq!(conflict.second, Party::Tower);
-    assert!(report.require_accepted().is_ok());
+    assert_eq!(report.conflicts[0].second, Party::Tower);
+    assert!(report.require_accepted().is_err());
+    // An unmarked brim (BambuStudio G-code) is told by its distance from the column.
+    let unmarked = tower_plate("Support", from, to, 1);
+    let crossing = vec![ConflictKind::Crossing];
+    assert_eq!(conflicts_under(&unmarked, TowerLines::BrimLoops), crossing);
+    // BambuStudio records the wall and the brim of every layer.
+    assert_eq!(conflicts_under(&unmarked, TowerLines::All), crossing);
+    // Vanilla Orca on a non-Bambu machine records no tower at all: the same plate passes.
+    assert!(conflicts_under(&marked, TowerLines::None).is_empty());
+}
+
+#[test]
+fn the_brim_loops_rule_does_not_see_the_tower_wall() {
+    // Crosses the column's wall (x = 100) on layer 4, where no brim ring exists.
+    let into_body = tower_plate_of("Support", (95.0, 103.0), (101.0, 103.0), 4, true);
+    assert!(conflicts_under(&into_body, TowerLines::BrimLoops).is_empty());
+    assert_eq!(
+        conflicts_under(&into_body, TowerLines::All),
+        vec![ConflictKind::Crossing]
+    );
 }
 
 #[test]
 fn walls_over_the_tower_brim_and_supports_into_the_tower_body_are_refused() {
     let wall = tower_plate("Outer wall", (95.0, 105.0), (99.0, 105.0), 1);
-    assert_eq!(conflicts_of(&wall), vec![(ConflictKind::Crossing, false)]);
+    assert_eq!(conflicts_of(&wall), vec![ConflictKind::Crossing]);
     let into_body = tower_plate("Support", (95.0, 103.0), (101.0, 103.0), 4);
     assert_eq!(
         conflicts_of(&into_body),
-        vec![(ConflictKind::Crossing, false)]
+        vec![ConflictKind::Crossing]
     );
 }
 

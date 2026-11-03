@@ -5,6 +5,7 @@ import com.goatpacker.web.model.Detection
 import com.goatpacker.web.model.PackJobResult
 import com.goatpacker.web.model.PackParams
 import com.goatpacker.web.model.PackTimeResult
+import com.goatpacker.web.model.PackTowerResult
 import com.goatpacker.web.model.PlateRecord
 import com.goatpacker.web.model.ScheduleJobRecord
 import com.goatpacker.web.model.ScheduleJobResult
@@ -18,7 +19,10 @@ fun PackJobResult.toDto() = PackInfoDto(
     supportsDetected = supportsDetected,
     supportOverlapMm = supportOverlapMm,
     finalSliced = finalSliced,
+    tower = tower?.toDto(),
 )
+
+fun PackTowerResult.toDto() = PackTowerDto(anchorXMm, anchorYMm, widthMm, depthMm)
 
 fun PackTimeResult.toDto() = PackTimeDto(
     windowHours = windowHours,

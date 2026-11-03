@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
 
-const FIRST_LAYER_KEY: &str = "support_object_first_layer_gap";
+pub const FIRST_LAYER_KEY: &str = "support_object_first_layer_gap";
 const XY_KEY: &str = "support_object_xy_distance";
 /// What the slicers use when a project does not carry the settings (Orca's own defaults, the
 /// same ones `support_model::settings` assumes).
@@ -32,20 +32,55 @@ const SAME_GAP_MM: f64 = 5e-4;
 /// `--foreign-gap-floor` and is reported as a warning.
 pub const DEFAULT_FOREIGN_GAPS: &str = "0:0.5,0.25:0.75,0.5:1.0,0.75:1.5";
 
-/// The support-to-own-model gap settings a project slices with.
+/// Where the effective first-layer gap comes from (decided in `own_gap`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSource {
+    /// The user's project changed it from the slicer's system preset: theirs stays.
+    #[default]
+    User,
+    /// Untouched by the user: the packer's value goes into the probes and the output 3MF.
+    Forced,
+    /// Untouched, but `--keep-own-gap` keeps whatever the project carries.
+    Kept,
+}
+
+/// The support-to-own-model gap settings a plate is sliced with. `first_layer_mm` is the
+/// EFFECTIVE value (probes and output 3MF); `xy_mm` is always the project's.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct OwnGap {
     pub first_layer_mm: f64,
     pub xy_mm: f64,
+    #[serde(default)]
+    pub source: GapSource,
+    /// What the project itself carries; differs from `first_layer_mm` only when forced.
+    #[serde(default)]
+    pub project_first_layer_mm: f64,
 }
 
 impl OwnGap {
-    /// Read once at startup; every probe and the output 3MF must agree with it.
+    /// The values as they are, whoever put them there.
+    pub fn user(first_layer_mm: f64, xy_mm: f64) -> OwnGap {
+        OwnGap {
+            first_layer_mm,
+            xy_mm,
+            source: GapSource::User,
+            project_first_layer_mm: first_layer_mm,
+        }
+    }
+
+    /// What the settings carry.
     pub fn of_settings(settings: &serde_json::Value) -> AppResult<OwnGap> {
-        Ok(OwnGap {
-            first_layer_mm: setting_mm(settings, FIRST_LAYER_KEY, DEFAULT_FIRST_LAYER_MM)?,
-            xy_mm: setting_mm(settings, XY_KEY, DEFAULT_XY_MM)?,
-        })
+        Ok(OwnGap::user(
+            setting_mm(settings, FIRST_LAYER_KEY, DEFAULT_FIRST_LAYER_MM)?,
+            setting_mm(settings, XY_KEY, DEFAULT_XY_MM)?,
+        ))
+    }
+
+    /// The project file does not carry `first_layer_mm` yet: copies of it must be edited.
+    pub fn edits_project(&self) -> bool {
+        self.source == GapSource::Forced
+            && !same_gap(self.first_layer_mm, self.project_first_layer_mm)
     }
 }
 

@@ -26,6 +26,12 @@ pub fn cache_key(job: &Job, rotation_deg: f64, centre: Point) -> String {
         hash.update(value.to_le_bytes());
     }
     hash_bytes(&mut hash, &job.settings_bytes);
+    // The probe copy is edited when the gap is forced; hashed only then, so a plate that
+    // slices with its project's own value keeps the keys (and cache entries) it always had.
+    if job.own_gap.edits_project() {
+        hash_bytes(&mut hash, b"own_gap_first_layer");
+        hash.update(job.own_gap.first_layer_mm.to_le_bytes());
+    }
     hash_bytes(&mut hash, job.profile.slicer_path.as_bytes());
     hash_bytes(&mut hash, slicer_fingerprint(&job.profile.slicer_path).as_bytes());
     hash.update([u8::from(job.profile.blank_start_gcode_for_cli)]);

@@ -66,6 +66,8 @@ pub fn test_args(work_dir: &Path) -> Args {
         // One rung, the library defaults: the plain single-pack behaviour of the tests.
         foreign_gaps: vec![ForeignGaps::default()],
         foreign_gap_floor: ForeignGaps::default(),
+        // The fixtures carry no preset bookkeeping: tests keep their project's own gaps.
+        keep_own_gap: true,
         finish_state: None,
     }
 }
@@ -131,7 +133,7 @@ pub fn test_job(dir: &Path) -> Job {
         },
         tower_anchor: None,
         gcode_offset: (0.0, 0.0),
-        own_gap: OwnGap { first_layer_mm: 0.2, xy_mm: 0.35 },
+        own_gap: OwnGap::user(0.2, 0.35),
         window_s: None,
         slicer_change_s: 0.0,
         correction,
@@ -168,6 +170,24 @@ pub fn test_plan(job: &Job, classes: usize) -> PackPlan {
 /// A job opened on the checked-in P1S fixture project: one object whose component and build
 /// item both carry a translation, on a 256 mm bed. `dir` holds its profile and output.
 pub fn fixture_job(dir: &Path) -> Job {
+    fixture_job_of(dir, "bambu.3mf", true)
+}
+
+/// The same project with a 0.4 mm nozzle and no `different_settings_to_system`: the user never
+/// touched the own support gap, so the job forces ours (`keep_own_gap` off).
+pub fn untouched_gap_job(dir: &Path) -> Job {
+    let source = dir.join("untouched.3mf");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    std::fs::copy(fixtures.join("bambu.3mf"), &source).unwrap();
+    goat_packer::project_settings_edit::edit_project_settings_in_3mf(&source, |settings| {
+        settings["nozzle_diameter"] = serde_json::json!(["0.4"]);
+        Ok(())
+    })
+    .unwrap();
+    fixture_job_of(dir, source.to_str().unwrap(), false)
+}
+
+fn fixture_job_of(dir: &Path, source: &str, keep_own_gap: bool) -> Job {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let mut profile: serde_json::Value =
         serde_json::from_slice(&std::fs::read(fixtures.join("profiles/corner_bed.json")).unwrap())
@@ -176,8 +196,9 @@ pub fn fixture_job(dir: &Path) -> Job {
     let profile_path = dir.join("profile.json");
     std::fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
     let mut args = test_args(dir);
-    args.source_3mf = fixtures.join("bambu.3mf");
+    args.source_3mf = fixtures.join(source);
     args.profile_path = profile_path;
+    args.keep_own_gap = keep_own_gap;
     Job::open(args).unwrap()
 }
 

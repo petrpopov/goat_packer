@@ -76,6 +76,7 @@ fn tower() -> TowerSpec {
         body: Rect::new(-0.25, -0.25, 10.0, 8.0),
         brim_l0_mm: 2.0,
         chamfer: vec![[0.4, 1.5]],
+        brim_conflicts: false,
         top_z_mm: 4.0,
         anchor_range: Rect::new(3.0, 3.0, 85.0, 88.0),
         source_anchor: Point { x: 60.0, y: 60.0 },

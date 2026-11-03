@@ -21,7 +21,8 @@ fn forbidden(gap: Gap) -> Permission {
     Forbidden { gap }
 }
 
-/// §7.2 row by row, columns: boundary, hard, restricted, soft, tower body, tower brim.
+/// §7.2 row by row, columns: boundary, hard, restricted, soft, tower body, tower brim, tower
+/// brim the GUI checks.
 #[test]
 fn matrix_pins_every_cell_of_the_design_table() {
     let table = [
@@ -35,6 +36,7 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 Allowed,
                 forbidden(Clearance),
                 forbidden(Clearance),
+                forbidden(Clearance),
             ],
         ),
         (
@@ -44,6 +46,7 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 PartHull,
                 PartBox,
                 Allowed,
+                forbidden(Clearance),
                 forbidden(Clearance),
                 forbidden(Clearance),
             ],
@@ -58,10 +61,11 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 forbidden(Zero),
                 forbidden(Clearance),
                 forbidden(Clearance),
+                forbidden(Clearance),
             ],
         ),
-        (Brim, [Allowed; 6]),
-        // Supports: inside the bed, off hard zones, away from the tower body, over its brim.
+        (Brim, [Allowed; 7]),
+        // Supports: inside the bed, off hard zones, away from the tower body, over its brim unless the GUI checks it.
         (
             SupportBase,
             [
@@ -71,6 +75,7 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 Allowed,
                 forbidden(Support),
                 Allowed,
+                forbidden(Zero),
             ],
         ),
         (
@@ -82,6 +87,7 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 Allowed,
                 forbidden(Support),
                 Allowed,
+                forbidden(Zero),
             ],
         ),
         (
@@ -93,6 +99,7 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 Allowed,
                 forbidden(Support),
                 Allowed,
+                forbidden(Zero),
             ],
         ),
         (
@@ -102,6 +109,7 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 forbidden(Zero),
                 Allowed,
                 forbidden(Zero),
+                Allowed,
                 Allowed,
                 Allowed,
             ],
@@ -115,11 +123,13 @@ fn matrix_pins_every_cell_of_the_design_table() {
                 Allowed,
                 Allowed,
                 Allowed,
+                Allowed,
             ],
         ),
     ];
     assert_eq!(table.len(), PrintKind::ALL.len(), "one row per kind");
     for (kind, expected) in table {
+        assert_eq!(expected.len(), ZoneClass::ALL.len());
         for (zone, want) in ZoneClass::ALL.into_iter().zip(expected) {
             assert_eq!(permission(kind, zone), want, "{kind:?} against {zone:?}");
         }

@@ -5,7 +5,7 @@
 
 use goat_packer::{
     Point, Rect,
-    gcode_collisions::TowerLayer,
+    gcode_collisions::{TowerLayer, TowerLines},
     object_print::layer_bands,
     pack::TowerSpec,
     plate_centre::gui_tower_anchor_range,
@@ -76,6 +76,8 @@ pub fn tower_spec(job: &Job, probes: &[ClassProbe]) -> AppResult<Option<TowerSpe
         body: shape.body,
         brim_l0_mm: shape.brim_mm,
         chamfer: chamfer_entries(&shape.rings),
+        // The GUI the plate is opened in decides whether a support over the brim warns.
+        brim_conflicts: job.flavour.flavour.conflict_tower_lines() != TowerLines::None,
         top_z_mm: shape.top_z,
         anchor_range,
         source_anchor: Point {

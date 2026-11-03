@@ -13,6 +13,7 @@ use goat_packer::{
 use crate::AppResult;
 use crate::gaps::check_output;
 use crate::job::Job;
+use crate::own_gap::apply_own_gap;
 use crate::plan::PackPlan;
 use crate::source::derive_embedded_stl;
 
@@ -61,6 +62,9 @@ pub fn build_colored_project(
     };
     assemble_project(&args.source_3mf, &args.output, &options)
         .map_err(|error| format!("3MF assembly failed: {error}"))?;
+    // A forced own support gap (the user never set it): the output slices with the very value
+    // the probes did.
+    apply_own_gap(&args.output, job.own_gap)?;
     // The one documented exception to "project_settings.config is copied byte-for-byte": the
     // tower position IS a project setting (`wipe_tower_x/y[0]`), and the packer chose it.
     // Applied to the output, so a slice of it prints the tower the layout reserved. Each build
@@ -149,8 +153,10 @@ pub fn tower_rect(plan: &PackPlan, anchor: Option<Point>) -> Option<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{fixture_job, test_plan};
-    use crate::gaps::OwnGap;
+    use crate::test_support::{fixture_job, test_plan, untouched_gap_job};
+    use crate::gaps::{GapSource, OwnGap};
+    use crate::probe_cache::cache_key;
+    use std::path::Path;
     use goat_packer::embedded_mesh::load_object_mesh;
 
     #[test]
@@ -164,11 +170,11 @@ mod tests {
         build_colored_project(&job, &plan, &placements, Some(Point { x: 50.0, y: 50.0 })).unwrap();
         check_output(&job.args.output, job.own_gap).unwrap();
         // Probes that sliced with other values than the file carries: refused, naming both.
-        let error = check_output(&job.args.output, OwnGap { first_layer_mm: 0.75, xy_mm: 0.35 })
+        let error = check_output(&job.args.output, OwnGap::user(0.75, 0.35))
             .unwrap_err()
             .to_string();
         assert!(error.contains("support_object_first_layer_gap") && error.contains("0.2"), "{error}");
-        let error = check_output(&job.args.output, OwnGap { first_layer_mm: 0.2, xy_mm: 0.75 })
+        let error = check_output(&job.args.output, OwnGap::user(0.2, 0.75))
             .unwrap_err()
             .to_string();
         assert!(error.contains("support_object_xy_distance"), "{error}");
@@ -176,6 +182,35 @@ mod tests {
         job.own_gap.xy_mm = 0.75;
         let error = build_colored_project(&job, &plan, &placements, None).unwrap_err().to_string();
         assert!(error.contains("support_object_xy_distance"), "{error}");
+    }
+
+    /// A project whose own gap the user never changed: the probe copy and the output carry our
+    /// value, the source file does not, and a kept value leaves the file alone.
+    #[test]
+    fn an_untouched_gap_is_forced_into_the_probe_copy_and_the_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = untouched_gap_job(dir.path());
+        assert_eq!(job.own_gap.source, GapSource::Forced);
+        assert_eq!((job.own_gap.first_layer_mm, job.own_gap.project_first_layer_mm), (0.75, 0.2));
+        let copy = dir.path().join("copy.3mf");
+        fs::copy(&job.args.source_3mf, &copy).unwrap();
+        apply_own_gap(&copy, job.own_gap).unwrap();
+        assert_eq!(OwnGap::of_settings(&settings_of(&copy)).unwrap().first_layer_mm, 0.75);
+        assert_eq!(OwnGap::of_settings(&settings_of(&job.args.source_3mf)).unwrap().first_layer_mm, 0.2);
+        let plan = test_plan(&job, 1);
+        let placements = [PrintPlacement { print: 0, x_mm: 100.0, y_mm: 120.0 }];
+        build_colored_project(&job, &plan, &placements, Some(Point { x: 50.0, y: 50.0 })).unwrap();
+        assert_eq!(OwnGap::of_settings(&settings_of(&job.args.output)).unwrap().first_layer_mm, 0.75);
+        // The probe cache key follows the forced value, and only then.
+        let centre = Point { x: 128.0, y: 128.0 };
+        let forced_key = cache_key(&job, 0.0, centre);
+        let mut kept = job;
+        kept.own_gap = OwnGap::decide(&settings_of(&kept.args.source_3mf), true).unwrap();
+        assert_ne!(forced_key, cache_key(&kept, 0.0, centre));
+    }
+
+    fn settings_of(project: &Path) -> serde_json::Value {
+        serde_json::Value::Object(goat_packer::orca_project::project_settings(project).unwrap())
     }
 
     /// A clone of each rotation class stands with its frame centre on the placement, whatever
