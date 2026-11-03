@@ -34,7 +34,14 @@ pub enum Member {
 
 impl Member {
     /// The members this package implements, in run order.
-    pub const AVAILABLE: [Member; 3] = [Member::Sweep, Member::Mixed, Member::Rows];
+    pub const AVAILABLE: [Member; 6] = [
+        Member::Sweep,
+        Member::Mixed,
+        Member::Rows,
+        Member::Lattice,
+        Member::DoubleLattice,
+        Member::TwoBlock,
+    ];
 }
 
 /// What decides between two equal layouts that no geometry tells apart: the member, the

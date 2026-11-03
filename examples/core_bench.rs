@@ -4,7 +4,7 @@
 //! Usage:
 //! ```text
 //! cargo run --release --example core_bench -- <print.json>... --rules <rules.json> \
-//!   [--tower <tower.json>] [--members sweep,rows] [--threads N] [--out <layout.json>] \
+//!   [--tower <tower.json>] [--members lattice,sweep,rows] [--threads N] [--out <layout.json>] \
 //!   [--resolution 0.25] [--clearance 0.7] [--attempts 64] [--max-objects 0] \
 //!   [--support-overlap <mm>]
 //! ```
@@ -16,6 +16,7 @@
 
 use std::{path::PathBuf, process::exit, time::Instant};
 
+use goat_packer::pack::lattice::hnf::Hnf;
 use goat_packer::pack::{Member, PackOutcome, TowerSpec, pack_members};
 use goat_packer::{ObjectPrint, PackOptions, PlateRules, Point, Rect};
 use serde_json::Value;
@@ -80,7 +81,7 @@ fn run() -> Result<(), String> {
     }
     let (outcome, seconds) = pack(&args.members);
     let outcome = outcome?;
-    report(&outcome, seconds);
+    report(&outcome, seconds, options.resolution);
     if let Some(out) = &args.out {
         let json = serde_json::to_string_pretty(&outcome).map_err(|e| e.to_string())?;
         std::fs::write(out, json).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -92,7 +93,7 @@ fn parse_args() -> Result<Args, String> {
     let mut prints = Vec::new();
     let mut rules = None;
     let mut tower = None;
-    let mut members = vec![Member::Sweep, Member::Rows];
+    let mut members = vec![Member::Lattice, Member::Sweep, Member::Rows];
     let mut threads = None;
     let mut out = None;
     let mut options = default_options();
@@ -240,7 +241,7 @@ fn times(outcome: &PackOutcome, seconds: f64) -> String {
     )
 }
 
-fn report(outcome: &PackOutcome, seconds: f64) {
+fn report(outcome: &PackOutcome, seconds: f64, options_resolution: f64) {
     let counts: Vec<String> = outcome
         .member_counts
         .iter()
@@ -258,6 +259,9 @@ fn report(outcome: &PackOutcome, seconds: f64) {
         outcome.key.bbox_area_px,
         times(outcome, seconds)
     );
+    if outcome.member == Member::Lattice {
+        describe_lattice(&outcome.key.tie.detail, options_resolution);
+    }
     let v = &outcome.validation;
     println!(
         "validation: {} shortlisted, {} raster-valid, {} vector failures, winner rank {}",
@@ -265,5 +269,27 @@ fn report(outcome: &PackOutcome, seconds: f64) {
         v.raster_passed,
         v.vector_failures.len(),
         v.winner_rank
+    );
+}
+
+/// The chosen lattice (`detail` = class, s, t, h, coset, corner) as its shortest vectors, mm.
+fn describe_lattice(detail: &[i64], resolution: f64) {
+    let [_, s, t, h, coset, corner] = detail[..] else {
+        return;
+    };
+    let lattice = Hnf {
+        s: s as i32,
+        t: t as i32,
+        h: h as i32,
+    };
+    let [u, w] = lattice.reduced();
+    let mm = |v: (i32, i32)| (f64::from(v.0) * resolution, f64::from(v.1) * resolution);
+    println!(
+        "lattice: u = ({:.2}, {:.2}) w = ({:.2}, {:.2}) mm, cell {:.1} mm2, coset {coset}, fill corner {corner}",
+        mm(u).0,
+        mm(u).1,
+        mm(w).0,
+        mm(w).1,
+        lattice.det() as f64 * resolution * resolution
     );
 }

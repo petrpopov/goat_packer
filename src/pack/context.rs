@@ -11,10 +11,10 @@
 use super::free_map::FreeMap;
 use super::no_fit::no_fit;
 use super::select::{Candidate, Member, RankKey, TieKey};
+use super::tower_scan::tower_origin_sets;
 use crate::geometry::Point;
 use crate::kind_masks::{
     FeasibleOrigins, KindMasks, OriginGrid, OriginSet, PlateZone, feasible_origins,
-    forbidden_origins,
 };
 use crate::layout::{PixelPlacement, bbox_area_px, extent_px};
 use crate::span_raster::SpanRaster;
@@ -84,26 +84,14 @@ impl<'a> Ctx<'a> {
     }
 
     /// Adds the tower at each `(anchor, zones)` as a removable layer: the origins its zones
-    /// forbid each class, inside the base map. Units (anchor, class) run in parallel and are
-    /// collected in order.
+    /// forbid each class, inside the base map (`tower_scan::tower_origin_sets`).
     pub(crate) fn add_towers(&mut self, anchors: Vec<(Point, Vec<PlateZone>)>) {
-        let classes = self.masks.len();
-        let units: Vec<(usize, usize)> = (0..anchors.len())
-            .flat_map(|a| (0..classes).map(move |c| (a, c)))
-            .collect();
-        let sets: Vec<OriginSet> = units
-            .par_iter()
-            .map(|&(a, c)| {
-                forbidden_origins(&self.masks[c], &anchors[a].1, &self.grid, &self.base[c])
-            })
-            .collect();
-        let mut sets = sets.into_iter();
+        let mut sets = tower_origin_sets(&self.masks, &self.base, &self.grid, &anchors).into_iter();
         for (anchor, zones) in anchors {
-            let forbidden = sets.by_ref().take(classes).collect();
             self.towers.push(TowerLayer {
                 anchor,
                 zones,
-                forbidden,
+                forbidden: sets.next().expect("one set per class and anchor"),
             });
         }
     }
