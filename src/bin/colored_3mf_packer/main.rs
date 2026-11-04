@@ -88,9 +88,10 @@ fn stage_plan(job: &Job) -> Vec<Stage> {
     let verify = finishing || job.args.verify || job.window_s.is_some();
     let mut stages = Vec::new();
     if !finishing {
+        // `Auto` plans the model; a refused project announces its probe stage when it starts.
         stages.push(match job.args.support_source {
             args::SupportSource::Probe => Stage::ProbeSlice,
-            args::SupportSource::Model => Stage::Modelling,
+            args::SupportSource::Model | args::SupportSource::Auto => Stage::Modelling,
         });
         stages.push(Stage::Packing);
     }

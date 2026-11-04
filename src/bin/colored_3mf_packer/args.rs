@@ -42,8 +42,13 @@ const MAX_TIME_MARGIN_PCT: f64 = 50.0;
 /// Where the supports of a plate come from (`--support-source`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SupportSource {
-    /// Probe slices of one object per rotation class (the slicer is called).
+    /// The model, or probes when the model refuses the project's settings (raft, normal
+    /// supports, ...; `SupportError::Unsupported`). The default since 2026-11-04: probes
+    /// only see the thread class and platform of the machine that slices them, and the
+    /// v0.6.x P1S plates they packed conflicted in every macOS slice.
     #[default]
+    Auto,
+    /// Probe slices of one object per rotation class (the slicer is called).
     Probe,
     /// The clean-room model of the slicers' tree supports (no slicer call).
     Model,
@@ -52,6 +57,7 @@ pub enum SupportSource {
 impl SupportSource {
     pub fn as_str(self) -> &'static str {
         match self {
+            SupportSource::Auto => "auto",
             SupportSource::Probe => "probe",
             SupportSource::Model => "model",
         }
@@ -85,7 +91,8 @@ pub struct Args {
     /// `--rotations`: the rotation classes (degrees about the frame centre, in `[0, 360)`) the
     /// layout may use; the first is class 0. Supports are predicted per class.
     pub rotations: Vec<f64>,
-    /// `--support-source`: probe slices (default) or the support model.
+    /// `--support-source`: the support model with a probe fallback (default), probes or the
+    /// model alone.
     pub support_source: SupportSource,
     /// `--support-orders`: which readings of the slicers' merge order the support model runs
     /// (`along`, `against`; default `along`, the reading that matches the corpus once the roof
@@ -308,6 +315,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--support-margins" => support_margins = Some(parse_margins(&value)?),
             "--support-source" => {
                 support_source = match value.as_str() {
+                    "auto" => SupportSource::Auto,
                     "probe" => SupportSource::Probe,
                     "model" => SupportSource::Model,
                     other => return Err(format!("unknown support source: {other}").into()),

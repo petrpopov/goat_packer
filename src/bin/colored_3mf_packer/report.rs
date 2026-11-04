@@ -13,6 +13,7 @@ use goat_packer::{
 use serde::Serialize;
 
 use crate::AppResult;
+use crate::args::SupportSource;
 use crate::gaps::{GapVariant, OwnGap, floor_warning};
 use crate::job::Job;
 use crate::margins::{DELTA_BAND_MM, DELTA_FIRST_LAYER_MM};
@@ -193,7 +194,10 @@ impl ColoredPackReport {
             upper_bound: summary.upper_bound,
             class_bounds: summary.class_bounds.clone(),
             levels: summary.levels.clone(),
-            warnings: floor_warning(args.foreign_gap_floor).into_iter().collect(),
+            warnings: floor_warning(args.foreign_gap_floor)
+                .into_iter()
+                .chain(fallback_warning(args.support_source, &summary.support_source))
+                .collect(),
             class_counts,
             member: summary.member.clone(),
             member_counts: summary.member_counts.clone(),
@@ -291,4 +295,11 @@ fn margins_of(state: &PackState) -> Margins {
                 bands: print.provenance.margins.band_mm,
             },
         )
+}
+
+/// `Auto` that ended in probes: the model refused the project (the log names the setting).
+fn fallback_warning(asked: SupportSource, used: &str) -> Option<String> {
+    (asked == SupportSource::Auto && used == SupportSource::Probe.as_str()).then(|| {
+        "the support model does not cover this project's settings; supports were probed with the slicer".to_owned()
+    })
 }

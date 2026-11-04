@@ -11,10 +11,12 @@ use goat_packer::{
         envelope::{envelope, envelope_banded},
         predict::{PredictInput, Prediction, predict},
         settings::{ProjectConfig, SupportSettings},
+        SupportError,
     },
 };
 
 use crate::AppResult;
+use crate::args::SupportSource;
 use crate::job::Job;
 use crate::model::{ClassSummary, Modelled};
 use crate::plan::plan_of;
@@ -23,7 +25,9 @@ use crate::tower::tower_spec;
 /// Predicts every rotation class and builds the plan.
 pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     let config = ProjectConfig::load(&job.args.source_3mf)?;
-    let mut settings = SupportSettings::from_config(&config)?;
+    // Settings the model cannot read are a refusal like any unsupported one (`Auto` probes).
+    let mut settings = SupportSettings::from_config(&config)
+        .map_err(|reason| SupportError::unsupported("project settings", "", &reason))?;
     // The output 3MF carries the first-layer gap this job forced (`own_gap`): the supports
     // are predicted with the value the slicer will read, as the probe copies are sliced.
     if job.own_gap.edits_project() {
@@ -80,6 +84,7 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     let tower = tower_spec(job, &[])?;
     Ok(Modelled {
         plan: plan_of(job, prints, tower),
+        source: SupportSource::Model,
         summaries,
         probe_seconds: 0.0,
         model_seconds: seconds,
