@@ -1,6 +1,7 @@
 //! The ensemble of realizations the slicer can print for one object (design §5.4): every
 //! thread class of the merge bucket rule (nondeterminism S2, spec 02 §4.7) for every arc
-//! family of the line connector (S9, spec 01 §5.5). The classes are found exactly: a run at
+//! family of the line connector (S9, spec 01 §5.5), under every `Overlap` reading of the
+//! pair test (marginal merges, `merge::Overlap`). The classes are found exactly: a run at
 //! thread count T makes the decision "m ≥ T" on every merge, and all T that make the same
 //! decisions give the same run, so the class of a run is the interval of T around it.
 //!
@@ -16,7 +17,7 @@ use super::bands::realization;
 use super::clearance::Avoidance;
 use super::flavour::MergeBucket;
 use super::graph::{BranchGraph, branch_graph};
-use super::merge::{MergeOrder, ThreadClass};
+use super::merge::{MergeOrder, Overlap, ThreadClass};
 use super::stage_a::StageA;
 use super::tips::ArcFamily;
 use crate::object_print::Realization;
@@ -29,6 +30,7 @@ const FIRST_BATCH: usize = 16;
 pub struct MemberRun {
     pub family: ArcFamily,
     pub order: MergeOrder,
+    pub overlap: Overlap,
     /// A representative thread count of the class.
     pub threads: usize,
     /// The thread counts (a, b] that give this very run; `None` = unbounded.
@@ -50,16 +52,22 @@ pub fn families(stage: &StageA) -> Vec<ArcFamily> {
 }
 
 /// Every member of the core ensemble for the given merge-order readings, in (family, order,
-/// thread count) order. Members whose graph another member already drew carry no realization.
+/// overlap, thread count) order. Members whose graph another member already drew carry no
+/// realization.
 pub fn run_members(stage: &StageA, orders: &[MergeOrder]) -> Vec<MemberRun> {
     warm_volumes(stage);
     let claims = Claims::default();
-    let axes: Vec<(ArcFamily, MergeOrder)> = families(stage)
+    let axes: Vec<(ArcFamily, MergeOrder, Overlap)> = families(stage)
         .into_iter()
         .flat_map(|family| orders.iter().map(move |&order| (family, order)))
+        .flat_map(|(family, order)| {
+            Overlap::ALL
+                .into_iter()
+                .map(move |overlap| (family, order, overlap))
+        })
         .collect();
     axes.into_par_iter()
-        .flat_map(|(family, order)| walk_classes(stage, &claims, family, order))
+        .flat_map(|(family, order, overlap)| walk_classes(stage, &claims, family, order, overlap))
         .collect::<Vec<_>>()
 }
 
@@ -86,12 +94,13 @@ fn warm_volumes(stage: &StageA) {
     });
 }
 
-/// The class walk of one (family, order).
+/// The class walk of one (family, order, overlap).
 fn walk_classes(
     stage: &StageA,
     claims: &Claims,
     family: ArcFamily,
     order: MergeOrder,
+    overlap: Overlap,
 ) -> Vec<MemberRun> {
     let fixed = stage.flavour.merge_bucket() == MergeBucket::FixedFour;
     let mut runs: Vec<MemberRun> = Vec::new();
@@ -100,7 +109,7 @@ fn walk_classes(
     loop {
         let fresh: Vec<MemberRun> = (next..next + batch)
             .into_par_iter()
-            .map(|threads| run_one(stage, claims, family, order, threads))
+            .map(|threads| run_one(stage, claims, family, order, overlap, threads))
             .collect();
         runs.extend(fresh);
         runs.sort_by_key(|run| run.threads);
@@ -141,9 +150,18 @@ fn run_one(
     claims: &Claims,
     family: ArcFamily,
     order: MergeOrder,
+    overlap: Overlap,
     threads: usize,
 ) -> MemberRun {
-    let graph = branch_graph(stage, family, ThreadClass { threads, order });
+    let graph = branch_graph(
+        stage,
+        family,
+        ThreadClass {
+            threads,
+            order,
+            overlap,
+        },
+    );
     let class = class_of(&graph.merge_values, threads);
     let hash = graph_hash(&graph);
     // Whoever reaches a graph first draws it; which member that is does not change the set.
@@ -151,6 +169,7 @@ fn run_one(
     MemberRun {
         family,
         order,
+        overlap,
         threads,
         class,
         hash,
@@ -234,6 +253,8 @@ pub fn distinct(runs: &[MemberRun]) -> Vec<&Realization> {
 pub struct MemberSummary {
     pub family: String,
     pub order: String,
+    #[serde(default)]
+    pub overlap: String,
     pub threads: usize,
     pub class_low: usize,
     pub class_high: Option<usize>,
@@ -245,6 +266,7 @@ impl MemberRun {
         MemberSummary {
             family: format!("{:?}", self.family),
             order: format!("{:?}", self.order),
+            overlap: format!("{:?}", self.overlap),
             threads: self.threads,
             class_low: self.class.0,
             class_high: self.class.1,

@@ -17,7 +17,7 @@ use crate::embedded_mesh::ObjectMesh;
 use crate::object_print::Realization;
 
 /// Bumped on any change of what the generator computes: old entries then miss.
-pub const MODEL_VERSION: u32 = 5;
+pub const MODEL_VERSION: u32 = 6;
 
 /// The distinct realizations of one (object, settings, flavour, rotation).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]

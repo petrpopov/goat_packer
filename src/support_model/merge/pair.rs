@@ -13,8 +13,9 @@ use crate::polygon_ops::{
 use crate::support_model::node::Node;
 use crate::support_model::stage_a::StageA;
 
-/// The overlap must survive shrinking by this (mm): thicker than about 0.05 mm.
-const THICK_OVERLAP_MM: f64 = 0.025;
+/// The slicer's own rule: the overlap must survive shrinking by this (mm), i.e. be thicker
+/// than about 0.05 mm (spec 02 §4.5).
+pub const THICK_OVERLAP_MM: f64 = 0.025;
 
 /// Mitre limit asked for by the overlap erosion (acts as 2).
 const EROSION_MITER_LIMIT: f64 = 1.2;
@@ -27,15 +28,18 @@ pub struct PairTest<'a> {
     pub stage: &'a StageA,
     /// The layer the candidates move to.
     pub layer: usize,
+    /// How far the overlap must survive shrinking, mm (`Overlap::erosion_mm`).
+    erosion_mm: f64,
     epsilon: f64,
 }
 
 impl<'a> PairTest<'a> {
-    pub fn new(stage: &'a StageA, layer: usize) -> PairTest<'a> {
+    pub fn new(stage: &'a StageA, layer: usize, erosion_mm: f64) -> PairTest<'a> {
         let tiny = stage.derived.grid.scaled(0.001);
         PairTest {
             stage,
             layer,
+            erosion_mm,
             epsilon: tiny * tiny,
         }
     }
@@ -76,7 +80,7 @@ impl<'a> PairTest<'a> {
         if area(&overlap) <= self.epsilon
             || !thick(
                 &overlap,
-                derived.grid.scaled(THICK_OVERLAP_MM),
+                derived.grid.scaled(self.erosion_mm),
                 self.epsilon,
             )
         {

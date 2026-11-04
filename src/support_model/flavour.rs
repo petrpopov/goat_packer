@@ -198,12 +198,17 @@ impl Flavour {
     /// The first-layer margin δ_L1 of the support envelope, mm (design §5.5): the largest
     /// distance any recorded realization of the build's corpus lies outside the model's
     /// ensemble union at rotations 0° and 180°, plus 0.1 mm (`examples/support_corpus.rs`,
-    /// campaign of 2026-11-03).
+    /// campaigns of 2026-11-03 and 2026-11-04). B was recalibrated with the overlap readings
+    /// (`merge::Overlap`); S, O and R keep the margins of the smaller ensemble, which the
+    /// larger one only covers better.
     pub fn first_layer_margin_mm(self) -> f64 {
         match self {
-            // P1S and A2L: 70 observations (CLI runs at all rotations, GUI runs, plates; Along-only
-            // 45-degree roof lines): worst 3.46 mm (A2L, 0 degrees).
-            Flavour::Bambu0208 => 3.6,
+            // P1S and A2L: 133 observations at 0 and 180 degrees: macOS slices at 1-20 threads
+            // (the CPU count faked per run), Linux runner slices at 1-20 threads of the same P1S
+            // goat, earlier CLI runs and the owner's GUI runs. Worst 0.41 mm (A2L, 0 degrees,
+            // one thread). The ensemble without the overlap readings needed 3.6 mm and still
+            // missed 4.26 mm on these slices.
+            Flavour::Bambu0208 => 0.51,
             // The owner's Snapmaker GUI plates (4 plates, 8 observations): worst 1.57 mm. O has
             // no support slices of its own and takes S's values.
             Flavour::Snapmaker240 | Flavour::Orca242 => 1.7,
@@ -214,12 +219,15 @@ impl Flavour {
     }
 
     /// The band margin δ_band per absolute 2 mm band, mm (the last entry repeats above): the
-    /// per-band worst exceedance of the same campaign plus 0.1 mm, made non-increasing with
-    /// height (a trunk that is off low is off by less near its tip).
+    /// per-band worst exceedance of the same campaign plus 0.1 mm; the 2026-11-03 tables were
+    /// made non-increasing with height (a trunk that is off low is off by less near its tip),
+    /// B's of 2026-11-04 is not (see its comment).
     pub fn band_margins_mm(self) -> &'static [f64] {
         match self {
+            // Same 133 observations, per band (not smoothed: band 0 near the feet misses
+            // less than bands 1-2, where A2L at 7-9 threads moves branches by up to 2.2 mm).
             Flavour::Bambu0208 => &[
-                5.47, 5.47, 5.47, 5.38, 5.16, 5.01, 4.58, 3.03, 2.21, 1.74, 1.28, 1.19, 0.76,
+                1.48, 2.31, 2.12, 1.36, 1.17, 1.13, 1.04, 0.91, 1.13, 0.86, 0.76, 1.0, 0.74,
             ],
             Flavour::Snapmaker240 | Flavour::Orca242 => &[
                 2.23, 1.65, 1.42, 1.42, 1.42, 1.42, 1.42, 1.42, 1.42, 1.39, 1.08, 0.57, 0.48,

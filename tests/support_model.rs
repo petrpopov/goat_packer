@@ -12,7 +12,7 @@ use goat_packer::support_model::envelope::envelope;
 use goat_packer::support_model::exceedance::area_mm2;
 use goat_packer::support_model::flavour::Flavour;
 use goat_packer::support_model::graph::branch_graph;
-use goat_packer::support_model::merge::{MergeOrder, ThreadClass};
+use goat_packer::support_model::merge::{MergeOrder, Overlap, ThreadClass};
 use goat_packer::support_model::predict::{PredictInput, predict};
 use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::support_model::tips::ArcFamily;
@@ -213,7 +213,8 @@ fn flavour_switches_change_the_roots_and_the_bucket_rule() {
     );
     // A flat foot slices to the full radius, a hemisphere to a hair less at mid-layer.
     assert!(area_mm2(&flat.base) >= area_mm2(&round.base) - 1e-6);
-    // R pins the bucket rule: every thread count is one class; O walks the classes.
+    // R pins the bucket rule: every thread count is one class (one member per overlap
+    // reading); O walks the classes.
     let (r_stage, _) = model(Flavour::Orca250);
     let r_runs = run_members(&r_stage, &BOTH);
     assert!(
@@ -226,7 +227,7 @@ fn flavour_switches_change_the_roots_and_the_bucket_rule() {
             .iter()
             .filter(|run| run.order == MergeOrder::Along)
             .count(),
-        1
+        Overlap::ALL.len()
     );
     let o_runs = run_members(&orca, &BOTH);
     assert!(o_runs.len() >= 2);
@@ -236,15 +237,20 @@ fn flavour_switches_change_the_roots_and_the_bucket_rule() {
 fn the_thread_classes_tile_every_thread_count_and_a_class_repeats_its_run() {
     let (stage, _) = model(Flavour::Orca242);
     let all = run_members(&stage, &BOTH);
-    for family in [ArcFamily::Roof, ArcFamily::Base] {
+    for (family, overlap) in [ArcFamily::Roof, ArcFamily::Base]
+        .into_iter()
+        .flat_map(|family| Overlap::ALL.into_iter().map(move |overlap| (family, overlap)))
+    {
         let runs: Vec<_> = all
             .iter()
-            .filter(|run| run.family == family && run.order == MergeOrder::Along)
+            .filter(|run| {
+                run.family == family && run.order == MergeOrder::Along && run.overlap == overlap
+            })
             .collect();
-        assert!(!runs.is_empty(), "{family:?} has members");
+        assert!(!runs.is_empty(), "{family:?} {overlap:?} has members");
         let mut covered = 1;
         for run in runs {
-            assert_eq!(run.threads, covered, "no gap between classes: {family:?}");
+            assert_eq!(run.threads, covered, "no gap between classes: {family:?} {overlap:?}");
             match run.class.1 {
                 Some(upper) => covered = upper + 1,
                 None => covered = usize::MAX,
@@ -254,7 +260,11 @@ fn the_thread_classes_tile_every_thread_count_and_a_class_repeats_its_run() {
                 .class
                 .1
                 .map_or(run.threads + 3, |upper| (run.threads + upper) / 2);
-            let graph = branch_graph(&stage, run.family, ThreadClass::along(mid));
+            let class = ThreadClass {
+                overlap,
+                ..ThreadClass::along(mid)
+            };
+            let graph = branch_graph(&stage, run.family, class);
             assert_eq!(class_of(&graph.merge_values, mid).1, run.class.1);
             if let Some(drawn) = &run.realization {
                 assert!(same_ignoring_member(&realization(&stage, &graph, 0), drawn));
