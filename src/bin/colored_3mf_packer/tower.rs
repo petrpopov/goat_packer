@@ -9,8 +9,10 @@ use goat_packer::{
     object_print::layer_bands,
     pack::TowerSpec,
     plate_centre::gui_tower_anchor_range,
+    project_settings_edit::edit_project_settings_in_3mf,
     tower_model::{
-        TowerPlate, TowerPrint, ToolSchedule, printed_tower, read_filament_sources, tool_schedule,
+        TowerPlate, TowerPrint, ToolSchedule, force_tower_shape, printed_tower,
+        read_filament_sources, tool_schedule,
     },
 };
 
@@ -38,6 +40,21 @@ struct Ring {
     z_bottom: f64,
     z_top: f64,
     width_mm: f64,
+}
+
+/// Writes the forced tower shape (`--tower-width`) into a copy of the project: the output 3MF
+/// and every probe copy, so each slice prints the tower the plan reserved. The second
+/// documented exception to "project_settings.config is copied byte-for-byte", after the
+/// tower position.
+pub fn apply_tower_shape(job: &Job, project: &std::path::Path) -> AppResult<()> {
+    let Some(width) = job.args.tower_width else {
+        return Ok(());
+    };
+    edit_project_settings_in_3mf(project, |settings| {
+        force_tower_shape(settings, job.build, width);
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// The tower to reserve, `None` when the slicer printed none.

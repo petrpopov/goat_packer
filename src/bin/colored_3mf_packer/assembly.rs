@@ -14,6 +14,7 @@ use crate::AppResult;
 use crate::gaps::check_output;
 use crate::job::Job;
 use crate::own_gap::apply_own_gap;
+use crate::tower::apply_tower_shape;
 use crate::plan::PackPlan;
 use crate::source::derive_embedded_stl;
 
@@ -65,7 +66,9 @@ pub fn build_colored_project(
     // A forced own support gap (the user never set it): the output slices with the very value
     // the probes did.
     apply_own_gap(&args.output, job.own_gap)?;
-    // The one documented exception to "project_settings.config is copied byte-for-byte": the
+    // The forced tower shape the plan reserved (`tower::apply_tower_shape`).
+    apply_tower_shape(job, &args.output)?;
+    // The first documented exception to "project_settings.config is copied byte-for-byte": the
     // tower position IS a project setting (`wipe_tower_x/y[0]`), and the packer chose it.
     // Applied to the output, so a slice of it prints the tower the layout reserved. Each build
     // re-assembles from the source, so the shift never accumulates.
@@ -207,6 +210,24 @@ mod tests {
         let mut kept = job;
         kept.own_gap = OwnGap::decide(&settings_of(&kept.args.source_3mf), true).unwrap();
         assert_ne!(forced_key, cache_key(&kept, 0.0, centre));
+    }
+
+    /// `--tower-width`: the job models the forced tower and the output carries it; the
+    /// source keeps its own.
+    #[test]
+    fn a_forced_tower_width_reaches_the_model_and_the_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut job = fixture_job(dir.path());
+        job.args.tower_width = Some(14.0);
+        let job = Job::open(job.args).unwrap();
+        assert_eq!(job.settings.number("prime_tower_width"), Some(14.0));
+        let plan = test_plan(&job, 1);
+        let placements = [PrintPlacement { print: 0, x_mm: 100.0, y_mm: 120.0 }];
+        build_colored_project(&job, &plan, &placements, None).unwrap();
+        let output = settings_of(&job.args.output);
+        assert_eq!(output["prime_tower_width"], "14");
+        assert_eq!(output["prime_tower_rib_wall"], "0");
+        assert_ne!(settings_of(&job.args.source_3mf)["prime_tower_width"], "14");
     }
 
     fn settings_of(project: &Path) -> serde_json::Value {

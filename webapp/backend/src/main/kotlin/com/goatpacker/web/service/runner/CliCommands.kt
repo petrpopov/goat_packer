@@ -21,6 +21,8 @@ object CliCommands {
         addOption("--candidates", params.candidates)
         addOption("--seed", params.seed)
         params.edgeMargin?.let { addOption("--edge-margin", it) }
+        // Пусто = дефолт пакера (20 мм): передаём только заданное.
+        params.towerWidth?.let { addOption("--tower-width", it) }
         addOption("--layout", params.layout)
         if (params.nozzleClean.isNotBlank() && !NozzleCleanSpec.isOff(params.nozzleClean)) {
             addOption("--nozzle-clean", params.nozzleClean)

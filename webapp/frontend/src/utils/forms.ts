@@ -8,6 +8,7 @@ export const LIMITS = {
   clearanceMm: { min: 0.05, max: 10 },
   resolutionMm: { min: 0.05, max: 1 },
   edgeMarginMm: { min: 0, max: 20 },
+  towerWidthMm: { min: 5, max: 60 },
   windowHours: { min: 0.5, max: 240 },
   marginPct: { min: 0, max: 50 },
   changeSeconds: { min: 0, max: 600 },

@@ -147,6 +147,7 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
             "changeSeconds" to 80,
             "timeMarginPct" to 15,
             "supportOverlapMm" to 1.5,
+            "towerWidth" to 15,
         )
         val id = client.job(file, extra = settings)["jobId"].asText()
         withWorker { worker ->
@@ -160,6 +161,7 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
             // --support-overlap-mm доходит до пакера; поля поддержек отчёта — до ответа.
             assertTrue(response["pack"]["supportsDetected"].asBoolean(), response.toString())
             assertEquals(1.5, response["pack"]["supportOverlapMm"].asDouble(), 1e-9)
+            assertEquals(15.0, response["params"]["towerWidth"].asDouble(), 1e-9)
             // layout-событие пакера (local runner ставит GOAT_LOG_FORMAT=json) живёт и после успеха.
             assertEquals(2, response["layout"]["placements"].size(), response.toString())
             // Список не тащит раскладку (до десятков КБ на строку при опросе раз в 5 с); одиночный статус — тащит.
@@ -272,6 +274,8 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
         val file = client.upload()
         client.job(file, extra = mapOf("kind" to "CALIBRATION", "variant" to "extreme"), expected = 400)
         client.job(file, extra = mapOf("supportOverlapMm" to 21), expected = 400)
+        client.job(file, extra = mapOf("towerWidth" to 4), expected = 400)
+        client.job(file, extra = mapOf("towerWidth" to 61), expected = 400)
         val id = client.job(file, extra = mapOf("kind" to "CALIBRATION", "variant" to "perfectionist"))["jobId"].asText()
         withWorker { worker ->
             worker.runUntilSettled(id)

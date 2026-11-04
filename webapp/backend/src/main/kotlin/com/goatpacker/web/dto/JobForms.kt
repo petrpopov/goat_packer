@@ -37,6 +37,10 @@ data class PackJobForm(
     @field:DecimalMin(value = "0.0", message = "edgeMargin должен быть в диапазоне 0..20 мм")
     @field:DecimalMax(value = "20", message = "edgeMargin должен быть в диапазоне 0..20 мм")
     val edgeMargin: Double? = null,
+    /** Ширина черновой башни, мм; пусто — дефолт пакера (20). Глубину задаёт слайсер. */
+    @field:DecimalMin(value = "5", message = "towerWidth должен быть в диапазоне 5..60 мм")
+    @field:DecimalMax(value = "60", message = "towerWidth должен быть в диапазоне 5..60 мм")
+    val towerWidth: Double? = null,
     @field:Pattern(
         regexp = """^(search|grid)$""",
         message = "layout допустим search или grid",

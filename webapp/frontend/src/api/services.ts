@@ -113,6 +113,7 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
       'resolution',
       'attempts',
       'edgeMargin',
+      'towerWidth',
       'turnaroundMin',
       'prepMin',
       'timeWindowHours',

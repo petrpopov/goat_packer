@@ -222,6 +222,8 @@ export interface PackParamsView {
   /** Спецификация чистки сопла пакера; '' — выключена. */
   nozzleClean: string;
   edgeMargin: number | null;
+  /** Ширина черновой башни, мм; null/нет — дефолт пакера или старый бэкенд. */
+  towerWidth?: number | null;
   finalSlice: boolean;
   timeWindowHours: number | null;
   timeMarginPct: number | null;

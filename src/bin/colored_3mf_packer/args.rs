@@ -8,6 +8,7 @@ use goat_packer::{
     nozzle_clean::NozzleCleanSpec,
     print_time::TimeCorrection,
     support_model::merge::MergeOrder,
+    tower_model::DEFAULT_TOWER_WIDTH_MM,
 };
 
 use crate::AppResult;
@@ -31,6 +32,9 @@ const DEFAULT_ANGLE_STEP_DEG: f64 = 2.0;
 const DEFAULT_ATTEMPTS: usize = 16_000;
 const DEFAULT_CANDIDATES: usize = 2_400;
 const DEFAULT_SEED: u64 = 20_270_831;
+/// `--tower-width` bounds, mm: the owner printed 12-20 mm towers; much narrower leaves no
+/// purge row inside the walls, much wider only costs plate room.
+const TOWER_WIDTH_RANGE_MM: (f64, f64) = (5.0, 60.0);
 
 /// 10 % margin on the corrected time: the AMS calibration is a lower bound and the per-change
 /// cost varies about ±15 % with the interval between changes.
@@ -118,6 +122,10 @@ pub struct Args {
     /// `--keep-own-gap`: keep the project's support first-layer gap even when the user never
     /// changed it from the system preset (otherwise it is forced, see `own_gap`).
     pub keep_own_gap: bool,
+    /// `--tower-width MM|keep`: the prime tower is forced to a plain rectangle this wide
+    /// (`tower_model::force_tower_shape`, default 20 mm); `None` (`keep`) leaves the project's
+    /// tower settings alone.
+    pub tower_width: Option<f64>,
     /// `--finish-state PATH`: skip modelling and packing, verify the plate of a saved state.
     pub finish_state: Option<PathBuf>,
     /// `--slicer bambu|orca`: the slicer the user prints with, one of the profile's `slicers`
@@ -262,6 +270,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut finish_state = None;
     let mut slicer = None;
     let mut keep_own_gap = false;
+    let mut tower_width = Some(DEFAULT_TOWER_WIDTH_MM);
     let mut foreign_gap_floor = ForeignGaps::default();
     let mut foreign_gaps = parse_foreign_gaps(DEFAULT_FOREIGN_GAPS)?;
     while let Some(option) = args.next() {
@@ -304,6 +313,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--stall" => stall = Some(value.parse()?),
             "--max-objects" => max_objects = value.parse()?,
             "--edge-margin" => edge_margin = Some(value.parse()?),
+            "--tower-width" => tower_width = parse_tower_width(&value)?,
             // Compatibility: the portfolio always runs every member.
             "--layout" => match value.as_str() {
                 "search" | "grid" => {}
@@ -393,9 +403,28 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         foreign_gaps,
         foreign_gap_floor,
         keep_own_gap,
+        tower_width,
         finish_state,
         slicer,
     })
+}
+
+/// `keep`, or a width in mm the owner's towers print at (they printed 12-20 mm).
+fn parse_tower_width(text: &str) -> AppResult<Option<f64>> {
+    if text == "keep" {
+        return Ok(None);
+    }
+    let width: f64 = text
+        .parse()
+        .map_err(|error| format!("--tower-width {text:?}: {error}"))?;
+    if !(TOWER_WIDTH_RANGE_MM.0..=TOWER_WIDTH_RANGE_MM.1).contains(&width) {
+        return Err(format!(
+            "--tower-width {width} is outside {}..{} mm",
+            TOWER_WIDTH_RANGE_MM.0, TOWER_WIDTH_RANGE_MM.1
+        )
+        .into());
+    }
+    Ok(Some(width))
 }
 
 /// `along,against`.
@@ -458,6 +487,15 @@ mod tests {
     fn keep_own_gap_is_a_valueless_switch_off_by_default() {
         assert!(!parse(&REQUIRED).unwrap().keep_own_gap);
         assert!(parse_with(&["--keep-own-gap", "--seed", "3"]).unwrap().keep_own_gap);
+    }
+
+    #[test]
+    fn the_tower_is_forced_to_20_mm_unless_kept_or_given() {
+        assert_eq!(parse(&REQUIRED).unwrap().tower_width, Some(20.0));
+        assert_eq!(parse_with(&["--tower-width", "12.5"]).unwrap().tower_width, Some(12.5));
+        assert_eq!(parse_with(&["--tower-width", "keep"]).unwrap().tower_width, None);
+        assert!(parse_with(&["--tower-width", "2"]).is_err());
+        assert!(parse_with(&["--tower-width", "wide"]).is_err());
     }
 
     #[test]

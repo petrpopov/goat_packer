@@ -17,6 +17,7 @@ use goat_packer::{
     print_time::{TimeCorrection, slicer_change_seconds},
     scheduler::object_count_3mf,
     support_model::flavour::{Flavour, ResolvedFlavour},
+    tower_model::force_tower_shape,
 };
 
 use crate::AppResult;
@@ -36,7 +37,8 @@ pub struct Job {
     /// The plate's zones in the plate frame (G-code-frame keepouts already moved by the
     /// project's `extruder_offset`).
     pub rules: PlateRules,
-    /// `project_settings.config` byte for byte: the support probes depend on all of it.
+    /// `project_settings.config` byte for byte (with the forced tower shape, when it changed
+    /// anything): the support probes depend on all of it.
     pub settings_bytes: Vec<u8>,
     pub settings: ProjectSettings,
     /// The slicer GUI the plate is opened in (the project's own, else the profile's).
@@ -74,9 +76,19 @@ impl Job {
             )
             .into());
         }
-        let settings_value = source_project_settings(&args.source_3mf)?;
-        let settings = ProjectSettings::from_json(&settings_value);
+        let mut settings_value = source_project_settings(&args.source_3mf)?;
         let flavour = resolve_flavour(&args, &profile)?;
+        let build = SlicerBuild::from_name(flavour.flavour.name())
+            .ok_or_else(|| format!("no slicer build for flavour {}", flavour.flavour.name()))?;
+        // The tower the GUI prints is the one the output 3MF asks for: the model, the probe
+        // copies and the output all read the forced shape (`tower::apply_tower_shape`).
+        let tower_forced = args
+            .tower_width
+            .is_some_and(|width| force_tower_shape(&mut settings_value, build, width));
+        if tower_forced {
+            eprintln!("{}", tower_note(build, args.tower_width.unwrap_or_default()));
+        }
+        let settings = ProjectSettings::from_json(&settings_value);
         // The GUI's own acceptance band (Snapmaker Orca's 3.5 mm) belongs to the target GUI.
         profile.gui_flavour = Some(GuiFlavour::try_from(flavour.flavour.name().to_owned())?);
         let bed = ProjectBed::from_settings(&settings_value)?;
@@ -105,11 +117,14 @@ impl Job {
             source: source_item_transform_of(&core)?,
             origin: (mesh.frame_origin[0], mesh.frame_origin[1]),
         };
-        let build = SlicerBuild::from_name(flavour.flavour.name())
-            .ok_or_else(|| format!("no slicer build for flavour {}", flavour.flavour.name()))?;
+        let settings_bytes = if tower_forced {
+            serde_json::to_vec_pretty(&settings_value)?
+        } else {
+            source_entry(&args.source_3mf, PROJECT_SETTINGS_ENTRY)?
+        };
         Ok(Job {
             rules,
-            settings_bytes: source_entry(&args.source_3mf, PROJECT_SETTINGS_ENTRY)?,
+            settings_bytes,
             settings,
             flavour,
             build,
@@ -125,6 +140,12 @@ impl Job {
             args,
         })
     }
+}
+
+/// The progress line of a forced tower.
+fn tower_note(build: SlicerBuild, width_mm: f64) -> String {
+    let rib = if build == SlicerBuild::BambuStudio { ", rib wall off" } else { "" };
+    format!("prime tower forced to {width_mm} mm wide{rib} (--tower-width keep leaves the project's)")
 }
 
 /// `--edge-margin` replaces the profile's margin for the model body: the old field and, in a

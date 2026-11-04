@@ -164,6 +164,7 @@ class WorkerJobProcessor(
                     candidates = PackDefaults.CANDIDATES,
                     seed = PackDefaults.SEED,
                     edgeMargin = request.edgeMargin,
+                    towerWidth = request.towerWidth,
                     layout = request.layout,
                     nozzleClean = request.nozzleClean,
                     timeWindowHours = request.timeWindowHours,

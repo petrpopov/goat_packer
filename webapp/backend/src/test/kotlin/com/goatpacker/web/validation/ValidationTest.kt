@@ -107,6 +107,7 @@ class ValidationTest(
             "changeSeconds" to "-1", "changeSeconds" to "601",
             "timeMarginPct" to "-1", "timeMarginPct" to "51",
             "supportOverlapMm" to "-0.1", "supportOverlapMm" to "20.5", "supportOverlapMm" to "abc",
+            "towerWidth" to "4.9", "towerWidth" to "60.5", "towerWidth" to "abc",
         )) {
             mockMvc.perform(
                 multipart("/api/pack/jobs")

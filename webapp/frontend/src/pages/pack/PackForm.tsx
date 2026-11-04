@@ -10,7 +10,7 @@ import { formatBytes } from '@/utils/format';
 import { inRange, LIMITS, rangeHint, type NozzleCleanMode } from '@/utils/forms';
 import { slicerLabel } from '@/utils/printers';
 import CustomBedFields from './CustomBedFields';
-import type { PackFormValues, PackRequestParts } from './packFormValues';
+import { DEFAULT_TOWER_WIDTH_MM, towerWidthValid, type PackFormValues, type PackRequestParts } from './packFormValues';
 import { PACK_FORM_ID } from './PackStatusStrip';
 import type { PrinterSelection } from './usePrinterSelection';
 
@@ -373,6 +373,7 @@ function AdvancedFields({
   profile,
   disabled,
 }: SectionProps & { supportInvalid: boolean; custom: boolean; profile: PrinterProfile | null }) {
+  const towerWidthInvalid = !towerWidthValid(values.towerWidth);
   return (
     <>
       <Field
@@ -430,6 +431,24 @@ function AdvancedFields({
           />
         </Field>
       )}
+      <Field
+        label="Ширина башни, мм"
+        error={towerWidthInvalid}
+        hint={
+          towerWidthInvalid
+            ? `${rangeHint(LIMITS.towerWidthMm, 'мм')} или пусто`
+            : 'Узкая башня экономит место; глубину задаёт слайсер'
+        }
+      >
+        <NumberInput
+          min={LIMITS.towerWidthMm.min}
+          max={LIMITS.towerWidthMm.max}
+          placeholder={String(DEFAULT_TOWER_WIDTH_MM)}
+          value={values.towerWidth}
+          onChange={(value) => update('towerWidth', value)}
+          disabled={disabled}
+        />
+      </Field>
     </>
   );
 }

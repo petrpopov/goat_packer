@@ -57,6 +57,8 @@ data class PackParams(
     val timeMarginPct: Double? = null,
     /** --support-overlap-mm; null = без ограничений (флаг не передаётся). */
     val supportOverlapMm: Double? = null,
+    /** --tower-width: ширина черновой башни, мм (рёбра выключены); null = дефолт пакера (20 мм). */
+    val towerWidth: Double? = null,
     /**
      * Вход — STL: команда source_project (STL → input.3mf), выполняется перед пакером в том же
      * процессе/контейнере ([ShellChain]); null — вход уже 3MF.

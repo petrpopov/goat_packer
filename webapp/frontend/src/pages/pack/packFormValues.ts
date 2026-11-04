@@ -25,6 +25,8 @@ export interface PackFormValues {
   fromZEvery: string;
   /** Пусто — дефолт профиля. */
   edgeMargin: string;
+  /** Ширина черновой башни; пусто — дефолт пакера ([DEFAULT_TOWER_WIDTH_MM]). */
+  towerWidth: string;
   /** Сразу нарезать весь стол; иначе — по кнопке «Проверить нарезкой» после упаковки (минуты ожидания). */
   sliceNow: boolean;
   windowOn: boolean;
@@ -39,6 +41,8 @@ export interface PackFormValues {
 }
 
 export const DEFAULT_CUSTOM_MARGIN_MM = '5';
+/** Ширина башни, которую пакер ставит без --tower-width (поле пустое — не шлётся). */
+export const DEFAULT_TOWER_WIDTH_MM = 20;
 export const EMPTY_BED: CustomBedInput = { width: '', depth: '', height: '', margin: DEFAULT_CUSTOM_MARGIN_MM };
 
 export const DEFAULT_PACK_FORM: PackFormValues = {
@@ -50,6 +54,7 @@ export const DEFAULT_PACK_FORM: PackFormValues = {
   fromZ: '',
   fromZEvery: '1',
   edgeMargin: '',
+  towerWidth: '',
   sliceNow: false,
   windowOn: false,
   windowHours: '12',
@@ -74,6 +79,7 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
     fromZ: clean.mode === 'from-z' ? clean.fromZ : current.fromZ,
     fromZEvery: clean.mode === 'from-z' ? clean.every : current.fromZEvery,
     edgeMargin: text(params.edgeMargin),
+    towerWidth: text(params.towerWidth ?? null),
     sliceNow: params.finalSlice,
     windowOn: params.timeWindowHours != null,
     windowHours: params.timeWindowHours != null ? String(params.timeWindowHours) : current.windowHours,
@@ -92,6 +98,9 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
 }
 
 type Fields = [string, string][];
+
+/** Пусто (дефолт пакера) или число в границах. */
+export const towerWidthValid = (value: string) => value.trim() === '' || inRange(value, LIMITS.towerWidthMm);
 
 /** Результат построителя полей: поля или признак ошибки (подсветка и блокировка «Упаковать»). */
 function attempt<T>(build: () => T, empty: T): { value: T; invalid: boolean } {
@@ -116,7 +125,7 @@ export interface PackRequestParts {
   timeInvalid: boolean;
   supportFields: Fields;
   supportInvalid: boolean;
-  /** Зазор, растр и отступ в границах. */
+  /** Зазор, растр, отступ и ширина башни в границах. */
   numbersValid: boolean;
   valid: boolean;
 }
@@ -143,7 +152,8 @@ export function packRequestParts(values: PackFormValues, context: PackRequestCon
   const numbersValid =
     inRange(values.clearance, LIMITS.clearanceMm) &&
     inRange(values.resolution, LIMITS.resolutionMm) &&
-    (values.edgeMargin.trim() === '' || inRange(values.edgeMargin, LIMITS.edgeMarginMm));
+    (values.edgeMargin.trim() === '' || inRange(values.edgeMargin, LIMITS.edgeMarginMm)) &&
+    towerWidthValid(values.towerWidth);
   return {
     nozzleSpec: nozzle.value,
     nozzleCleanInvalid: nozzle.invalid,
@@ -187,6 +197,8 @@ export function packFormData(
   // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки). Свой стол
   // несёт отступ в customMargin, второй (из «Дополнительно», там скрыт) не шлём.
   if (target.kind !== 'custom' && values.edgeMargin.trim() !== '') form.append('edgeMargin', values.edgeMargin.trim());
+  // Пустая ширина башни = дефолт пакера (20 мм): поле не шлётся.
+  if (values.towerWidth.trim() !== '') form.append('towerWidth', values.towerWidth.trim());
   // Окно и коррекция — только если заданы: иначе действуют дефолты CLI.
   for (const [name, value] of parts.timeFields) form.append(name, value);
   // Пустое перекрытие = без ограничений: поле не шлётся, флаг CLI не передаётся.

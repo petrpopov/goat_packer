@@ -214,6 +214,8 @@ data class PackParamsDto(
     val layout: String,
     val nozzleClean: String,
     val edgeMargin: Double?,
+    /** Ширина черновой башни, мм; null — дефолт пакера. */
+    val towerWidth: Double?,
     val finalSlice: Boolean,
     val timeWindowHours: Double?,
     val timeMarginPct: Double?,

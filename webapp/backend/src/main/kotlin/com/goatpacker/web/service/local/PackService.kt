@@ -92,6 +92,7 @@ class PackService(
             candidates = form.candidates ?: PackDefaults.CANDIDATES,
             seed = form.seed ?: PackDefaults.SEED,
             edgeMargin = form.edgeMargin,
+            towerWidth = form.towerWidth,
             layout = form.layout ?: PackDefaults.LAYOUT,
             nozzleClean = nozzleClean,
             timeWindowHours = form.timeWindowHours,

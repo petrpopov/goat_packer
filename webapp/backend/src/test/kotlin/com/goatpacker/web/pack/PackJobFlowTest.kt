@@ -150,7 +150,7 @@ class PackJobFlowTest(
         assertEquals(2, body["layout"]["placements"].size(), "раскладка видна и после успеха")
         assertEquals("pack", body["layout"]["source"].asText())
         val args = packerArgs(jobId)
-        for (flag in listOf("--time-window-hours", "--ams-correction", "--change-seconds", "--time-margin-pct", "--support-overlap-mm")) {
+        for (flag in listOf("--time-window-hours", "--ams-correction", "--change-seconds", "--time-margin-pct", "--support-overlap-mm", "--tower-width")) {
             assertTrue(flag !in args, "$flag не задан пользователем: $args")
         }
         // Отчёт без полей поддержек (старый пакер) — их нет и в результате, ошибки нет.
@@ -250,7 +250,8 @@ class PackJobFlowTest(
                 multipart("/api/pack/jobs")
                     .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
                     .param("profileId", "test_wide_bed")
-                    .param("supportOverlapMm", overlap),
+                    .param("supportOverlapMm", overlap)
+                    .param("towerWidth", "12.5"),
             )
                 .andExpect(status().isAccepted)
                 .andReturn()
@@ -258,6 +259,9 @@ class PackJobFlowTest(
             val body = mockMvc.awaitJobCompletion(jobId)
             val args = packerArgs(jobId)
             assertEquals(overlap.toDouble(), args[args.indexOf("--support-overlap-mm") + 1].toDouble())
+            // Ширина башни доходит до пакера и возвращается в настройках (форма только для чтения).
+            assertEquals(12.5, args[args.indexOf("--tower-width") + 1].toDouble())
+            assertEquals(12.5, body["params"]["towerWidth"].asDouble(), 1e-9)
             assertTrue(body["pack"]["supportsDetected"].asBoolean(), body["pack"].toString())
             assertEquals(overlap.toDouble(), body["pack"]["supportOverlapMm"].asDouble(), 1e-9)
         }

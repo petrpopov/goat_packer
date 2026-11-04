@@ -17,6 +17,8 @@ data class JobRequest(
     val resolution: Double = PackDefaults.RESOLUTION_MM,
     val attempts: Long = PackDefaults.ATTEMPTS,
     val edgeMargin: Double? = null,
+    /** Ширина черновой башни, мм (упаковка) → --tower-width; null = дефолт пакера (20). */
+    val towerWidth: Double? = null,
     val layout: String = PackDefaults.LAYOUT,
     val nozzleClean: String = "",
     val dayStart: String = ScheduleDefaults.DAY_START,

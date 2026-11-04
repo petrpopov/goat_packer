@@ -162,7 +162,7 @@ pub fn floor_warning(floor: ForeignGaps) -> Option<String> {
 }
 
 /// The output 3MF slices with the gaps the probes used. The project settings are copied
-/// byte for byte except for the moved-tower rewrite and the nozzle-clean injection; a plate
+/// byte for byte except for the tower (position, forced shape) and the nozzle-clean injection; a plate
 /// whose slice supports sit closer than the probes learned would invalidate the layout.
 pub fn check_output(output: &Path, expected: OwnGap) -> AppResult<()> {
     let settings = serde_json::Value::Object(orca_project::project_settings(output)?);

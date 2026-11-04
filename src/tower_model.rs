@@ -9,7 +9,8 @@
 //!   mitred offsets of the brim and chamfer loops (04 §4.5-§4.6);
 //! - `print`: `TowerPrint` and its plate zones: the column and the chamfer rings of layers
 //!   ≥ 1 are tower body, the L0 brim ring is tower brim (design §4.2, §14 Q18);
-//! - `anchor`: the anchor range each build's GUI or CLI keeps (04 §6, design §6).
+//! - `anchor`: the anchor range each build's GUI or CLI keeps (04 §6, design §6);
+//! - `forced`: the plain tower of a chosen width the packer writes into the project.
 //!
 //! The tower does not depend on object count (04 §8.2) nor, with support filament 0, on the
 //! support realization (04 §7 N1); everything here is a deterministic function of the project.
@@ -17,6 +18,7 @@
 mod anchor;
 mod bambu;
 mod changes;
+mod forced;
 mod formulas;
 mod outline;
 mod print;
@@ -31,6 +33,7 @@ pub use anchor::{
 };
 pub use bambu::{Column, Rib};
 pub use changes::{LayerOrdering, changes_per_layer};
+pub use forced::{DEFAULT_TOWER_WIDTH_MM, force_tower_shape};
 pub use formulas::{auto_brim_width, bead_area, brim_loops, min_depth_for_height};
 pub use outline::{BRIM_MITRE_LIMIT, grow_mitred, rectangle, rib_outline};
 pub use print::{

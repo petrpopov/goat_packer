@@ -36,6 +36,8 @@ object JobRequestValidator {
         }
         if (r.attempts !in JobLimits.ATTEMPTS || r.layout !in LAYOUTS || r.benchMode !in BENCH_MODES) badRequest("Некорректный режим поиска")
         if (r.edgeMargin.isOutOf(JobLimits.EDGE_MARGIN_MM)) badRequest("Некорректный отступ")
+        if (r.towerWidth.isOutOf(JobLimits.TOWER_WIDTH_MM)) badRequest("Ширина башни должна быть 5–60 мм")
+        if (r.towerWidth != null && kind != JobKind.PACK) badRequest("Ширина башни задаётся только для упаковки")
         if (r.timeWindowHours.isOutOf(JobLimits.TIME_WINDOW_HOURS)) badRequest("Окно печати должно быть 0.5–240 ч")
         if (r.changeSeconds.isOutOf(JobLimits.CHANGE_SECONDS)) badRequest("Длительность смены прутка должна быть 0–600 с")
         if (r.timeMarginPct.isOutOf(JobLimits.TIME_MARGIN_PCT)) badRequest("Запас времени должен быть 0–50 %")

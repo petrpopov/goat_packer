@@ -73,6 +73,8 @@ pub fn test_args(work_dir: &Path) -> Args {
         foreign_gap_floor: ForeignGaps::default(),
         // The fixtures carry no preset bookkeeping: tests keep their project's own gaps.
         keep_own_gap: true,
+        // The fixtures' own towers, as the tests measured them.
+        tower_width: None,
         finish_state: None,
         slicer: None,
     }
