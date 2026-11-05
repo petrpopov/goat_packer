@@ -35,7 +35,10 @@ pub fn speeds(stage: &StageA, parent: &Node, layer: usize) -> Speeds {
     }
     let foot_step = derived.foot_growth as i64;
     let below = layer as i64 - 1;
-    if (layer as i64) < derived.foot_layers && derived.recommended_min_radius(below) < grown {
+    if derived.foot_in_descent
+        && (layer as i64) < derived.foot_layers
+        && derived.recommended_min_radius(below) < grown
+    {
         let with_foot = derived.radius(parent.rdepth + 1, parent.foot + 1.0);
         if keys.key(with_foot, tight) == keys.key(current, tight) {
             both += foot_step;

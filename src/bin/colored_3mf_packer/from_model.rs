@@ -5,10 +5,11 @@
 use goat_packer::{
     first_layer::landing,
     mesh_section::{BodyBands, body_print},
-    object_print::{Margins, ObjectPrint},
+    object_print::{Margins, ObjectPrint, Realization},
     progress::{self, Stage, StageDetail},
     support_model::{
         envelope::{envelope, envelope_banded},
+        flavour::Flavour,
         predict::{PredictInput, Prediction, predict},
         settings::{ProjectConfig, SupportSettings},
         SupportError,
@@ -33,6 +34,7 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     if job.own_gap.edits_project() {
         settings.first_layer_gap = job.own_gap.first_layer_mm;
     }
+    let builds = job.flavour.support_builds();
     let margins = match job.args.support_margins {
         Some((first_layer_mm, band_mm)) => Margins {
             first_layer_mm,
@@ -54,28 +56,41 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
                 .with("class", index + 1)
                 .with("classes", count),
         );
-        let prediction = predict(&PredictInput {
-            mesh: &job.mesh,
-            settings: &settings,
-            flavour: job.flavour.flavour,
-            rotation_deg: rotation,
-            cache_dir: job.args.cache_dir.as_deref(),
-            orders: &job.args.support_orders,
-        })?;
-        println!(
-            "support model, rotation {rotation}°: {} distinct realizations of {} members in {:.1} s{}",
-            prediction.ensemble.realizations.len(),
-            prediction.ensemble.members.len(),
-            prediction.seconds,
-            if prediction.cached { " (cache)" } else { "" }
-        );
-        seconds += prediction.seconds;
-        prints.push(class_print(job, rotation, &prediction, margins)?);
+        let mut predictions = Vec::new();
+        for &build in &builds {
+            let orders = job
+                .args
+                .support_orders
+                .clone()
+                .unwrap_or_else(|| build.default_orders().to_vec());
+            let prediction = predict(&PredictInput {
+                mesh: &job.mesh,
+                settings: &settings,
+                flavour: build,
+                rotation_deg: rotation,
+                cache_dir: job.args.cache_dir.as_deref(),
+                orders: &orders,
+            })?;
+            println!(
+                "support model {}, rotation {rotation}°: {} distinct realizations of {} members in {:.1} s{}",
+                build.name(),
+                prediction.ensemble.realizations.len(),
+                prediction.ensemble.members.len(),
+                prediction.seconds,
+                if prediction.cached { " (cache)" } else { "" }
+            );
+            seconds += prediction.seconds;
+            predictions.push((build, prediction));
+        }
+        prints.push(class_print(job, rotation, &predictions, margins)?);
         summaries.push(ClassSummary {
             rotation_deg: rotation,
-            runs: prediction.ensemble.members.len(),
+            runs: predictions
+                .iter()
+                .map(|(_, prediction)| prediction.ensemble.members.len())
+                .sum(),
             saturated: true,
-            cached: prediction.cached,
+            cached: predictions.iter().all(|(_, prediction)| prediction.cached),
             growth_mm2: Vec::new(),
             landing_outside_model_mm2: 0.0,
         });
@@ -91,11 +106,12 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
 }
 
 /// The print of one class: body kinds from the mesh, landing from the first-layer model, the
-/// supports from the envelope of the ensemble.
+/// supports from the union of every build's envelope, each build's ensemble grown by its own
+/// margins (or all by `--support-margins`).
 fn class_print(
     job: &Job,
     rotation: f64,
-    prediction: &Prediction,
+    predictions: &[(Flavour, Prediction)],
     margins: Margins,
 ) -> AppResult<ObjectPrint> {
     let layer_height = job
@@ -109,21 +125,40 @@ fn class_print(
     let bands = BodyBands::printed(layer_height.max(first_height));
     let mut print = body_print(&job.mesh, rotation, &bands);
     print.landing = landing(&job.mesh, &job.settings, job.build, rotation)?.loops;
-    let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
-    let grown = if job.args.support_margins.is_some() {
-        envelope(&members, margins)
-    } else {
-        let flavour = job.flavour;
-        envelope_banded(&members, margins.first_layer_mm, &|band| {
-            flavour.band_margin_mm(band)
+    let envelopes: Vec<Realization> = predictions
+        .iter()
+        .map(|(build, prediction)| {
+            let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
+            if job.args.support_margins.is_some() {
+                envelope(&members, margins)
+            } else {
+                envelope_banded(&members, build.first_layer_margin_mm(), &|band| {
+                    build.band_margin_mm(band)
+                })
+            }
         })
+        .collect();
+    let grown = match envelopes.as_slice() {
+        [single] => single.clone(),
+        all => envelope(&all.iter().collect::<Vec<_>>(), Margins::default()),
     };
     print.support_base = grown.base;
     print.support = grown.above_base;
     print.interface = grown.interface;
-    print.provenance.flavour = job.flavour.flavour.name().to_owned();
-    print.provenance.members = prediction.ensemble.realizations.len();
+    print.provenance.flavour = predictions
+        .iter()
+        .map(|(build, _)| build.name())
+        .collect::<Vec<_>>()
+        .join("+");
+    print.provenance.members = predictions
+        .iter()
+        .map(|(_, prediction)| prediction.ensemble.realizations.len())
+        .sum();
     print.provenance.margins = margins;
-    print.provenance.cache_key = prediction.cache_key.clone();
+    print.provenance.cache_key = predictions
+        .iter()
+        .map(|(_, prediction)| prediction.cache_key.as_str())
+        .collect::<Vec<_>>()
+        .join("+");
     Ok(print)
 }

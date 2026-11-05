@@ -34,6 +34,16 @@ pub enum MergeBucket {
     FixedFour,
 }
 
+/// The foot flare drawn under a branch standing on the bed (02.09): at the bed the radius is
+/// the trunk's plus `extra_mm` (at most the 7.5 mm foot), narrowing to the trunk with a
+/// quadratic ease (steepest at the bed, tangent to the trunk) over the height a mean slope of
+/// `mean_slope_degrees` needs; a root branch too short for that height gets a smaller flare.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlateFoot {
+    pub extra_mm: f64,
+    pub mean_slope_degrees: f64,
+}
+
 /// Shape of a branch root standing on the bed (spec 03 §3.2).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RootCap {
@@ -358,6 +368,41 @@ impl Flavour {
         matches!(self, Flavour::Orca242 | Flavour::Orca250)
     }
 
+    /// 02.09 reads `tree_support_tip_diameter` (default 0.8, as 02.08's constant) and keeps it
+    /// between the support line width and the branch diameter.
+    pub fn reads_tip_diameter(self) -> bool {
+        self == Flavour::Bambu0209
+    }
+
+    /// Up to 02.08 a branch near the bed widens toward the 7.5 mm foot while it descends (the
+    /// foot count of spec 02 §1.2, with the extra speed that growth buys, §3.3). From 02.09 the
+    /// descent keeps the plain branch radius down to the bed and the foot is drawn afterwards as
+    /// a flare (`plate_foot`): the 02.09 corpus of 2026-11-05 has smaller first-layer patches
+    /// (P1S 523-586 mm² against 668 in 02.08 at the same thread count) and feet shaped like
+    /// `plate_foot`, while above ~12 mm (out of the foot zone) the two builds print the same.
+    pub fn foot_grows_in_descent(self) -> bool {
+        self != Flavour::Bambu0209
+    }
+
+    /// The flare 02.09 draws at the bottom of every branch standing on the bed (`None`: the
+    /// foot comes from the descent instead, `foot_grows_in_descent`).
+    pub fn plate_foot(self) -> Option<PlateFoot> {
+        (self == Flavour::Bambu0209).then_some(PlateFoot {
+            extra_mm: 1.2,
+            mean_slope_degrees: 12.0,
+        })
+    }
+
+    /// 02.09 limits how far a merge may reach across the gap between two influence areas: no
+    /// longer the whole radius difference, but at most two layers of fast movement or 3/4 of
+    /// the bigger radius (whichever is smaller), never less than half a line width, never
+    /// postponing a merge beyond 30 layers of movement, and never above the radius difference.
+    /// A thick trunk no longer swallows a thin branch several millimetres away in one layer
+    /// (02.09 lands more, closer separate feet next to a trunk than 02.08 at the same threads).
+    pub fn caps_merge_reach(self) -> bool {
+        self == Flavour::Bambu0209
+    }
+
     /// Snapmaker's mixed-filament gradient and Z-dithering modes rewrite the layer ranges
     /// (S `PrintObject.cpp:3838-3900`, spec 01 §1.2.1).
     pub fn has_dithering_modes(self) -> bool {
@@ -394,9 +439,9 @@ mod tests {
         assert!(Bambu0208.strictly_simple() && !Snapmaker240.strictly_simple());
     }
 
-    /// 02.09 is modelled as 02.08 (only its margins differ): every switch reads the same.
+    /// 02.09 shares 02.08's switches except the foot and the merge reach.
     #[test]
-    fn bambu_02_09_switches_like_02_08() {
+    fn bambu_02_09_differs_from_02_08_in_the_foot_and_the_merge_reach_only() {
         use Flavour::*;
         let pair = [Bambu0208, Bambu0209];
         let same = |f: &dyn Fn(Flavour) -> String| assert_eq!(f(pair[0]), f(pair[1]));
@@ -410,5 +455,10 @@ mod tests {
         same(&|v| format!("{:?}", v.anchor_clamp()));
         same(&|v| format!("{} {}", v.roof_line_angle_degrees(), v.closes_no_brim_set()));
         same(&|v| format!("{:?}", v.grid()));
+        assert!(Bambu0208.foot_grows_in_descent() && !Bambu0209.foot_grows_in_descent());
+        assert!(Bambu0208.plate_foot().is_none() && Bambu0209.plate_foot().is_some());
+        assert!(!Bambu0208.caps_merge_reach() && Bambu0209.caps_merge_reach());
+        assert!(!Bambu0208.reads_tip_diameter() && Bambu0209.reads_tip_diameter());
+        assert!(Snapmaker240.foot_grows_in_descent() && Snapmaker240.plate_foot().is_none());
     }
 }

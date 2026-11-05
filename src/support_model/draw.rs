@@ -9,7 +9,7 @@ mod shapes;
 
 use shapes::{CHORD_TOLERANCE_MM, disc, slice_cylinder};
 
-use super::flavour::RootCap;
+use super::flavour::{PlateFoot, RootCap};
 use super::node::Node;
 use super::stage_a::StageA;
 use crate::polygon_ops::{
@@ -32,6 +32,9 @@ pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> 
     for (layer, nodes) in layers.iter().enumerate() {
         for (index, node) in nodes.iter().enumerate() {
             pieces.add_node(&mut slices, layer, index, node);
+            if let Some(foot) = stage.flavour.plate_foot() {
+                pieces.add_plate_foot(&mut slices, foot, layer, index, node);
+            }
         }
     }
     slices
@@ -185,6 +188,76 @@ impl<'a> Pieces<'a> {
                 self.tolerance,
             );
             slices[index].extend(piece);
+        }
+    }
+
+    /// The 02.09 foot flare (`Flavour::plate_foot`) under a tree that stands on the bed: one
+    /// per piece of branch leaving the lowest node upward, each piece followed while its nodes
+    /// have one parent (up to and including a node where branches meet). The flare is a disc
+    /// per layer around the node centre, unioned with the tube, so it never narrows the tube.
+    fn add_plate_foot(
+        &self,
+        slices: &mut [Vec<Ring>],
+        foot: PlateFoot,
+        layer: usize,
+        index: usize,
+        node: &Node,
+    ) {
+        if self.child[layer][index].is_some() || node.parents.is_empty() || !node.to_bed {
+            return;
+        }
+        let derived = &self.stage.derived;
+        let grid = derived.grid;
+        let root_radius = node.real_radius(derived) as f64;
+        let cap = derived.foot_radius as f64;
+        if root_radius <= 0.0 || root_radius >= cap {
+            return;
+        }
+        let extra = grid.scaled(foot.extra_mm);
+        let per_layer =
+            libm::tan(foot.mean_slope_degrees.to_radians()) * derived.layer_height as f64;
+        let widest = extra.min(cap - root_radius);
+        let needed = libm::ceil(widest / per_layer) as usize;
+        for &first in &node.parents {
+            let path = self.piece_upward(layer, index, first);
+            let top = needed.min(path.len() - 1);
+            if top == 0 {
+                continue;
+            }
+            let (top_layer, top_index) = path[top];
+            let trunk = self.layers[top_layer][top_index].real_radius(derived) as f64;
+            let height = (top_layer - layer) as f64;
+            let at_bed = cap
+                .min(trunk + extra)
+                .min(libm::round(trunk + height * per_layer));
+            if at_bed <= root_radius || at_bed <= trunk {
+                continue;
+            }
+            for &(step_layer, step_index) in &path[..=top] {
+                let t = (step_layer - layer) as f64 / height;
+                let ease = 1.0 - (1.0 - t) * (1.0 - t);
+                let radius = libm::round(at_bed + ease * (trunk - at_bed));
+                if radius > 0.0 {
+                    let at = self.position(step_layer, step_index);
+                    slices[step_layer].push(disc(at, radius, (radius / 100.0).max(1.0)));
+                }
+            }
+        }
+    }
+
+    /// The nodes from (`layer`, `index`) up through its parent `first` while every node has
+    /// one parent; a node with more parents (or none) ends it and is included.
+    fn piece_upward(&self, layer: usize, index: usize, first: usize) -> Vec<(usize, usize)> {
+        let mut path = vec![(layer, index), (layer + 1, first)];
+        let (mut at_layer, mut at_index) = (layer + 1, first);
+        loop {
+            let parents = &self.layers[at_layer][at_index].parents;
+            if parents.len() != 1 {
+                return path;
+            }
+            at_layer += 1;
+            at_index = parents[0];
+            path.push((at_layer, at_index));
         }
     }
 

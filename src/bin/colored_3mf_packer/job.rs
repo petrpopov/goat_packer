@@ -147,13 +147,14 @@ impl Job {
 }
 
 /// The warning of a project whose slicer version has no calibration of its own: the support
-/// envelope then takes the widest margins of the family (`ResolvedFlavour::margins`).
+/// envelope then holds every calibrated build of the family (`ResolvedFlavour::support_builds`).
 pub fn flavour_warning(args: &Args, flavour: &ResolvedFlavour) -> Option<String> {
     flavour.approximated.then(|| {
         let application = source_application(&args.source_3mf).unwrap_or_default();
+        let builds: Vec<&str> = flavour.support_builds().iter().map(|f| f.name()).collect();
         format!(
-            "slicer version {application} not calibrated; using the widest margins (as {})",
-            flavour.flavour.name()
+            "slicer version {application} not calibrated; predicting the supports of every calibrated build ({})",
+            builds.join(", ")
         )
     })
 }
@@ -190,12 +191,15 @@ fn resolve_flavour(args: &Args, profile: &PrinterProfile) -> AppResult<ResolvedF
         .gui_flavour
         .as_ref()
         .map_or_else(|| by_kind.name().to_owned(), ToString::to_string);
+    // `--slicer-flavour` names a build and pins the prediction to it; `--slicer` names a
+    // family (its GUI from the profile), so a Bambu target stays version-independent.
+    if let Some(build) = &args.slicer_flavour {
+        return Ok(Flavour::resolve(Some(build), application.as_deref(), Some(&profile_name))?);
+    }
     let explicit = args.slicer.as_ref().map(|_| profile_name.as_str());
-    Ok(Flavour::resolve(
-        explicit,
-        application.as_deref(),
-        Some(&profile_name),
-    )?)
+    let mut resolved = Flavour::resolve(explicit, application.as_deref(), Some(&profile_name))?;
+    resolved.pinned = false;
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -212,11 +216,12 @@ mod tests {
             flavour: Flavour::NEWEST_BAMBU,
             source: FlavourSource::Application,
             approximated: false,
+            pinned: false,
         };
         assert_eq!(flavour_warning(&job.args, &flavour), None);
         flavour.approximated = true;
         let warning = flavour_warning(&job.args, &flavour).unwrap();
         // The fixture project was saved by BambuStudio 02.00.00.00.
-        assert!(warning.starts_with("slicer version BambuStudio-02.00.00.00 not calibrated; using the widest margins"), "{warning}");
+        assert!(warning.starts_with("slicer version BambuStudio-02.00.00.00 not calibrated; predicting the supports of every calibrated build (bambu-02.08, bambu-02.09)"), "{warning}");
     }
 }

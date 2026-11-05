@@ -11,6 +11,7 @@ use crate::polygon_ops::{
     IntBox, IntPoint, Join, Rings, area, bbox, intersection, nearest_inside, offset, union,
 };
 use crate::support_model::node::Node;
+use crate::support_model::settings::Derived;
 use crate::support_model::stage_a::StageA;
 
 /// The slicer's own rule: the overlap must survive shrinking by this (mm), i.e. be thicker
@@ -60,6 +61,11 @@ impl<'a> PairTest<'a> {
             (source, destination)
         };
         let delta = (bigger.node.real_radius(derived) - smaller.node.real_radius(derived)).abs();
+        let delta = if self.stage.flavour.caps_merge_reach() {
+            capped_reach(derived, delta, bigger.node.real_radius(derived))
+        } else {
+            delta
+        };
         if !boxes_meet(smaller.bounds?, bigger.bounds?, delta as i32) {
             return None;
         }
@@ -160,6 +166,24 @@ impl<'a> PairTest<'a> {
         }
     }
 }
+
+/// How far the smaller branch may reach toward the bigger one when the build caps it
+/// (`Flavour::caps_merge_reach`): two layers of fast movement (the gap closes from both sides),
+/// or 3/4 of the bigger radius if less; at least half a line width; at least what keeps a merge
+/// from waiting more than `MERGE_DELAY_LAYERS` layers; never more than the radius difference.
+fn capped_reach(derived: &Derived, delta: i64, bigger_radius: i64) -> i64 {
+    let budget = derived.move_fast.min(derived.grid.length(MOVE_BUDGET_CAP_MM));
+    let mut reach = (2 * budget).min((REACH_RADIUS_SHARE * bigger_radius as f64) as i64);
+    reach = reach.max(derived.line_width / 2);
+    reach = reach.max(delta - 2 * MERGE_DELAY_LAYERS * budget);
+    reach.min(delta)
+}
+
+/// The capped merge reach (`capped_reach`): share of the bigger radius, longest wait in
+/// layers, and the movement per layer above which the budget stops growing (mm).
+const REACH_RADIUS_SHARE: f64 = 0.75;
+const MERGE_DELAY_LAYERS: i64 = 30;
+const MOVE_BUDGET_CAP_MM: f64 = 10.0;
 
 fn boxes_meet(small: IntBox, big: IntBox, grow: i32) -> bool {
     small.min.x - grow <= big.max.x

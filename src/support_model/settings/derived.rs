@@ -86,6 +86,8 @@ pub struct Derived {
     /// g_ft = max(g_bp − g, 0) and its truncation g_ft′.
     pub foot_increment: f64,
     pub foot_increment_units: i64,
+    /// The foot count grows while a branch descends (`Flavour::foot_grows_in_descent`).
+    pub foot_in_descent: bool,
     pub increase_until_radius: i64,
     pub increase_until_layer: i64,
     pub to_model_allowed: bool,
@@ -143,13 +145,19 @@ impl Derived {
             settings.branch_diameter,
             settings.branch_diameter_organic,
         ));
-        let tip_diameter = if fixed {
+        let tip_diameter = if fixed && !flavour.reads_tip_diameter() {
             BAMBU_TIP_DIAMETER_MM
         } else {
             settings.tip_diameter
         };
         let branch_radius = branch_diameter / 2;
-        let tip_radius = grid.length(tip_diameter).clamp(0, branch_diameter) / 2;
+        let tip_radius = if flavour.reads_tip_diameter() {
+            grid.length(tip_diameter)
+                .clamp(line_width, line_width.max(branch_diameter))
+                / 2
+        } else {
+            grid.length(tip_diameter).clamp(0, branch_diameter) / 2
+        };
         let branch_angle = angle(pick(settings.branch_angle, settings.branch_angle_organic))
             .clamp(0.0, std::f64::consts::FRAC_PI_2 - ANGLE_EPSILON);
         let slow_degrees = if fixed {
@@ -205,6 +213,7 @@ impl Derived {
             foot_layers: ((foot_radius - branch_radius) as f64 / foot_growth) as i64,
             foot_increment,
             foot_increment_units: foot_increment as i64,
+            foot_in_descent: flavour.foot_grows_in_descent(),
             increase_until_radius,
             increase_until_layer: tip_layers * (increase_until_radius / branch_radius),
             to_model_allowed: !settings.on_build_plate_only,

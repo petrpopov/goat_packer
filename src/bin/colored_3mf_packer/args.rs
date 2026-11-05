@@ -7,7 +7,7 @@ use goat_packer::{
     colored_packer::{PrinterProfile, SLICER_KINDS},
     nozzle_clean::NozzleCleanSpec,
     print_time::TimeCorrection,
-    support_model::merge::MergeOrder,
+    support_model::{flavour::Flavour, merge::MergeOrder},
     tower_model::DEFAULT_TOWER_WIDTH_MM,
 };
 
@@ -99,9 +99,12 @@ pub struct Args {
     /// model alone.
     pub support_source: SupportSource,
     /// `--support-orders`: which readings of the slicers' merge order the support model runs
-    /// (`along`, `against`; default `along`, the reading that matches the corpus once the roof
-    /// lines run at the build's own angle).
-    pub support_orders: Vec<MergeOrder>,
+    /// (`along`, `against`); `None` = each build's own (`Flavour::default_orders`: `along`,
+    /// both for Bambu Studio 02.09), the readings its margins were calibrated with.
+    pub support_orders: Option<Vec<MergeOrder>>,
+    /// `--slicer-flavour NAME` (`bambu-02.08`, `bambu-02.09`, ...): predict the supports of
+    /// this build only. Without it a Bambu target covers every calibrated Bambu Studio build.
+    pub slicer_flavour: Option<String>,
     /// `--support-margins FIRST_LAYER:BAND` (mm): replaces the flavour's calibrated margins.
     pub support_margins: Option<(f64, f64)>,
     /// `--cache-dir`: where the per-class support probes are kept between runs.
@@ -260,7 +263,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
     let mut cache_dir = None;
     let mut support_source = SupportSource::default();
-    let mut support_orders = vec![MergeOrder::Along];
+    let mut support_orders = None;
+    let mut slicer_flavour = None;
     let mut support_margins = None;
     let mut verify = false;
     let mut seed = DEFAULT_SEED;
@@ -321,7 +325,13 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             },
             "--rotations" => rotations = parse_rotations(&value)?,
             "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
-            "--support-orders" => support_orders = parse_orders(&value)?,
+            "--support-orders" => support_orders = Some(parse_orders(&value)?),
+            "--slicer-flavour" => {
+                if Flavour::from_name(&value).is_none() {
+                    return Err(format!("--slicer-flavour {value}: unknown slicer build").into());
+                }
+                slicer_flavour = Some(value);
+            }
             "--support-margins" => support_margins = Some(parse_margins(&value)?),
             "--support-source" => {
                 support_source = match value.as_str() {
@@ -397,6 +407,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         cache_dir,
         support_source,
         support_orders,
+        slicer_flavour,
         support_margins,
         verify,
         support_overlap_mm,

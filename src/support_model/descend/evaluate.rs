@@ -207,7 +207,7 @@ impl<'a> Mover<'a> {
     /// Elephant-foot growth toward the recommended minimum radius near the bed.
     fn grow_foot(&self, child: &mut Node, below: usize, valid: &impl Fn(i64, i64) -> bool) {
         let derived = &self.stage.derived;
-        if derived.foot_increment_units <= 0 {
+        if !derived.foot_in_descent || derived.foot_increment_units <= 0 {
             return;
         }
         let real = child.real_radius(derived);

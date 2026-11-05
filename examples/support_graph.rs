@@ -27,7 +27,8 @@ fn main() {
     let mesh = loaded.rotated(rotation);
     let config = ProjectConfig::load(path).unwrap();
     let settings = SupportSettings::from_config(&config).unwrap();
-    let flavour = Flavour::resolve(None, config.application.as_deref(), None).unwrap();
+    let explicit = std::env::var("GOAT_FLAVOUR").ok();
+    let flavour = Flavour::resolve(explicit.as_deref(), config.application.as_deref(), None).unwrap();
     let start = Instant::now();
     let stage = stage_a(&StageAInput {
         mesh: &mesh,

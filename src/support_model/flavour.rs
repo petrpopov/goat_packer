@@ -4,24 +4,26 @@
 //!
 //! Resolution order (§5.3): an explicit name, then the source 3MF `Application` metadata,
 //! then the profile's `gui_flavour`; an unknown version of a known family maps to the
-//! nearest known build (Bambu: the newest) and is reported as approximated, with the widest
-//! margins of its family. A Bambu project of an older build than the profile's is sliced in
-//! the profile's build.
+//! nearest known build (Bambu: the newest) and is reported as approximated. A Bambu project
+//! of an older build than the profile's is sliced in the profile's build. Which builds' supports
+//! a plate must hold is `ResolvedFlavour::support_builds`: every calibrated Bambu Studio build
+//! unless one is pinned (`--slicer-flavour`).
 
 mod switches;
 
 use serde::{Deserialize, Serialize};
 
 use crate::object_print::Margins;
+use crate::support_model::merge::MergeOrder;
 use crate::polygon_ops::Grid;
 
 pub use switches::{
     AnchorClamp, CriticalOnly, ExclusionEncoding, FirstLayerExpansion, GuiExclusionCheck,
-    MergeBucket, RootCap, SmallOverhang, TowerChamfer,
+    MergeBucket, PlateFoot, RootCap, SmallOverhang, TowerChamfer,
 };
 
-/// The slicer builds the behaviour specs describe (four), plus Bambu Studio 02.09, which
-/// behaves like 02.08 in the model and has its own calibrated margins. Builds of one family
+/// The slicer builds the behaviour specs describe (four), plus Bambu Studio 02.09 (02.08 with
+/// a drawn foot flare and a capped merge reach, `switches`). Builds of one family
 /// are declared oldest first: `Ord` is their release order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,8 +64,13 @@ pub struct ResolvedFlavour {
     pub flavour: Flavour,
     pub source: FlavourSource,
     /// The project names another version of the family; the nearest known build stands in
-    /// (report `flavour_approximated: true`, widest margins).
+    /// (report `flavour_approximated: true`; the supports are those of every calibrated build
+    /// of the family, `support_builds`).
     pub approximated: bool,
+    /// The user named this very build (`--slicer-flavour`): only its supports are predicted.
+    /// Otherwise a Bambu target is version-independent (`support_builds`).
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl Flavour {
@@ -148,7 +155,8 @@ impl Flavour {
     /// write "BambuStudio" are told apart by the version shape: Bambu versions have four
     /// zero-padded parts (`02.08.02.61`), Orca versions three (`2.4.2`). A Bambu version
     /// without its own calibration (older or newer) stands in as the newest calibrated build,
-    /// not exact (its margins are then the widest of the family, `ResolvedFlavour`).
+    /// not exact (the supports of every calibrated build are then predicted,
+    /// `ResolvedFlavour::support_builds`).
     pub fn from_application(application: &str) -> Option<(Flavour, bool)> {
         let (name, version) = split_application(application.trim());
         let parts = version_parts(version);
@@ -183,6 +191,7 @@ impl Flavour {
                 flavour,
                 source: FlavourSource::Explicit,
                 approximated: false,
+                pinned: true,
             });
         }
         if let Some((flavour, exact)) = application.and_then(Flavour::from_application) {
@@ -201,6 +210,7 @@ impl Flavour {
                     flavour: profile,
                     source: FlavourSource::Profile,
                     approximated: false,
+                    pinned: false,
                 });
             }
             // A Bambu project saved by an older build is sliced by the GUI the user has now,
@@ -219,12 +229,14 @@ impl Flavour {
                     flavour: profile_bambu.unwrap_or(flavour),
                     source: FlavourSource::Profile,
                     approximated: false,
+                    pinned: false,
                 });
             }
             return Ok(ResolvedFlavour {
                 flavour,
                 source: FlavourSource::Application,
                 approximated: !exact,
+                pinned: false,
             });
         }
         let name = gui_flavour.ok_or(
@@ -236,6 +248,7 @@ impl Flavour {
             flavour,
             source: FlavourSource::Profile,
             approximated: false,
+            pinned: false,
         })
     }
 
@@ -253,15 +266,14 @@ impl Flavour {
             // one thread). The ensemble without the overlap readings needed 3.6 mm and still
             // missed 4.26 mm on these slices.
             Flavour::Bambu0208 => 0.51,
-            // 02.09.01.70, 2026-11-05: 161 single-goat slices (P1S and A2L at 0 and 180 degrees;
-            // macOS at 1-20 threads plus 4 repeats at 14 and the probe runs, 119; Linux x86 in
-            // docker at 1-20 threads, 42). Worst 2.38 mm (A2L, 180 degrees, 13-16 threads); the
-            // misses are systematic, at every thread count: next to 02.08 at the same count the
-            // supports above ~12 mm are identical, below it 02.09 lands fewer, differently merged
-            // feet (P1S first layer 523-586 mm² vs 668). No reading of the 02.08 model covers it
-            // cheaply: Along+Against 2.40 mm (3x the time), extra pair-test readings at 1.6 and
-            // 3.2 mm 1.13 mm but a 28 % larger union and 10x the time (P1S/A2L 38/65 vs 36/64).
-            Flavour::Bambu0209 => 2.48,
+            // 02.09.01.70, 2026-11-05, with its own behaviour (no foot growth in the descent,
+            // the drawn foot flare, the capped merge reach; `switches`) and both merge-order
+            // readings: 122 single-goat slices (P1S and A2L at 0 and 180 degrees; macOS at 1-20
+            // threads, 80; Linux x86 in docker at 1-20 threads, 42). Worst 1.44 mm: one foot of
+            // the A2L at 0 degrees that most thread counts (both platforms) print 2.5 mm west of
+            // where any member puts it; everything else is within 0.47 mm. The 02.08 model on
+            // the same build missed 2.38 mm.
+            Flavour::Bambu0209 => 1.54,
             // U1, 2026-11-04: Snapmaker Orca 2.4.0 slices at 1-20 threads, 0 and 180 degrees
             // (40 observations; its CLI crashes in two GUI-only calls, so the corpus copy had
             // them stubbed): worst 0.67 mm; the owner's printed 48-goat GUI plate lies 0.06 mm
@@ -284,12 +296,11 @@ impl Flavour {
             Flavour::Bambu0208 => &[
                 1.48, 2.31, 2.12, 1.36, 1.17, 1.13, 1.04, 0.91, 1.13, 0.86, 0.76, 1.0, 0.74,
             ],
-            // Same 161 observations, per band. Bands 2-4 (4.26/4.44/4.13) come from ONE Linux
-            // slice of the P1S at 16 threads (a trunk 4 mm off; two repeats did not show it);
-            // without it 2.58/2.18/1.78 (P1S/A2L 37/65 instead of 36/64). Band 0: A2L at 0
-            // degrees misses 3.06 mm at most thread counts on both platforms.
+            // Same 122 observations, per band. Bands 0-1 (2.35 / 1.70) are the A2L foot above;
+            // without it no band misses more than 1.0 mm. The Linux P1S slice at 16 threads
+            // whose trunk was 4 mm off (2026-11-05, 02.08 model) did not recur in this run.
             Flavour::Bambu0209 => &[
-                3.16, 2.79, 4.26, 4.44, 4.13, 2.98, 1.99, 1.51, 1.12, 1.05, 1.05, 1.0, 0.74,
+                2.35, 1.7, 0.99, 1.02, 0.92, 0.71, 0.58, 0.65, 0.92, 0.76, 0.76, 1.0, 0.74,
             ],
             // Same 40 observations, per band (the GUI plate: 0.71 mm at most).
             Flavour::Snapmaker240 | Flavour::Orca242 => &[
@@ -298,6 +309,18 @@ impl Flavour {
             Flavour::Orca250 => &[
                 7.34, 7.34, 7.34, 5.87, 5.06, 3.89, 2.3, 1.71, 1.71, 1.33, 1.16, 0.63, 0.5,
             ],
+        }
+    }
+
+    /// The merge-order readings (`MergeOrder`) of the ensemble its margins were calibrated
+    /// with. 02.09 needs both: on the P1S goat at 0 degrees a foot that every 02.09 slice (1-20
+    /// threads) prints 2.5 mm from where the Along reading puts it is predicted by Against only
+    /// (first layer 1.50 -> 0.47 mm), while the A2L at 0 degrees misses 2.10 mm with Against
+    /// alone and 1.44 with Along.
+    pub fn default_orders(self) -> &'static [MergeOrder] {
+        match self {
+            Flavour::Bambu0209 => &[MergeOrder::Along, MergeOrder::Against],
+            _ => &[MergeOrder::Along],
         }
     }
 
@@ -317,39 +340,36 @@ impl Flavour {
 }
 
 impl ResolvedFlavour {
-    /// The flavour's first-layer margin, or for an approximated flavour (a version without
-    /// its own calibration) the widest of every calibrated build of its family: nothing says
-    /// which build an unknown version behaves like.
-    pub fn first_layer_margin_mm(&self) -> f64 {
-        self.calibrated()
-            .map(Flavour::first_layer_margin_mm)
-            .fold(0.0, f64::max)
+    /// The builds whose supports the envelope must hold, each with its own margins. A pinned
+    /// build is alone. A Bambu target is every calibrated Bambu Studio build: the owner's
+    /// projects say 02.08.02.61 and are opened in whatever Bambu Studio is installed, and one
+    /// plate must print in both 02.08 and 02.09 (their supports differ below ~12 mm). An
+    /// approximated (uncalibrated) version of another family takes its whole family: nothing
+    /// says which build it behaves like.
+    pub fn support_builds(&self) -> Vec<Flavour> {
+        let family = self.flavour.family();
+        if self.pinned || (family != Family::Bambu && !self.approximated) {
+            return vec![self.flavour];
+        }
+        Flavour::ALL
+            .into_iter()
+            .filter(|flavour| flavour.family() == family)
+            .collect()
     }
 
-    /// δ_band of absolute band `band`, widest over the family when approximated.
-    pub fn band_margin_mm(&self, band: usize) -> f64 {
-        self.calibrated()
-            .map(|flavour| flavour.band_margin_mm(band))
-            .fold(0.0, f64::max)
-    }
-
-    /// The margins as one pair: the first layer's and the largest band's.
+    /// The margins as one pair, the largest over `support_builds` (report, provenance).
     pub fn margins(&self) -> Margins {
+        let builds = self.support_builds();
         Margins {
-            first_layer_mm: self.first_layer_margin_mm(),
-            band_mm: self
-                .calibrated()
-                .flat_map(|flavour| flavour.band_margins_mm().iter().copied())
+            first_layer_mm: builds
+                .iter()
+                .map(|flavour| flavour.first_layer_margin_mm())
+                .fold(0.0, f64::max),
+            band_mm: builds
+                .iter()
+                .map(|flavour| flavour.margins().band_mm)
                 .fold(0.0, f64::max),
         }
-    }
-
-    /// The builds whose margins apply: the flavour itself, or its whole family.
-    fn calibrated(&self) -> impl Iterator<Item = Flavour> + '_ {
-        Flavour::ALL.into_iter().filter(move |flavour| {
-            *flavour == self.flavour
-                || (self.approximated && flavour.family() == self.flavour.family())
-        })
     }
 }
 
@@ -531,25 +551,25 @@ mod tests {
     }
 
     #[test]
-    fn an_approximated_flavour_takes_the_widest_margins_of_its_family() {
-        let exact = ResolvedFlavour {
-            flavour: Flavour::Bambu0209,
-            source: FlavourSource::Application,
-            approximated: false,
-        };
-        assert_eq!(exact.first_layer_margin_mm(), Flavour::Bambu0209.first_layer_margin_mm());
-        assert_eq!(exact.band_margin_mm(3), Flavour::Bambu0209.band_margin_mm(3));
-        let approximated = ResolvedFlavour { approximated: true, ..exact };
-        let bambu = [Flavour::Bambu0208, Flavour::Bambu0209];
-        let widest = |margin: &dyn Fn(Flavour) -> f64| bambu.into_iter().map(margin).fold(0.0, f64::max);
-        assert_eq!(approximated.first_layer_margin_mm(), widest(&|f| f.first_layer_margin_mm()));
-        for band in 0..16 {
-            assert_eq!(approximated.band_margin_mm(band), widest(&|f| f.band_margin_mm(band)), "{band}");
-        }
-        let margins = approximated.margins();
-        assert_eq!(margins.band_mm, widest(&|f| f.margins().band_mm));
-        // Another family's margins never leak in.
-        assert!(margins.first_layer_mm < Flavour::Orca250.first_layer_margin_mm());
+    fn a_bambu_target_predicts_every_calibrated_bambu_build_unless_pinned() {
+        let resolved = Flavour::resolve(None, Some("BambuStudio-02.08.02.61"), Some("bambu-02.09")).unwrap();
+        assert_eq!(resolved.support_builds(), vec![Flavour::Bambu0208, Flavour::Bambu0209]);
+        let unknown = Flavour::resolve(None, Some("BambuStudio-02.10.00.12"), Some("bambu-02.09")).unwrap();
+        assert!(unknown.approximated);
+        assert_eq!(unknown.support_builds(), vec![Flavour::Bambu0208, Flavour::Bambu0209]);
+        let pinned = Flavour::resolve(Some("bambu-02.08"), Some("BambuStudio-02.08.02.61"), None).unwrap();
+        assert_eq!(pinned.support_builds(), vec![Flavour::Bambu0208]);
+        // Other families: the build itself, the family only when approximated.
+        let snapmaker = Flavour::resolve(None, Some("Snapmaker_Orca-2.4.0"), None).unwrap();
+        assert_eq!(snapmaker.support_builds(), vec![Flavour::Snapmaker240]);
+        let orca = Flavour::resolve(None, Some("OrcaSlicer-2.3.0"), None).unwrap();
+        assert!(orca.approximated);
+        assert_eq!(orca.support_builds(), vec![Flavour::Orca242, Flavour::Orca250]);
+        let margins = resolved.margins();
+        assert_eq!(
+            margins.first_layer_mm,
+            Flavour::Bambu0208.first_layer_margin_mm().max(Flavour::Bambu0209.first_layer_margin_mm())
+        );
     }
 
     #[test]
