@@ -27,7 +27,7 @@ class NativeRuntimeTest {
         PlatformProperties().apply {
             workerId = "native-test-${newId()}"
             workerMemoryMib = 4096
-            runnerBambuImage = "goat-runner-bambu:2.8.2.61"
+            runnerBambuImage = "goat-runner-bambu:2.9.1.70"
             runnerOrcaImage = "goat-runner-orca:2.4.2"
         },
         jacksonObjectMapper(),

@@ -177,8 +177,8 @@ mod tests {
     fn another_slicer_is_offered_only_with_the_same_bed_and_start_gcode() {
         let same = Trees { orca: tree("Acme", machine(START, "250")), bambu: tree("Acme", machine(START, "250.0")) };
         let map = offered(&profile("Acme", "orca", "orca-2.4"), &same).unwrap();
-        assert_eq!(map, json!({"bambu": "bambu-02.08", "orca": "orca-2.4"}).as_object().unwrap().clone());
-        assert_eq!(flavours(&map), vec!["bambu-02.08", "orca-2.4"]);
+        assert_eq!(map, json!({"bambu": "bambu-02.09", "orca": "orca-2.4"}).as_object().unwrap().clone());
+        assert_eq!(flavours(&map), vec!["bambu-02.09", "orca-2.4"]);
 
         let other_start = Trees { orca: tree("Acme", machine(START, "250")), bambu: tree("Acme", machine("G28\nPRINT_START\n", "250")) };
         let map = offered(&profile("Acme", "orca", "orca-2.4"), &other_start).unwrap();
@@ -191,13 +191,13 @@ mod tests {
     #[test]
     fn a_bambu_printer_offers_orca_and_a_snapmaker_one_keeps_its_gui() {
         let trees = Trees { orca: tree("BBL", machine(START, "250")), bambu: tree("BBL", machine("M970\n", "250")) };
-        let map = offered(&profile("BBL", "bambu", "bambu-02.08"), &trees).unwrap();
+        let map = offered(&profile("BBL", "bambu", "bambu-02.09"), &trees).unwrap();
         // The Bambu tree's own start G-code is irrelevant to its own kind; Orca's BBL preset is
         // the qualified reference, so Orca is offered.
-        assert_eq!(map, json!({"bambu": "bambu-02.08", "orca": "orca-2.4"}).as_object().unwrap().clone());
+        assert_eq!(map, json!({"bambu": "bambu-02.09", "orca": "orca-2.4"}).as_object().unwrap().clone());
         // A printer missing from Orca's tree (A2L) keeps its own slicer only.
         let only_bambu = Trees { orca: PresetIndex::default(), bambu: tree("BBL", machine(START, "250")) };
-        assert_eq!(offered(&profile("BBL", "bambu", "bambu-02.08"), &only_bambu).unwrap().len(), 1);
+        assert_eq!(offered(&profile("BBL", "bambu", "bambu-02.09"), &only_bambu).unwrap().len(), 1);
 
         let snap = Trees { orca: tree("Snapmaker", machine(START, "250")), bambu: PresetIndex::default() };
         let map = offered(&profile("Snapmaker", "orca", "snapmaker-orca-2.4"), &snap).unwrap();
@@ -246,7 +246,7 @@ mod tests {
         };
         run();
         let once = fs::read_to_string(profiles.join("acme.json")).unwrap();
-        assert!(once.contains("  \"slicers\": {\n    \"bambu\": \"bambu-02.08\",\n    \"orca\": \"orca-2.4\"\n  },\n  \"source\""));
+        assert!(once.contains("  \"slicers\": {\n    \"bambu\": \"bambu-02.09\",\n    \"orca\": \"orca-2.4\"\n  },\n  \"source\""));
         run();
         assert_eq!(fs::read_to_string(profiles.join("acme.json")).unwrap(), once);
         assert_eq!(fs::read_to_string(profiles.join("hand.json")).unwrap(), hand);

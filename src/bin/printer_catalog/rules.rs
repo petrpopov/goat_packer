@@ -25,7 +25,7 @@ const BAMBU_VENDOR: &str = "BBL";
 /// The GUI versions the support model and the GUI checks follow: the BambuStudio release the
 /// owner slices in, the Orca release the catalog was imported from (v2.4.2), and Snapmaker's
 /// Orca fork of the same line.
-const BAMBU_GUI_VERSION: &str = "02.08";
+const BAMBU_GUI_VERSION: &str = "02.09";
 const ORCA_GUI_VERSION: &str = "2.4";
 const SNAPMAKER_ORCA_GUI_VERSION: &str = "2.4";
 
@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(snapmaker.bed_rules.body_edge_band_mm, 3.5);
         assert_eq!(snapmaker.edge_margin_mm, 3.5);
         let bambu = derive(&profile(vec![], vec![]), "BBL", &PrinterFacts::default());
-        assert_eq!(bambu.gui_flavour.to_string(), "bambu-02.08");
+        assert_eq!(bambu.gui_flavour.to_string(), "bambu-02.09");
         assert_eq!(bambu.bed_rules.body_edge_band_mm, 0.0);
         assert!(old_field_mismatches(&written(profile(vec![], vec![]), &snapmaker)).is_empty());
     }

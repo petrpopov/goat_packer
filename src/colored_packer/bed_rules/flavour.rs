@@ -1,5 +1,5 @@
 //! The profile's `gui_flavour`: which slicer GUI the owner opens the plate in
-//! (`"bambu-02.08"`, `"snapmaker-orca-2.4"`, `"orca-2.4"`). A job resolves its target GUI from
+//! (`"bambu-02.09"`, `"snapmaker-orca-2.4"`, `"orca-2.4"`). A job resolves its target GUI from
 //! the command line or the project's `Application` first (design §5.3); the profile's value is
 //! the fallback, and the only one an STL job has.
 

@@ -21,7 +21,7 @@
   CPU/RAM/PID limits, ограниченный tmpfs), экспорт только обычных файлов доверенным helper.
 - S3 (SeaweedFS 4.47): private bucket, signed download, SHA256-dedup, attempt-scoped выводы,
   TTL гостей, reference-aware GC с fencing публикации.
-- Закреплённые Linux-сборки Bambu Studio 2.8.2.61 и OrcaSlicer 2.4.2 (SHA256), headless Xvfb.
+- Закреплённые Linux-сборки Bambu Studio 2.9.1.70 (до 2026-11-05: 2.8.2.61) и OrcaSlicer 2.4.2 (SHA256), headless Xvfb.
 
 ## Проверки
 

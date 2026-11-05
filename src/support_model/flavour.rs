@@ -4,7 +4,9 @@
 //!
 //! Resolution order (§5.3): an explicit name, then the source 3MF `Application` metadata,
 //! then the profile's `gui_flavour`; an unknown version of a known family maps to the
-//! nearest known build and is reported as approximated.
+//! nearest known build (Bambu: the newest) and is reported as approximated, with the widest
+//! margins of its family. A Bambu project of an older build than the profile's is sliced in
+//! the profile's build.
 
 mod switches;
 
@@ -18,12 +20,16 @@ pub use switches::{
     MergeBucket, RootCap, SmallOverhang, TowerChamfer,
 };
 
-/// The four slicer builds the behaviour specs describe.
+/// The slicer builds the behaviour specs describe (four), plus Bambu Studio 02.09, which
+/// behaves like 02.08 in the model and has its own calibrated margins. Builds of one family
+/// are declared oldest first: `Ord` is their release order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Flavour {
-    /// Bambu Studio 02.08.02.61 (owner P1S / A2L GUI and CLI).
+    /// Bambu Studio 02.08.02.61 (owner P1S / A2L GUI and CLI until 2026-11-04).
     Bambu0208,
+    /// Bambu Studio 02.09.01.70 (owner P1S / A2L GUI from 2026-11-05, server CLI).
+    Bambu0209,
     /// OrcaSlicer 2.4.2 (server U1 CLI).
     Orca242,
     /// OrcaSlicer 2.5.0-rc (local CLI).
@@ -61,8 +67,9 @@ pub struct ResolvedFlavour {
 }
 
 impl Flavour {
-    pub const ALL: [Flavour; 4] = [
+    pub const ALL: [Flavour; 5] = [
         Flavour::Bambu0208,
+        Flavour::Bambu0209,
         Flavour::Orca242,
         Flavour::Orca250,
         Flavour::Snapmaker240,
@@ -70,7 +77,7 @@ impl Flavour {
 
     pub fn family(self) -> Family {
         match self {
-            Flavour::Bambu0208 => Family::Bambu,
+            Flavour::Bambu0208 | Flavour::Bambu0209 => Family::Bambu,
             Flavour::Orca242 | Flavour::Orca250 => Family::Orca,
             Flavour::Snapmaker240 => Family::SnapmakerOrca,
         }
@@ -80,6 +87,7 @@ impl Flavour {
     pub fn name(self) -> &'static str {
         match self {
             Flavour::Bambu0208 => "bambu-02.08",
+            Flavour::Bambu0209 => "bambu-02.09",
             Flavour::Orca242 => "orca-2.4",
             Flavour::Orca250 => "orca-2.5",
             Flavour::Snapmaker240 => "snapmaker-orca-2.4",
@@ -101,7 +109,8 @@ impl Flavour {
             .into_iter()
             .find(|flavour| flavour.name() == text)
             .or(match text.as_str() {
-                "bambu" | "bambu-02.08.02.61" => Some(Flavour::Bambu0208),
+                "bambu-02.08.02.61" => Some(Flavour::Bambu0208),
+                "bambu" | "bambu-02.09.01.70" => Some(Flavour::NEWEST_BAMBU),
                 "orca" | "orca-2.4.2" => Some(Flavour::Orca242),
                 "orca-2.5.0" | "orca-2.5.0-rc" => Some(Flavour::Orca250),
                 "snapmaker-orca" | "snapmaker-orca-2.4.0" => Some(Flavour::Snapmaker240),
@@ -116,28 +125,43 @@ impl Flavour {
     pub fn own_application(self) -> Option<&'static str> {
         match self {
             Flavour::Bambu0208 => Some("BambuStudio-02.08.02.61"),
+            Flavour::Bambu0209 => Some("BambuStudio-02.09.01.70"),
             Flavour::Snapmaker240 => Some("Snapmaker_Orca-2.4.0"),
             Flavour::Orca242 | Flavour::Orca250 => None,
+        }
+    }
+
+    /// The newest calibrated Bambu Studio build: the stand-in for an uncalibrated version.
+    pub const NEWEST_BAMBU: Flavour = Flavour::Bambu0209;
+
+    /// The four-part version a Bambu build writes (`02.09.01.70` -> `[2, 9, 1, 70]`).
+    fn bambu_version(self) -> Option<[u32; 4]> {
+        match self {
+            Flavour::Bambu0208 => Some([2, 8, 2, 61]),
+            Flavour::Bambu0209 => Some([2, 9, 1, 70]),
+            Flavour::Orca242 | Flavour::Orca250 | Flavour::Snapmaker240 => None,
         }
     }
 
     /// Reads the 3MF `Application` metadata (`BambuStudio-02.08.02.61`,
     /// `Snapmaker_Orca-2.4.0`, `OrcaSlicer-2.4.2`): `(flavour, exact)`. Orca forks that still
     /// write "BambuStudio" are told apart by the version shape: Bambu versions have four
-    /// zero-padded parts (`02.08.02.61`), Orca versions three (`2.4.2`).
+    /// zero-padded parts (`02.08.02.61`), Orca versions three (`2.4.2`). A Bambu version
+    /// without its own calibration (older or newer) stands in as the newest calibrated build,
+    /// not exact (its margins are then the widest of the family, `ResolvedFlavour`).
     pub fn from_application(application: &str) -> Option<(Flavour, bool)> {
         let (name, version) = split_application(application.trim());
-        let parts: Vec<u32> = version
-            .split('.')
-            .map_while(|part| part.parse().ok())
-            .collect();
+        let parts = version_parts(version);
         let lower = name.to_ascii_lowercase();
         let bambu_shape = parts.len() == 4 && version.starts_with('0');
         if lower.contains("snapmaker") {
             return Some((Flavour::Snapmaker240, parts == [2, 4, 0]));
         }
         if lower.contains("bambu") && bambu_shape {
-            return Some((Flavour::Bambu0208, parts == [2, 8, 2, 61]));
+            let exact = Flavour::ALL
+                .into_iter()
+                .find(|flavour| flavour.bambu_version().is_some_and(|known| parts == known));
+            return Some(exact.map_or((Flavour::NEWEST_BAMBU, false), |flavour| (flavour, true)));
         }
         if lower.contains("orca") || lower.contains("bambu") {
             return Some(nearest_orca(&parts));
@@ -167,12 +191,32 @@ impl Flavour {
             // owner's P1S project: BambuStudio-02.08.02.61 plus OrcaSlicer 2.5.0-dev, printed
             // from BambuStudio). On a printer whose profile targets BambuStudio the profile
             // decides; an Orca user there passes `--slicer orca`.
-            let profile_is_bambu = gui_flavour
+            let profile_bambu = gui_flavour
                 .and_then(Flavour::from_name)
-                .is_some_and(|profile| profile.family() == Family::Bambu);
-            if flavour.family() == Family::Orca && profile_is_bambu {
+                .filter(|profile| profile.family() == Family::Bambu);
+            if let Some(profile) = profile_bambu
+                && flavour.family() == Family::Orca
+            {
                 return Ok(ResolvedFlavour {
-                    flavour: Flavour::Bambu0208,
+                    flavour: profile,
+                    source: FlavourSource::Profile,
+                    approximated: false,
+                });
+            }
+            // A Bambu project saved by an older build is sliced by the GUI the user has now,
+            // which opens it without a word: the owner's goat projects still say
+            // BambuStudio-02.08.02.61 and are sliced in 02.09.01.70, whose supports lie up to
+            // 2.4 mm (first layer) and 4.3 mm (bands) outside the 02.08 ensemble. So the
+            // profile's Bambu build wins over an older (or equal) project version; a newer
+            // project version than the profile knows stays the project's (approximated when
+            // uncalibrated).
+            if let (Some(profile), Some(project)) = (
+                profile_bambu.and_then(Flavour::bambu_version),
+                application.and_then(bambu_application_version),
+            ) && project <= profile
+            {
+                return Ok(ResolvedFlavour {
+                    flavour: profile_bambu.unwrap_or(flavour),
                     source: FlavourSource::Profile,
                     approximated: false,
                 });
@@ -209,6 +253,15 @@ impl Flavour {
             // one thread). The ensemble without the overlap readings needed 3.6 mm and still
             // missed 4.26 mm on these slices.
             Flavour::Bambu0208 => 0.51,
+            // 02.09.01.70, 2026-11-05: 161 single-goat slices (P1S and A2L at 0 and 180 degrees;
+            // macOS at 1-20 threads plus 4 repeats at 14 and the probe runs, 119; Linux x86 in
+            // docker at 1-20 threads, 42). Worst 2.38 mm (A2L, 180 degrees, 13-16 threads); the
+            // misses are systematic, at every thread count: next to 02.08 at the same count the
+            // supports above ~12 mm are identical, below it 02.09 lands fewer, differently merged
+            // feet (P1S first layer 523-586 mm² vs 668). No reading of the 02.08 model covers it
+            // cheaply: Along+Against 2.40 mm (3x the time), extra pair-test readings at 1.6 and
+            // 3.2 mm 1.13 mm but a 28 % larger union and 10x the time (P1S/A2L 38/65 vs 36/64).
+            Flavour::Bambu0209 => 2.48,
             // U1, 2026-11-04: Snapmaker Orca 2.4.0 slices at 1-20 threads, 0 and 180 degrees
             // (40 observations; its CLI crashes in two GUI-only calls, so the corpus copy had
             // them stubbed): worst 0.67 mm; the owner's printed 48-goat GUI plate lies 0.06 mm
@@ -230,6 +283,13 @@ impl Flavour {
             // less than bands 1-2, where A2L at 7-9 threads moves branches by up to 2.2 mm).
             Flavour::Bambu0208 => &[
                 1.48, 2.31, 2.12, 1.36, 1.17, 1.13, 1.04, 0.91, 1.13, 0.86, 0.76, 1.0, 0.74,
+            ],
+            // Same 161 observations, per band. Bands 2-4 (4.26/4.44/4.13) come from ONE Linux
+            // slice of the P1S at 16 threads (a trunk 4 mm off; two repeats did not show it);
+            // without it 2.58/2.18/1.78 (P1S/A2L 37/65 instead of 36/64). Band 0: A2L at 0
+            // degrees misses 3.06 mm at most thread counts on both platforms.
+            Flavour::Bambu0209 => &[
+                3.16, 2.79, 4.26, 4.44, 4.13, 2.98, 1.99, 1.51, 1.12, 1.05, 1.05, 1.0, 0.74,
             ],
             // Same 40 observations, per band (the GUI plate: 0.71 mm at most).
             Flavour::Snapmaker240 | Flavour::Orca242 => &[
@@ -254,6 +314,59 @@ impl Flavour {
             band_mm: self.band_margins_mm().iter().copied().fold(0.0, f64::max),
         }
     }
+}
+
+impl ResolvedFlavour {
+    /// The flavour's first-layer margin, or for an approximated flavour (a version without
+    /// its own calibration) the widest of every calibrated build of its family: nothing says
+    /// which build an unknown version behaves like.
+    pub fn first_layer_margin_mm(&self) -> f64 {
+        self.calibrated()
+            .map(Flavour::first_layer_margin_mm)
+            .fold(0.0, f64::max)
+    }
+
+    /// δ_band of absolute band `band`, widest over the family when approximated.
+    pub fn band_margin_mm(&self, band: usize) -> f64 {
+        self.calibrated()
+            .map(|flavour| flavour.band_margin_mm(band))
+            .fold(0.0, f64::max)
+    }
+
+    /// The margins as one pair: the first layer's and the largest band's.
+    pub fn margins(&self) -> Margins {
+        Margins {
+            first_layer_mm: self.first_layer_margin_mm(),
+            band_mm: self
+                .calibrated()
+                .flat_map(|flavour| flavour.band_margins_mm().iter().copied())
+                .fold(0.0, f64::max),
+        }
+    }
+
+    /// The builds whose margins apply: the flavour itself, or its whole family.
+    fn calibrated(&self) -> impl Iterator<Item = Flavour> + '_ {
+        Flavour::ALL.into_iter().filter(move |flavour| {
+            *flavour == self.flavour
+                || (self.approximated && flavour.family() == self.flavour.family())
+        })
+    }
+}
+
+/// The four-part version of a Bambu-shaped `Application` (`BambuStudio-02.09.01.70`).
+fn bambu_application_version(application: &str) -> Option<[u32; 4]> {
+    let (name, version) = split_application(application.trim());
+    let parts = version_parts(version);
+    (name.to_ascii_lowercase().contains("bambu") && version.starts_with('0'))
+        .then(|| parts.try_into().ok())
+        .flatten()
+}
+
+fn version_parts(version: &str) -> Vec<u32> {
+    version
+        .split('.')
+        .map_while(|part| part.parse().ok())
+        .collect()
 }
 
 /// The application that wrote a project, from its `Application` metadata and the `OrcaSlicer`
@@ -333,8 +446,17 @@ mod tests {
             Some((Flavour::Orca250, true))
         );
         assert_eq!(
+            Flavour::from_application("BambuStudio-02.09.01.70"),
+            Some((Flavour::Bambu0209, true))
+        );
+        // Uncalibrated Bambu versions, older or newer, stand in as the newest calibrated one.
+        assert_eq!(
             Flavour::from_application("BambuStudio-02.07.00.55"),
-            Some((Flavour::Bambu0208, false))
+            Some((Flavour::NEWEST_BAMBU, false))
+        );
+        assert_eq!(
+            Flavour::from_application("BambuStudio-02.10.00.12"),
+            Some((Flavour::NEWEST_BAMBU, false))
         );
         // An Orca fork writing "BambuStudio" with an Orca-shaped version.
         assert_eq!(
@@ -378,6 +500,56 @@ mod tests {
                 assert_eq!(Flavour::from_application(application), Some((flavour, true)));
             }
         }
+    }
+
+    #[test]
+    fn an_older_bambu_project_is_sliced_in_the_profiles_newer_build() {
+        // The owner's goat projects say 02.08.02.61 and are sliced in 02.09.01.70.
+        let older = Flavour::resolve(None, Some("BambuStudio-02.08.02.61"), Some("bambu-02.09")).unwrap();
+        assert_eq!(
+            (older.flavour, older.source, older.approximated),
+            (Flavour::Bambu0209, FlavourSource::Profile, false)
+        );
+        let uncalibrated_older =
+            Flavour::resolve(None, Some("BambuStudio-02.05.00.66"), Some("bambu-02.09")).unwrap();
+        assert_eq!(uncalibrated_older.flavour, Flavour::Bambu0209);
+        assert!(!uncalibrated_older.approximated);
+        // A project of a newer build than the profile's is the project's.
+        let newer = Flavour::resolve(None, Some("BambuStudio-02.09.01.70"), Some("bambu-02.08")).unwrap();
+        assert_eq!(
+            (newer.flavour, newer.source, newer.approximated),
+            (Flavour::Bambu0209, FlavourSource::Application, false)
+        );
+        let unknown = Flavour::resolve(None, Some("BambuStudio-02.10.00.12"), Some("bambu-02.09")).unwrap();
+        assert_eq!(
+            (unknown.flavour, unknown.source, unknown.approximated),
+            (Flavour::NEWEST_BAMBU, FlavourSource::Application, true)
+        );
+        // Without a Bambu profile the project decides.
+        let alone = Flavour::resolve(None, Some("BambuStudio-02.08.02.61"), None).unwrap();
+        assert_eq!((alone.flavour, alone.approximated), (Flavour::Bambu0208, false));
+    }
+
+    #[test]
+    fn an_approximated_flavour_takes_the_widest_margins_of_its_family() {
+        let exact = ResolvedFlavour {
+            flavour: Flavour::Bambu0209,
+            source: FlavourSource::Application,
+            approximated: false,
+        };
+        assert_eq!(exact.first_layer_margin_mm(), Flavour::Bambu0209.first_layer_margin_mm());
+        assert_eq!(exact.band_margin_mm(3), Flavour::Bambu0209.band_margin_mm(3));
+        let approximated = ResolvedFlavour { approximated: true, ..exact };
+        let bambu = [Flavour::Bambu0208, Flavour::Bambu0209];
+        let widest = |margin: &dyn Fn(Flavour) -> f64| bambu.into_iter().map(margin).fold(0.0, f64::max);
+        assert_eq!(approximated.first_layer_margin_mm(), widest(&|f| f.first_layer_margin_mm()));
+        for band in 0..16 {
+            assert_eq!(approximated.band_margin_mm(band), widest(&|f| f.band_margin_mm(band)), "{band}");
+        }
+        let margins = approximated.margins();
+        assert_eq!(margins.band_mm, widest(&|f| f.margins().band_mm));
+        // Another family's margins never leak in.
+        assert!(margins.first_layer_mm < Flavour::Orca250.first_layer_margin_mm());
     }
 
     #[test]

@@ -78,6 +78,10 @@ impl Job {
         }
         let mut settings_value = source_project_settings(&args.source_3mf)?;
         let flavour = resolve_flavour(&args, &profile)?;
+        if let Some(warning) = flavour_warning(&args, &flavour) {
+            // A plain line like the gap-floor warning; the report repeats it (`warnings`).
+            eprintln!("warning: {warning}");
+        }
         let build = SlicerBuild::from_name(flavour.flavour.name())
             .ok_or_else(|| format!("no slicer build for flavour {}", flavour.flavour.name()))?;
         // The tower the GUI prints is the one the output 3MF asks for: the model, the probe
@@ -142,6 +146,18 @@ impl Job {
     }
 }
 
+/// The warning of a project whose slicer version has no calibration of its own: the support
+/// envelope then takes the widest margins of the family (`ResolvedFlavour::margins`).
+pub fn flavour_warning(args: &Args, flavour: &ResolvedFlavour) -> Option<String> {
+    flavour.approximated.then(|| {
+        let application = source_application(&args.source_3mf).unwrap_or_default();
+        format!(
+            "slicer version {application} not calibrated; using the widest margins (as {})",
+            flavour.flavour.name()
+        )
+    })
+}
+
 /// The progress line of a forced tower.
 fn tower_note(build: SlicerBuild, width_mm: f64) -> String {
     let rib = if build == SlicerBuild::BambuStudio { ", rib wall off" } else { "" };
@@ -167,7 +183,7 @@ fn apply_edge_margin(profile: &mut PrinterProfile, edge_margin: Option<f64>) {
 fn resolve_flavour(args: &Args, profile: &PrinterProfile) -> AppResult<ResolvedFlavour> {
     let application = source_application(&args.source_3mf);
     let by_kind = match profile.slicer_kind.as_str() {
-        "bambu" => Flavour::Bambu0208,
+        "bambu" => Flavour::NEWEST_BAMBU,
         _ => Flavour::Orca242,
     };
     let profile_name = profile
@@ -180,4 +196,27 @@ fn resolve_flavour(args: &Args, profile: &PrinterProfile) -> AppResult<ResolvedF
         application.as_deref(),
         Some(&profile_name),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::fixture_job;
+    use goat_packer::support_model::flavour::FlavourSource;
+
+    #[test]
+    fn an_uncalibrated_slicer_version_warns_and_names_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = fixture_job(dir.path());
+        let mut flavour = ResolvedFlavour {
+            flavour: Flavour::NEWEST_BAMBU,
+            source: FlavourSource::Application,
+            approximated: false,
+        };
+        assert_eq!(flavour_warning(&job.args, &flavour), None);
+        flavour.approximated = true;
+        let warning = flavour_warning(&job.args, &flavour).unwrap();
+        // The fixture project was saved by BambuStudio 02.00.00.00.
+        assert!(warning.starts_with("slicer version BambuStudio-02.00.00.00 not calibrated; using the widest margins"), "{warning}");
+    }
 }

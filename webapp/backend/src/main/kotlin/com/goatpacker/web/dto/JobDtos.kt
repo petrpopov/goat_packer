@@ -44,7 +44,7 @@ data class ProfileDto(
 
 /**
  * Слайсер принтера: [kind] — bambu|orca (бинарник и runner-образ), [gui] — GUI, в котором открывают стол
- * (`bambu-02.08`, `orca-2.4`, `snapmaker-orca-2.4`; пусто — профиль его не называет).
+ * (`bambu-02.09`, `orca-2.4`, `snapmaker-orca-2.4`; пусто — профиль его не называет).
  */
 data class SlicerOptionDto(val kind: String, val gui: String)
 

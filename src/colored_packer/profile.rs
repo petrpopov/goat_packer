@@ -66,14 +66,15 @@ pub struct PrinterProfile {
     /// table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bed_rules: Option<ProfileBedRules>,
-    /// The slicer GUI the plate is opened in (`"bambu-02.08"`, `"snapmaker-orca-2.4"`,
+    /// The slicer GUI the plate is opened in (`"bambu-02.09"`, `"snapmaker-orca-2.4"`,
     /// `"orca-2.4"`): its own acceptance rules (Snapmaker Orca's 3.5 mm part band) and the
-    /// support behaviour to predict. A job prefers the project's own `Application`; this is the
-    /// fallback, and the only source an STL job has.
+    /// support behaviour to predict. A job prefers the project's own `Application`, except
+    /// that a Bambu project saved by an older (or the same) build than this one is sliced in
+    /// this one (`Flavour::resolve`); this is the fallback, and the only source an STL job has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gui_flavour: Option<GuiFlavour>,
     /// The slicers a user may print this printer with, by `slicer_kind`, each with the GUI it
-    /// targets (`{"bambu": "bambu-02.08", "orca": "orca-2.4"}`; Snapmaker printers
+    /// targets (`{"bambu": "bambu-02.09", "orca": "orca-2.4"}`; Snapmaker printers
     /// `{"orca": "snapmaker-orca-2.4"}`: the server slices them in vanilla Orca on purpose, the
     /// user opens the plate in Snapmaker Orca). Written by `printer_catalog slicers` from the
     /// runner images' preset trees: a kind is listed only when its tree has the machine with

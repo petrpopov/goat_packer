@@ -149,7 +149,7 @@ impl Flavour {
     pub fn root_cap(self) -> RootCap {
         match self {
             Flavour::Orca242 | Flavour::Orca250 => RootCap::FlatFoot,
-            Flavour::Bambu0208 | Flavour::Snapmaker240 => RootCap::Hemisphere,
+            Flavour::Bambu0208 | Flavour::Bambu0209 | Flavour::Snapmaker240 => RootCap::Hemisphere,
         }
     }
 
@@ -188,7 +188,7 @@ impl Flavour {
 
     /// The no-brim set is closed by one brim spacing in B and S (spec 03 §5.3).
     pub fn closes_no_brim_set(self) -> bool {
-        matches!(self, Flavour::Bambu0208 | Flavour::Snapmaker240)
+        matches!(self, Flavour::Bambu0208 | Flavour::Bambu0209 | Flavour::Snapmaker240)
     }
 
     /// Arc thresholds of the support-base connector are process-static in B/O/S (S9) and
@@ -217,7 +217,7 @@ impl Flavour {
 
     pub fn gui_exclusion_check(self) -> GuiExclusionCheck {
         match self {
-            Flavour::Bambu0208 => GuiExclusionCheck::EverySegment,
+            Flavour::Bambu0208 | Flavour::Bambu0209 => GuiExclusionCheck::EverySegment,
             Flavour::Snapmaker240 => GuiExclusionCheck::ConvexHull,
             Flavour::Orca242 | Flavour::Orca250 => GuiExclusionCheck::None,
         }
@@ -233,7 +233,7 @@ impl Flavour {
     /// `GCode/GCodeProcessor.cpp:1845`); S has no such check.
     pub fn cli_outside_error_code(self) -> Option<i32> {
         match self {
-            Flavour::Bambu0208 => Some(-104),
+            Flavour::Bambu0208 | Flavour::Bambu0209 => Some(-104),
             Flavour::Orca242 | Flavour::Orca250 => Some(-102),
             Flavour::Snapmaker240 => None,
         }
@@ -251,7 +251,7 @@ impl Flavour {
     /// their tower brim never warns.
     pub fn conflict_tower_lines(self) -> TowerLines {
         match self {
-            Flavour::Bambu0208 => TowerLines::All,
+            Flavour::Bambu0208 | Flavour::Bambu0209 => TowerLines::All,
             Flavour::Snapmaker240 => TowerLines::BrimLoops,
             Flavour::Orca242 | Flavour::Orca250 => TowerLines::None,
         }
@@ -259,7 +259,7 @@ impl Flavour {
 
     pub fn tower_chamfer(self) -> TowerChamfer {
         match self {
-            Flavour::Bambu0208 => TowerChamfer::Always,
+            Flavour::Bambu0208 | Flavour::Bambu0209 => TowerChamfer::Always,
             Flavour::Snapmaker240 => TowerChamfer::Setting,
             Flavour::Orca242 | Flavour::Orca250 => TowerChamfer::Never,
         }
@@ -267,7 +267,7 @@ impl Flavour {
 
     pub fn anchor_clamp(self) -> AnchorClamp {
         match self {
-            Flavour::Bambu0208 => AnchorClamp::GuiOnOpen,
+            Flavour::Bambu0208 | Flavour::Bambu0209 => AnchorClamp::GuiOnOpen,
             Flavour::Orca242 => AnchorClamp::Never,
             Flavour::Orca250 => AnchorClamp::EverySlice,
             Flavour::Snapmaker240 => AnchorClamp::EveryReload,
@@ -374,11 +374,12 @@ mod tests {
         use Flavour::*;
         assert_eq!(
             Flavour::ALL.map(Flavour::bed_is_obstacle),
-            [true, false, false, false]
+            [true, true, false, false, false]
         );
         assert_eq!(
             Flavour::ALL.map(Flavour::merge_bucket),
             [
+                MergeBucket::ThreadCount,
                 MergeBucket::ThreadCount,
                 MergeBucket::ThreadCount,
                 MergeBucket::FixedFour,
@@ -391,5 +392,23 @@ mod tests {
         assert!(Snapmaker240.static_arc_thresholds());
         assert!(Orca250.simplifies_collision() && !Orca242.simplifies_collision());
         assert!(Bambu0208.strictly_simple() && !Snapmaker240.strictly_simple());
+    }
+
+    /// 02.09 is modelled as 02.08 (only its margins differ): every switch reads the same.
+    #[test]
+    fn bambu_02_09_switches_like_02_08() {
+        use Flavour::*;
+        let pair = [Bambu0208, Bambu0209];
+        let same = |f: &dyn Fn(Flavour) -> String| assert_eq!(f(pair[0]), f(pair[1]));
+        same(&|v| format!("{:?}", v.merge_bucket()));
+        same(&|v| format!("{:?}", v.root_cap()));
+        same(&|v| format!("{:?}", v.first_layer_expansion()));
+        same(&|v| format!("{:?}", v.gui_exclusion_check()));
+        same(&|v| format!("{:?}", v.cli_outside_error_code()));
+        same(&|v| format!("{:?}", v.conflict_tower_lines()));
+        same(&|v| format!("{:?}", v.tower_chamfer()));
+        same(&|v| format!("{:?}", v.anchor_clamp()));
+        same(&|v| format!("{} {}", v.roof_line_angle_degrees(), v.closes_no_brim_set()));
+        same(&|v| format!("{:?}", v.grid()));
     }
 }

@@ -53,7 +53,7 @@ struct Args {
     orca: PathBuf,
     printer: Printer,
     edge_margin: f64,
-    /// `--gui-flavour`: the slicer GUI the user opens the project in (`bambu-02.08`,
+    /// `--gui-flavour`: the slicer GUI the user opens the project in (`bambu-02.09`,
     /// `orca-2.4`, `snapmaker-orca-2.4`, the job profile's `gui_flavour`); the export is
     /// stamped so that GUI reads it as its own (`project_application::stamp_project`).
     /// `None` = the exporting slicer's own stamp.
@@ -95,7 +95,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Error> {
             }
             "--gui-flavour" => {
                 gui_flavour = Some(Flavour::from_name(&value).ok_or_else(|| {
-                    format!("--gui-flavour {value}: expected bambu-02.08, orca-2.4, orca-2.5 or snapmaker-orca-2.4")
+                    format!("--gui-flavour {value}: expected bambu-02.09, bambu-02.08, orca-2.4, orca-2.5 or snapmaker-orca-2.4")
                 })?)
             }
             "--output" => output = Some(PathBuf::from(value)),

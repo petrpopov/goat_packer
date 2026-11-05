@@ -22,8 +22,8 @@
   "tower_marker_style": "wipe_tower",
   "tower_line_width_mm": 0.5,
   "filament_change_seconds": 91,
-  "gui_flavour": "bambu-02.08",
-  "slicers": { "bambu": "bambu-02.08", "orca": "orca-2.4" },
+  "gui_flavour": "bambu-02.09",
+  "slicers": { "bambu": "bambu-02.09", "orca": "orca-2.4" },
   "bed_rules": {
     "body_edge_band_mm": 0.0,
     "print_edge_reserve_mm": 0.0,

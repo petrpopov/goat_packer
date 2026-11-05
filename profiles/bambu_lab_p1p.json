@@ -62,7 +62,7 @@
       28.0
     ]
   ],
-  "gui_flavour": "bambu-02.08",
+  "gui_flavour": "bambu-02.09",
   "id": "bambu_lab_p1p",
   "no_check_for_final_tower_probe": false,
   "nozzle_diameter": 0.4,
@@ -219,7 +219,7 @@
   "slicer_kind": "bambu",
   "slicer_path": "/opt/slicers/bambu/AppRun",
   "slicers": {
-    "bambu": "bambu-02.08",
+    "bambu": "bambu-02.09",
     "orca": "orca-2.4"
   },
   "source": {

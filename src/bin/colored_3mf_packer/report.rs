@@ -194,8 +194,9 @@ impl ColoredPackReport {
             upper_bound: summary.upper_bound,
             class_bounds: summary.class_bounds.clone(),
             levels: summary.levels.clone(),
-            warnings: floor_warning(args.foreign_gap_floor)
+            warnings: crate::job::flavour_warning(args, &job.flavour)
                 .into_iter()
+                .chain(floor_warning(args.foreign_gap_floor))
                 .chain(fallback_warning(args.support_source, &summary.support_source))
                 .collect(),
             class_counts,

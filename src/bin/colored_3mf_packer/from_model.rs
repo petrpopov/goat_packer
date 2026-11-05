@@ -33,13 +33,12 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     if job.own_gap.edits_project() {
         settings.first_layer_gap = job.own_gap.first_layer_mm;
     }
-    let flavour = job.flavour.flavour;
     let margins = match job.args.support_margins {
         Some((first_layer_mm, band_mm)) => Margins {
             first_layer_mm,
             band_mm,
         },
-        None => flavour.margins(),
+        None => job.flavour.margins(),
     };
     let mut prints = Vec::new();
     let mut summaries = Vec::new();
@@ -114,7 +113,7 @@ fn class_print(
     let grown = if job.args.support_margins.is_some() {
         envelope(&members, margins)
     } else {
-        let flavour = job.flavour.flavour;
+        let flavour = job.flavour;
         envelope_banded(&members, margins.first_layer_mm, &|band| {
             flavour.band_margin_mm(band)
         })
