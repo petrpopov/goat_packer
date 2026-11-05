@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use super::cache::{Ensemble, cache_key, load, store};
-use super::ensemble::{distinct, run_members};
+use super::ensemble::{distinct, run_members_with};
 use super::flavour::Flavour;
 use super::merge::MergeOrder;
 use super::settings::SupportSettings;
@@ -40,12 +40,14 @@ pub struct Prediction {
 /// for what the model does not describe (design §5.7).
 pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
     let started = Instant::now();
+    let overlaps = input.flavour.overlap_readings();
     let key = cache_key(
         input.mesh,
         input.settings,
         input.flavour,
         input.rotation_deg,
         input.orders,
+        overlaps,
     );
     if let Some(dir) = input.cache_dir
         && let Some(ensemble) = load(dir, &key)
@@ -65,7 +67,7 @@ pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
         flavour: input.flavour,
         bed: None,
     })?;
-    let runs = run_members(&stage, input.orders);
+    let runs = run_members_with(&stage, input.orders, overlaps);
     let ensemble = Ensemble {
         members: runs.iter().map(|run| run.summary()).collect(),
         realizations: distinct(&runs).into_iter().cloned().collect(),

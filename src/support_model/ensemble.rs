@@ -1,6 +1,6 @@
 //! The ensemble of realizations the slicer can print for one object (design §5.4): every
 //! thread class of the merge bucket rule (nondeterminism S2, spec 02 §4.7) for every arc
-//! family of the line connector (S9, spec 01 §5.5), under every `Overlap` reading of the
+//! family of the line connector (S9, spec 01 §5.5), under the flavour's `Overlap` readings of the
 //! pair test (marginal merges, `merge::Overlap`). The classes are found exactly: a run at
 //! thread count T makes the decision "m ≥ T" on every merge, and all T that make the same
 //! decisions give the same run, so the class of a run is the interval of T around it.
@@ -55,15 +55,24 @@ pub fn families(stage: &StageA) -> Vec<ArcFamily> {
 /// overlap, thread count) order. Members whose graph another member already drew carry no
 /// realization.
 pub fn run_members(stage: &StageA, orders: &[MergeOrder]) -> Vec<MemberRun> {
+    run_members_with(stage, orders, stage.flavour.overlap_readings())
+}
+
+/// `run_members` under the given pair-test readings.
+pub fn run_members_with(
+    stage: &StageA,
+    orders: &[MergeOrder],
+    overlaps: &[Overlap],
+) -> Vec<MemberRun> {
     warm_volumes(stage);
     let claims = Claims::default();
     let axes: Vec<(ArcFamily, MergeOrder, Overlap)> = families(stage)
         .into_iter()
         .flat_map(|family| orders.iter().map(move |&order| (family, order)))
         .flat_map(|(family, order)| {
-            Overlap::ALL
-                .into_iter()
-                .map(move |overlap| (family, order, overlap))
+            overlaps
+                .iter()
+                .map(move |&overlap| (family, order, overlap))
         })
         .collect();
     axes.into_par_iter()

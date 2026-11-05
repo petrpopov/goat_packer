@@ -148,6 +148,8 @@ export interface PackJobInfo {
   finalSliced?: boolean;
   /** Башня очистки, которую поставил пакер; null/нет поля — башни нет (или старый бэкенд). */
   tower?: PackTowerInfo | null;
+  /** Сборка слайсера, на которую рассчитан стол («Bambu Studio 02.09.01.70»); нет поля — старый пакер. */
+  targetSlicer?: string | null;
 }
 
 /** Угол башни очистки (wipe_tower_x/y) и её размер, мм, координаты стола. */

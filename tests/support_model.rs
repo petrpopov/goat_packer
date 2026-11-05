@@ -239,7 +239,13 @@ fn the_thread_classes_tile_every_thread_count_and_a_class_repeats_its_run() {
     let all = run_members(&stage, &BOTH);
     for (family, overlap) in [ArcFamily::Roof, ArcFamily::Base]
         .into_iter()
-        .flat_map(|family| Overlap::ALL.into_iter().map(move |overlap| (family, overlap)))
+        .flat_map(|family| {
+            stage
+                .flavour
+                .overlap_readings()
+                .iter()
+                .map(move |&overlap| (family, overlap))
+        })
     {
         let runs: Vec<_> = all
             .iter()

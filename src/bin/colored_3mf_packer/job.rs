@@ -146,14 +146,14 @@ impl Job {
     }
 }
 
-/// The warning of a project whose slicer version has no calibration of its own: the support
-/// envelope then holds every calibrated build of the family (`ResolvedFlavour::support_builds`).
+/// The warning of a project whose slicer version has no calibration of its own: the supports
+/// are those of the stand-in builds (`ResolvedFlavour::support_builds`; Bambu: the newest).
 pub fn flavour_warning(args: &Args, flavour: &ResolvedFlavour) -> Option<String> {
     flavour.approximated.then(|| {
         let application = source_application(&args.source_3mf).unwrap_or_default();
         let builds: Vec<&str> = flavour.support_builds().iter().map(|f| f.name()).collect();
         format!(
-            "slicer version {application} not calibrated; predicting the supports of every calibrated build ({})",
+            "slicer version {application} not calibrated; predicting the supports of {}",
             builds.join(", ")
         )
     })
@@ -192,7 +192,7 @@ fn resolve_flavour(args: &Args, profile: &PrinterProfile) -> AppResult<ResolvedF
         .as_ref()
         .map_or_else(|| by_kind.name().to_owned(), ToString::to_string);
     // `--slicer-flavour` names a build and pins the prediction to it; `--slicer` names a
-    // family (its GUI from the profile), so a Bambu target stays version-independent.
+    // family (its GUI from the profile's build).
     if let Some(build) = &args.slicer_flavour {
         return Ok(Flavour::resolve(Some(build), application.as_deref(), Some(&profile_name))?);
     }
@@ -222,6 +222,6 @@ mod tests {
         flavour.approximated = true;
         let warning = flavour_warning(&job.args, &flavour).unwrap();
         // The fixture project was saved by BambuStudio 02.00.00.00.
-        assert!(warning.starts_with("slicer version BambuStudio-02.00.00.00 not calibrated; predicting the supports of every calibrated build (bambu-02.08, bambu-02.09)"), "{warning}");
+        assert!(warning.starts_with("slicer version BambuStudio-02.00.00.00 not calibrated; predicting the supports of bambu-02.09"), "{warning}");
     }
 }

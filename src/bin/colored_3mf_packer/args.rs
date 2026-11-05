@@ -103,7 +103,8 @@ pub struct Args {
     /// both for Bambu Studio 02.09), the readings its margins were calibrated with.
     pub support_orders: Option<Vec<MergeOrder>>,
     /// `--slicer-flavour NAME` (`bambu-02.08`, `bambu-02.09`, ...): predict the supports of
-    /// this build only. Without it a Bambu target covers every calibrated Bambu Studio build.
+    /// this build only. Without it the build is the profile's (or a newer project's); an
+    /// uncalibrated Bambu version predicts the newest calibrated one (warning).
     pub slicer_flavour: Option<String>,
     /// `--support-margins FIRST_LAYER:BAND` (mm): replaces the flavour's calibrated margins.
     pub support_margins: Option<(f64, f64)>,

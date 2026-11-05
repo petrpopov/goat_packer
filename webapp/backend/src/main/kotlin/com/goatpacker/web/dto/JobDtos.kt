@@ -93,6 +93,8 @@ data class PackInfoDto(
     val finalSliced: Boolean = true,
     /** Башня очистки, поставленная пакером; null — башни нет. */
     val tower: PackTowerDto? = null,
+    /** Сборка слайсера, на которую рассчитан стол; null — пакер поле не прислал. */
+    val targetSlicer: String? = null,
 )
 
 /**

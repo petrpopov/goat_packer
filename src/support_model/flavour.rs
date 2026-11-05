@@ -6,15 +6,15 @@
 //! then the profile's `gui_flavour`; an unknown version of a known family maps to the
 //! nearest known build (Bambu: the newest) and is reported as approximated. A Bambu project
 //! of an older build than the profile's is sliced in the profile's build. Which builds' supports
-//! a plate must hold is `ResolvedFlavour::support_builds`: every calibrated Bambu Studio build
-//! unless one is pinned (`--slicer-flavour`).
+//! a plate must hold is `ResolvedFlavour::support_builds`: for Bambu the resolved build alone
+//! (`--slicer-flavour` pins another one).
 
 mod switches;
 
 use serde::{Deserialize, Serialize};
 
 use crate::object_print::Margins;
-use crate::support_model::merge::MergeOrder;
+use crate::support_model::merge::{MergeOrder, Overlap};
 use crate::polygon_ops::Grid;
 
 pub use switches::{
@@ -64,11 +64,11 @@ pub struct ResolvedFlavour {
     pub flavour: Flavour,
     pub source: FlavourSource,
     /// The project names another version of the family; the nearest known build stands in
-    /// (report `flavour_approximated: true`; the supports are those of every calibrated build
-    /// of the family, `support_builds`).
+    /// (report `flavour_approximated: true`; Bambu: the newest calibrated build's supports,
+    /// other families: every calibrated build's, `support_builds`).
     pub approximated: bool,
     /// The user named this very build (`--slicer-flavour`): only its supports are predicted.
-    /// Otherwise a Bambu target is version-independent (`support_builds`).
+    /// Otherwise the build comes from the project and the profile (`resolve`).
     #[serde(default)]
     pub pinned: bool,
 }
@@ -98,6 +98,17 @@ impl Flavour {
             Flavour::Orca242 => "orca-2.4",
             Flavour::Orca250 => "orca-2.5",
             Flavour::Snapmaker240 => "snapmaker-orca-2.4",
+        }
+    }
+
+    /// The build as the user knows it (report `target_slicer`, the webapp's result view).
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Flavour::Bambu0208 => "Bambu Studio 02.08.02.61",
+            Flavour::Bambu0209 => "Bambu Studio 02.09.01.70",
+            Flavour::Orca242 => "OrcaSlicer 2.4.2",
+            Flavour::Orca250 => "OrcaSlicer 2.5.0-rc",
+            Flavour::Snapmaker240 => "Snapmaker Orca 2.4.0",
         }
     }
 
@@ -155,8 +166,7 @@ impl Flavour {
     /// write "BambuStudio" are told apart by the version shape: Bambu versions have four
     /// zero-padded parts (`02.08.02.61`), Orca versions three (`2.4.2`). A Bambu version
     /// without its own calibration (older or newer) stands in as the newest calibrated build,
-    /// not exact (the supports of every calibrated build are then predicted,
-    /// `ResolvedFlavour::support_builds`).
+    /// not exact (`ResolvedFlavour::support_builds`).
     pub fn from_application(application: &str) -> Option<(Flavour, bool)> {
         let (name, version) = split_application(application.trim());
         let parts = version_parts(version);
@@ -274,11 +284,12 @@ impl Flavour {
             // where any member puts it; everything else is within 0.47 mm. The 02.08 model on
             // the same build missed 2.38 mm.
             Flavour::Bambu0209 => 1.54,
-            // U1, 2026-11-04: Snapmaker Orca 2.4.0 slices at 1-20 threads, 0 and 180 degrees
-            // (40 observations; its CLI crashes in two GUI-only calls, so the corpus copy had
-            // them stubbed): worst 0.67 mm; the owner's printed 48-goat GUI plate lies 0.06 mm
-            // outside. O has no support slices of its own and takes S's values.
-            Flavour::Snapmaker240 | Flavour::Orca242 => 0.77,
+            // U1: Snapmaker Orca 2.4.0 slices at 1-20 threads, 0 and 180 degrees (40
+            // observations; its CLI crashes in two GUI-only calls, so the corpus copy had them
+            // stubbed). 2026-11-05, ensemble without `Lone` (`overlap_readings`): worst 0.91 mm
+            // (180 degrees, every thread count); with `Lone` it was 0.67 (2026-11-04). O has no
+            // support slices of its own and takes S's values.
+            Flavour::Snapmaker240 | Flavour::Orca242 => 1.01,
             // Vanilla Orca CLI on the U1 (40 observations): worst 4.85 mm over 40 observations at all rotations. R is
             // deterministic, so this is model error, not slicer noise.
             Flavour::Orca250 => 5.0,
@@ -302,9 +313,11 @@ impl Flavour {
             Flavour::Bambu0209 => &[
                 2.35, 1.7, 0.99, 1.02, 0.92, 0.71, 0.58, 0.65, 0.92, 0.76, 0.76, 1.0, 0.74,
             ],
-            // Same 40 observations, per band (the GUI plate: 0.71 mm at most).
+            // Same 40 observations, per band, without `Lone` (with it: 1.48, 1.99, 1.76, 0.84,
+            // ...). Bands 0-2 are one foot at 180 degrees that the slicer prints between two
+            // predicted feet at every thread count.
             Flavour::Snapmaker240 | Flavour::Orca242 => &[
-                1.48, 1.99, 1.76, 0.84, 0.81, 0.89, 0.61, 0.69, 0.91, 0.94, 0.49, 0.6, 0.49,
+                1.80, 1.99, 2.15, 0.91, 0.81, 0.89, 0.61, 0.89, 1.06, 0.99, 0.72, 0.6, 0.49,
             ],
             Flavour::Orca250 => &[
                 7.34, 7.34, 7.34, 5.87, 5.06, 3.89, 2.3, 1.71, 1.71, 1.33, 1.16, 0.63, 0.5,
@@ -324,6 +337,26 @@ impl Flavour {
         }
     }
 
+    /// The pair-test readings (`merge::Overlap`) of the ensemble its margins were calibrated
+    /// with. `Lone` (0.8 mm) was added for a Bambu Linux slice; Snapmaker Orca (and O, which
+    /// shares its margins) runs without it: over the 40 Snapmaker slices (2026-11-05, T 1-20,
+    /// 0/180 degrees) it lowers the worst miss (L1 0.91 -> 0.67, band 0 1.70 -> 1.38 mm) but
+    /// adds more area than the smaller margins save: U1 46 with it, 47 without (each with its
+    /// own margins). No reading subset reaches 48: the worst band misses (1.89 mm at 180
+    /// degrees, one foot between two predicted ones) are the same in every member.
+    pub fn overlap_readings(self) -> &'static [Overlap] {
+        const WITHOUT_LONE: [Overlap; 4] = [
+            Overlap::Slicer,
+            Overlap::Thicker,
+            Overlap::Thick,
+            Overlap::Thickest,
+        ];
+        match self {
+            Flavour::Snapmaker240 | Flavour::Orca242 => &WITHOUT_LONE,
+            Flavour::Bambu0208 | Flavour::Bambu0209 | Flavour::Orca250 => &Overlap::ALL,
+        }
+    }
+
     /// δ_band of absolute band `band`.
     pub fn band_margin_mm(self, band: usize) -> f64 {
         let table = self.band_margins_mm();
@@ -340,15 +373,16 @@ impl Flavour {
 }
 
 impl ResolvedFlavour {
-    /// The builds whose supports the envelope must hold, each with its own margins. A pinned
-    /// build is alone. A Bambu target is every calibrated Bambu Studio build: the owner's
-    /// projects say 02.08.02.61 and are opened in whatever Bambu Studio is installed, and one
-    /// plate must print in both 02.08 and 02.09 (their supports differ below ~12 mm). An
-    /// approximated (uncalibrated) version of another family takes its whole family: nothing
-    /// says which build it behaves like.
+    /// The builds whose supports the envelope must hold, each with its own margins. A Bambu
+    /// target is the resolved build alone: the profile's (the newest calibrated, 02.09), a
+    /// newer project's, or the newest for an uncalibrated version (warning). The 02.08+02.09
+    /// union was measured and dropped (2026-11-05, fresh caches: P1S 41 / A2L 70 against 44 /
+    /// 73 for 02.09 alone; the owner slices in 02.09); `--slicer-flavour bambu-02.08` still
+    /// pins the old build. An approximated (uncalibrated) version of another family takes its
+    /// whole family: nothing says which build it behaves like.
     pub fn support_builds(&self) -> Vec<Flavour> {
         let family = self.flavour.family();
-        if self.pinned || (family != Family::Bambu && !self.approximated) {
+        if self.pinned || family == Family::Bambu || !self.approximated {
             return vec![self.flavour];
         }
         Flavour::ALL
@@ -551,12 +585,12 @@ mod tests {
     }
 
     #[test]
-    fn a_bambu_target_predicts_every_calibrated_bambu_build_unless_pinned() {
+    fn a_bambu_target_predicts_the_resolved_build_alone() {
         let resolved = Flavour::resolve(None, Some("BambuStudio-02.08.02.61"), Some("bambu-02.09")).unwrap();
-        assert_eq!(resolved.support_builds(), vec![Flavour::Bambu0208, Flavour::Bambu0209]);
+        assert_eq!(resolved.support_builds(), vec![Flavour::Bambu0209]);
         let unknown = Flavour::resolve(None, Some("BambuStudio-02.10.00.12"), Some("bambu-02.09")).unwrap();
         assert!(unknown.approximated);
-        assert_eq!(unknown.support_builds(), vec![Flavour::Bambu0208, Flavour::Bambu0209]);
+        assert_eq!(unknown.support_builds(), vec![Flavour::NEWEST_BAMBU]);
         let pinned = Flavour::resolve(Some("bambu-02.08"), Some("BambuStudio-02.08.02.61"), None).unwrap();
         assert_eq!(pinned.support_builds(), vec![Flavour::Bambu0208]);
         // Other families: the build itself, the family only when approximated.
@@ -565,11 +599,19 @@ mod tests {
         let orca = Flavour::resolve(None, Some("OrcaSlicer-2.3.0"), None).unwrap();
         assert!(orca.approximated);
         assert_eq!(orca.support_builds(), vec![Flavour::Orca242, Flavour::Orca250]);
-        let margins = resolved.margins();
         assert_eq!(
-            margins.first_layer_mm,
-            Flavour::Bambu0208.first_layer_margin_mm().max(Flavour::Bambu0209.first_layer_margin_mm())
+            resolved.margins().first_layer_mm,
+            Flavour::Bambu0209.first_layer_margin_mm()
         );
+    }
+
+    #[test]
+    fn snapmaker_runs_without_the_lone_reading_and_bambu_with_it() {
+        assert!(!Flavour::Snapmaker240.overlap_readings().contains(&Overlap::Lone));
+        assert_eq!(Flavour::Orca242.overlap_readings(), Flavour::Snapmaker240.overlap_readings());
+        for bambu in [Flavour::Bambu0208, Flavour::Bambu0209] {
+            assert_eq!(bambu.overlap_readings(), &Overlap::ALL);
+        }
     }
 
     #[test]

@@ -18,6 +18,8 @@ data class PackJobResult(
     val finalSliced: Boolean = true,
     /** `tower` отчёта: башня очистки, которую пакер поставил на стол; null — башни нет (или старый пакер). */
     val tower: PackTowerResult? = null,
+    /** `target_slicer` отчёта: сборка слайсера, на которую рассчитан стол («Bambu Studio 02.09.01.70»); null — старый пакер. */
+    val targetSlicer: String? = null,
 )
 
 /**

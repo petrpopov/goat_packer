@@ -33,6 +33,9 @@ pub struct ColoredPackReport {
     /// `probe`: slicer probes of one object per rotation class (a cache hit counts as one).
     pub support_source: String,
     pub slicer_flavour: String,
+    /// The slicer build(s) the plate is computed for, as the user knows them
+    /// (`Bambu Studio 02.09.01.70`; the webapp shows it with the result).
+    pub target_slicer: String,
     pub flavour_approximated: bool,
     /// Per rotation class: runs sliced, whether the last runs added nothing, cache hit.
     pub probes: Vec<ClassSummary>,
@@ -179,6 +182,13 @@ impl ColoredPackReport {
                 summary.support_source.clone()
             },
             slicer_flavour: job.flavour.flavour.name().to_owned(),
+            target_slicer: job
+                .flavour
+                .support_builds()
+                .iter()
+                .map(|build| build.display_name())
+                .collect::<Vec<_>>()
+                .join(" + "),
             flavour_approximated: job.flavour.approximated,
             probes: summary.probes.clone(),
             model_seconds: summary.model_seconds,

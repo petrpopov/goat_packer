@@ -20,6 +20,7 @@ fun PackJobResult.toDto() = PackInfoDto(
     supportOverlapMm = supportOverlapMm,
     finalSliced = finalSliced,
     tower = tower?.toDto(),
+    targetSlicer = targetSlicer,
 )
 
 fun PackTowerResult.toDto() = PackTowerDto(anchorXMm, anchorYMm, widthMm, depthMm)

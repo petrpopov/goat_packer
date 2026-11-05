@@ -39,6 +39,7 @@ class JobReportParser(private val mapper: ObjectMapper) {
             // Старый пакер поля не пишет — он всегда резал стол целиком.
             finalSliced = report?.get("final_sliced")?.takeIf { it.isBoolean }?.asBoolean() ?: true,
             tower = report?.get("tower")?.let(::parsePackTower),
+            targetSlicer = report?.get("target_slicer")?.takeIf { it.isTextual }?.asText()?.takeIf { it.isNotBlank() },
         )
     }
 

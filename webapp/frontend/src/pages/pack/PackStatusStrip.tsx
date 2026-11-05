@@ -338,6 +338,7 @@ function succeededContent(pack: PackJob, result: PackJobInfo, now: number): Stri
       <>Готово: {objectsText(result.objectCount)} на столе</>
     ),
   ];
+  if (result.targetSlicer) parts.push(<>рассчитано на {result.targetSlicer}</>);
   if (checkActive && check) {
     parts.push(
       checkRunning && check.stage ? (

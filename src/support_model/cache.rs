@@ -11,13 +11,13 @@ use sha2::{Digest, Sha256};
 
 use super::ensemble::MemberSummary;
 use super::flavour::Flavour;
-use super::merge::MergeOrder;
+use super::merge::{MergeOrder, Overlap};
 use super::settings::SupportSettings;
 use crate::embedded_mesh::ObjectMesh;
 use crate::object_print::Realization;
 
 /// Bumped on any change of what the generator computes: old entries then miss.
-pub const MODEL_VERSION: u32 = 7;
+pub const MODEL_VERSION: u32 = 8;
 
 /// The distinct realizations of one (object, settings, flavour, rotation).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -33,6 +33,7 @@ pub fn cache_key(
     flavour: Flavour,
     rotation_deg: f64,
     orders: &[MergeOrder],
+    overlaps: &[Overlap],
 ) -> String {
     let mut hash = Sha256::new();
     hash.update(MODEL_VERSION.to_le_bytes());
@@ -40,6 +41,9 @@ pub fn cache_key(
     hash.update(rotation_deg.to_le_bytes());
     for order in orders {
         hash_bytes(&mut hash, format!("{order:?}").as_bytes());
+    }
+    for overlap in overlaps {
+        hash_bytes(&mut hash, format!("{overlap:?}").as_bytes());
     }
     hash_bytes(&mut hash, &serde_json::to_vec(settings).unwrap_or_default());
     for part in &mesh.parts {
