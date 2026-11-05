@@ -73,6 +73,10 @@ pub struct ResolvedFlavour {
     pub pinned: bool,
 }
 
+/// Snapmaker Orca 2.4.0's support margin for the first layer and every band, mm: chosen by
+/// whole-plate slices (`Flavour::first_layer_margin_mm`).
+const SNAPMAKER_PLATE_MARGIN_MM: f64 = 0.75;
+
 impl Flavour {
     pub const ALL: [Flavour; 5] = [
         Flavour::Bambu0208,
@@ -288,8 +292,16 @@ impl Flavour {
             // observations; its CLI crashes in two GUI-only calls, so the corpus copy had them
             // stubbed). 2026-11-05, ensemble without `Lone` (`overlap_readings`): worst 0.91 mm
             // (180 degrees, every thread count); with `Lone` it was 0.67 (2026-11-04). O has no
-            // support slices of its own and takes S's values.
-            Flavour::Snapmaker240 | Flavour::Orca242 => 1.01,
+            // support slices of its own and keeps these values.
+            Flavour::Orca242 => 1.01,
+            // S itself is set by whole-plate slices, not by the single-goat worst case: the
+            // owner's printed 48-goat brick lattice (40 x 32 mm, all at 0 degrees) is admissible
+            // up to 0.5 mm only, and the corpus maximum held the packer at 47. Uniform 0.75 mm
+            // packs 49 and that plate sliced clean 16 of 16 times (Snapmaker Orca 2.4.0, T =
+            // 1-20 with repeats at 4 and 18, where the rare unmerged 180-degree trunk showed;
+            // 2026-11-05), like the owner's 48 (11 of 11); 0.5 mm packed 51 but 1 of 11 slices
+            // conflicted, 0.5 / 1.0 mm 51 and 3 of 11. Tied to `band_margins_mm`.
+            Flavour::Snapmaker240 => SNAPMAKER_PLATE_MARGIN_MM,
             // Vanilla Orca CLI on the U1 (40 observations): worst 4.85 mm over 40 observations at all rotations. R is
             // deterministic, so this is model error, not slicer noise.
             Flavour::Orca250 => 5.0,
@@ -316,7 +328,9 @@ impl Flavour {
             // Same 40 observations, per band, without `Lone` (with it: 1.48, 1.99, 1.76, 0.84,
             // ...). Bands 0-2 are one foot at 180 degrees that the slicer prints between two
             // predicted feet at every thread count.
-            Flavour::Snapmaker240 | Flavour::Orca242 => &[
+            // S: one uniform value, see `first_layer_margin_mm`.
+            Flavour::Snapmaker240 => &[SNAPMAKER_PLATE_MARGIN_MM],
+            Flavour::Orca242 => &[
                 1.80, 1.99, 2.15, 0.91, 0.81, 0.89, 0.61, 0.89, 1.06, 0.99, 0.72, 0.6, 0.49,
             ],
             Flavour::Orca250 => &[
