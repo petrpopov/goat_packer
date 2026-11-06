@@ -1,7 +1,7 @@
 //! The model's results kept between runs (design §5.6). The key hashes everything a run
 //! depends on: the mesh of every part with its paint, every support-relevant setting, the
-//! flavour, the rotation and `MODEL_VERSION`. What is cached is the raw ensemble (the distinct
-//! realizations), not the grown envelope, so a changed margin needs no recomputation.
+//! flavour, the rotation and `MODEL_VERSION`. What is cached is the raw ensemble (its drawn
+//! union), not the grown envelope, so a changed margin needs no recomputation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,12 +17,17 @@ use crate::embedded_mesh::ObjectMesh;
 use crate::object_print::Realization;
 
 /// Bumped on any change of what the generator computes: old entries then miss.
-pub const MODEL_VERSION: u32 = 8;
+/// 9: the distinct graphs are drawn as one union (`bands::union_realization`).
+pub const MODEL_VERSION: u32 = 9;
 
-/// The distinct realizations of one (object, settings, flavour, rotation).
+/// The ensemble of one (object, settings, flavour, rotation).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Ensemble {
     pub members: Vec<MemberSummary>,
+    /// How many distinct branch graphs the members produced.
+    #[serde(default)]
+    pub graphs: usize,
+    /// The realizations the envelope unites: the distinct graphs drawn together, one.
     pub realizations: Vec<Realization>,
 }
 
@@ -98,6 +103,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ensemble = Ensemble {
             members: Vec::new(),
+            graphs: 1,
             realizations: vec![Realization {
                 member: 7,
                 ..Realization::default()

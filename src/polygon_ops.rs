@@ -27,7 +27,7 @@ pub use i_overlay::i_float::int::point::IntPoint;
 
 pub use boolean::{
     difference, difference_islands, intersection, intersection_islands, islands, overlaps, resolve,
-    union, union_all, union_islands, xor,
+    union, union_all, union_islands, union_many, xor,
 };
 pub use grid::{Grid, MAX_COORDINATE};
 pub use offset::{DEFAULT_MITER_LIMIT, Join, offset};

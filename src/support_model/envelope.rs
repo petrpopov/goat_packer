@@ -2,6 +2,8 @@
 //! band, grown by the margin δ that covers what the model does not reproduce. δ describes the
 //! slicer, not the printer, and is not the pair gap between neighbours.
 
+use rayon::prelude::*;
+
 use crate::object_print::{Loops, Margins, Realization};
 use crate::polygon_ops::{Grid, Join, Rings, islands, offset, union_all};
 
@@ -21,15 +23,17 @@ pub fn envelope(members: &[&Realization], margins: Margins) -> Realization {
 pub fn envelope_banded(
     members: &[&Realization],
     first_layer_mm: f64,
-    band_margin_mm: &dyn Fn(usize) -> f64,
+    band_margin_mm: &(dyn Fn(usize) -> f64 + Sync),
 ) -> Realization {
     let bands = members
         .iter()
         .map(|member| member.support.len())
         .max()
         .unwrap_or(0);
-    let band_union = |pick: &dyn Fn(&Realization) -> &[Loops]| -> Vec<Loops> {
+    // Bands are independent: in parallel (4 s per class on one thread for a P1S goat).
+    let band_union = |pick: &(dyn Fn(&Realization) -> &[Loops] + Sync)| -> Vec<Loops> {
         (0..bands)
+            .into_par_iter()
             .map(|band| {
                 let parts: Vec<Rings> = members
                     .iter()

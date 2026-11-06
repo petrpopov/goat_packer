@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use super::cache::{Ensemble, cache_key, load, store};
-use super::ensemble::{distinct, run_members_with};
+use super::ensemble::{distinct, run_members_with, union};
 use super::flavour::Flavour;
 use super::merge::MergeOrder;
 use super::settings::SupportSettings;
@@ -70,7 +70,8 @@ pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
     let runs = run_members_with(&stage, input.orders, overlaps);
     let ensemble = Ensemble {
         members: runs.iter().map(|run| run.summary()).collect(),
-        realizations: distinct(&runs).into_iter().cloned().collect(),
+        graphs: distinct(&runs).len(),
+        realizations: vec![union(&stage, &runs)],
     };
     if let Some(dir) = input.cache_dir {
         store(dir, &key, &ensemble).map_err(|error| SupportError::Invalid(error.to_string()))?;

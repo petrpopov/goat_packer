@@ -38,6 +38,40 @@ pub fn union_islands(a: &[Ring], b: &[Ring]) -> Vec<Island> {
     overlay(a, b, OverlayRule::Union, FillRule::NonZero)
 }
 
+/// Rings per leaf of `union_many`: below it one sweep is cheapest.
+const UNION_LEAF: usize = 16;
+
+/// The sweep of `union_many`: the list solver was the fastest on piles of tube slices
+/// (P1S layers: list 11.2 s, auto 13.1 s, fragment 13.1 s, tree 23 s).
+const UNION_SOLVER: Solver = Solver {
+    strategy: Strategy::List,
+    ..SOLVER
+};
+
+/// The non-zero union of many rings as a balanced tree of unions (each half resolved first,
+/// in parallel). One sweep over a pile of nearly coincident polygons (the same tube slice of
+/// many ensemble graphs, a few units apart) computes every crossing inside the pile: 22 k
+/// rings of one P1S layer took 170 s, the tree 1.6 s. Splitting the rings by position
+/// instead of by input order was no faster: nearly coincident rings each keep a piece of the
+/// union's scalloped outline, so the outlines do not shrink up the tree either way.
+pub fn union_many(rings: &[Ring]) -> Rings {
+    let run = |rings: &[Ring]| {
+        flatten(overlay_with(
+            rings,
+            &[],
+            OverlayRule::Subject,
+            FillRule::NonZero,
+            UNION_SOLVER,
+        ))
+    };
+    if rings.len() <= UNION_LEAF {
+        return run(rings);
+    }
+    let (low, high) = rings.split_at(rings.len() / 2);
+    let (low, high) = rayon::join(|| union_many(low), || union_many(high));
+    run(&[low, high].concat())
+}
+
 /// The union of several regions in one pass.
 pub fn union_all<'a>(regions: impl IntoIterator<Item = &'a Rings>) -> Rings {
     let rings: Rings = regions.into_iter().flatten().cloned().collect();
@@ -86,11 +120,15 @@ fn disjoint_boxes(a: &[Ring], b: &[Ring]) -> bool {
 }
 
 fn overlay(subject: &[Ring], clip: &[Ring], rule: OverlayRule, fill: FillRule) -> Vec<Island> {
+    overlay_with(subject, clip, rule, fill, SOLVER)
+}
+
+fn overlay_with(subject: &[Ring], clip: &[Ring], rule: OverlayRule, fill: FillRule, solver: Solver) -> Vec<Island> {
     let edges: usize = subject.iter().chain(clip).map(Vec::len).sum();
     if edges == 0 {
         return Vec::new();
     }
-    let mut overlay = Overlay::new_custom(edges, IntOverlayOptions::default(), SOLVER);
+    let mut overlay = Overlay::new_custom(edges, IntOverlayOptions::default(), solver);
     for ring in subject.iter().filter(|ring| ring.len() >= 3) {
         overlay.add_contour(ring, ShapeType::Subject);
     }

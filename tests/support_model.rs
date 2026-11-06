@@ -7,9 +7,9 @@ use goat_packer::embedded_mesh::{ObjectMesh, Part};
 use goat_packer::object_print::{Loops, Margins, Realization};
 use goat_packer::support_model::bands::realization;
 use goat_packer::support_model::cache::Ensemble;
-use goat_packer::support_model::ensemble::{class_of, distinct, run_members};
+use goat_packer::support_model::ensemble::{class_of, distinct, run_members, union};
 use goat_packer::support_model::envelope::envelope;
-use goat_packer::support_model::exceedance::area_mm2;
+use goat_packer::support_model::exceedance::{area_mm2, exceedance};
 use goat_packer::support_model::flavour::Flavour;
 use goat_packer::support_model::graph::branch_graph;
 use goat_packer::support_model::merge::{MergeOrder, Overlap, ThreadClass};
@@ -106,16 +106,6 @@ fn model(flavour: Flavour) -> (goat_packer::support_model::StageA, SupportSettin
     })
     .unwrap();
     (stage, settings)
-}
-
-fn same_ignoring_member(a: &Realization, b: &Realization) -> bool {
-    Realization {
-        member: 0,
-        ..a.clone()
-    } == Realization {
-        member: 0,
-        ..b.clone()
-    }
 }
 
 #[test]
@@ -272,8 +262,10 @@ fn the_thread_classes_tile_every_thread_count_and_a_class_repeats_its_run() {
             };
             let graph = branch_graph(&stage, run.family, class);
             assert_eq!(class_of(&graph.merge_values, mid).1, run.class.1);
-            if let Some(drawn) = &run.realization {
-                assert!(same_ignoring_member(&realization(&stage, &graph, 0), drawn));
+            if let Some(kept) = &run.graph {
+                let mut placed = graph.layers.clone();
+                placed.iter_mut().flatten().for_each(|node| node.area.clear());
+                assert_eq!(kept.layers, placed);
             }
         }
         assert_eq!(covered, usize::MAX, "the last class is unbounded");
@@ -365,7 +357,7 @@ fn the_ensemble_is_identical_for_one_and_eight_threads_and_across_runs() {
 }
 
 #[test]
-fn every_distinct_graph_has_exactly_one_realization() {
+fn every_distinct_graph_is_kept_exactly_once() {
     let (stage, _) = model(Flavour::Orca242);
     let runs = run_members(&stage, &BOTH);
     let unique = distinct(&runs);
@@ -373,9 +365,9 @@ fn every_distinct_graph_has_exactly_one_realization() {
     hashes.sort_unstable();
     hashes.dedup();
     assert_eq!(unique.len(), hashes.len());
-    // Exactly the first member of each graph... or a later one drew it: one drawer each.
-    let drawn = runs.iter().filter(|run| run.realization.is_some()).count();
-    assert_eq!(drawn, hashes.len());
+    // Exactly the first member of each graph... or a later one kept it: one keeper each.
+    let kept = runs.iter().filter(|run| run.graph.is_some()).count();
+    assert_eq!(kept, hashes.len());
 }
 
 #[test]
@@ -389,6 +381,31 @@ fn loops_of_a_member_are_closed_millimetre_rings() {
     for loops in all {
         for ring in loops {
             assert!(ring.len() >= 4 && ring.first() == ring.last());
+        }
+    }
+}
+
+#[test]
+fn the_drawn_union_covers_every_graph_drawn_alone() {
+    for flavour in [Flavour::Orca242, Flavour::Bambu0209] {
+        let (stage, _) = model(flavour);
+        let runs = run_members(&stage, &BOTH);
+        let united = union(&stage, &runs);
+        let graphs = distinct(&runs);
+        assert!(graphs.len() >= 2, "{flavour:?}: {} graphs", graphs.len());
+        for (index, graph) in graphs.into_iter().enumerate() {
+            let alone = realization(&stage, graph, 0);
+            let kinds = std::iter::once(("base", &alone.base, &united.base))
+                .chain(alone.support.iter().zip(&united.support).map(|(a, b)| ("support", a, b)))
+                .chain(alone.above_base.iter().zip(&united.above_base).map(|(a, b)| ("above", a, b)))
+                .chain(alone.interface.iter().zip(&united.interface).map(|(a, b)| ("interface", a, b)));
+            for (kind, own, all) in kinds {
+                // The union is not simplified and the flange is grown per root set, so the
+                // slack is the notch closing's arcs and integer rounding.
+                let outside = exceedance(own, all);
+                assert!(outside.max_mm < 0.05, "{flavour:?} graph {index} {kind}: {outside:?}");
+            }
+            assert!(alone.support.len() <= united.support.len());
         }
     }
 }

@@ -8,10 +8,10 @@
 //! cap 0.2 mm at factor ½, stop when no sphere digs in deeper than 1e-4 mm or after 100
 //! iterations.
 
-mod obstacle;
+pub(crate) mod obstacle;
 mod spheres;
 
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use obstacle::SegmentGrid;
 use spheres::{Sphere, Spheres};
@@ -38,14 +38,12 @@ pub struct Smoothed {
 /// Runs the pass over the placed `layers`.
 pub fn smooth(stage: &StageA, layers: &[Vec<Node>]) -> Smoothed {
     let mut spheres = Spheres::new(stage, layers);
-    let mut obstacles: BTreeMap<usize, SegmentGrid> = BTreeMap::new();
-    let cell = stage.derived.grid.scaled(CELL_MM);
+    let mut obstacles: Vec<Option<Arc<SegmentGrid>>> = vec![None; stage.grid.len()];
     for sphere in &spheres.list {
         for layer in sphere.span.0..=sphere.span.1 {
-            obstacles.entry(layer).or_insert_with(|| {
-                let rings = stage.clearance.collision(0, layer, true);
-                SegmentGrid::new(&rings, cell)
-            });
+            if obstacles[layer].is_none() {
+                obstacles[layer] = Some(obstacle(stage, layer));
+            }
         }
     }
     let rule = Rule::new(stage);
@@ -89,6 +87,15 @@ pub fn smooth(stage: &StageA, layers: &[Vec<Node>]) -> Smoothed {
     }
 }
 
+/// The nearest-boundary grid of a layer's radius-0 collision area, built once per stage: every
+/// member's smoothing asks for the same layers.
+fn obstacle(stage: &StageA, layer: usize) -> Arc<SegmentGrid> {
+    stage.memo.obstacles.get_or(layer as u128, || {
+        let rings = stage.clearance.collision(0, layer, true);
+        Arc::new(SegmentGrid::new(&rings, stage.derived.grid.scaled(CELL_MM)))
+    })
+}
+
 /// The update rule's constants on the flavour grid.
 struct Rule {
     layer: f64,
@@ -123,7 +130,7 @@ impl Rule {
         at: [f64; 2],
         all: &[Sphere],
         previous: &[[f64; 2]],
-        obstacles: &BTreeMap<usize, SegmentGrid>,
+        obstacles: &[Option<Arc<SegmentGrid>>],
     ) -> ([f64; 2], f64) {
         let (depth, away) = self.collision(sphere, at, obstacles);
         let mut pushed = at;
@@ -156,7 +163,7 @@ impl Rule {
         &self,
         sphere: &Sphere,
         at: [f64; 2],
-        obstacles: &BTreeMap<usize, SegmentGrid>,
+        obstacles: &[Option<Arc<SegmentGrid>>],
     ) -> (f64, [f64; 2]) {
         let mut best = (0.0, [0.0, 0.0]);
         for layer in sphere.span.0..=sphere.span.1 {
@@ -166,7 +173,7 @@ impl Rule {
                 continue;
             }
             let rho = libm::sqrt(rho2);
-            let Some(grid) = obstacles.get(&layer) else {
+            let Some(grid) = obstacles.get(layer).and_then(Option::as_ref) else {
                 continue;
             };
             let Some((point, distance)) = grid.nearest(at, rho) else {

@@ -72,9 +72,9 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
                 orders: &orders,
             })?;
             println!(
-                "support model {}, rotation {rotation}°: {} distinct realizations of {} members in {:.1} s{}",
+                "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
                 build.name(),
-                prediction.ensemble.realizations.len(),
+                prediction.ensemble.graphs,
                 prediction.ensemble.members.len(),
                 prediction.seconds,
                 if prediction.cached { " (cache)" } else { "" }
@@ -152,7 +152,7 @@ fn class_print(
         .join("+");
     print.provenance.members = predictions
         .iter()
-        .map(|(_, prediction)| prediction.ensemble.realizations.len())
+        .map(|(_, prediction)| prediction.ensemble.graphs)
         .sum();
     print.provenance.margins = margins;
     print.provenance.cache_key = predictions

@@ -14,7 +14,7 @@ use super::memo::Fingerprint;
 use super::node::Node;
 use super::stage_a::StageA;
 use crate::polygon_ops::{
-    FillRule, IntPoint, Join, Ring, Rings, difference, offset, resolve, simplify,
+    FillRule, IntPoint, Join, Ring, Rings, difference, offset, resolve, simplify, union_many,
 };
 
 /// Notches narrower than a support line are filled (spec 03 §3.7 step 2).
@@ -45,6 +45,9 @@ fn finish_shared(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
 /// The memo kind of a finished layer.
 const LAYER_KEY: u8 = 3;
 
+/// The fingerprint kind of a piece (or piece list) `draw_union` has taken.
+const PIECE_KEY: u8 = 7;
+
 /// The tube slices of every layer, trimmed and closed, in the object frame.
 pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> Vec<Rings> {
     let pieces = Pieces::new(stage, layers, centres);
@@ -63,6 +66,83 @@ pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> 
         .map(|(layer, rings)| finish_shared(stage, layer, rings))
         .collect()
 }
+
+/// The tube slices of several graphs drawn as ONE layer set: every graph's pieces, each
+/// distinct ring once, finished per layer (in parallel over the layers). The distinct graphs
+/// of an ensemble share most of their pieces (P1S under 02.09: 677 k nodes of 180 graphs,
+/// 92 k distinct after smoothing), and the packer only reads their union: drawing each
+/// graph and uniting the results did the same unions 180 times and then once more over
+/// nearly coincident outlines. Trimming commutes with the union and the notch closing is
+/// monotone, so the layers cover the union of the graphs drawn one by one up to the outline
+/// simplification (it may close a notch between pieces of different graphs; that only adds
+/// area). Layer 0 is also returned per graph (each distinct piece list once, finished):
+/// the base grows from it through free space (`base::first_layer_base`), and a sliver the
+/// union's simplification shaves off one graph's root can seed 2 mm of that graph's flange.
+pub struct UnionDrawing {
+    pub layers: Vec<Rings>,
+    /// Layer 0 of every distinct root piece list, finished as `draw` finishes it.
+    pub roots: Vec<Rings>,
+}
+
+pub fn draw_union(stage: &StageA, graphs: &[(&[Vec<Node>], &[Vec<IntPoint>])]) -> UnionDrawing {
+    let count = graphs.iter().map(|(layers, _)| layers.len()).max().unwrap_or(0);
+    // Fingerprints, not copies, of the rings already taken: the copies doubled the memory.
+    let mut seen: Vec<std::collections::HashSet<u128>> = vec![Default::default(); count];
+    let mut slices: Vec<Vec<Ring>> = vec![Vec::new(); count];
+    let mut root_lists: Vec<Vec<Ring>> = Vec::new();
+    let mut seen_roots: std::collections::HashSet<u128> = Default::default();
+    use rayon::prelude::*;
+    // Graphs draw their pieces in parallel, a few at a time (every piece of every graph at
+    // once would hold the 2.7 M rings of a P1S rotation); the merge runs in graph order.
+    for chunk in graphs.chunks(GRAPHS_PER_BATCH) {
+        let drawn: Vec<Vec<Vec<Ring>>> = chunk
+            .par_iter()
+            .map(|&(layers, centres)| {
+                let pieces = Pieces::new(stage, layers, centres);
+                let mut own: Vec<Vec<Ring>> = vec![Vec::new(); layers.len()];
+                for (layer, nodes) in layers.iter().enumerate() {
+                    for (index, node) in nodes.iter().enumerate() {
+                        pieces.add_node(&mut own, layer, index, node);
+                        if let Some(foot) = stage.flavour.plate_foot() {
+                            pieces.add_plate_foot(&mut own, foot, layer, index, node);
+                        }
+                    }
+                }
+                own
+            })
+            .collect();
+        for own in drawn {
+            if let Some(roots) = own.first()
+                && !roots.is_empty()
+                && seen_roots.insert(Fingerprint::new(PIECE_KEY).rings(roots).finish())
+            {
+                root_lists.push(roots.clone());
+            }
+            // Insertion order (graph order, then piece order) keeps the result independent
+            // of the thread count.
+            for (layer, rings) in own.into_iter().enumerate() {
+                for ring in rings {
+                    if seen[layer].insert(Fingerprint::new(PIECE_KEY).ring(&ring).finish()) {
+                        slices[layer].push(ring);
+                    }
+                }
+            }
+        }
+    }
+    let layers = slices
+        .into_par_iter()
+        .enumerate()
+        .map(|(layer, rings)| closed_layer(stage, layer, rings))
+        .collect();
+    let roots = root_lists
+        .into_par_iter()
+        .map(|rings| finish_shared(stage, 0, rings))
+        .collect();
+    UnionDrawing { layers, roots }
+}
+
+/// Graphs whose pieces `draw_union` draws at once.
+const GRAPHS_PER_BATCH: usize = 8;
 
 /// Everything the slices of one drawing need.
 struct Pieces<'a> {
@@ -294,23 +374,32 @@ impl<'a> Pieces<'a> {
 }
 
 fn finish_layer(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
+    simplify(
+        &closed_layer(stage, layer, rings),
+        stage.derived.grid.scaled(SIMPLIFY_MM),
+        stage.flavour.strictly_simple(),
+    )
+}
+
+/// The united pieces of a layer, trimmed by the object and closed over narrow notches: the
+/// layer before the slicer's simplification. The union of many graphs stops here: S(τ) of
+/// the union drops slivers narrower than 2τ that one graph's own outline still holds (up
+/// to 0.7 mm long on a P1S layer), while the unsimplified union covers every graph's
+/// simplified layer within 0.02 mm.
+fn closed_layer(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
     if rings.is_empty() {
         return Rings::new();
     }
     let grid = stage.derived.grid;
-    let united = resolve(&rings, FillRule::NonZero);
+    let united = union_many(&rings);
     let collision = stage.clearance.collision(0, layer, true);
     let trimmed = difference(&united, &collision);
     let half = 0.5 * grid.scaled(NOTCH_CLOSING_MM);
     let round = Join::Round(grid.scaled(shapes::CHORD_TOLERANCE_MM));
     let closed = offset(&offset(&trimmed, half, round), -half, round);
-    let filled = difference(
+    difference(
         &resolve(&[trimmed, closed].concat(), FillRule::NonZero),
         &collision,
-    );
-    simplify(
-        &filled,
-        grid.scaled(SIMPLIFY_MM),
-        stage.flavour.strictly_simple(),
     )
 }
+

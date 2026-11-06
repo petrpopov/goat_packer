@@ -36,7 +36,7 @@ fn main() {
             member.class.0,
             member.class.1.map_or("inf".to_owned(), |end| end.to_string()),
             member.hash,
-            if member.realization.is_some() { "" } else { " (same as an earlier member)" }
+            if member.graph.is_some() { "" } else { " (same as an earlier member)" }
         );
     }
 }

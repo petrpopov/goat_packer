@@ -8,10 +8,11 @@ use super::base::first_layer_base;
 use super::graph::BranchGraph;
 use super::smooth::smooth;
 use super::stage_a::StageA;
-use super::{draw::draw, tips::RoofPiece};
+use super::node::Node;
+use super::{draw::{draw, draw_union}, tips::RoofPiece};
 use crate::geometry::Point;
 use crate::object_print::{Loops, MemberId, Realization, layer_bands};
-use crate::polygon_ops::{Grid, Rings, islands, union_all};
+use crate::polygon_ops::{Grid, IntPoint, Rings, islands, union_all};
 
 /// Smooths, draws and bands the graph of one member.
 pub fn realization(stage: &StageA, graph: &BranchGraph, member: MemberId) -> Realization {
@@ -20,10 +21,53 @@ pub fn realization(stage: &StageA, graph: &BranchGraph, member: MemberId) -> Rea
     layers_to_realization(stage, &tubes, &graph.roofs, member)
 }
 
+/// The realization of several graphs at once (the ensemble's union): each graph smoothed on
+/// its own (in parallel), all drawn as one layer set (`draw::draw_union`), the roofs of every
+/// arc family once. It covers the union of the graphs' own realizations.
+pub fn union_realization(stage: &StageA, graphs: &[&BranchGraph], member: MemberId) -> Realization {
+    use rayon::prelude::*;
+    let smoothed: Vec<Vec<Vec<IntPoint>>> = graphs
+        .par_iter()
+        .map(|graph| smooth(stage, &graph.layers).centres)
+        .collect();
+    let drawn: Vec<(&[Vec<Node>], &[Vec<IntPoint>])> = graphs
+        .iter()
+        .zip(&smoothed)
+        .map(|(graph, centres)| (graph.layers.as_slice(), centres.as_slice()))
+        .collect();
+    let drawing = draw_union(stage, &drawn);
+    let mut roofs: Vec<RoofPiece> = Vec::new();
+    for piece in graphs.iter().flat_map(|graph| &graph.roofs) {
+        if !roofs.contains(piece) {
+            roofs.push(piece.clone());
+        }
+    }
+    // Every root set grows its own flange, as each graph alone would.
+    let flanges: Vec<Rings> = drawing
+        .roots
+        .par_iter()
+        .map(|roots| first_layer_base(stage, roots))
+        .collect();
+    realization_of(stage, &drawing.layers, union_all(flanges.iter()), &roofs, member)
+}
+
 /// The realization from drawn tube slices and roof pieces (`tubes[0]` = the roots).
 pub fn layers_to_realization(
     stage: &StageA,
     tubes: &[Rings],
+    roofs: &[RoofPiece],
+    member: MemberId,
+) -> Realization {
+    let empty = Rings::new();
+    let flange = first_layer_base(stage, tubes.first().unwrap_or(&empty));
+    realization_of(stage, tubes, flange, roofs, member)
+}
+
+/// The realization from drawn tube slices, the grown first-layer flange and roof pieces.
+fn realization_of(
+    stage: &StageA,
+    tubes: &[Rings],
+    flange: Rings,
     roofs: &[RoofPiece],
     member: MemberId,
 ) -> Realization {
@@ -35,8 +79,7 @@ pub fn layers_to_realization(
         }
     }
     let empty = Rings::new();
-    let root_tubes = tubes.first().unwrap_or(&empty);
-    let base = union_all([&first_layer_base(stage, root_tubes), &roof_layers[0]]);
+    let base = union_all([&flange, &roof_layers[0]]);
     let mut support: Vec<Vec<Rings>> = Vec::new();
     let mut above: Vec<Vec<Rings>> = Vec::new();
     let mut interface: Vec<Vec<Rings>> = Vec::new();

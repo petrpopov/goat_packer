@@ -10,13 +10,14 @@
 //! replaced speculative batches of 16 thread counts from the top, which ran 704 descents for
 //! the 424 members of a P1S goat under Bambu 02.09: 514 s per rotation at two threads (an M
 //! Mac), and the server's two cores did not finish one rotation in the 30 minute job limit.
-//! With the tree and the stage memo (`memo`) the same rotation takes 155 s. The result does
-//! not depend on the order branches finish in.
+//! With the tree and the stage memo (`memo`) the same rotation takes 155 s; with the graphs
+//! drawn as one union (`union`) 33 s. The result does not depend on the order branches
+//! finish in.
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::bands::realization;
+use super::bands::union_realization;
 use super::clearance::Avoidance;
 use super::flavour::MergeBucket;
 use super::descend::{ClassDescent, descend_classes};
@@ -37,9 +38,10 @@ pub struct MemberRun {
     pub threads: usize,
     /// The thread counts (a, b] that give this very run; `None` = unbounded.
     pub class: (usize, Option<usize>),
-    /// The member's realization, or `None` when another member produced the very same graph
-    /// first (equal graphs draw equal realizations, and drawing is most of a member's cost).
-    pub realization: Option<Realization>,
+    /// The member's branch graph (node areas dropped: placement was their last reader), or
+    /// `None` when another member produced the very same graph first. Graphs are not drawn one
+    /// by one: `union` draws the distinct ones together.
+    pub graph: Option<BranchGraph>,
     /// Hash of the branch graph and roofs: equal hashes are one realization.
     pub hash: u64,
 }
@@ -54,8 +56,8 @@ pub fn families(stage: &StageA) -> Vec<ArcFamily> {
 }
 
 /// Every member of the core ensemble for the given merge-order readings, in (family, order,
-/// overlap, thread count) order. Members whose graph another member already drew carry no
-/// realization.
+/// overlap, thread count) order. Members whose graph another member already produced carry
+/// no graph.
 pub fn run_members(stage: &StageA, orders: &[MergeOrder]) -> Vec<MemberRun> {
     run_members_with(stage, orders, stage.flavour.overlap_readings())
 }
@@ -135,7 +137,12 @@ fn walk_classes(
             descended,
         } = class_descent;
         let started = std::time::Instant::now();
-        let layers = place(descended.layers);
+        let mut layers = place(descended.layers);
+        // Placement was the last reader of the influence areas; a kept graph holds hundreds
+        // of members' nodes until the union is drawn.
+        for node in layers.iter_mut().flatten() {
+            node.area = Default::default();
+        }
         let graph = BranchGraph {
             layers,
             roofs: seeds.roofs.clone(),
@@ -154,8 +161,7 @@ fn walk_classes(
         };
         debug_assert!(fixed || class == class_of(&graph.merge_values, low));
         let hash = graph_hash(&graph);
-        // Whoever reaches a graph first draws it; which member that is does not change the set.
-        let realization = claims.claim(hash).then(|| realization(stage, &graph, 0));
+        // Whoever reaches a graph first keeps it; which member that is does not change the set.
         MemberRun {
             family,
             order,
@@ -163,7 +169,7 @@ fn walk_classes(
             threads: low,
             class,
             hash,
-            realization,
+            graph: claims.claim(hash).then_some(graph),
         }
     };
     descend_classes(stage, seeds.tips.clone(), class, &member)
@@ -226,18 +232,26 @@ fn graph_hash(graph: &BranchGraph) -> u64 {
     hash
 }
 
-/// One realization per distinct graph, in the order of each graph's first member in run
-/// order (which member actually drew it depends on timing, so the order must not).
-pub fn distinct(runs: &[MemberRun]) -> Vec<&Realization> {
+/// Every distinct graph once, in the order of each graph's first member in run order (which
+/// member actually kept it depends on timing, so the order must not).
+pub fn distinct(runs: &[MemberRun]) -> Vec<&BranchGraph> {
+    let mut kept = std::collections::BTreeMap::new();
+    for run in runs {
+        if let Some(graph) = &run.graph {
+            kept.insert(run.hash, graph);
+        }
+    }
     let mut seen = std::collections::BTreeSet::new();
     runs.iter()
         .filter(|run| seen.insert(run.hash))
-        .filter_map(|run| {
-            runs.iter()
-                .filter(|other| other.hash == run.hash)
-                .find_map(|other| other.realization.as_ref())
-        })
+        .filter_map(|run| kept.get(&run.hash).copied())
         .collect()
+}
+
+/// The ensemble's realization: the distinct graphs drawn together (`bands::union_realization`),
+/// what the envelope is made of.
+pub fn union(stage: &StageA, runs: &[MemberRun]) -> Realization {
+    union_realization(stage, &distinct(runs), 0)
 }
 
 /// Serializable summary for reports.
