@@ -2,7 +2,7 @@
 
 Образы собирает Woodpecker (`ci.ezheg.xyz`) прямо в Docker на `main`; реестра нет.
 
-- Push в любую ветку: `.woodpecker/check.yaml` — тесты Rust, backend (Testcontainers), frontend и `lint`
+- Push в любую ветку: `.woodpecker/check.yaml` — тесты Rust, backend (без Testcontainers: тег `containers` выключен), frontend и `lint`
   (shellcheck скриптов `deploy/`, `deploy/check-pins.sh`), затем образы `goat-packer-*:branch-<ветка>`
   (перезаписываются следующим push, никуда не выкладываются).
 - Тег `v*`: `.woodpecker/release.yaml` — `deploy/build-images.sh <тег>` собирает
@@ -188,7 +188,8 @@ Backend logs — JSON/ECS с jobId/attemptFence; события slicer stdout/st
 слоты и состояние worker.
 
 ```sh
-TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock ./webapp/backend/gradlew -p webapp/backend test
+./webapp/backend/gradlew -p webapp/backend test
+./webapp/backend/gradlew -p webapp/backend containersTest  # по желанию: Testcontainers, нужен Docker
 ./webapp/backend/gradlew -p webapp/backend nativeTest  # нужны собранные runner images
 cd webapp/frontend && bun test tests && bun run typecheck && bun run lint && bun run build
 sh deploy/check-pins.sh   # и shellcheck -x deploy/*.sh deploy/runner/slicer.sh, как шаг lint

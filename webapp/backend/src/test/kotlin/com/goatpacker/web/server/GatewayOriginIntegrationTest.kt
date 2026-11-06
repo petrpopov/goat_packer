@@ -22,9 +22,12 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
+import org.junit.jupiter.api.Tag
 
 /** Real Tomcat + real nginx with the deployment config. MockMvc does not run RemoteIpValve,
  * so it cannot catch losing the public port when Docker maps an arbitrary port to nginx:80. */
+/** Testcontainers: off in `gradle test`, run by `containersTest`. */
+@Tag("containers")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("server")
 class GatewayOriginIntegrationTest {

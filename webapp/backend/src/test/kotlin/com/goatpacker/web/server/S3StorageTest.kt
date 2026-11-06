@@ -16,7 +16,10 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Random
+import org.junit.jupiter.api.Tag
 
+/** Testcontainers: off in `gradle test`, run by `containersTest`. */
+@Tag("containers")
 class S3StorageTest {
     @TempDir lateinit var dir: Path
 

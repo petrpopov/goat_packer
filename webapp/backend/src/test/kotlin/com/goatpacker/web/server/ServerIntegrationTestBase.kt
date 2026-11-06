@@ -38,11 +38,14 @@ import org.testcontainers.containers.PostgreSQLContainer
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import org.junit.jupiter.api.Tag
 
 /**
  * Серверный режим целиком: настоящий PostgreSQL в контейнере, хранилище в каталоге, фейковые бинарники и
  * локальный раннер. Все наследники делят один контекст Spring и одну базу.
  */
+/** Testcontainers: off in `gradle test`, run by `containersTest`. */
+@Tag("containers")
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("server")

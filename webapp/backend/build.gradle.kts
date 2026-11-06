@@ -45,8 +45,17 @@ kotlin {
     }
 }
 
+// "containers" = Testcontainers (postgres, seaweedfs, nginx in Docker): off by default, the
+// images only took disk space; `./gradlew containersTest` runs them.
 tasks.withType<Test> {
-    useJUnitPlatform { excludeTags("native") }
+    useJUnitPlatform { excludeTags("native", "containers") }
+}
+
+tasks.register<Test>("containersTest") {
+    description = "Server integration tests on Testcontainers (Docker: postgres, seaweedfs, nginx)"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("containers"); excludeTags = hashSetOf() }
 }
 
 tasks.register<Test>("nativeTest") {

@@ -1,4 +1,4 @@
-# Проверки goat_packer на main: Rust, backend (Testcontainers через docker socket хоста), frontend, скрипты deploy/.
+# Проверки goat_packer на main: Rust, backend, frontend, скрипты deploy/.
 # Push в ветку после тестов собирает образы goat-packer-*:branch-<ветка> (перезаписываются, не выкладываются).
 # Тег тоже проверяется: release.yaml ждёт успешного check и собирает образы версии сам.
 # Версии образов шагов — в паре с deploy/Dockerfile.* (шаг lint сверяет их deploy/check-pins.sh).
@@ -30,21 +30,16 @@ steps:
     commands:
       - cargo test --release --all --locked
 
-  # Testcontainers публикует порты контейнеров на хосте main, а из сети шага Woodpecker они недоступны
-  # ("Could not connect to Ryuk at 172.17.0.1:…"). Поэтому тесты идут в контейнере в сети хоста
-  # (через docker socket), с рабочим каталогом этого шага (--volumes-from).
+  # Тесты на Testcontainers (тег containers) выключены: `gradle test` их не запускает, им не нужен
+  # Docker. Запуск вручную: ./gradlew containersTest.
   - name: backend
-    image: docker:29-cli
+    image: eclipse-temurin:21-jdk-jammy
     depends_on: []
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/ci/goat_packer/gradle:/root/.gradle
     commands:
-      # ID этого контейнера (hostname может быть задан Woodpecker): из пути его файла hostname в mountinfo.
-      - self=$(grep -o '/containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -1 | cut -d/ -f3) && test -n "$self"
-      - >-
-        docker run --rm --network host --volumes-from "$self" -w "$CI_WORKSPACE/webapp/backend"
-        -v /var/lib/ci/goat_packer/gradle:/root/.gradle eclipse-temurin:21-jdk-jammy
-        sh -c './gradlew --no-daemon test || { grep -h -A12 "<failure" build/test-results/test/*.xml | head -80; exit 1; }'
+      - cd webapp/backend
+      - ./gradlew --no-daemon test || { grep -h -A12 "<failure" build/test-results/test/*.xml | head -80; exit 1; }
 
   - name: frontend
     image: oven/bun:1.3.14
