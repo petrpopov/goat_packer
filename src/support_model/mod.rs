@@ -32,6 +32,7 @@ pub mod sections;
 pub mod settings;
 pub mod smooth;
 pub mod tips;
+pub mod union;
 
 mod stage_a;
 

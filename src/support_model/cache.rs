@@ -17,13 +17,23 @@ use crate::embedded_mesh::ObjectMesh;
 use crate::object_print::Realization;
 
 /// Bumped on any change of what the generator computes: old entries then miss.
-pub const MODEL_VERSION: u32 = 8;
+pub const MODEL_VERSION: u32 = 9;
 
-/// The distinct realizations of one (object, settings, flavour, rotation).
+/// The members of one (object, settings, flavour, rotation) and the union of their
+/// realizations (`ensemble::run_union`: one realization since `MODEL_VERSION` 9).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Ensemble {
     pub members: Vec<MemberSummary>,
     pub realizations: Vec<Realization>,
+}
+
+impl Ensemble {
+    /// How many distinct graphs the members drew.
+    pub fn distinct_graphs(&self) -> usize {
+        let hashes: std::collections::BTreeSet<&str> =
+            self.members.iter().map(|member| member.hash.as_str()).collect();
+        hashes.len()
+    }
 }
 
 /// SHA-256 hex of everything the ensemble depends on.

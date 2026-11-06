@@ -106,7 +106,7 @@ fn main() {
             println!(
                 "{flavour:?}: {} members, {} distinct, {:.1} s{}",
                 prediction.runs,
-                prediction.ensemble.realizations.len(),
+                prediction.ensemble.distinct_graphs(),
                 prediction.seconds,
                 if prediction.cached { " (cache)" } else { "" }
             );

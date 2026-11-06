@@ -27,6 +27,25 @@ pub fn layers_to_realization(
     roofs: &[RoofPiece],
     member: MemberId,
 ) -> Realization {
+    layers_with_base(stage, tubes, roofs, member, &Rings::new())
+}
+
+/// One member's first-layer base: its roots (`draw::finish_layer` of its layer-0 slices)
+/// grown by `first_layer_base`. The growth spreads through the gap around the model, so a
+/// 0.03 mm difference of the roots can move the base by 1.5 mm: a union keeps the members'
+/// own bases (`union::UnionSlices`) instead of growing the union's roots.
+pub fn member_base(stage: &StageA, layer0: Vec<crate::polygon_ops::Ring>) -> Rings {
+    first_layer_base(stage, &super::draw::finish_layer(stage, 0, layer0))
+}
+
+/// `layers_to_realization` with `extra_base` (object frame, stage units) added to the base.
+pub fn layers_with_base(
+    stage: &StageA,
+    tubes: &[Rings],
+    roofs: &[RoofPiece],
+    member: MemberId,
+    extra_base: &Rings,
+) -> Realization {
     let count = stage.grid.len();
     let mut roof_layers = vec![Rings::new(); count];
     for piece in roofs {
@@ -36,7 +55,11 @@ pub fn layers_to_realization(
     }
     let empty = Rings::new();
     let root_tubes = tubes.first().unwrap_or(&empty);
-    let base = union_all([&first_layer_base(stage, root_tubes), &roof_layers[0]]);
+    let base = union_all([
+        &first_layer_base(stage, root_tubes),
+        &roof_layers[0],
+        extra_base,
+    ]);
     let mut support: Vec<Vec<Rings>> = Vec::new();
     let mut above: Vec<Vec<Rings>> = Vec::new();
     let mut interface: Vec<Vec<Rings>> = Vec::new();

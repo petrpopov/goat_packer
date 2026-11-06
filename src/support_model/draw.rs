@@ -18,7 +18,7 @@ use crate::polygon_ops::{
 };
 
 /// Notches narrower than a support line are filled (spec 03 §3.7 step 2).
-const NOTCH_CLOSING_MM: f64 = 0.42;
+pub const NOTCH_CLOSING_MM: f64 = 0.42;
 
 /// A bend whose sine is above this (about 10°) gets a ball at its joint.
 const SHARP_BEND_SINE: f64 = 0.17;
@@ -47,6 +47,15 @@ const LAYER_KEY: u8 = 3;
 
 /// The tube slices of every layer, trimmed and closed, in the object frame.
 pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> Vec<Rings> {
+    slices(stage, layers, centres)
+        .into_iter()
+        .enumerate()
+        .map(|(layer, rings)| finish_shared(stage, layer, rings))
+        .collect()
+}
+
+/// The raw tube slices of every layer, before the layer is united, trimmed and closed.
+pub fn slices(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> Vec<Vec<Ring>> {
     let pieces = Pieces::new(stage, layers, centres);
     let mut slices: Vec<Vec<Ring>> = vec![Vec::new(); layers.len()];
     for (layer, nodes) in layers.iter().enumerate() {
@@ -58,10 +67,6 @@ pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> 
         }
     }
     slices
-        .into_iter()
-        .enumerate()
-        .map(|(layer, rings)| finish_shared(stage, layer, rings))
-        .collect()
 }
 
 /// Everything the slices of one drawing need.
@@ -293,7 +298,22 @@ impl<'a> Pieces<'a> {
     }
 }
 
-fn finish_layer(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
+/// The last steps of `finish_layer` for a layer already united and closed (`union`): the
+/// object cut away and the outline simplified.
+pub fn trim_layer(stage: &StageA, layer: usize, rings: &Rings) -> Rings {
+    if rings.is_empty() {
+        return Rings::new();
+    }
+    let collision = stage.clearance.collision(0, layer, true);
+    simplify(
+        &difference(rings, &collision),
+        stage.derived.grid.scaled(SIMPLIFY_MM),
+        stage.flavour.strictly_simple(),
+    )
+}
+
+/// Unites, trims and closes the slices of one layer (`rings` in any fixed order).
+pub fn finish_layer(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
     if rings.is_empty() {
         return Rings::new();
     }

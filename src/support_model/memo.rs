@@ -48,8 +48,10 @@ impl<V: Clone> Memo<V> {
 pub struct StageMemo {
     /// `evaluate::step_down` by (layer, parent without its parents).
     pub steps: Memo<Option<Moved>>,
-    /// `PairTest::try_merge` by (layer, erosion, destination, source; without parents).
+    /// The pair test but its thickness check, by (layer, destination, source; without
+    /// parents), and the check by (that key, erosion).
     pub pairs: Memo<Option<Moved>>,
+    pub thick: Memo<bool>,
     /// `draw::finish_layer` by (layer, pieces).
     pub layers: Memo<Rings>,
 }
@@ -72,6 +74,11 @@ impl Fingerprint {
         self.0.write_i64(value);
         self.1.write_i64(value);
         self
+    }
+
+    /// Another fingerprint.
+    pub fn key(&mut self, key: u128) -> &mut Fingerprint {
+        self.int(key as i64).int((key >> 64) as i64)
     }
 
     pub fn point(&mut self, point: IntPoint) -> &mut Fingerprint {

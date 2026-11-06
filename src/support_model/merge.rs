@@ -135,14 +135,18 @@ pub fn merge_layer(
     if class.order == MergeOrder::Against {
         order.reverse();
     }
-    let ordered: Vec<Moved> = order
+    // Each candidate's fingerprint is taken once, not once per pair it is tested in.
+    let ordered: Vec<pair::Keyed> = order
         .into_iter()
-        .map(|index| candidates[index].clone())
+        .map(|index| pair::Keyed::new(candidates[index].clone()))
         .collect();
     let count = ordered.len();
     let buckets = class.buckets(stage, count);
     let test = pair::PairTest::new(stage, layer, class.overlap.erosion_mm());
-    let merge = |destination: &Moved, source: &Moved| test.try_merge(destination, source);
+    let merge = |destination: &pair::Keyed, source: &pair::Keyed| test.try_merge(destination, source);
     let merged = merge_rounds(ordered, buckets, &merge);
-    (merged, Some(ThreadClass::decision_value(count)))
+    (
+        merged.into_iter().map(|keyed| keyed.moved).collect(),
+        Some(ThreadClass::decision_value(count)),
+    )
 }

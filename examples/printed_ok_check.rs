@@ -72,7 +72,7 @@ fn main() {
     .unwrap();
     println!(
         "{flavour:?}: {} distinct realizations in {:.1} s{}",
-        prediction.ensemble.realizations.len(),
+        prediction.ensemble.distinct_graphs(),
         prediction.seconds,
         if prediction.cached { " (cache)" } else { "" }
     );

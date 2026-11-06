@@ -16,7 +16,14 @@
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::bands::realization;
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+use super::bands::{layers_with_base, realization};
+use super::draw::slices;
+use super::smooth::smooth;
+use super::tips::RoofPiece;
+use super::union::UnionSlices;
 use super::clearance::Avoidance;
 use super::flavour::MergeBucket;
 use super::descend::{ClassDescent, descend_classes};
@@ -66,6 +73,63 @@ pub fn run_members_with(
     orders: &[MergeOrder],
     overlaps: &[Overlap],
 ) -> Vec<MemberRun> {
+    walk_axes(stage, orders, overlaps, &Sink::Members)
+}
+
+/// The members and the union of their realizations (`union`): the slices of every distinct
+/// graph are drawn into one bitmap per layer, and each layer is finished once instead of once
+/// per graph. The realizations: that one union, or every distinct member's (`distinct`) in
+/// the rare case a slice leaves the union's window.
+pub fn run_union(
+    stage: &StageA,
+    orders: &[MergeOrder],
+    overlaps: &[Overlap],
+) -> (Vec<MemberRun>, Vec<Realization>) {
+    let union = Union {
+        slices: UnionSlices::new(stage),
+        roofs: Mutex::default(),
+    };
+    let runs = walk_axes(stage, orders, overlaps, &Sink::Union(&union));
+    let roofs: Vec<RoofPiece> = into_inner(union.roofs).into_values().flatten().collect();
+    match union.slices.finish(stage) {
+        Some((tubes, bases)) => {
+            let realization = layers_with_base(stage, &tubes, &roofs, 0, &bases);
+            (runs, vec![realization])
+        }
+        None => {
+            let runs = run_members_with(stage, orders, overlaps);
+            let realizations = distinct(&runs).into_iter().cloned().collect();
+            (runs, realizations)
+        }
+    }
+}
+
+/// Where a member's drawing goes.
+enum Sink<'a> {
+    /// Into the member's own realization.
+    Members,
+    /// Into the shared union of `run_union`.
+    Union(&'a Union),
+}
+
+/// The union's bitmaps and the roof pieces of every family that drew a graph.
+struct Union {
+    slices: UnionSlices,
+    roofs: Mutex<BTreeMap<ArcFamily, Vec<RoofPiece>>>,
+}
+
+fn into_inner<T>(mutex: Mutex<T>) -> T {
+    mutex
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn walk_axes(
+    stage: &StageA,
+    orders: &[MergeOrder],
+    overlaps: &[Overlap],
+    sink: &Sink,
+) -> Vec<MemberRun> {
     warm_volumes(stage);
     let claims = Claims::default();
     // The tips depend on the family alone: seeded once, not once per member.
@@ -84,7 +148,7 @@ pub fn run_members_with(
         .collect();
     axes.into_par_iter()
         .flat_map(|((family, seeds), order, overlap)| {
-            walk_classes(stage, &claims, *family, seeds, order, overlap)
+            walk_classes(stage, &claims, sink, *family, seeds, order, overlap)
         })
         .collect::<Vec<_>>()
 }
@@ -117,6 +181,7 @@ fn warm_volumes(stage: &StageA) {
 fn walk_classes(
     stage: &StageA,
     claims: &Claims,
+    sink: &Sink,
     family: ArcFamily,
     seeds: &Seeds,
     order: MergeOrder,
@@ -155,7 +220,23 @@ fn walk_classes(
         debug_assert!(fixed || class == class_of(&graph.merge_values, low));
         let hash = graph_hash(&graph);
         // Whoever reaches a graph first draws it; which member that is does not change the set.
-        let realization = claims.claim(hash).then(|| realization(stage, &graph, 0));
+        let realization = if !claims.claim(hash) {
+            None
+        } else if let Sink::Union(union) = sink {
+            let smoothed = smooth(stage, &graph.layers);
+            union
+                .slices
+                .add(stage, &slices(stage, &graph.layers, &smoothed.centres));
+            union
+                .roofs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .entry(family)
+                .or_insert_with(|| graph.roofs.clone());
+            None
+        } else {
+            Some(realization(stage, &graph, 0))
+        };
         MemberRun {
             family,
             order,
