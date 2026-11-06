@@ -22,11 +22,31 @@ pub const THICK_OVERLAP_MM: f64 = 0.025;
 /// Mitre limit asked for by the overlap erosion (acts as 2).
 const EROSION_MITER_LIMIT: f64 = 1.2;
 
-/// The memo kind of a pair test.
+/// The memo kinds of a pair test and of its thickness check.
 const PAIR_KEY: u8 = 2;
+const THICK_KEY: u8 = 4;
 
 /// The box padding of a merged candidate (mm).
 const BOX_PADDING_MM: f64 = 0.0001;
+
+/// A merge candidate with the fingerprint of everything but its `parents`.
+#[derive(Clone)]
+pub struct Keyed {
+    pub key: u128,
+    pub moved: Moved,
+}
+
+impl Keyed {
+    pub fn new(moved: Moved) -> Keyed {
+        Keyed {
+            key: Fingerprint::new(CANDIDATE_KEY).moved(&moved).finish(),
+            moved,
+        }
+    }
+}
+
+/// The memo kind of a candidate's own fingerprint.
+const CANDIDATE_KEY: u8 = 6;
 
 /// A merge test bound to one layer step.
 pub struct PairTest<'a> {
@@ -51,24 +71,37 @@ impl<'a> PairTest<'a> {
 
     /// `destination` absorbs `source`: the merged candidate, or `None` when refused. The
     /// test reads the nodes' `parents` only to join them, so the stage's memo keys it without
-    /// them and joins them here.
-    pub fn try_merge(&self, destination: &Moved, source: &Moved) -> Option<Moved> {
+    /// them and joins them here. Only the last check (`thick`) reads the overlap reading, so the
+    /// readings share the rest: the merge as if thick enough is memoized without the reading.
+    pub fn try_merge(&self, destination: &Keyed, source: &Keyed) -> Option<Keyed> {
+        let memo = &self.stage.memo;
         let key = Fingerprint::new(PAIR_KEY)
             .int(self.layer as i64)
-            .int(self.erosion_mm.to_bits() as i64)
-            .moved(destination)
-            .moved(source)
+            .key(destination.key)
+            .key(source.key)
             .finish();
-        let mut merged = self
-            .stage
-            .memo
+        let (destination, source) = (&destination.moved, &source.moved);
+        let mut merged = memo
             .pairs
             .get_or(key, || self.test(destination, source))?;
+        let thick_key = Fingerprint::new(THICK_KEY)
+            .int(key as i64)
+            .int((key >> 64) as i64)
+            .int(self.erosion_mm.to_bits() as i64)
+            .finish();
+        let radius = self.stage.derived.grid.scaled(self.erosion_mm);
+        if !memo
+            .thick
+            .get_or(thick_key, || thick(&merged.plate, radius, self.epsilon))
+        {
+            return None;
+        }
         merged.node.parents = destination.node.parents.clone();
         merged.node.parents.extend(&source.node.parents);
-        Some(merged)
+        Some(Keyed::new(merged))
     }
 
+    /// The merge if the overlap is thick enough (`try_merge` checks that).
     fn test(&self, destination: &Moved, source: &Moved) -> Option<Moved> {
         let derived = &self.stage.derived;
         let (dst, src) = (&destination.node, &source.node);
@@ -106,13 +139,7 @@ impl<'a> PairTest<'a> {
             .collision(small_radius, self.layer, tight);
         let reach = |region: &Rings| self.grow(region, delta, &walls, small_radius);
         let overlap = intersection(&reach(&smaller.plate), &bigger.plate);
-        if area(&overlap) <= self.epsilon
-            || !thick(
-                &overlap,
-                derived.grid.scaled(self.erosion_mm),
-                self.epsilon,
-            )
-        {
+        if area(&overlap) <= self.epsilon {
             return None;
         }
         let hint = nearest_inside(&overlap, dst.hint);
