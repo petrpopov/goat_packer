@@ -1,6 +1,7 @@
 package com.goatpacker.web.service.runner
 
 import com.goatpacker.web.model.CalibrationParams
+import com.goatpacker.web.model.PackDefaults
 import com.goatpacker.web.model.PackParams
 import com.goatpacker.web.model.ScheduleDefaults
 import com.goatpacker.web.model.ScheduleParams
@@ -16,7 +17,10 @@ object CliCommands {
         addOption("--output", JobArtifacts.PACKED_3MF)
         addOption("--work-dir", JobArtifacts.PACK_WORK_DIR)
         addOption("--clearance", params.clearance)
-        addOption("--resolution", params.resolution)
+        // Дефолт формы = лестница пакера (0.25, затем 0.2 мм): `--resolution X` оставляет один
+        // уровень X, и веб-задачи P1S теряли копию, которую даёт уровень 0.2 мм (42 вместо 43).
+        // Заданное пользователем разрешение передаётся как есть.
+        if (params.resolution != PackDefaults.RESOLUTION_MM) addOption("--resolution", params.resolution)
         addOption("--attempts", params.attempts)
         addOption("--candidates", params.candidates)
         addOption("--seed", params.seed)

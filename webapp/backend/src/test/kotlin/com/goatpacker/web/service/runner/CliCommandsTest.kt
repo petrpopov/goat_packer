@@ -27,4 +27,11 @@ class CliCommandsTest {
         // Пусто = дефолт пакера (20 мм): флаг не передаётся.
         assertFalse("--tower-width" in CliCommands.pack("packer", base))
     }
+
+    @Test
+    fun `разрешение по умолчанию оставляет пакеру лестницу, заданное передаётся`() {
+        assertFalse("--resolution" in CliCommands.pack("packer", base))
+        val args = CliCommands.pack("packer", base.copy(resolution = 0.2))
+        assertEquals("0.2", args[args.indexOf("--resolution") + 1])
+    }
 }

@@ -6,6 +6,7 @@ import java.nio.file.Path
 /** Значения по умолчанию упаковки: совпадают с дефолтами CLI colored_3mf_packer. */
 object PackDefaults {
     const val CLEARANCE_MM = 0.7
+    /** Первая ступень лестницы разрешений пакера; при этом значении `--resolution` не передаётся. */
     const val RESOLUTION_MM = 0.25
     const val LAYOUT = "search"
 
