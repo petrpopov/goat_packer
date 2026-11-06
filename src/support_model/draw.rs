@@ -10,6 +10,7 @@ mod shapes;
 use shapes::{CHORD_TOLERANCE_MM, disc, slice_cylinder};
 
 use super::flavour::{PlateFoot, RootCap};
+use super::memo::Fingerprint;
 use super::node::Node;
 use super::stage_a::StageA;
 use crate::polygon_ops::{
@@ -24,6 +25,25 @@ const SHARP_BEND_SINE: f64 = 0.17;
 
 /// Simplification tolerance of the layer outline, mm (spec 03 §3.7 step 3).
 const SIMPLIFY_MM: f64 = 0.03;
+
+/// `finish_layer` through the stage's memo: graphs that differ in a few merges still draw
+/// most layers from the very same pieces.
+fn finish_shared(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
+    if rings.is_empty() {
+        return Rings::new();
+    }
+    let key = Fingerprint::new(LAYER_KEY)
+        .int(layer as i64)
+        .rings(&rings)
+        .finish();
+    stage
+        .memo
+        .layers
+        .get_or(key, || finish_layer(stage, layer, rings))
+}
+
+/// The memo kind of a finished layer.
+const LAYER_KEY: u8 = 3;
 
 /// The tube slices of every layer, trimmed and closed, in the object frame.
 pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> Vec<Rings> {
@@ -40,7 +60,7 @@ pub fn draw(stage: &StageA, layers: &[Vec<Node>], centres: &[Vec<IntPoint>]) -> 
     slices
         .into_iter()
         .enumerate()
-        .map(|(layer, rings)| finish_layer(stage, layer, rings))
+        .map(|(layer, rings)| finish_shared(stage, layer, rings))
         .collect()
 }
 

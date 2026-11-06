@@ -5,10 +5,13 @@
 //! thread count T makes the decision "m ≥ T" on every merge, and all T that make the same
 //! decisions give the same run, so the class of a run is the interval of T around it.
 //!
-//! The walk is parallel by speculation: runs for T = 1..=K are independent, so they run
-//! together on rayon, and only T beyond K (a layer with more candidates than K buckets) wait
-//! for the next batch. The result does not depend on the order runs finish in: it is grouped
-//! and ordered by (family, T) afterwards.
+//! The walk is a tree (`descend::descend_classes`): the classes share their descent down to
+//! the first merge they decide differently, so each class is descended once, from there. It
+//! replaced speculative batches of 16 thread counts from the top, which ran 704 descents for
+//! the 424 members of a P1S goat under Bambu 02.09: 514 s per rotation at two threads (an M
+//! Mac), and the server's two cores did not finish one rotation in the 30 minute job limit.
+//! With the tree and the stage memo (`memo`) the same rotation takes 155 s. The result does
+//! not depend on the order branches finish in.
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -16,14 +19,13 @@ use serde::{Deserialize, Serialize};
 use super::bands::realization;
 use super::clearance::Avoidance;
 use super::flavour::MergeBucket;
-use super::graph::{BranchGraph, branch_graph};
+use super::descend::{ClassDescent, descend_classes};
+use super::graph::BranchGraph;
+use super::place::place;
 use super::merge::{MergeOrder, Overlap, ThreadClass};
 use super::stage_a::StageA;
-use super::tips::ArcFamily;
+use super::tips::{ArcFamily, Seeds, seed_tips};
 use crate::object_print::Realization;
-
-/// Thread counts tried in the first batch; a batch covers up to this many new values.
-const FIRST_BATCH: usize = 16;
 
 /// One run of the generator.
 #[derive(Clone, Debug, PartialEq)]
@@ -66,17 +68,24 @@ pub fn run_members_with(
 ) -> Vec<MemberRun> {
     warm_volumes(stage);
     let claims = Claims::default();
-    let axes: Vec<(ArcFamily, MergeOrder, Overlap)> = families(stage)
-        .into_iter()
-        .flat_map(|family| orders.iter().map(move |&order| (family, order)))
-        .flat_map(|(family, order)| {
+    // The tips depend on the family alone: seeded once, not once per member.
+    let seeded: Vec<(ArcFamily, Seeds)> = families(stage)
+        .into_par_iter()
+        .map(|family| (family, seed_tips(stage, family)))
+        .collect();
+    let axes: Vec<(&(ArcFamily, Seeds), MergeOrder, Overlap)> = seeded
+        .iter()
+        .flat_map(|seeds| orders.iter().map(move |&order| (seeds, order)))
+        .flat_map(|(seeds, order)| {
             overlaps
                 .iter()
-                .map(move |&overlap| (family, order, overlap))
+                .map(move |&overlap| (seeds, order, overlap))
         })
         .collect();
     axes.into_par_iter()
-        .flat_map(|(family, order, overlap)| walk_classes(stage, &claims, family, order, overlap))
+        .flat_map(|((family, seeds), order, overlap)| {
+            walk_classes(stage, &claims, *family, seeds, order, overlap)
+        })
         .collect::<Vec<_>>()
 }
 
@@ -103,87 +112,61 @@ fn warm_volumes(stage: &StageA) {
     });
 }
 
-/// The class walk of one (family, order, overlap).
+/// The class walk of one (family, order, overlap): the descent tree of `descend_classes`,
+/// one member per class. A fixed-four build has one class.
 fn walk_classes(
     stage: &StageA,
     claims: &Claims,
     family: ArcFamily,
+    seeds: &Seeds,
     order: MergeOrder,
     overlap: Overlap,
 ) -> Vec<MemberRun> {
     let fixed = stage.flavour.merge_bucket() == MergeBucket::FixedFour;
-    let mut runs: Vec<MemberRun> = Vec::new();
-    let mut next = 1;
-    let mut batch = if fixed { 1 } else { FIRST_BATCH };
-    loop {
-        let fresh: Vec<MemberRun> = (next..next + batch)
-            .into_par_iter()
-            .map(|threads| run_one(stage, claims, family, order, overlap, threads))
-            .collect();
-        runs.extend(fresh);
-        runs.sort_by_key(|run| run.threads);
-        let mut covered = 1;
-        let mut finished = fixed;
-        let mut kept: Vec<MemberRun> = Vec::new();
-        for run in std::mem::take(&mut runs) {
-            // A run inside an earlier run's class repeats it (same decisions): the same graph,
-            // so it hands over a realization it drew first.
-            if run.threads < covered {
-                if let Some(last) = kept.last_mut()
-                    && last.realization.is_none()
-                    && last.hash == run.hash
-                {
-                    last.realization = run.realization;
-                }
-                continue;
-            }
-            if run.threads > covered {
-                // A gap in the classes: the thread counts in it are not covered by any run.
-                break;
-            }
-            covered = run.class.1.map_or(usize::MAX, |upper| upper + 1);
-            finished |= run.class.1.is_none();
-            kept.push(run);
-        }
-        runs = kept;
-        if finished {
-            return runs;
-        }
-        next = covered;
-        batch = FIRST_BATCH;
-    }
-}
-
-fn run_one(
-    stage: &StageA,
-    claims: &Claims,
-    family: ArcFamily,
-    order: MergeOrder,
-    overlap: Overlap,
-    threads: usize,
-) -> MemberRun {
-    let graph = branch_graph(
-        stage,
-        family,
-        ThreadClass {
-            threads,
-            order,
-            overlap,
-        },
-    );
-    let class = class_of(&graph.merge_values, threads);
-    let hash = graph_hash(&graph);
-    // Whoever reaches a graph first draws it; which member that is does not change the set.
-    let realization = claims.claim(hash).then(|| realization(stage, &graph, 0));
-    MemberRun {
-        family,
+    let class = ThreadClass {
+        threads: 1,
         order,
         overlap,
-        threads,
-        class,
-        hash,
-        realization,
-    }
+    };
+    let member = |class_descent: ClassDescent| {
+        let ClassDescent {
+            low,
+            high,
+            descended,
+        } = class_descent;
+        let started = std::time::Instant::now();
+        let layers = place(descended.layers);
+        let graph = BranchGraph {
+            layers,
+            roofs: seeds.roofs.clone(),
+            merge_values: descended.merge_values,
+            seconds: [
+                0.0,
+                descended.move_seconds,
+                descended.merge_seconds,
+                started.elapsed().as_secs_f64(),
+            ],
+        };
+        let class = if fixed {
+            class_of(&graph.merge_values, 1)
+        } else {
+            (low - 1, high)
+        };
+        debug_assert!(fixed || class == class_of(&graph.merge_values, low));
+        let hash = graph_hash(&graph);
+        // Whoever reaches a graph first draws it; which member that is does not change the set.
+        let realization = claims.claim(hash).then(|| realization(stage, &graph, 0));
+        MemberRun {
+            family,
+            order,
+            overlap,
+            threads: low,
+            class,
+            hash,
+            realization,
+        }
+    };
+    descend_classes(stage, seeds.tips.clone(), class, &member)
 }
 
 /// The graphs already taken by a member.

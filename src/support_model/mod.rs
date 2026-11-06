@@ -22,6 +22,7 @@ pub mod exceedance;
 pub mod flavour;
 pub mod graph;
 pub mod layers;
+pub mod memo;
 pub mod merge;
 pub mod node;
 pub mod overhangs;

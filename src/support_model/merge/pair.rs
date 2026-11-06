@@ -10,6 +10,7 @@ use super::super::descend::{
 use crate::polygon_ops::{
     IntBox, IntPoint, Join, Rings, area, bbox, intersection, nearest_inside, offset, union,
 };
+use crate::support_model::memo::Fingerprint;
 use crate::support_model::node::Node;
 use crate::support_model::settings::Derived;
 use crate::support_model::stage_a::StageA;
@@ -20,6 +21,9 @@ pub const THICK_OVERLAP_MM: f64 = 0.025;
 
 /// Mitre limit asked for by the overlap erosion (acts as 2).
 const EROSION_MITER_LIMIT: f64 = 1.2;
+
+/// The memo kind of a pair test.
+const PAIR_KEY: u8 = 2;
 
 /// The box padding of a merged candidate (mm).
 const BOX_PADDING_MM: f64 = 0.0001;
@@ -45,8 +49,27 @@ impl<'a> PairTest<'a> {
         }
     }
 
-    /// `destination` absorbs `source`: the merged candidate, or `None` when refused.
+    /// `destination` absorbs `source`: the merged candidate, or `None` when refused. The
+    /// test reads the nodes' `parents` only to join them, so the stage's memo keys it without
+    /// them and joins them here.
     pub fn try_merge(&self, destination: &Moved, source: &Moved) -> Option<Moved> {
+        let key = Fingerprint::new(PAIR_KEY)
+            .int(self.layer as i64)
+            .int(self.erosion_mm.to_bits() as i64)
+            .moved(destination)
+            .moved(source)
+            .finish();
+        let mut merged = self
+            .stage
+            .memo
+            .pairs
+            .get_or(key, || self.test(destination, source))?;
+        merged.node.parents = destination.node.parents.clone();
+        merged.node.parents.extend(&source.node.parents);
+        Some(merged)
+    }
+
+    fn test(&self, destination: &Moved, source: &Moved) -> Option<Moved> {
         let derived = &self.stage.derived;
         let (dst, src) = (&destination.node, &source.node);
         if dst.graceful != src.graceful || dst.tight_xy != src.tight_xy {

@@ -4,6 +4,7 @@
 
 use super::SupportError;
 use super::clearance::{BedPlacement, Clearance, bed_obstacle};
+use super::memo::StageMemo;
 use super::flavour::Flavour;
 use super::layers::LayerGrid;
 use super::overhangs::{Overhangs, PaintInput, detect_overhangs};
@@ -39,6 +40,8 @@ pub struct StageA {
     pub paint: PaintInput,
     pub overhangs: Overhangs,
     pub clearance: Clearance,
+    /// Steps, pair tests and drawn layers shared by the ensemble members (`memo`).
+    pub memo: StageMemo,
 }
 
 /// Runs A1-A5. Unsupported settings are refused before any geometry is computed (§5.7).
@@ -83,6 +86,7 @@ pub fn stage_a(input: &StageAInput) -> Result<StageA, SupportError> {
         paint,
         overhangs,
         clearance,
+        memo: StageMemo::default(),
     })
 }
 
