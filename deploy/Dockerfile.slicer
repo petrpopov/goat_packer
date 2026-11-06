@@ -15,7 +15,10 @@ COPY --from=slicer ${SLICER_FILE} /tmp/slicer.AppImage
 RUN echo "$SLICER_SHA256  /tmp/slicer.AppImage" | sha256sum -c - \
     && test "$(dd if=/tmp/slicer.AppImage bs=1 skip="$SQUASHFS_OFFSET" count=4 2>/dev/null)" = hsqs \
     && unsquashfs -processors 2 -o "$SQUASHFS_OFFSET" -d /opt/slicer /tmp/slicer.AppImage \
-    && rm /tmp/slicer.AppImage
+    && rm /tmp/slicer.AppImage \
+    && chmod -R a+rX /opt/slicer
+# unsquashfs keeps the image's own modes: Bambu Studio 02.09.01.70 ships bin/, resources/ and usr/
+# as 0700, so the runner (uid 1000) got "bambu-studio: Permission denied" on every slice.
 
 FROM ubuntu:24.04
 ARG APT_MIRROR
@@ -36,5 +39,7 @@ RUN mkdir -p /opt/slicers/bambu /opt/slicers/orca \
 ENV HOME=/work/home LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 LIBGL_ALWAYS_SOFTWARE=1
 WORKDIR /work
 USER 1000:1000
+# The runner user must reach every file of the slicer (find fails on an unreadable directory).
+RUN find /opt/slicer >/dev/null && test -x "$(sed -n 's|^exec "\$DIR/\([^"]*\)".*|/opt/slicer/\1|p' /opt/slicer/AppRun)"
 ENTRYPOINT []
 CMD ["/usr/bin/sleep", "infinity"]
