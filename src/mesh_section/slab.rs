@@ -17,9 +17,10 @@
 //! kinds are material extents with the line width included (design §4.2).
 
 use i_overlay::core::fill_rule::FillRule;
+use rayon::prelude::*;
 
 use super::area::{
-    IntRings, counter_clockwise, int_point, loops_from_rings, resolve, union_of_areas,
+    IntRings, NM_PER_MM, counter_clockwise, doubled_area, int_point, loops_from_rings, resolve,
 };
 use super::offset::offset_area;
 use super::section::raw_rings;
@@ -28,8 +29,19 @@ use crate::object_print::LAYER_BAND_MM;
 use crate::object_print::Loops;
 
 /// Mitre limit of the bulge growth. Any limit keeps the growth conservative: a mitre or its
-/// square cut always covers the round offset of the vertex.
-const BULGE_MITER_LIMIT: f64 = 3.0;
+/// square cut always covers the round offset of the vertex. 1.5 still mitres a right angle
+/// (a box grows by exactly the bulge on every side) and keeps the reach of the sharpest cut
+/// at √(1.5² + 1) = 1.80 bulges (`SILHOUETTE_REACH`); 3 reached 3.16, which the silhouette
+/// would have to pay along its whole outline.
+const BULGE_MITER_LIMIT: f64 = 1.5;
+
+/// How far, in bulges, a mitred growth with limit `BULGE_MITER_LIMIT` reaches from the
+/// vertex it grows: the tip of a mitre lies within the limit, the corners of a square cut at
+/// most √(limit² + 1) away (the supremum, approached by the sharpest corners).
+const SILHOUETTE_REACH: f64 = 1.802_775_637_731_995; // √(1.5² + 1)
+
+/// Grid slack of the silhouette growth: every offset point is rounded to the 1 nm grid.
+const SILHOUETTE_SLACK_MM: f64 = 2.0e-6;
 
 /// How the body is cut into height bands and how far printed walls reach past the mesh.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,22 +99,67 @@ pub fn wall_bulge_mm(layer_height_mm: f64) -> f64 {
     layer_height_mm * (1.0 - std::f64::consts::FRAC_PI_4) * 0.5
 }
 
-/// `body[k]` for every band up to the object's top, in the mesh's frame.
+/// `body[k]` for every band up to the object's top, in the mesh's frame. Bands are
+/// independent and each is built single-threaded, so running them in parallel keeps the bits.
 pub fn body_bands(mesh: &ObjectMesh, bands: &BodyBands) -> Vec<Loops> {
     let height = mesh.height();
     let parts: Vec<PartSpans> = mesh.normal_parts().map(PartSpans::new).collect();
     (0..bands.count(height))
+        .into_par_iter()
         .map(|band| {
             let (lo, hi) = bands.slab(band);
-            let area = slab_area(&parts, lo, hi, height);
+            let area = without_filled_holes(slab_area(&parts, lo, hi, height), bands.bulge_mm);
             loops_from_rings(&offset_area(&area, bands.bulge_mm, BULGE_MITER_LIMIT))
         })
         .collect()
 }
 
-/// The silhouette: the union of every body band (so it contains each of them).
-pub fn silhouette(bands: &[Loops]) -> Loops {
-    union_of_areas(bands.iter())
+/// `area` without the holes a growth by `grow_mm` fills anyway: a hole of area below
+/// π·grow² has an inscribed radius below `grow`, so every point of it lies within `grow` of
+/// its rim and the mitred growth (which covers the round one) closes it. Same result, but
+/// the union of a slab's triangles leaves hundreds of such cracks (10⁻⁷ mm², seeoptics
+/// keychain: ~200 per band) and each one, grown, turns into a self-crossing star: the
+/// resolve took 0.5 s per band instead of milliseconds.
+fn without_filled_holes(area: IntRings, grow_mm: f64) -> IntRings {
+    if grow_mm <= 0.0 {
+        return area;
+    }
+    let grow_nm = grow_mm * NM_PER_MM;
+    let filled_doubled = 2.0 * std::f64::consts::PI * grow_nm * grow_nm;
+    area.into_iter()
+        .filter(|ring| {
+            let doubled = doubled_area(ring);
+            doubled > 0 || (-doubled) as f64 >= filled_doubled
+        })
+        .collect()
+}
+
+/// The silhouette: the projection of every normal part (the union of its triangles' shadows,
+/// which holds every slab of it) grown by `SILHOUETTE_REACH` bulges, so it contains each
+/// body band: a band is its slab grown by the bulge, and no point of that growth lies
+/// farther than the reach from the slab.
+///
+/// Not the union of the bands: their outlines run along the same walls a few nm apart, and
+/// their union is a sawtooth (seeoptics keychain: 57 528 vertices against 1 750, 1.5 s per
+/// rotation against 2 ms) that every later exact check pays for.
+pub fn silhouette(mesh: &ObjectMesh, bands: &BodyBands) -> Loops {
+    let mut shadows = IntRings::new();
+    for part in mesh.normal_parts() {
+        for index in 0..part.triangles.len() {
+            let ring = part
+                .corners(index)
+                .iter()
+                .map(|corner| int_point(corner[0], corner[1]))
+                .collect();
+            shadows.extend(counter_clockwise(ring));
+        }
+    }
+    if bands.bulge_mm <= 0.0 {
+        return loops_from_rings(&resolve(&shadows, FillRule::Positive));
+    }
+    let grow_mm = bands.bulge_mm * SILHOUETTE_REACH + SILHOUETTE_SLACK_MM;
+    let projection = without_filled_holes(resolve(&shadows, FillRule::Positive), grow_mm);
+    loops_from_rings(&offset_area(&projection, grow_mm, BULGE_MITER_LIMIT))
 }
 
 /// The XY outline of the part of a triangle with `lo <= z <= hi`; empty when the triangle

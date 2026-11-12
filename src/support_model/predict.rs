@@ -9,9 +9,10 @@ use super::cache::{Ensemble, cache_key, load, store};
 use super::ensemble::{distinct, run_members_with, union};
 use super::flavour::Flavour;
 use super::merge::MergeOrder;
-use super::settings::SupportSettings;
+use super::settings::{SupportSettings, check_supported};
 use super::{StageAInput, SupportError, stage_a};
 use crate::embedded_mesh::ObjectMesh;
+use crate::object_print::Realization;
 
 /// What `predict` needs.
 pub struct PredictInput<'a> {
@@ -40,6 +41,23 @@ pub struct Prediction {
 /// for what the model does not describe (design §5.7).
 pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
     let started = Instant::now();
+    // Supports off in the project: no member can grow a branch, so neither stage A nor the
+    // ensemble runs (a keychain spent 0.3 s per rotation on 20 empty members). The settings
+    // checks still run: some refuse a project with or without supports.
+    if !input.settings.enable_support {
+        check_supported(input.settings, input.flavour)?;
+        return Ok(Prediction {
+            ensemble: Ensemble {
+                members: Vec::new(),
+                graphs: 0,
+                realizations: vec![Realization::default()],
+            },
+            cached: false,
+            cache_key: String::new(),
+            seconds: started.elapsed().as_secs_f64(),
+            runs: 0,
+        });
+    }
     let overlaps = input.flavour.overlap_readings();
     let key = cache_key(
         input.mesh,

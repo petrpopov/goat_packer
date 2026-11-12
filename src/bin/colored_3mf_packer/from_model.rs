@@ -71,14 +71,18 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
                 cache_dir: job.args.cache_dir.as_deref(),
                 orders: &orders,
             })?;
-            println!(
-                "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
-                build.name(),
-                prediction.ensemble.graphs,
-                prediction.ensemble.members.len(),
-                prediction.seconds,
-                if prediction.cached { " (cache)" } else { "" }
-            );
+            if !settings.enable_support {
+                println!("supports are off in the project: none predicted (rotation {rotation}°)");
+            } else {
+                println!(
+                    "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
+                    build.name(),
+                    prediction.ensemble.graphs,
+                    prediction.ensemble.members.len(),
+                    prediction.seconds,
+                    if prediction.cached { " (cache)" } else { "" }
+                );
+            }
             seconds += prediction.seconds;
             predictions.push((build, prediction));
         }

@@ -448,3 +448,59 @@ fn body_print_is_deterministic() {
         );
     }
 }
+
+/// Loops (outer rings only) as one geo area.
+fn geo_area(loops: &[Vec<Point>]) -> geo::MultiPolygon<f64> {
+    use geo::BooleanOps;
+    loops.iter().fold(geo::MultiPolygon::new(Vec::new()), |area, ring| {
+        let ring: Vec<(f64, f64)> = ring.iter().map(|p| (p.x, p.y)).collect();
+        area.union(&geo::Polygon::new(ring.into(), Vec::new()))
+    })
+}
+
+#[test]
+fn the_silhouette_holds_every_printed_band_even_at_the_sharpest_corners() {
+    use geo::{Area, BooleanOps};
+    // A 3° wedge high up whose tip ends on the edge of a low box: in the projection the tip
+    // is no corner, in band 2 it is the sharpest one, whose square cut reaches farthest.
+    // Plus sloped pyramid walls and an L.
+    let wedge = prism(&[[0.0, 4.75], [10.0, 5.0], [0.0, 5.25]], 4.0, 6.0, 0);
+    let low_box = cuboid([0.0, 0.0, 0.0], [10.0, 10.0, 1.5]);
+    let mesh = object(vec![wedge, low_box, pyramid(8.0, 9.0), prism(&L_SHAPE, 0.0, 3.0, 3)]);
+    let bands = BodyBands::printed(0.28);
+    for rotation in [0.0, 37.5] {
+        let print = body_print(&mesh, rotation, &bands);
+        let silhouette = geo_area(&print.silhouette);
+        for (band, loops) in print.body.iter().enumerate() {
+            let outside = geo_area(loops).difference(&silhouette).unsigned_area();
+            assert!(outside < 1e-9, "rotation {rotation}, band {band}: {outside} mm² outside");
+        }
+    }
+}
+
+#[test]
+fn the_silhouette_grows_a_box_by_less_than_two_bulges() {
+    let mesh = object(vec![cuboid([0.0; 3], [10.0; 3])]);
+    let print = body_print(&mesh, 0.0, &BodyBands::printed(0.28));
+    let width = bounds(&print.silhouette).max_x - bounds(&print.silhouette).min_x;
+    let bulge = wall_bulge_mm(0.28);
+    assert!(width >= 10.0 + 2.0 * bulge && width <= 10.0 + 2.0 * 1.81 * bulge, "{width}");
+    assert_eq!(print.silhouette.len(), 1);
+}
+
+#[test]
+fn a_real_hole_stays_open_in_the_bands_and_the_silhouette() {
+    // A 10 x 10 frame around a 3 x 3 hole, from four boxes.
+    let mesh = object(vec![
+        cuboid([0.0, 0.0, 0.0], [10.0, 3.5, 3.0]),
+        cuboid([0.0, 6.5, 0.0], [10.0, 3.5, 3.0]),
+        cuboid([0.0, 3.5, 0.0], [3.5, 3.0, 3.0]),
+        cuboid([6.5, 3.5, 0.0], [3.5, 3.0, 3.0]),
+    ]);
+    let print = body_print(&mesh, 0.0, &BodyBands::printed(0.28));
+    // The frame centre is the bbox centre: the hole sits at the origin.
+    for loops in print.body.iter().chain([&print.silhouette]) {
+        assert!(!point_in_footprint(loops, 0.0, 0.0));
+        assert!(point_in_footprint(loops, 3.0, 0.0));
+    }
+}

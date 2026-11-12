@@ -291,6 +291,28 @@ fn unsupported_settings_are_named_before_any_geometry() {
 }
 
 #[test]
+fn supports_off_in_the_project_predict_nothing_and_cache_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut off = settings("");
+    off.enable_support = false;
+    let prediction = predict(&PredictInput {
+        mesh: &cantilever(),
+        settings: &off,
+        flavour: Flavour::Bambu0209,
+        rotation_deg: 0.0,
+        cache_dir: Some(dir.path()),
+        orders: &BOTH,
+    })
+    .unwrap();
+    assert!(prediction.ensemble.members.is_empty() && prediction.runs == 0);
+    assert_eq!(prediction.ensemble.realizations, vec![Realization::default()]);
+    let members: Vec<&Realization> = prediction.ensemble.realizations.iter().collect();
+    let grown = envelope(&members, Margins { first_layer_mm: 1.0, band_mm: 2.0 });
+    assert!(grown.base.is_empty() && grown.above_base.is_empty());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "nothing to cache");
+}
+
+#[test]
 fn a_prediction_is_cached_and_the_envelope_grows_by_the_margins() {
     let dir = tempfile::tempdir().unwrap();
     let settings = settings("");

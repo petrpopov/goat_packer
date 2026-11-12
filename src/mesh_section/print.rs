@@ -14,7 +14,7 @@ pub fn body_print(mesh: &ObjectMesh, rotation_deg: f64, bands: &BodyBands) -> Ob
     let body = body_bands(&rotated, bands);
     ObjectPrint {
         rotation_deg,
-        silhouette: silhouette(&body),
+        silhouette: silhouette(&rotated, bands),
         part_hulls: part_hulls(&rotated),
         part_boxes: part_boxes(&rotated),
         body,
