@@ -65,6 +65,7 @@ pub fn test_args(work_dir: &Path) -> Args {
         cache_dir: None,
         support_source: Default::default(),
         support_orders: None,
+        precision: Default::default(),
         slicer_flavour: None,
         support_margins: None,
         verify: false,

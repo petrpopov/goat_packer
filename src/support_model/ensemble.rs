@@ -23,6 +23,7 @@ use super::flavour::MergeBucket;
 use super::descend::{ClassDescent, descend_classes};
 use super::graph::BranchGraph;
 use super::place::place;
+use super::precision::Precision;
 use super::merge::{MergeOrder, Overlap, ThreadClass};
 use super::stage_a::StageA;
 use super::tips::{ArcFamily, Seeds, seed_tips};
@@ -250,8 +251,8 @@ pub fn distinct(runs: &[MemberRun]) -> Vec<&BranchGraph> {
 
 /// The ensemble's realization: the distinct graphs drawn together (`bands::union_realization`),
 /// what the envelope is made of.
-pub fn union(stage: &StageA, runs: &[MemberRun]) -> Realization {
-    union_realization(stage, &distinct(runs), 0)
+pub fn union(stage: &StageA, runs: &[MemberRun], precision: Precision) -> Realization {
+    union_realization(stage, &distinct(runs), 0, precision)
 }
 
 /// Serializable summary for reports.

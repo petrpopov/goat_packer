@@ -71,6 +71,7 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
                 rotation_deg: rotation,
                 cache_dir: job.args.cache_dir.as_deref(),
                 orders: &orders,
+                precision: job.args.precision,
             })?;
             if !settings.enable_support {
                 println!("supports are off in the project: none predicted (rotation {rotation}°)");

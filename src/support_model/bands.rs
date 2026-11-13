@@ -9,6 +9,7 @@ use super::graph::BranchGraph;
 use super::smooth::smooth;
 use super::stage_a::StageA;
 use super::node::Node;
+use super::precision::Precision;
 use super::{draw::{draw, draw_union}, tips::RoofPiece};
 use crate::geometry::Point;
 use crate::object_print::{Loops, MemberId, Realization, layer_bands};
@@ -24,7 +25,12 @@ pub fn realization(stage: &StageA, graph: &BranchGraph, member: MemberId) -> Rea
 /// The realization of several graphs at once (the ensemble's union): each graph smoothed on
 /// its own (in parallel), all drawn as one layer set (`draw::draw_union`), the roofs of every
 /// arc family once. It covers the union of the graphs' own realizations.
-pub fn union_realization(stage: &StageA, graphs: &[&BranchGraph], member: MemberId) -> Realization {
+pub fn union_realization(
+    stage: &StageA,
+    graphs: &[&BranchGraph],
+    member: MemberId,
+    precision: Precision,
+) -> Realization {
     use rayon::prelude::*;
     let smoothed: Vec<Vec<Vec<IntPoint>>> = graphs
         .par_iter()
@@ -35,7 +41,7 @@ pub fn union_realization(stage: &StageA, graphs: &[&BranchGraph], member: Member
         .zip(&smoothed)
         .map(|(graph, centres)| (graph.layers.as_slice(), centres.as_slice()))
         .collect();
-    let drawing = draw_union(stage, &drawn);
+    let drawing = draw_union(stage, &drawn, precision);
     let mut roofs: Vec<RoofPiece> = Vec::new();
     for piece in graphs.iter().flat_map(|graph| &graph.roofs) {
         if !roofs.contains(piece) {

@@ -32,6 +32,8 @@ pub struct ColoredPackReport {
     pub paint_color_attribute_mentions: usize,
     /// `probe`: slicer probes of one object per rotation class (a cache hit counts as one).
     pub support_source: String,
+    /// `--precision`: how the support model drew its ensemble (`precise`, `fast`).
+    pub precision: String,
     pub slicer_flavour: String,
     /// The slicer build(s) the plate is computed for, as the user knows them
     /// (`Bambu Studio 02.09.01.70`; the webapp shows it with the result).
@@ -181,6 +183,7 @@ impl ColoredPackReport {
             } else {
                 summary.support_source.clone()
             },
+            precision: args.precision.name().to_owned(),
             slicer_flavour: job.flavour.flavour.name().to_owned(),
             target_slicer: job
                 .flavour

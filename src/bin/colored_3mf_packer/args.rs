@@ -7,7 +7,7 @@ use goat_packer::{
     colored_packer::{PrinterProfile, SLICER_KINDS},
     nozzle_clean::NozzleCleanSpec,
     print_time::TimeCorrection,
-    support_model::{flavour::Flavour, merge::MergeOrder},
+    support_model::{flavour::Flavour, merge::MergeOrder, precision::Precision},
     tower_model::DEFAULT_TOWER_WIDTH_MM,
 };
 
@@ -102,6 +102,9 @@ pub struct Args {
     /// (`along`, `against`); `None` = each build's own (`Flavour::default_orders`: `along`,
     /// both for Bambu Studio 02.09), the readings its margins were calibrated with.
     pub support_orders: Option<Vec<MergeOrder>>,
+    /// `--precision precise|fast`: how the support model draws its ensemble
+    /// (`support_model::precision`; `fast` only matters with the model as the source).
+    pub precision: Precision,
     /// `--slicer-flavour NAME` (`bambu-02.08`, `bambu-02.09`, ...): predict the supports of
     /// this build only. Without it the build is the profile's (or a newer project's); an
     /// uncalibrated Bambu version predicts the newest calibrated one (warning).
@@ -265,6 +268,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut cache_dir = None;
     let mut support_source = SupportSource::default();
     let mut support_orders = None;
+    let mut precision = Precision::default();
     let mut slicer_flavour = None;
     let mut support_margins = None;
     let mut verify = false;
@@ -327,6 +331,10 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--rotations" => rotations = parse_rotations(&value)?,
             "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
             "--support-orders" => support_orders = Some(parse_orders(&value)?),
+            "--precision" => {
+                precision = Precision::parse(&value)
+                    .ok_or_else(|| format!("--precision must be precise or fast; got {value:?}"))?;
+            }
             "--slicer-flavour" => {
                 if Flavour::from_name(&value).is_none() {
                     return Err(format!("--slicer-flavour {value}: unknown slicer build").into());
@@ -408,6 +416,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         cache_dir,
         support_source,
         support_orders,
+        precision,
         slicer_flavour,
         support_margins,
         verify,

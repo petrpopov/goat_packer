@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use super::ensemble::MemberSummary;
 use super::flavour::Flavour;
 use super::merge::{MergeOrder, Overlap};
+use super::precision::Precision;
 use super::settings::SupportSettings;
 use crate::embedded_mesh::ObjectMesh;
 use crate::object_print::Realization;
@@ -99,9 +100,14 @@ pub fn cache_key(
     rotation_deg: f64,
     orders: &[MergeOrder],
     overlaps: &[Overlap],
+    precision: Precision,
 ) -> String {
     let mut hash = Sha256::new();
     hash.update(MODEL_VERSION.to_le_bytes());
+    // Only a non-default drawing enters the key: precise entries keep their keys.
+    if precision != Precision::Precise {
+        hash_bytes(&mut hash, precision.name().as_bytes());
+    }
     hash_bytes(&mut hash, flavour.name().as_bytes());
     hash.update(rotation_deg.to_le_bytes());
     for order in orders {

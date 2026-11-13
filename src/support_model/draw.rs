@@ -5,6 +5,7 @@
 //! (Bambu, Snapmaker) or a flat cylinder (Orca). Every slice loses the object's own radius-0
 //! collision area, and the layer's union is closed over notches narrower than a line.
 
+mod raster;
 mod shapes;
 
 use shapes::{CHORD_TOLERANCE_MM, disc, slice_cylinder};
@@ -12,6 +13,7 @@ use shapes::{CHORD_TOLERANCE_MM, disc, slice_cylinder};
 use super::flavour::{PlateFoot, RootCap};
 use super::memo::Fingerprint;
 use super::node::Node;
+use super::precision::Precision;
 use super::stage_a::StageA;
 use crate::polygon_ops::{
     FillRule, IntPoint, Join, Ring, Rings, difference, offset, resolve, simplify, union_many,
@@ -19,6 +21,14 @@ use crate::polygon_ops::{
 
 /// Notches narrower than a support line are filled (spec 03 §3.7 step 2).
 const NOTCH_CLOSING_MM: f64 = 0.42;
+
+/// Pixel of the raster union (`Precision::Fast`), mm: 0.01 was no closer in plate counts
+/// and slower.
+const RASTER_PIXEL_MM: f64 = 0.02;
+
+/// Pixels the raster layer is grown by before its outline is simplified by one pixel, so the
+/// simplified outline still covers every pixel of the closed union.
+const RASTER_SAFETY_PX: f64 = 1.5;
 
 /// A bend whose sine is above this (about 10°) gets a ball at its joint.
 const SHARP_BEND_SINE: f64 = 0.17;
@@ -84,7 +94,11 @@ pub struct UnionDrawing {
     pub roots: Vec<Rings>,
 }
 
-pub fn draw_union(stage: &StageA, graphs: &[(&[Vec<Node>], &[Vec<IntPoint>])]) -> UnionDrawing {
+pub fn draw_union(
+    stage: &StageA,
+    graphs: &[(&[Vec<Node>], &[Vec<IntPoint>])],
+    precision: Precision,
+) -> UnionDrawing {
     let count = graphs.iter().map(|(layers, _)| layers.len()).max().unwrap_or(0);
     // Fingerprints, not copies, of the rings already taken: the copies doubled the memory.
     let mut seen: Vec<std::collections::HashSet<u128>> = vec![Default::default(); count];
@@ -132,7 +146,10 @@ pub fn draw_union(stage: &StageA, graphs: &[(&[Vec<Node>], &[Vec<IntPoint>])]) -
     let layers = slices
         .into_par_iter()
         .enumerate()
-        .map(|(layer, rings)| closed_layer(stage, layer, rings))
+        .map(|(layer, rings)| match precision {
+            Precision::Precise => closed_layer(stage, layer, rings),
+            Precision::Fast => raster_layer(stage, layer, rings),
+        })
         .collect();
     let roots = root_lists
         .into_par_iter()
@@ -403,3 +420,22 @@ fn closed_layer(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
     )
 }
 
+
+/// `closed_layer` on a raster (`Precision::Fast`): the pieces' pixel cover, closed over the
+/// same notches, grown by `RASTER_SAFETY_PX` and simplified within a pixel, then trimmed by
+/// the object. A superset of `closed_layer`: the cover and every step after it only add, and
+/// closing the untrimmed union covers the closing of the trimmed one.
+fn raster_layer(stage: &StageA, layer: usize, rings: Vec<Ring>) -> Rings {
+    if rings.is_empty() {
+        return Rings::new();
+    }
+    let grid = stage.derived.grid;
+    let pixel = grid.scaled(RASTER_PIXEL_MM).round() as i64;
+    let radius = 0.5 * grid.scaled(NOTCH_CLOSING_MM) / pixel as f64;
+    let outline = raster::cover(&rings, pixel)
+        .closed(radius)
+        .dilated(RASTER_SAFETY_PX)
+        .outline(pixel);
+    let simplified = simplify(&outline, pixel as f64, stage.flavour.strictly_simple());
+    difference(&simplified, &stage.clearance.collision(0, layer, true))
+}
