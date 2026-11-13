@@ -17,6 +17,8 @@ use goat_packer::{
     },
 };
 
+use rayon::prelude::*;
+
 use crate::AppResult;
 use crate::args::SupportSource;
 use crate::job::Job;
@@ -43,64 +45,21 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
         },
         None => job.flavour.margins(),
     };
-    let mut prints = Vec::new();
-    let mut summaries = Vec::new();
-    let mut seconds = 0.0;
     let count = job.args.rotations.len();
-    for (index, &rotation) in job.args.rotations.iter().enumerate() {
-        progress::stage_step(
-            Stage::Modelling,
-            &format!("predicting supports (rotation {rotation}°)..."),
-            Some(1),
-            &StageDetail::new(index, count)
-                .with("rotation_deg", rotation)
-                .with("class", index + 1)
-                .with("classes", count),
-        );
-        let mut predictions = Vec::new();
-        for &build in &builds {
-            let orders = job
-                .args
-                .support_orders
-                .clone()
-                .unwrap_or_else(|| build.default_orders().to_vec());
-            let prediction = predict(&PredictInput {
-                mesh: &job.mesh,
-                settings: &settings,
-                flavour: build,
-                rotation_deg: rotation,
-                cache_dir: job.args.cache_dir.as_deref(),
-                orders: &orders,
-                precision: job.args.precision,
-            })?;
-            if !settings.enable_support {
-                println!("supports are off in the project: none predicted (rotation {rotation}°)");
-            } else {
-                println!(
-                    "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
-                    build.name(),
-                    prediction.ensemble.graphs,
-                    prediction.ensemble.members.len(),
-                    prediction.seconds,
-                    if prediction.cached { " (cache)" } else { "" }
-                );
-            }
-            seconds += prediction.seconds;
-            predictions.push((build, prediction));
-        }
-        prints.push(class_print(job, rotation, &predictions, margins)?);
-        summaries.push(ClassSummary {
-            rotation_deg: rotation,
-            runs: predictions
-                .iter()
-                .map(|(_, prediction)| prediction.ensemble.members.len())
-                .sum(),
-            saturated: true,
-            cached: predictions.iter().all(|(_, prediction)| prediction.cached),
-            growth_mm2: Vec::new(),
-            landing_outside_model_mm2: 0.0,
-        });
-    }
+    // The classes are independent (own stage A, memo and cache entry): in parallel, so one
+    // class's sequential stretches (stage A, the last descents, drawing tails) fill the other's
+    // idle threads. P1S at 8 threads: the two classes took 7.7 + 7.3 s one after the other.
+    let started = std::time::Instant::now();
+    let classes: Vec<(ObjectPrint, ClassSummary)> = job
+        .args
+        .rotations
+        .par_iter()
+        .enumerate()
+        .map(|(index, &rotation)| model_class(job, &settings, &builds, margins, rotation, index, count))
+        .collect::<AppResult<_>>()?;
+    // Wall time: the classes overlap, their own seconds would count it twice.
+    let seconds = started.elapsed().as_secs_f64();
+    let (prints, summaries) = classes.into_iter().unzip();
     let tower = tower_spec(job, &[])?;
     Ok(Modelled {
         plan: plan_of(job, prints, tower),
@@ -109,6 +68,70 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
         probe_seconds: 0.0,
         model_seconds: seconds,
     })
+}
+
+/// One rotation class: every build's prediction, the class print and its summary.
+fn model_class(
+    job: &Job,
+    settings: &SupportSettings,
+    builds: &[Flavour],
+    margins: Margins,
+    rotation: f64,
+    index: usize,
+    count: usize,
+) -> AppResult<(ObjectPrint, ClassSummary)> {
+    progress::stage_step(
+        Stage::Modelling,
+        &format!("predicting supports (rotation {rotation}°)..."),
+        Some(1),
+        &StageDetail::new(index, count)
+            .with("rotation_deg", rotation)
+            .with("class", index + 1)
+            .with("classes", count),
+    );
+    let mut predictions = Vec::new();
+    for &build in builds {
+        let orders = job
+            .args
+            .support_orders
+            .clone()
+            .unwrap_or_else(|| build.default_orders().to_vec());
+        let prediction = predict(&PredictInput {
+            mesh: &job.mesh,
+            settings,
+            flavour: build,
+            rotation_deg: rotation,
+            cache_dir: job.args.cache_dir.as_deref(),
+            orders: &orders,
+            precision: job.args.precision,
+        })?;
+        if !settings.enable_support {
+            println!("supports are off in the project: none predicted (rotation {rotation}°)");
+        } else {
+            println!(
+                "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
+                build.name(),
+                prediction.ensemble.graphs,
+                prediction.ensemble.members.len(),
+                prediction.seconds,
+                if prediction.cached { " (cache)" } else { "" }
+            );
+        }
+        predictions.push((build, prediction));
+    }
+    let print = class_print(job, rotation, &predictions, margins)?;
+    let summary = ClassSummary {
+        rotation_deg: rotation,
+        runs: predictions
+            .iter()
+            .map(|(_, prediction)| prediction.ensemble.members.len())
+            .sum(),
+        saturated: true,
+        cached: predictions.iter().all(|(_, prediction)| prediction.cached),
+        growth_mm2: Vec::new(),
+        landing_outside_model_mm2: 0.0,
+    };
+    Ok((print, summary))
 }
 
 /// The print of one class: body kinds from the mesh, landing from the first-layer model, the
