@@ -4,7 +4,6 @@
 use super::separate::Field;
 use super::windows::Window;
 use crate::layout::PixelPlacement;
-use std::collections::HashMap;
 
 /// Two tries start at least this far apart (max norm, pixels).
 const SPREAD: i32 = 12;
@@ -29,7 +28,12 @@ impl CostMap {
         step: usize,
     ) -> CostMap {
         let mut cells: Vec<(u32, PixelPlacement)> = Vec::new();
-        let mut buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        // The neighbours of each bucket of the window, found on first use (shared by the
+        // classes).
+        let (bx0, by0) = (area.x0.div_euclid(BUCKET), area.y0.div_euclid(BUCKET));
+        let columns = (area.x1.div_euclid(BUCKET) - bx0 + 1).max(0) as usize;
+        let rows = (area.y1.div_euclid(BUCKET) - by0 + 1).max(0) as usize;
+        let mut buckets: Vec<Option<Vec<usize>>> = vec![None; columns * rows];
         for class in 0..field.depth.classes() {
             for y in (area.y0..=area.y1).step_by(step) {
                 for x in (area.x0..=area.x1).step_by(step) {
@@ -37,12 +41,12 @@ impl CostMap {
                         continue;
                     }
                     let key = (x.div_euclid(BUCKET), y.div_euclid(BUCKET));
-                    let near = buckets.entry(key).or_insert_with(|| {
+                    let slot = (key.1 - by0) as usize * columns + (key.0 - bx0) as usize;
+                    let near = buckets[slot].get_or_insert_with(|| {
                         let centre = (key.0 * BUCKET + BUCKET / 2, key.1 * BUCKET + BUCKET / 2);
                         field.neighbours(items, centre.0, centre.1, BUCKET / 2, None)
                     });
-                    let cost = field.overlap(items, near, class, x, y);
-                    if cost <= MAX_COST {
+                    if let Some(cost) = field.overlap_at_most(items, near, class, x, y, MAX_COST) {
                         cells.push((cost, PixelPlacement { class, x, y }));
                     }
                 }

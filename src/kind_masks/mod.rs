@@ -51,6 +51,9 @@ pub struct KindMasks {
     /// The vector print, for the plate zones (`origins`).
     pub print: ObjectPrint,
     pub bed_extent: Loops,
+    /// Material covers of the plate-zone tests, shared by every call on these masks (the
+    /// base map, each tower reference, the zone checker): growing them is the costly part.
+    pub(crate) zone_covers: zone_tests::SharedCovers,
 }
 
 impl KindShapes {
@@ -74,6 +77,7 @@ impl KindShapes {
             extent_bounds: self.extent_bounds(),
             print: self.print.clone(),
             bed_extent: self.bed_extent.clone(),
+            zone_covers: Default::default(),
         }
     }
 }

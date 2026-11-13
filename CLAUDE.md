@@ -12,6 +12,8 @@ cargo test --release colored_pack   # by name substring
 
 CI: Woodpecker `ci.ezheg.xyz` (`.woodpecker/`): `check` on every push, `release` on tag `v*` builds `goat-packer-*:<tag>` into Docker on `main` via `deploy/build-images.sh` (the only description of the image build; no registry).
 
+`colored_3mf_packer` runs on mimalloc (2026-11-13, P1S job at two threads 92 -> 89 s, peak RSS 1.30 -> 1.07 GB, byte-identical). Fat LTO was measured too and gained nothing beyond noise (84.4 vs 83.8 s with the other speedups): not worth the slower image build.
+
 Tests must stay self-contained: generated temp data or `tests/fixtures/` only (printer profiles too: `tests/fixtures/profiles/`, generic test beds — tests never read the `profiles/` catalog or name its printers, except the one check that every catalog profile loads with a unique id/name); no sibling-dir paths, symlinks, env-gated no-op tests, shared `/tmp` names. The packer and tests never call a slicer or network; the production colored-3MF pipeline does (slicer path comes from the printer profile).
 
 ## Packing core (`src/packing.rs`, `src/packing_search.rs`, `src/raster_mask.rs`, `src/collision.rs`, `src/validation.rs`)
