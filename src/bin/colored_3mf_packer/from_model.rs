@@ -8,6 +8,7 @@ use goat_packer::{
     object_print::{Margins, ObjectPrint, Realization},
     progress::{self, Stage, StageDetail},
     support_model::{
+        cache::{EnvelopePart, envelope_key, load_envelope, store_envelope},
         envelope::{envelope, envelope_banded},
         flavour::Flavour,
         predict::{PredictInput, Prediction, predict},
@@ -129,23 +130,7 @@ fn class_print(
     let bands = BodyBands::printed(layer_height.max(first_height));
     let mut print = body_print(&job.mesh, rotation, &bands);
     print.landing = landing(&job.mesh, &job.settings, job.build, rotation)?.loops;
-    let envelopes: Vec<Realization> = predictions
-        .iter()
-        .map(|(build, prediction)| {
-            let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
-            if job.args.support_margins.is_some() {
-                envelope(&members, margins)
-            } else {
-                envelope_banded(&members, build.first_layer_margin_mm(), &|band| {
-                    build.band_margin_mm(band)
-                })
-            }
-        })
-        .collect();
-    let grown = match envelopes.as_slice() {
-        [single] => single.clone(),
-        all => envelope(&all.iter().collect::<Vec<_>>(), Margins::default()),
-    };
+    let grown = class_envelope(job, predictions, margins)?;
     print.support_base = grown.base;
     print.support = grown.above_base;
     print.interface = grown.interface;
@@ -165,4 +150,77 @@ fn class_print(
         .collect::<Vec<_>>()
         .join("+");
     Ok(print)
+}
+
+/// The supports of one class: every build's ensemble grown by its margins, united. Growing is
+/// most of a class on a model cache hit (2.4 s per P1S class at two threads), so with
+/// `--cache-dir` the result is cached too, keyed by the ensembles and the margins.
+fn class_envelope(
+    job: &Job,
+    predictions: &[(Flavour, Prediction)],
+    margins: Margins,
+) -> AppResult<Realization> {
+    let fixed = job.args.support_margins.is_some();
+    let first_layer_mm = |build: Flavour| {
+        if fixed {
+            margins.first_layer_mm
+        } else {
+            build.first_layer_margin_mm()
+        }
+    };
+    let band_mm = |build: Flavour, band: usize| {
+        if fixed {
+            margins.band_mm
+        } else {
+            build.band_margin_mm(band)
+        }
+    };
+    // Supports off: no ensemble key, nothing worth caching.
+    let key = job
+        .args
+        .cache_dir
+        .as_deref()
+        .filter(|_| predictions.iter().all(|(_, p)| !p.cache_key.is_empty()))
+        .map(|dir| {
+            let parts: Vec<EnvelopePart> = predictions
+                .iter()
+                .map(|(build, prediction)| {
+                    let bands = prediction
+                        .ensemble
+                        .realizations
+                        .iter()
+                        .map(|member| member.support.len())
+                        .max()
+                        .unwrap_or(0);
+                    EnvelopePart {
+                        ensemble_key: &prediction.cache_key,
+                        first_layer_mm: first_layer_mm(*build),
+                        band_mm: (0..bands).map(|band| band_mm(*build, band)).collect(),
+                    }
+                })
+                .collect();
+            (dir, envelope_key(&parts))
+        });
+    if let Some((dir, key)) = &key
+        && let Some(cached) = load_envelope(dir, key)
+    {
+        return Ok(cached);
+    }
+    let envelopes: Vec<Realization> = predictions
+        .iter()
+        .map(|(build, prediction)| {
+            let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
+            envelope_banded(&members, first_layer_mm(*build), &|band| {
+                band_mm(*build, band)
+            })
+        })
+        .collect();
+    let grown = match envelopes.as_slice() {
+        [single] => single.clone(),
+        all => envelope(&all.iter().collect::<Vec<_>>(), Margins::default()),
+    };
+    if let Some((dir, key)) = &key {
+        store_envelope(dir, key, &grown)?;
+    }
+    Ok(grown)
 }
