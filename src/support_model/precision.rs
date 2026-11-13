@@ -1,9 +1,10 @@
 //! How exactly the model draws an ensemble (`--precision`). `Precise` is the calibrated
 //! vector drawing; `Fast` unites each layer's pieces on a raster (`draw::raster`): a superset
-//! of the vector layer by under 0.05 mm (band area +3 % on P1S), about a third faster per
-//! job, and the plate count may lose a copy (2026-11-13, fresh cache, two threads, precise ->
-//! fast: P1S 43 -> 43 copies in 78 -> 53 s, U1 50 -> 49 in 38 -> 28 s, A2L 73 -> 72 in 73 ->
-//! 51 s; a 0.01 mm pixel gave A2L 71), so it is the user's choice, not the default.
+//! of the vector layer by under 0.05 mm (band area +3 % on P1S), and the packer then climbs
+//! no finer level than 0.25 mm (`colored_3mf_packer --precision`). The plate count may lose a
+//! copy, so it is the user's choice, not the default. 2026-11-13, fresh cache, two threads,
+//! precise -> fast: P1S 43 -> 43 copies in 65 -> 30 s, U1 50 -> 49 in 35 -> 14 s, A2L 73 -> 72
+//! in 61 -> 30 s (a 0.01 mm pixel gave A2L 71).
 
 /// The drawing of an ensemble's union.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
