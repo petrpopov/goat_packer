@@ -34,4 +34,11 @@ class CliCommandsTest {
         val args = CliCommands.pack("packer", base.copy(resolution = 0.2))
         assertEquals("0.2", args[args.indexOf("--resolution") + 1])
     }
+
+    @Test
+    fun `быстрый расчёт поддержек передаётся флагом, точный — дефолт пакера`() {
+        val args = CliCommands.pack("packer", base.copy(precision = "fast"))
+        assertEquals("fast", args[args.indexOf("--precision") + 1])
+        assertFalse("--precision" in CliCommands.pack("packer", base))
+    }
 }

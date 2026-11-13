@@ -46,6 +46,11 @@ data class PackJobForm(
         message = "layout допустим search или grid",
     )
     val layout: String? = null,
+    @field:Pattern(
+        regexp = """^(precise|fast)$""",
+        message = "precision допустим precise или fast",
+    )
+    val precision: String? = null,
     val nozzleClean: String? = null,
     /** Окно печати, ч: уложить стол в это время (с коррекцией и запасом). Пусто — без окна. */
     @field:DecimalMin(value = "0.5", message = "timeWindowHours должен быть в диапазоне 0.5..240 ч")

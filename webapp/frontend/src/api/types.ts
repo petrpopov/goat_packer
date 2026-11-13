@@ -150,7 +150,12 @@ export interface PackJobInfo {
   tower?: PackTowerInfo | null;
   /** Сборка слайсера, на которую рассчитан стол («Bambu Studio 02.09.01.70»); нет поля — старый пакер. */
   targetSlicer?: string | null;
+  /** Расчёт поддержек: precise|fast; нет поля — старый пакер. */
+  precision?: PackPrecision | null;
 }
+
+/** Расчёт поддержек пакера (--precision). */
+export type PackPrecision = 'precise' | 'fast';
 
 /** Угол башни очистки (wipe_tower_x/y) и её размер, мм, координаты стола. */
 export interface PackTowerInfo {
@@ -221,6 +226,8 @@ export interface PackParamsView {
   clearance: number;
   resolution: number;
   layout: 'search' | 'grid';
+  /** Расчёт поддержек; нет поля — старый бэкенд (точный). */
+  precision?: PackPrecision;
   /** Спецификация чистки сопла пакера; '' — выключена. */
   nozzleClean: string;
   edgeMargin: number | null;

@@ -28,6 +28,8 @@ object CliCommands {
         // Пусто = дефолт пакера (20 мм): передаём только заданное.
         params.towerWidth?.let { addOption("--tower-width", it) }
         addOption("--layout", params.layout)
+        // Дефолт пакера (precise) не передаём: команда старых задач остаётся прежней.
+        if (params.precision != PackDefaults.PRECISION) addOption("--precision", params.precision)
         if (params.nozzleClean.isNotBlank() && !NozzleCleanSpec.isOff(params.nozzleClean)) {
             addOption("--nozzle-clean", params.nozzleClean)
         }

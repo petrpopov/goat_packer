@@ -1,6 +1,6 @@
 /** Форма упаковки без React: значения полей, их проверка и запрос на сервер. */
 
-import type { PackParamsView } from '@/api/types';
+import type { PackParamsView, PackPrecision } from '@/api/types';
 import {
   buildNozzleClean,
   buildSupportOverlap,
@@ -19,6 +19,7 @@ export interface PackFormValues {
   clearance: string;
   resolution: string;
   layout: PackLayoutMode;
+  precision: PackPrecision;
   cleanMode: NozzleCleanMode;
   globalEvery: string;
   fromZ: string;
@@ -49,6 +50,7 @@ export const DEFAULT_PACK_FORM: PackFormValues = {
   clearance: '0.7',
   resolution: '0.25',
   layout: 'search',
+  precision: 'precise',
   cleanMode: 'off',
   globalEvery: '10',
   fromZ: '',
@@ -74,6 +76,7 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
     clearance: String(params.clearance),
     resolution: String(params.resolution),
     layout: params.layout === 'grid' ? 'grid' : 'search',
+    precision: params.precision === 'fast' ? 'fast' : 'precise',
     cleanMode: clean.mode,
     globalEvery: clean.mode === 'global' ? clean.every : current.globalEvery,
     fromZ: clean.mode === 'from-z' ? clean.fromZ : current.fromZ,
@@ -194,6 +197,7 @@ export function packFormData(
   // поиск всегда перебирает фиксированные 64 варианта, число попыток ни на что не влияло.
   form.append('nozzleClean', parts.nozzleSpec);
   form.append('layout', values.layout);
+  form.append('precision', values.precision);
   // Пустой отступ = дефолт профиля (у Snapmaker U1 — 4 мм против качания головки). Свой стол
   // несёт отступ в customMargin, второй (из «Дополнительно», там скрыт) не шлём.
   if (target.kind !== 'custom' && values.edgeMargin.trim() !== '') form.append('edgeMargin', values.edgeMargin.trim());

@@ -20,6 +20,8 @@ data class JobRequest(
     /** Ширина черновой башни, мм (упаковка) → --tower-width; null = дефолт пакера (20). */
     val towerWidth: Double? = null,
     val layout: String = PackDefaults.LAYOUT,
+    /** Расчёт поддержек (упаковка) → --precision: precise|fast. */
+    val precision: String = PackDefaults.PRECISION,
     val nozzleClean: String = "",
     val dayStart: String = ScheduleDefaults.DAY_START,
     val nightStart: String = ScheduleDefaults.NIGHT_START,

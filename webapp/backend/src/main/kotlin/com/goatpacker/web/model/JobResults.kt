@@ -20,6 +20,8 @@ data class PackJobResult(
     val tower: PackTowerResult? = null,
     /** `target_slicer` отчёта: сборка слайсера, на которую рассчитан стол («Bambu Studio 02.09.01.70»); null — старый пакер. */
     val targetSlicer: String? = null,
+    /** `precision` отчёта: расчёт поддержек (precise|fast); null — старый пакер. */
+    val precision: String? = null,
 )
 
 /**

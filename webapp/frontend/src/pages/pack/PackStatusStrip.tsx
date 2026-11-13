@@ -339,6 +339,7 @@ function succeededContent(pack: PackJob, result: PackJobInfo, now: number): Stri
     ),
   ];
   if (result.targetSlicer) parts.push(<>рассчитано на {result.targetSlicer}</>);
+  if (result.precision === 'fast') parts.push(<>быстрый расчёт</>);
   if (checkActive && check) {
     parts.push(
       checkRunning && check.stage ? (
