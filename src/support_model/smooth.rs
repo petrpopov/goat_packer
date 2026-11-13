@@ -36,6 +36,14 @@ pub struct Smoothed {
 }
 
 /// Runs the pass over the placed `layers`.
+///
+/// Spheres move only with their own tree (an update reads the sphere, its parents and its
+/// child), so every tree is smoothed alone and the result is kept in the stage's memo: the
+/// distinct graphs of an ensemble share most of their trees (P1S under 02.09: 10 044 trees
+/// in 353 graphs, 1 479 distinct). Only the stop is common to the graph (no sphere of any
+/// tree digs in deeper than `enough`); the trees record their depth per iteration, and a
+/// graph that would stop before the last iteration is smoothed whole as before. Same bits
+/// either way: a tree alone runs the very arithmetic it runs in its graph.
 pub fn smooth(stage: &StageA, layers: &[Vec<Node>]) -> Smoothed {
     let mut spheres = Spheres::new(stage, layers);
     let mut obstacles: Vec<Option<Arc<SegmentGrid>>> = vec![None; stage.grid.len()];
@@ -47,25 +55,31 @@ pub fn smooth(stage: &StageA, layers: &[Vec<Node>]) -> Smoothed {
         }
     }
     let rule = Rule::new(stage);
-    let mut iterations = 0;
-    for _ in 0..MAX_ITERATIONS {
-        iterations += 1;
-        let previous: Vec<[f64; 2]> = spheres.list.iter().map(|s| s.position).collect();
-        let mut deepest: f64 = 0.0;
-        for id in 0..spheres.list.len() {
-            let sphere = &spheres.list[id];
-            if sphere.locked {
-                continue;
+    let trees = spheres.trees();
+    let runs: Vec<Arc<TreeRun>> = trees
+        .iter()
+        .map(|tree| {
+            let (key, alone) = spheres.alone(tree);
+            stage.memo.trees.get_or(key, || {
+                let mut alone = alone;
+                let depths = iterate(&rule, &mut alone, &obstacles, false).1;
+                let positions = alone.iter().map(|sphere| sphere.position).collect();
+                Arc::new(TreeRun { depths, positions })
+            })
+        })
+        .collect();
+    let stops_early = (0..MAX_ITERATIONS - 1)
+        .any(|iteration| runs.iter().all(|run| run.depths[iteration] <= rule.enough));
+    let iterations = if stops_early {
+        iterate(&rule, &mut spheres.list, &obstacles, true).0
+    } else {
+        for (tree, run) in trees.iter().zip(&runs) {
+            for (&id, &position) in tree.iter().zip(&run.positions) {
+                spheres.list[id].position = position;
             }
-            let (next, depth) =
-                rule.update(sphere, previous[id], &spheres.list, &previous, &obstacles);
-            deepest = deepest.max(depth);
-            spheres.list[id].position = next;
         }
-        if deepest <= rule.enough {
-            break;
-        }
-    }
+        MAX_ITERATIONS
+    };
     let centres = layers
         .iter()
         .enumerate()
@@ -85,6 +99,43 @@ pub fn smooth(stage: &StageA, layers: &[Vec<Node>]) -> Smoothed {
         centres,
         iterations,
     }
+}
+
+/// One tree smoothed alone for every iteration: its deepest dig-in per iteration and its
+/// final positions (in the order of `Spheres::alone`).
+pub struct TreeRun {
+    depths: Vec<f64>,
+    positions: Vec<[f64; 2]>,
+}
+
+/// Runs the update on `list` (whole trees) up to `MAX_ITERATIONS` times; with `stop` it ends
+/// after the first iteration where nothing dug in deeper than `enough`. The iterations run
+/// and the deepest dig-in of each.
+fn iterate(
+    rule: &Rule,
+    list: &mut [Sphere],
+    obstacles: &[Option<Arc<SegmentGrid>>],
+    stop: bool,
+) -> (usize, Vec<f64>) {
+    let mut depths = Vec::with_capacity(MAX_ITERATIONS);
+    for _ in 0..MAX_ITERATIONS {
+        let previous: Vec<[f64; 2]> = list.iter().map(|s| s.position).collect();
+        let mut deepest: f64 = 0.0;
+        for id in 0..list.len() {
+            let sphere = &list[id];
+            if sphere.locked {
+                continue;
+            }
+            let (next, depth) = rule.update(sphere, previous[id], list, &previous, obstacles);
+            deepest = deepest.max(depth);
+            list[id].position = next;
+        }
+        depths.push(deepest);
+        if stop && deepest <= rule.enough {
+            break;
+        }
+    }
+    (depths.len(), depths)
 }
 
 /// The nearest-boundary grid of a layer's radius-0 collision area, built once per stage: every

@@ -18,6 +18,7 @@ use std::sync::Mutex;
 
 use super::descend::Moved;
 use super::node::Node;
+use super::smooth::TreeRun;
 use super::smooth::obstacle::SegmentGrid;
 use crate::polygon_ops::{IntPoint, Ring, Rings};
 
@@ -87,6 +88,8 @@ pub struct StageMemo {
     pub layers: Memo<Rings>,
     /// The smoothing pass's boundary grid by layer.
     pub obstacles: Memo<std::sync::Arc<SegmentGrid>>,
+    /// A tree smoothed alone, by everything its update reads (`smooth::Spheres::alone`).
+    pub trees: Memo<std::sync::Arc<TreeRun>>,
 }
 
 /// Builds a fingerprint: two independent 64-bit lanes of folded 128-bit multiplications
