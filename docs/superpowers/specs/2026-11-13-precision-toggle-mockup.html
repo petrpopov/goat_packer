@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Макет: переключатель «Расчёт поддержек»</title>
+<style>
+  :root {
+    --font-ui: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --bg: #f5f4f1; --panel: #ffffff; --panel-2: #eeeeee; --hover: #e5e5e5;
+    --border: #e2e1de; --text: #181818; --muted: #434343; --dim: #5c5c5c;
+    --accent: #9c3d00; --accent-fill: #ff7a1a; --accent-ink: #1a0d00;
+    --shadow-ink-near: rgb(24 24 24 / 0.08); --shadow-lift: 0 1px 2px var(--shadow-ink-near);
+    --radius-sm: 4px; --radius: 6px; --radius-lg: 10px;
+    --space-2xs: 4px; --space-xs: 6px; --space-sm: 10px; --space-md: 12px; --space-lg: 16px;
+    --dur: 160ms; --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font-ui); }
+  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 24px; max-width: 1040px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-lg); }
+  .form-col { display: grid; gap: var(--space-lg); }
+  .field { display: grid; gap: var(--space-xs); }
+  .field-label { font-weight: 600; font-size: 13px; }
+  .field-hint { color: var(--dim); font-size: 12px; }
+  .select { height: 32px; border: 1px solid var(--border); border-radius: var(--radius); padding: 0 var(--space-sm); display: flex; align-items: center; color: var(--muted); }
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: 2px; background: var(--panel-2); border-radius: var(--radius); }
+  .seg button { height: 26px; padding: 0 var(--space-sm); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font: 500 12.5px var(--font-ui); cursor: pointer; transition: background-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out); }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed='true'] { background: var(--panel); color: var(--text); box-shadow: var(--shadow-lift), 0 0 0 1px var(--border); }
+  .check { display: flex; gap: var(--space-xs); align-items: flex-start; }
+  .check small { display: block; color: var(--dim); font-size: 12px; }
+  .new { outline: 2px dashed var(--accent-fill); outline-offset: 6px; border-radius: var(--radius); }
+  .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #ff7a1a26; color: var(--accent); font: 600 11px var(--font-ui); vertical-align: 1px; }
+  .btn { height: 36px; border: 0; border-radius: var(--radius); background: var(--accent-fill); color: var(--accent-ink); font: 600 14px var(--font-ui); }
+  .notes h2 { margin: 0 0 8px; font-size: 16px; }
+  .notes p, .notes li { color: var(--muted); }
+  .result { margin-top: 16px; padding: var(--space-md); border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+  .result .num { font: 600 22px var(--font-mono); }
+  .result small { color: var(--dim); }
+  table { border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  td, th { padding: 4px 10px 4px 0; text-align: left; }
+  th { color: var(--dim); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <form class="panel form-col" onsubmit="return false">
+    <div class="field">
+      <span class="field-label">Принтер</span>
+      <div class="select">Bambu Lab P1S</div>
+    </div>
+    <div class="field">
+      <span class="field-label">Раскладка</span>
+      <div class="seg"><button type="button" aria-pressed="true">Плотная</button><button type="button" aria-pressed="false">Сетка</button></div>
+      <span class="field-hint">подбор с поворотами и нависаниями</span>
+    </div>
+    <div class="field new">
+      <span class="field-label">Расчёт поддержек <span class="tag">новое</span></span>
+      <div class="seg" id="precision">
+        <button type="button" data-v="precise" aria-pressed="true">Точно</button>
+        <button type="button" data-v="fast" aria-pressed="false">Быстро</button>
+      </div>
+      <span class="field-hint" id="precision-hint"></span>
+    </div>
+    <label class="check"><input type="checkbox"> <span>Сразу проверить нарезкой<small>дольше на несколько минут; можно и потом — кнопкой «Проверить нарезкой»</small></span></label>
+    <label class="check"><input type="checkbox"> <span>Уложиться в окно печати<small>без окна стол заполняется максимально</small></span></label>
+    <button class="btn" type="button">Упаковать</button>
+  </form>
+
+  <div class="notes">
+    <h2>Переключатель «Расчёт поддержек»</h2>
+    <p>Тот же сегментный контрол, что у «Раскладки», сразу под ней. По умолчанию — «Точно» (как сейчас). Подсказка под контролом меняется с выбором.</p>
+    <ul>
+      <li><b>Точно</b> — нынешний откалиброванный векторный расчёт (<code>--precision precise</code>).</li>
+      <li><b>Быстро</b> — объединение поддержек на растре (<code>--precision fast</code>): на треть быстрее, на столе иногда на одну модель меньше.</li>
+      <li>Режим сохраняется в параметрах задачи: открытая по ссылке задача показывает его в форме только для чтения, «Упаковать заново» его сохраняет.</li>
+      <li>В строке результата рядом с «рассчитано на …» добавляется «быстрый расчёт», только если выбран «Быстро».</li>
+    </ul>
+    <p>Замеры (2 потока, свежий кэш):</p>
+    <table>
+      <tr><th></th><th>Точно</th><th>Быстро</th></tr>
+      <tr><td>P1S</td><td>43 шт · 78 с</td><td>43 шт · 53 с</td></tr>
+      <tr><td>U1</td><td>50 шт · 38 с</td><td>49 шт · 28 с</td></tr>
+      <tr><td>A2L</td><td>73 шт · 73 с</td><td>72 шт · 51 с</td></tr>
+    </table>
+    <div class="result">
+      <div><span class="num">43</span> модели на столе</div>
+      <small id="result-note">рассчитано на Bambu Studio 02.09.01.70</small>
+    </div>
+  </div>
+</div>
+<script>
+  const hints = {
+    precise: 'откалиброванный расчёт — максимум моделей на столе',
+    fast: 'на треть быстрее; на столе иногда на одну модель меньше',
+  };
+  const notes = {
+    precise: 'рассчитано на Bambu Studio 02.09.01.70',
+    fast: 'рассчитано на Bambu Studio 02.09.01.70 · быстрый расчёт',
+  };
+  const seg = document.getElementById('precision');
+  const set = (v) => {
+    seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+    document.getElementById('precision-hint').textContent = hints[v];
+    document.getElementById('result-note').textContent = notes[v];
+  };
+  seg.addEventListener('click', (e) => { if (e.target.dataset.v) set(e.target.dataset.v); });
+  set('precise');
+</script>
+</body>
+</html>

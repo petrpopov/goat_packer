@@ -7,7 +7,7 @@ use goat_packer::{
     colored_packer::{PrinterProfile, SLICER_KINDS},
     nozzle_clean::NozzleCleanSpec,
     print_time::TimeCorrection,
-    support_model::{flavour::Flavour, merge::MergeOrder},
+    support_model::{flavour::Flavour, merge::MergeOrder, precision::Precision},
     tower_model::DEFAULT_TOWER_WIDTH_MM,
 };
 
@@ -28,6 +28,10 @@ const DEFAULT_CLEARANCE_MM: f64 = 0.7;
 /// copy and was the slowest level (P1S 39 of 85 s of packing on the server's two cores), so
 /// it is opt-in (`--resolutions 0.25,0.2,0.15`).
 const DEFAULT_RESOLUTIONS_MM: [f64; 2] = [0.25, 0.2];
+/// The ladder of `--precision fast`: the coarse level alone. 2026-11-13, fast drawing, fresh
+/// cache, two threads: P1S / U1 / A2L packed 43 / 49 / 72 at 0.25 mm and the same at 0.2 mm,
+/// whose level was 10 of 17 s of packing.
+const FAST_RESOLUTIONS_MM: [f64; 1] = [0.25];
 const DEFAULT_ANGLE_STEP_DEG: f64 = 2.0;
 const DEFAULT_ATTEMPTS: usize = 16_000;
 const DEFAULT_CANDIDATES: usize = 2_400;
@@ -102,6 +106,9 @@ pub struct Args {
     /// (`along`, `against`); `None` = each build's own (`Flavour::default_orders`: `along`,
     /// both for Bambu Studio 02.09), the readings its margins were calibrated with.
     pub support_orders: Option<Vec<MergeOrder>>,
+    /// `--precision precise|fast`: how the support model draws its ensemble
+    /// (`support_model::precision`; `fast` only matters with the model as the source).
+    pub precision: Precision,
     /// `--slicer-flavour NAME` (`bambu-02.08`, `bambu-02.09`, ...): predict the supports of
     /// this build only. Without it the build is the profile's (or a newer project's); an
     /// uncalibrated Bambu version predicts the newest calibrated one (warning).
@@ -254,7 +261,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut output = None;
     let mut work_dir = None;
     let mut clearance = DEFAULT_CLEARANCE_MM;
-    let mut resolutions = DEFAULT_RESOLUTIONS_MM.to_vec();
+    let mut resolutions: Option<Vec<f64>> = None;
     let mut angle_step = DEFAULT_ANGLE_STEP_DEG;
     let mut attempts = DEFAULT_ATTEMPTS;
     let mut candidates = DEFAULT_CANDIDATES;
@@ -265,6 +272,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut cache_dir = None;
     let mut support_source = SupportSource::default();
     let mut support_orders = None;
+    let mut precision = Precision::default();
     let mut slicer_flavour = None;
     let mut support_margins = None;
     let mut verify = false;
@@ -310,8 +318,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--output" => output = Some(PathBuf::from(value)),
             "--work-dir" => work_dir = Some(PathBuf::from(value)),
             "--clearance" => clearance = value.parse()?,
-            "--resolution" => resolutions = vec![value.parse()?],
-            "--resolutions" => resolutions = parse_resolutions(&value)?,
+            "--resolution" => resolutions = Some(vec![value.parse()?]),
+            "--resolutions" => resolutions = Some(parse_resolutions(&value)?),
             "--angle-step" => angle_step = value.parse()?,
             "--attempts" => attempts = value.parse()?,
             "--candidates" => candidates = value.parse()?,
@@ -327,6 +335,10 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--rotations" => rotations = parse_rotations(&value)?,
             "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
             "--support-orders" => support_orders = Some(parse_orders(&value)?),
+            "--precision" => {
+                precision = Precision::parse(&value)
+                    .ok_or_else(|| format!("--precision must be precise or fast; got {value:?}"))?;
+            }
             "--slicer-flavour" => {
                 if Flavour::from_name(&value).is_none() {
                     return Err(format!("--slicer-flavour {value}: unknown slicer build").into());
@@ -387,6 +399,10 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let attempts = attempts.max(1);
     // Compatibility option: the deterministic finite portfolio does not stop on random stalls.
     let stall = stall.unwrap_or(0);
+    let resolutions = resolutions.unwrap_or_else(|| match precision {
+        Precision::Precise => DEFAULT_RESOLUTIONS_MM.to_vec(),
+        Precision::Fast => FAST_RESOLUTIONS_MM.to_vec(),
+    });
     Ok(Args {
         source_3mf: source_3mf.ok_or("--source is required")?,
         profile_path: profile_path.ok_or("--profile is required")?,
@@ -408,6 +424,7 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         cache_dir,
         support_source,
         support_orders,
+        precision,
         slicer_flavour,
         support_margins,
         verify,
@@ -561,6 +578,10 @@ mod tests {
         assert_eq!((list.resolution, list.resolutions), (0.3, vec![0.3, 0.2]));
         assert!(parse_with(&["--resolutions", "0.3,0"]).is_err());
         assert!(parse_with(&["--resolutions", ""]).is_err());
+        let fast = parse_with(&["--precision", "fast"]).unwrap();
+        assert_eq!(fast.resolutions, vec![0.25]);
+        let fast_ladder = parse_with(&["--precision", "fast", "--resolutions", "0.25,0.2"]).unwrap();
+        assert_eq!(fast_ladder.resolutions, vec![0.25, 0.2]);
     }
 
     #[test]

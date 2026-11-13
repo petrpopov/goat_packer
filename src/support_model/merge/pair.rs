@@ -75,15 +75,16 @@ impl<'a> PairTest<'a> {
     /// readings share the rest: the merge as if thick enough is memoized without the reading.
     pub fn try_merge(&self, destination: &Keyed, source: &Keyed) -> Option<Keyed> {
         let memo = &self.stage.memo;
+        // The box, flag and bed checks cost less than the key and its lock: a pair they
+        // refuse never reaches the memo (most pairs of a bucket round are far apart).
+        let reach = self.reach(&destination.moved, &source.moved)?;
         let key = Fingerprint::new(PAIR_KEY)
             .int(self.layer as i64)
             .key(destination.key)
             .key(source.key)
             .finish();
         let (destination, source) = (&destination.moved, &source.moved);
-        let mut merged = memo
-            .pairs
-            .get_or(key, || self.test(destination, source))?;
+        let mut merged = memo.pairs.get_or(key, || self.test(reach))?;
         let thick_key = Fingerprint::new(THICK_KEY)
             .int(key as i64)
             .int((key >> 64) as i64)
@@ -101,8 +102,9 @@ impl<'a> PairTest<'a> {
         Some(Keyed::new(merged))
     }
 
-    /// The merge if the overlap is thick enough (`try_merge` checks that).
-    fn test(&self, destination: &Moved, source: &Moved) -> Option<Moved> {
+    /// The cheap half of the pair test: which branch is the bigger, and how far the smaller
+    /// reaches, when the flags, the boxes and the bed do not already refuse the merge.
+    fn reach<'m>(&self, destination: &'m Moved, source: &'m Moved) -> Option<Reach<'m>> {
         let derived = &self.stage.derived;
         let (dst, src) = (&destination.node, &source.node);
         if dst.graceful != src.graceful || dst.tight_xy != src.tight_xy {
@@ -131,6 +133,26 @@ impl<'a> PairTest<'a> {
         if !bigger.node.past_holes && smaller.node.past_holes {
             return None;
         }
+        Some(Reach {
+            destination,
+            source,
+            bigger,
+            smaller,
+            delta,
+        })
+    }
+
+    /// The merge if the overlap is thick enough (`try_merge` checks that).
+    fn test(&self, reach: Reach<'_>) -> Option<Moved> {
+        let derived = &self.stage.derived;
+        let Reach {
+            destination,
+            source,
+            bigger,
+            smaller,
+            delta,
+        } = reach;
+        let (dst, src) = (&destination.node, &source.node);
         let tight = bigger.node.tight_xy && smaller.node.tight_xy;
         let small_radius = smaller.node.collision_radius(derived);
         let walls = self
@@ -221,6 +243,16 @@ impl<'a> PairTest<'a> {
 /// (`Flavour::caps_merge_reach`): two layers of fast movement (the gap closes from both sides),
 /// or 3/4 of the bigger radius if less; at least half a line width; at least what keeps a merge
 /// from waiting more than `MERGE_DELAY_LAYERS` layers; never more than the radius difference.
+/// A pair the cheap checks let through (`PairTest::reach`).
+#[derive(Clone, Copy)]
+struct Reach<'m> {
+    destination: &'m Moved,
+    source: &'m Moved,
+    bigger: &'m Moved,
+    smaller: &'m Moved,
+    delta: i64,
+}
+
 fn capped_reach(derived: &Derived, delta: i64, bigger_radius: i64) -> i64 {
     let budget = derived.move_fast.min(derived.grid.length(MOVE_BUDGET_CAP_MM));
     let mut reach = (2 * budget).min((REACH_RADIUS_SHARE * bigger_radius as f64) as i64);

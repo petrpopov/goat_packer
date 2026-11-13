@@ -166,6 +166,7 @@ class WorkerJobProcessor(
                     edgeMargin = request.edgeMargin,
                     towerWidth = request.towerWidth,
                     layout = request.layout,
+                    precision = request.precision,
                     nozzleClean = request.nozzleClean,
                     timeWindowHours = request.timeWindowHours,
                     amsCorrection = request.amsCorrection,

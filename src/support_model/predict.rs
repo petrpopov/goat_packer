@@ -9,6 +9,7 @@ use super::cache::{Ensemble, cache_key, load, store};
 use super::ensemble::{distinct, run_members_with, union};
 use super::flavour::Flavour;
 use super::merge::MergeOrder;
+use super::precision::Precision;
 use super::settings::{SupportSettings, check_supported};
 use super::{StageAInput, SupportError, stage_a};
 use crate::embedded_mesh::ObjectMesh;
@@ -24,6 +25,7 @@ pub struct PredictInput<'a> {
     pub cache_dir: Option<&'a Path>,
     /// Which readings of the merge order run (an ensemble axis, `merge::MergeOrder`).
     pub orders: &'a [MergeOrder],
+    pub precision: Precision,
 }
 
 /// The ensemble of one class and how it was obtained.
@@ -66,6 +68,7 @@ pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
         input.rotation_deg,
         input.orders,
         overlaps,
+        input.precision,
     );
     if let Some(dir) = input.cache_dir
         && let Some(ensemble) = load(dir, &key)
@@ -89,7 +92,7 @@ pub fn predict(input: &PredictInput) -> Result<Prediction, SupportError> {
     let ensemble = Ensemble {
         members: runs.iter().map(|run| run.summary()).collect(),
         graphs: distinct(&runs).len(),
-        realizations: vec![union(&stage, &runs)],
+        realizations: vec![union(&stage, &runs, input.precision)],
     };
     if let Some(dir) = input.cache_dir {
         store(dir, &key, &ensemble).map_err(|error| SupportError::Invalid(error.to_string()))?;

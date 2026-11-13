@@ -9,6 +9,9 @@ object PackDefaults {
     /** Первая ступень лестницы разрешений пакера; при этом значении `--resolution` не передаётся. */
     const val RESOLUTION_MM = 0.25
     const val LAYOUT = "search"
+    /** Расчёт поддержек: precise — откалиброванный (дефолт CLI), fast — растр, быстрее на треть. */
+    const val PRECISION = "precise"
+    const val PRECISION_FAST = "fast"
 
     /**
      * Дефолт CLI. Фронт поле больше не шлёт: с поддержками поиск всё равно перебирает
@@ -60,6 +63,8 @@ data class PackParams(
     val supportOverlapMm: Double? = null,
     /** --tower-width: ширина черновой башни, мм (рёбра выключены); null = дефолт пакера (20 мм). */
     val towerWidth: Double? = null,
+    /** --precision: precise|fast; дефолт CLI флаг не передаёт. */
+    val precision: String = PackDefaults.PRECISION,
     /**
      * Вход — STL: команда source_project (STL → input.3mf), выполняется перед пакером в том же
      * процессе/контейнере ([ShellChain]); null — вход уже 3MF.

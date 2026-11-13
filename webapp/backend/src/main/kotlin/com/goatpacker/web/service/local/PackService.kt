@@ -94,6 +94,7 @@ class PackService(
             edgeMargin = form.edgeMargin,
             towerWidth = form.towerWidth,
             layout = form.layout ?: PackDefaults.LAYOUT,
+            precision = form.precision ?: PackDefaults.PRECISION,
             nozzleClean = nozzleClean,
             timeWindowHours = form.timeWindowHours,
             amsCorrection = amsCorrection,

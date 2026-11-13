@@ -27,6 +27,7 @@ pub mod merge;
 pub mod node;
 pub mod overhangs;
 pub mod place;
+pub mod precision;
 pub mod predict;
 pub mod sections;
 pub mod settings;

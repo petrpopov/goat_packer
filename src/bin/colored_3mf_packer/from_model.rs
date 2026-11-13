@@ -8,6 +8,7 @@ use goat_packer::{
     object_print::{Margins, ObjectPrint, Realization},
     progress::{self, Stage, StageDetail},
     support_model::{
+        cache::{EnvelopePart, envelope_key, load_envelope, store_envelope},
         envelope::{envelope, envelope_banded},
         flavour::Flavour,
         predict::{PredictInput, Prediction, predict},
@@ -15,6 +16,8 @@ use goat_packer::{
         SupportError,
     },
 };
+
+use rayon::prelude::*;
 
 use crate::AppResult;
 use crate::args::SupportSource;
@@ -42,63 +45,21 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
         },
         None => job.flavour.margins(),
     };
-    let mut prints = Vec::new();
-    let mut summaries = Vec::new();
-    let mut seconds = 0.0;
     let count = job.args.rotations.len();
-    for (index, &rotation) in job.args.rotations.iter().enumerate() {
-        progress::stage_step(
-            Stage::Modelling,
-            &format!("predicting supports (rotation {rotation}°)..."),
-            Some(1),
-            &StageDetail::new(index, count)
-                .with("rotation_deg", rotation)
-                .with("class", index + 1)
-                .with("classes", count),
-        );
-        let mut predictions = Vec::new();
-        for &build in &builds {
-            let orders = job
-                .args
-                .support_orders
-                .clone()
-                .unwrap_or_else(|| build.default_orders().to_vec());
-            let prediction = predict(&PredictInput {
-                mesh: &job.mesh,
-                settings: &settings,
-                flavour: build,
-                rotation_deg: rotation,
-                cache_dir: job.args.cache_dir.as_deref(),
-                orders: &orders,
-            })?;
-            if !settings.enable_support {
-                println!("supports are off in the project: none predicted (rotation {rotation}°)");
-            } else {
-                println!(
-                    "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
-                    build.name(),
-                    prediction.ensemble.graphs,
-                    prediction.ensemble.members.len(),
-                    prediction.seconds,
-                    if prediction.cached { " (cache)" } else { "" }
-                );
-            }
-            seconds += prediction.seconds;
-            predictions.push((build, prediction));
-        }
-        prints.push(class_print(job, rotation, &predictions, margins)?);
-        summaries.push(ClassSummary {
-            rotation_deg: rotation,
-            runs: predictions
-                .iter()
-                .map(|(_, prediction)| prediction.ensemble.members.len())
-                .sum(),
-            saturated: true,
-            cached: predictions.iter().all(|(_, prediction)| prediction.cached),
-            growth_mm2: Vec::new(),
-            landing_outside_model_mm2: 0.0,
-        });
-    }
+    // The classes are independent (own stage A, memo and cache entry): in parallel, so one
+    // class's sequential stretches (stage A, the last descents, drawing tails) fill the other's
+    // idle threads. P1S at 8 threads: the two classes took 7.7 + 7.3 s one after the other.
+    let started = std::time::Instant::now();
+    let classes: Vec<(ObjectPrint, ClassSummary)> = job
+        .args
+        .rotations
+        .par_iter()
+        .enumerate()
+        .map(|(index, &rotation)| model_class(job, &settings, &builds, margins, rotation, index, count))
+        .collect::<AppResult<_>>()?;
+    // Wall time: the classes overlap, their own seconds would count it twice.
+    let seconds = started.elapsed().as_secs_f64();
+    let (prints, summaries) = classes.into_iter().unzip();
     let tower = tower_spec(job, &[])?;
     Ok(Modelled {
         plan: plan_of(job, prints, tower),
@@ -107,6 +68,70 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
         probe_seconds: 0.0,
         model_seconds: seconds,
     })
+}
+
+/// One rotation class: every build's prediction, the class print and its summary.
+fn model_class(
+    job: &Job,
+    settings: &SupportSettings,
+    builds: &[Flavour],
+    margins: Margins,
+    rotation: f64,
+    index: usize,
+    count: usize,
+) -> AppResult<(ObjectPrint, ClassSummary)> {
+    progress::stage_step(
+        Stage::Modelling,
+        &format!("predicting supports (rotation {rotation}°)..."),
+        Some(1),
+        &StageDetail::new(index, count)
+            .with("rotation_deg", rotation)
+            .with("class", index + 1)
+            .with("classes", count),
+    );
+    let mut predictions = Vec::new();
+    for &build in builds {
+        let orders = job
+            .args
+            .support_orders
+            .clone()
+            .unwrap_or_else(|| build.default_orders().to_vec());
+        let prediction = predict(&PredictInput {
+            mesh: &job.mesh,
+            settings,
+            flavour: build,
+            rotation_deg: rotation,
+            cache_dir: job.args.cache_dir.as_deref(),
+            orders: &orders,
+            precision: job.args.precision,
+        })?;
+        if !settings.enable_support {
+            println!("supports are off in the project: none predicted (rotation {rotation}°)");
+        } else {
+            println!(
+                "support model {}, rotation {rotation}°: {} distinct graphs of {} members in {:.1} s{}",
+                build.name(),
+                prediction.ensemble.graphs,
+                prediction.ensemble.members.len(),
+                prediction.seconds,
+                if prediction.cached { " (cache)" } else { "" }
+            );
+        }
+        predictions.push((build, prediction));
+    }
+    let print = class_print(job, rotation, &predictions, margins)?;
+    let summary = ClassSummary {
+        rotation_deg: rotation,
+        runs: predictions
+            .iter()
+            .map(|(_, prediction)| prediction.ensemble.members.len())
+            .sum(),
+        saturated: true,
+        cached: predictions.iter().all(|(_, prediction)| prediction.cached),
+        growth_mm2: Vec::new(),
+        landing_outside_model_mm2: 0.0,
+    };
+    Ok((print, summary))
 }
 
 /// The print of one class: body kinds from the mesh, landing from the first-layer model, the
@@ -129,23 +154,7 @@ fn class_print(
     let bands = BodyBands::printed(layer_height.max(first_height));
     let mut print = body_print(&job.mesh, rotation, &bands);
     print.landing = landing(&job.mesh, &job.settings, job.build, rotation)?.loops;
-    let envelopes: Vec<Realization> = predictions
-        .iter()
-        .map(|(build, prediction)| {
-            let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
-            if job.args.support_margins.is_some() {
-                envelope(&members, margins)
-            } else {
-                envelope_banded(&members, build.first_layer_margin_mm(), &|band| {
-                    build.band_margin_mm(band)
-                })
-            }
-        })
-        .collect();
-    let grown = match envelopes.as_slice() {
-        [single] => single.clone(),
-        all => envelope(&all.iter().collect::<Vec<_>>(), Margins::default()),
-    };
+    let grown = class_envelope(job, predictions, margins)?;
     print.support_base = grown.base;
     print.support = grown.above_base;
     print.interface = grown.interface;
@@ -165,4 +174,77 @@ fn class_print(
         .collect::<Vec<_>>()
         .join("+");
     Ok(print)
+}
+
+/// The supports of one class: every build's ensemble grown by its margins, united. Growing is
+/// most of a class on a model cache hit (2.4 s per P1S class at two threads), so with
+/// `--cache-dir` the result is cached too, keyed by the ensembles and the margins.
+fn class_envelope(
+    job: &Job,
+    predictions: &[(Flavour, Prediction)],
+    margins: Margins,
+) -> AppResult<Realization> {
+    let fixed = job.args.support_margins.is_some();
+    let first_layer_mm = |build: Flavour| {
+        if fixed {
+            margins.first_layer_mm
+        } else {
+            build.first_layer_margin_mm()
+        }
+    };
+    let band_mm = |build: Flavour, band: usize| {
+        if fixed {
+            margins.band_mm
+        } else {
+            build.band_margin_mm(band)
+        }
+    };
+    // Supports off: no ensemble key, nothing worth caching.
+    let key = job
+        .args
+        .cache_dir
+        .as_deref()
+        .filter(|_| predictions.iter().all(|(_, p)| !p.cache_key.is_empty()))
+        .map(|dir| {
+            let parts: Vec<EnvelopePart> = predictions
+                .iter()
+                .map(|(build, prediction)| {
+                    let bands = prediction
+                        .ensemble
+                        .realizations
+                        .iter()
+                        .map(|member| member.support.len())
+                        .max()
+                        .unwrap_or(0);
+                    EnvelopePart {
+                        ensemble_key: &prediction.cache_key,
+                        first_layer_mm: first_layer_mm(*build),
+                        band_mm: (0..bands).map(|band| band_mm(*build, band)).collect(),
+                    }
+                })
+                .collect();
+            (dir, envelope_key(&parts))
+        });
+    if let Some((dir, key)) = &key
+        && let Some(cached) = load_envelope(dir, key)
+    {
+        return Ok(cached);
+    }
+    let envelopes: Vec<Realization> = predictions
+        .iter()
+        .map(|(build, prediction)| {
+            let members: Vec<_> = prediction.ensemble.realizations.iter().collect();
+            envelope_banded(&members, first_layer_mm(*build), &|band| {
+                band_mm(*build, band)
+            })
+        })
+        .collect();
+    let grown = match envelopes.as_slice() {
+        [single] => single.clone(),
+        all => envelope(&all.iter().collect::<Vec<_>>(), Margins::default()),
+    };
+    if let Some((dir, key)) = &key {
+        store_envelope(dir, key, &grown)?;
+    }
+    Ok(grown)
 }

@@ -2,9 +2,11 @@
 //! node, linked to its parents and its child, with the layers each sphere has to test
 //! against the object and the spheres that never move.
 
+use crate::support_model::memo::Fingerprint;
 use crate::support_model::node::Node;
 use crate::support_model::stage_a::StageA;
 
+#[derive(Clone)]
 pub struct Sphere {
     pub layer: usize,
     /// Position in units.
@@ -126,3 +128,69 @@ impl Spheres {
         }
     }
 }
+
+impl Spheres {
+    /// The trees (spheres linked through parents and children), each as its sphere ids in
+    /// ascending order, in the order of their first sphere.
+    pub fn trees(&self) -> Vec<Vec<usize>> {
+        let mut tree_of = vec![usize::MAX; self.list.len()];
+        let mut trees: Vec<Vec<usize>> = Vec::new();
+        for start in 0..self.list.len() {
+            if tree_of[start] != usize::MAX {
+                continue;
+            }
+            tree_of[start] = trees.len();
+            let mut members = vec![start];
+            let mut stack = vec![start];
+            while let Some(id) = stack.pop() {
+                let sphere = &self.list[id];
+                for &linked in sphere.parents.iter().chain(&sphere.child) {
+                    if tree_of[linked] == usize::MAX {
+                        tree_of[linked] = trees.len();
+                        members.push(linked);
+                        stack.push(linked);
+                    }
+                }
+            }
+            members.sort_unstable();
+            trees.push(members);
+        }
+        trees
+    }
+
+    /// The spheres of `tree` renumbered from 0 in its order, and the fingerprint of all an
+    /// update reads of them.
+    pub fn alone(&self, tree: &[usize]) -> (u128, Vec<Sphere>) {
+        let local = |id: usize| tree.binary_search(&id).expect("a linked sphere is in its tree");
+        let mut key = Fingerprint::new(TREE_KEY);
+        let spheres: Vec<Sphere> = tree
+            .iter()
+            .map(|&id| {
+                let sphere = &self.list[id];
+                let alone = Sphere {
+                    parents: sphere.parents.iter().map(|&p| local(p)).collect(),
+                    child: sphere.child.map(local),
+                    ..sphere.clone()
+                };
+                key.int(alone.layer as i64)
+                    .int(alone.position[0].to_bits() as i64)
+                    .int(alone.position[1].to_bits() as i64)
+                    .int(alone.radius.to_bits() as i64)
+                    .int(alone.z.to_bits() as i64)
+                    .int(i64::from(alone.locked))
+                    .int(alone.child.map_or(-1, |child| child as i64))
+                    .int(alone.span.0 as i64)
+                    .int(alone.span.1 as i64)
+                    .int(alone.parents.len() as i64);
+                for &parent in &alone.parents {
+                    key.int(parent as i64);
+                }
+                alone
+            })
+            .collect();
+        (key.finish(), spheres)
+    }
+}
+
+/// The memo kind of a smoothed tree.
+const TREE_KEY: u8 = 8;

@@ -14,6 +14,7 @@ import com.goatpacker.web.service.NozzleCleanSpec
 /** Проверка тела `POST /api/v2/jobs` до обращения к БД: форма запроса и диапазоны настроек. */
 object JobRequestValidator {
     private val LAYOUTS = setOf(PackDefaults.LAYOUT, "grid")
+    private val PRECISIONS = setOf(PackDefaults.PRECISION, PackDefaults.PRECISION_FAST)
     private val BENCH_MODES = setOf(ScheduleDefaults.BENCH_MODE_ADAPTIVE, ScheduleDefaults.BENCH_MODE_FULL)
     private val CALIBRATION_VARIANTS = setOf(ScheduleDefaults.CALIBRATION_VARIANT_NORMAL, ScheduleDefaults.CALIBRATION_VARIANT_PERFECTIONIST)
 
@@ -36,6 +37,7 @@ object JobRequestValidator {
         }
         if (r.attempts !in JobLimits.ATTEMPTS || r.layout !in LAYOUTS || r.benchMode !in BENCH_MODES) badRequest("Некорректный режим поиска")
         if (r.edgeMargin.isOutOf(JobLimits.EDGE_MARGIN_MM)) badRequest("Некорректный отступ")
+        if (r.precision !in PRECISIONS) badRequest("Расчёт поддержек: ${PRECISIONS.joinToString(" или ")}")
         if (r.towerWidth.isOutOf(JobLimits.TOWER_WIDTH_MM)) badRequest("Ширина башни должна быть 5–60 мм")
         if (r.towerWidth != null && kind != JobKind.PACK) badRequest("Ширина башни задаётся только для упаковки")
         if (r.timeWindowHours.isOutOf(JobLimits.TIME_WINDOW_HOURS)) badRequest("Окно печати должно быть 0.5–240 ч")

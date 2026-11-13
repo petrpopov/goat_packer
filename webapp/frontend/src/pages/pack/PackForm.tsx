@@ -99,6 +99,33 @@ export default function PackForm(props: PackFormProps) {
             </button>
           </div>
         </Field>
+        <Field
+          label="Расчёт поддержек"
+          hint={
+            values.precision === 'fast'
+              ? 'на треть быстрее; на столе иногда на одну модель меньше'
+              : 'откалиброванный расчёт — максимум моделей на столе'
+          }
+        >
+          <div className="seg" role="group" aria-label="Расчёт поддержек">
+            <button
+              type="button"
+              aria-pressed={values.precision === 'precise'}
+              onClick={() => update('precision', 'precise')}
+              disabled={busy}
+            >
+              Точно
+            </button>
+            <button
+              type="button"
+              aria-pressed={values.precision === 'fast'}
+              onClick={() => update('precision', 'fast')}
+              disabled={busy}
+            >
+              Быстро
+            </button>
+          </div>
+        </Field>
         <NozzleCleanFields
           values={values}
           update={update}

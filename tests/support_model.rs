@@ -13,6 +13,7 @@ use goat_packer::support_model::exceedance::{area_mm2, exceedance};
 use goat_packer::support_model::flavour::Flavour;
 use goat_packer::support_model::graph::branch_graph;
 use goat_packer::support_model::merge::{MergeOrder, Overlap, ThreadClass};
+use goat_packer::support_model::precision::Precision;
 use goat_packer::support_model::predict::{PredictInput, predict};
 use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::support_model::tips::ArcFamily;
@@ -282,6 +283,7 @@ fn unsupported_settings_are_named_before_any_geometry() {
         rotation_deg: 0.0,
         cache_dir: None,
         orders: &BOTH,
+        precision: Precision::Precise,
     })
     .err();
     assert_eq!(
@@ -302,6 +304,7 @@ fn supports_off_in_the_project_predict_nothing_and_cache_nothing() {
         rotation_deg: 0.0,
         cache_dir: Some(dir.path()),
         orders: &BOTH,
+        precision: Precision::Precise,
     })
     .unwrap();
     assert!(prediction.ensemble.members.is_empty() && prediction.runs == 0);
@@ -323,6 +326,7 @@ fn a_prediction_is_cached_and_the_envelope_grows_by_the_margins() {
         rotation_deg: 0.0,
         cache_dir: Some(dir.path()),
         orders: &BOTH,
+        precision: Precision::Precise,
     };
     let first = predict(&input).unwrap();
     let second = predict(&input).unwrap();
@@ -362,6 +366,7 @@ fn ensemble_of(threads: usize) -> Ensemble {
             rotation_deg: 0.0,
             cache_dir: None,
             orders: &BOTH,
+            precision: Precision::Precise,
         })
         .unwrap()
         .ensemble
@@ -412,7 +417,7 @@ fn the_drawn_union_covers_every_graph_drawn_alone() {
     for flavour in [Flavour::Orca242, Flavour::Bambu0209] {
         let (stage, _) = model(flavour);
         let runs = run_members(&stage, &BOTH);
-        let united = union(&stage, &runs);
+        let united = union(&stage, &runs, Precision::Precise);
         let graphs = distinct(&runs);
         assert!(graphs.len() >= 2, "{flavour:?}: {} graphs", graphs.len());
         for (index, graph) in graphs.into_iter().enumerate() {

@@ -18,6 +18,7 @@ use goat_packer::orca_project::project_settings;
 use goat_packer::support_model::envelope::envelope;
 use goat_packer::support_model::flavour::Flavour;
 use goat_packer::support_model::merge::MergeOrder;
+use goat_packer::support_model::precision::Precision;
 use goat_packer::support_model::predict::{PredictInput, predict};
 use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::{ForeignGaps, LayoutRules, PrintPlacement, validate_vector};
@@ -68,6 +69,7 @@ fn main() {
         rotation_deg: 0.0,
         cache_dir: cache_dir.as_deref(),
         orders: &orders,
+        precision: Precision::Precise,
     })
     .unwrap();
     println!(

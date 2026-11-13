@@ -95,6 +95,8 @@ data class PackInfoDto(
     val tower: PackTowerDto? = null,
     /** Сборка слайсера, на которую рассчитан стол; null — пакер поле не прислал. */
     val targetSlicer: String? = null,
+    /** Расчёт поддержек (precise|fast); null — пакер поле не прислал. */
+    val precision: String? = null,
 )
 
 /**
@@ -214,6 +216,8 @@ data class PackParamsDto(
     val clearance: Double,
     val resolution: Double,
     val layout: String,
+    /** Расчёт поддержек: precise|fast. */
+    val precision: String,
     val nozzleClean: String,
     val edgeMargin: Double?,
     /** Ширина черновой башни, мм; null — дефолт пакера. */

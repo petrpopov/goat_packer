@@ -23,6 +23,7 @@ use goat_packer::support_model::exceedance::{area_mm2, exceedance};
 use goat_packer::support_model::flavour::Flavour;
 use goat_packer::support_model::graph::branch_graph;
 use goat_packer::support_model::merge::{MergeOrder, ThreadClass};
+use goat_packer::support_model::precision::Precision;
 use goat_packer::support_model::predict::{PredictInput, predict};
 use goat_packer::support_model::settings::{ProjectConfig, SupportSettings};
 use goat_packer::support_model::tips::ArcFamily;
@@ -101,6 +102,7 @@ fn main() {
                 rotation_deg: 0.0,
                 cache_dir: options.cache_dir.as_deref(),
                 orders: &orders,
+                precision: Precision::Precise,
             })
             .unwrap();
             println!(

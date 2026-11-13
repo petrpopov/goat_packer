@@ -11,9 +11,10 @@ class ProbeCacheEntriesTest {
 
     private fun valid(name: String, body: String) = ProbeCacheEntries.isValid(name, body.toByteArray(), mapper)
 
-    @Test fun `only the packer's two file names are entries, nothing with path or shell characters`() {
+    @Test fun `only the packer's file names are entries, nothing with path or shell characters`() {
         assertTrue(ProbeCacheEntries.isEntryName("probe-$key.json"))
         assertTrue(ProbeCacheEntries.isEntryName("support-$key.json"))
+        assertTrue(ProbeCacheEntries.isEntryName("envelope-$key.json"))
         for (name in listOf("probe-$key.json.part", "../probe-$key.json", "probe-${key.uppercase()}.json", "probe-abc.json", "probe-$key.json; rm", "x/probe-$key.json", "input.3mf")) {
             assertFalse(ProbeCacheEntries.isEntryName(name), name)
         }
@@ -36,5 +37,13 @@ class ProbeCacheEntriesTest {
         assertTrue(valid(name, """{"members":[],"realizations":[]}"""))
         assertFalse(valid(name, """{"members":[]}"""))
         assertFalse(valid(name, """{"members":{},"realizations":[]}"""))
+    }
+
+    @Test fun `an envelope must carry its own key and the grown realization`() {
+        val name = "envelope-$key.json"
+        assertTrue(valid(name, """{"key":"$key","envelope":{"member":0,"base":[]}}"""))
+        assertFalse(valid(name, """{"key":"${"cd".repeat(32)}","envelope":{}}"""))
+        assertFalse(valid(name, """{"key":"$key","envelope":[]}"""))
+        assertFalse(valid(name, """{"envelope":{}}"""))
     }
 }

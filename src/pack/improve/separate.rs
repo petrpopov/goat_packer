@@ -81,6 +81,53 @@ impl Field<'_> {
             })
             .sum()
     }
+
+    /// `weighted` when it is below `limit`, else `None`. The terms are never negative, so a
+    /// partial sum at the limit already decides: the scan stops there, with the same answer.
+    fn weighted_below(
+        &self,
+        items: &[PixelPlacement],
+        weights: &Weights,
+        i: usize,
+        near: &[usize],
+        at: PixelPlacement,
+        limit: f32,
+    ) -> Option<f32> {
+        // `-0.0` is where `Iterator::sum` of floats starts.
+        let mut sum = -0.0f32;
+        for &j in near {
+            let o = items[j];
+            let d = self.depth.at(o.class, at.class, at.x - o.x, at.y - o.y);
+            if d != 0 {
+                sum += d as f32 * weights.get(i, j);
+                if sum >= limit {
+                    return None;
+                }
+            }
+        }
+        (sum < limit).then_some(sum)
+    }
+
+    /// `overlap` when it is at most `cap`, else `None`, stopping as soon as it passes `cap`.
+    pub(super) fn overlap_at_most(
+        &self,
+        items: &[PixelPlacement],
+        near: &[usize],
+        class: usize,
+        x: i32,
+        y: i32,
+        cap: u32,
+    ) -> Option<u32> {
+        let mut sum = 0u32;
+        for &j in near {
+            let o = items[j];
+            sum += self.depth.at(o.class, class, x - o.x, y - o.y);
+            if sum > cap {
+                return None;
+            }
+        }
+        Some(sum)
+    }
 }
 
 /// Pair weights, symmetric, all 1 at the start.
@@ -190,8 +237,7 @@ fn consider(
         if p == best.1 || !field.free[p.class].contains(p.x, p.y) {
             continue;
         }
-        let cost = field.weighted(items, weights, i, near, p);
-        if cost < best.0 - EPSILON {
+        if let Some(cost) = field.weighted_below(items, weights, i, near, p, best.0 - EPSILON) {
             *best = (cost, p);
         }
     }

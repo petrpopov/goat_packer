@@ -40,6 +40,7 @@ class JobReportParser(private val mapper: ObjectMapper) {
             finalSliced = report?.get("final_sliced")?.takeIf { it.isBoolean }?.asBoolean() ?: true,
             tower = report?.get("tower")?.let(::parsePackTower),
             targetSlicer = report?.get("target_slicer")?.takeIf { it.isTextual }?.asText()?.takeIf { it.isNotBlank() },
+            precision = report?.get("precision")?.takeIf { it.isTextual }?.asText(),
         )
     }
 

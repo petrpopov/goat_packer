@@ -10,6 +10,9 @@
 //!    check it, learn from a failure (`learn`) and pack again once; `time_report` /
 //!    `time_window` fit a time window.
 
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod args;
 mod assembly;
 mod class_print;

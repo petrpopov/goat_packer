@@ -21,6 +21,7 @@ fun PackJobResult.toDto() = PackInfoDto(
     finalSliced = finalSliced,
     tower = tower?.toDto(),
     targetSlicer = targetSlicer,
+    precision = precision,
 )
 
 fun PackTowerResult.toDto() = PackTowerDto(anchorXMm, anchorYMm, widthMm, depthMm)
@@ -75,6 +76,7 @@ fun PackParams.toDto() = PackParamsDto(
     clearance = clearance,
     resolution = resolution,
     layout = layout,
+    precision = precision,
     nozzleClean = nozzleClean,
     edgeMargin = edgeMargin,
     towerWidth = towerWidth,
@@ -93,6 +95,7 @@ fun JobRequest.toPackParamsDto() = PackParamsDto(
     clearance = clearance,
     resolution = resolution,
     layout = layout,
+    precision = precision,
     nozzleClean = nozzleClean,
     edgeMargin = edgeMargin,
     towerWidth = towerWidth,

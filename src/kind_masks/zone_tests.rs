@@ -11,6 +11,7 @@ use crate::keepout::{Gap, Permission, ZoneClass, permission};
 use crate::object_print::{Loops, ObjectPrint, PrintKind};
 use crate::pixel_mask::{PixelMask, masks_overlap};
 use crate::span_raster::SpanRaster;
+use std::sync::{Arc, Mutex};
 
 /// Inclusive origin range `(min_x, min_y, max_x, max_y)`.
 pub(super) type Range = (i32, i32, i32, i32);
@@ -84,6 +85,11 @@ type RowMaterial<'a> = (Gap, PrintKind, usize, &'a Loops);
 /// Material covers already built, by gap and (kind, band) list.
 type CoverCache = Vec<((Gap, Vec<(PrintKind, usize)>), PixelMask)>;
 
+/// A `CoverCache` shared by the threads that build tests on one `KindMasks`. A cover is a
+/// function of its key and the masks' print, so whichever thread stores it first stores the
+/// same mask as any other would.
+pub(crate) type SharedCovers = Arc<Mutex<CoverCache>>;
+
 /// Every test `zones` put on `masks`, zone by zone. Material covers are built once per
 /// distinct (gap, material) and shared between zones.
 pub(super) fn plate_tests(
@@ -91,7 +97,7 @@ pub(super) fn plate_tests(
     zones: &[PlateZone],
     grid: &OriginGrid,
 ) -> Vec<PlateTest> {
-    let mut covers = CoverCache::new();
+    let covers = &masks.zone_covers;
     let mut tests = Vec::new();
     for (index, zone) in zones.iter().enumerate() {
         let (parts, materials) = zone_rows(&masks.print, zone);
@@ -113,7 +119,7 @@ pub(super) fn plate_tests(
                 continue;
             }
             let what = material_label(group.iter().map(|(kind, ..)| *kind));
-            let test = material_test(masks, &group, gap, zone, grid, &mut covers);
+            let test = material_test(masks, &group, gap, zone, grid, covers);
             tests.push(PlateTest {
                 zone: index,
                 test,
@@ -218,7 +224,7 @@ fn material_test(
     gap: Gap,
     zone: &PlateZone,
     grid: &OriginGrid,
-    covers: &mut CoverCache,
+    covers: &SharedCovers,
 ) -> ZoneTest {
     let gap_mm = gap.mm(masks.rules.clearance_mm, masks.rules.foreign);
     match &zone.area {
@@ -247,12 +253,23 @@ fn material_test(
                 gap,
                 group.iter().map(|&(kind, band, _)| (kind, band)).collect(),
             );
-            let material = match covers.iter().find(|(known, _)| *known == key) {
-                Some((_, mask)) => mask.clone(),
+            let known = |covers: &CoverCache| {
+                covers
+                    .iter()
+                    .find(|(known, _)| *known == key)
+                    .map(|(_, mask)| mask.clone())
+            };
+            let cached = known(&covers.lock().expect("cover cache"));
+            let material = match cached {
+                Some(mask) => mask,
                 None => {
+                    // Built outside the lock: another thread may build the same cover meanwhile.
                     let loops: Vec<&Loops> = group.iter().map(|(.., loops)| *loops).collect();
                     let mask = union_cover(&loops, gap_mm, masks.resolution);
-                    covers.push((key, mask.clone()));
+                    let mut covers = covers.lock().expect("cover cache");
+                    if known(&covers).is_none() {
+                        covers.push((key, mask.clone()));
+                    }
                     mask
                 }
             };
