@@ -209,7 +209,7 @@ data class JobStageDto(
 
 /**
  * Настройки pack-джоба как отправлены (для режима «только чтение» формы при открытии по URL).
- * [layout] search|grid; [nozzleClean] сырая спека, "" = выключена; [customBed] — свой стол или null.
+ * [layout] dense|grid (search — прежнее dense); [nozzleClean] сырая спека, "" = выключена; [customBed] — свой стол или null.
  */
 @JsonInclude(JsonInclude.Include.ALWAYS)
 data class PackParamsDto(

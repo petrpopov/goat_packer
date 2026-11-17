@@ -53,7 +53,7 @@ class LocalJobLifecycleTest {
         return Job(id, kind, Files.createDirectory(root.resolve(id)), created).also(store::put)
     }
 
-    private fun params() = PackParams("test", root.resolve("profile.json"), 0.7, 0.25, 1, 1, 1, null, "search", "")
+    private fun params() = PackParams("test", root.resolve("profile.json"), 0.7, 0.25, 1, null, "dense", "")
 
     @Test fun `deleted queued job never launches`() {
         val job = registeredJob()

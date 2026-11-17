@@ -8,7 +8,11 @@ object PackDefaults {
     const val CLEARANCE_MM = 0.7
     /** Первая ступень лестницы разрешений пакера; при этом значении `--resolution` не передаётся. */
     const val RESOLUTION_MM = 0.25
-    const val LAYOUT = "search"
+    /** Раскладка: dense — все методы пакера (максимум моделей), grid — только ровные решётки. */
+    const val LAYOUT = "dense"
+    const val LAYOUT_GRID = "grid"
+    /** Прежнее имя dense: так записаны задачи до 2026-11-17, пакер его тоже понимает. */
+    const val LAYOUT_LEGACY_SEARCH = "search"
     /** Расчёт поддержек: precise — откалиброванный (дефолт CLI), fast — растр, быстрее на треть. */
     const val PRECISION = "precise"
     const val PRECISION_FAST = "fast"
@@ -19,8 +23,9 @@ object PackDefaults {
      * ради совместимости API.
      */
     const val ATTEMPTS = 16_000L
-    const val CANDIDATES = 2_400L
-    const val SEED = 20_270_831L
+
+    /** Раскладка для CLI: прежнее search — это dense. */
+    fun cliLayout(layout: String): String = if (layout == LAYOUT_LEGACY_SEARCH) LAYOUT else layout
 }
 
 /** Значения по умолчанию расписания и калибровки. */
@@ -44,11 +49,9 @@ data class PackParams(
     val clearance: Double,
     val resolution: Double,
     val attempts: Long,
-    val candidates: Long,
-    val seed: Long,
     /** Override отступа от края стола; null = дефолт профиля. */
     val edgeMargin: Double?,
-    /** search = детерминированный поиск, grid = только детерминированная сетка (быстро). */
+    /** dense = все методы (максимум моделей), grid = только ровные решётки (быстрее); search = прежнее dense. */
     val layout: String,
     val nozzleClean: String,
     /** Окно печати, ч → --time-window-hours; null = без окна. */

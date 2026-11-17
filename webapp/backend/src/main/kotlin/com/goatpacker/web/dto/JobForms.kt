@@ -29,11 +29,6 @@ data class PackJobForm(
     @field:Min(value = 1, message = "attempts должен быть в диапазоне 1..1000000")
     @field:Max(value = 1000000, message = "attempts должен быть в диапазоне 1..1000000")
     val attempts: Long? = null,
-    @field:Min(value = 1, message = "candidates должен быть в диапазоне 1..100000")
-    @field:Max(value = 100000, message = "candidates должен быть в диапазоне 1..100000")
-    val candidates: Long? = null,
-    @field:Min(value = 0, message = "seed должен быть в диапазоне 0..2^63-1")
-    val seed: Long? = null,
     @field:DecimalMin(value = "0.0", message = "edgeMargin должен быть в диапазоне 0..20 мм")
     @field:DecimalMax(value = "20", message = "edgeMargin должен быть в диапазоне 0..20 мм")
     val edgeMargin: Double? = null,
@@ -42,8 +37,8 @@ data class PackJobForm(
     @field:DecimalMax(value = "60", message = "towerWidth должен быть в диапазоне 5..60 мм")
     val towerWidth: Double? = null,
     @field:Pattern(
-        regexp = """^(search|grid)$""",
-        message = "layout допустим search или grid",
+        regexp = """^(dense|grid|search)$""",
+        message = "layout допустим dense или grid",
     )
     val layout: String? = null,
     @field:Pattern(

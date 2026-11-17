@@ -13,12 +13,29 @@ class CliCommandsTest {
         clearance = 0.7,
         resolution = 0.25,
         attempts = 1,
-        candidates = 1,
-        seed = 1,
         edgeMargin = null,
-        layout = "search",
+        layout = "dense",
         nozzleClean = "",
     )
+
+    @Test
+    fun `раскладка передаётся как dense или grid, прежнее search — это dense`() {
+        val layout = { params: PackParams ->
+            val args = CliCommands.pack("packer", params)
+            args[args.indexOf("--layout") + 1]
+        }
+        assertEquals("dense", layout(base))
+        assertEquals("grid", layout(base.copy(layout = "grid")))
+        assertEquals("dense", layout(base.copy(layout = "search")))
+    }
+
+    @Test
+    fun `флаги совместимости, ни на что не влиявшие, пакеру не передаются`() {
+        val args = CliCommands.pack("packer", base)
+        for (gone in listOf("--candidates", "--seed", "--stall", "--angle-step", "--no-final-slice")) {
+            assertFalse(gone in args, gone)
+        }
+    }
 
     @Test
     fun `ширина башни передаётся пакеру только заданной`() {

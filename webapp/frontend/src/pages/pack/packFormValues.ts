@@ -12,7 +12,8 @@ import {
 } from '@/utils/forms';
 import type { CustomBed, CustomBedInput } from '@/utils/printers';
 
-export type PackLayoutMode = 'search' | 'grid';
+/** dense — все методы пакера (максимум моделей), grid — только ровные решётки (быстрее). */
+export type PackLayoutMode = 'dense' | 'grid';
 
 /** Поля формы упаковки строками — как их ввёл пользователь. */
 export interface PackFormValues {
@@ -49,7 +50,7 @@ export const EMPTY_BED: CustomBedInput = { width: '', depth: '', height: '', mar
 export const DEFAULT_PACK_FORM: PackFormValues = {
   clearance: '0.7',
   resolution: '0.25',
-  layout: 'search',
+  layout: 'dense',
   precision: 'precise',
   cleanMode: 'off',
   globalEvery: '10',
@@ -75,7 +76,8 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
     ...current,
     clearance: String(params.clearance),
     resolution: String(params.resolution),
-    layout: params.layout === 'grid' ? 'grid' : 'search',
+    // Прежнее search (задачи до 2026-11-17) — это dense.
+    layout: params.layout === 'grid' ? 'grid' : 'dense',
     precision: params.precision === 'fast' ? 'fast' : 'precise',
     cleanMode: clean.mode,
     globalEvery: clean.mode === 'global' ? clean.every : current.globalEvery,

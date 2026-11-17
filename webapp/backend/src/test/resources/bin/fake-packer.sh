@@ -66,7 +66,7 @@ fi
 
 echo "probing prime tower position (slicing 1 object)..."
 echo "probe tower keepout: 10.00,10.00 → 30.00,30.00"
-echo "packing (2000 attempts, seed 20270831)..."
+echo "packing (2000 attempts)..."
 echo "pack_footprint: 240/2000 attempts, best so far: 12 objects"
 echo "pack_footprint: 2000/2000 attempts, best so far: 30 objects"
 echo "pack_footprint: best layout: 30 objects (found at attempt 1800, 2000/2000 attempts run)"

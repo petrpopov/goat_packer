@@ -83,7 +83,7 @@ class JobSubmissionIntegrationTest : ServerIntegrationTestBase() {
         assertEquals(a.call("GET", "/api/v2/profiles").first { it["id"].asText() == "test_corner_bed" }, status["profile"])
         assertEquals(1.5, status["params"]["clearance"].asDouble(), 1e-9)
         assertFalse(status["params"]["finalSlice"].asBoolean())
-        assertEquals("search", status["params"]["layout"].asText())
+        assertEquals("dense", status["params"]["layout"].asText())
         assertTrue(status["params"]["customBed"].isNull)
         // Список лёгкий: профиль и настройки только в статусе одной задачи.
         assertFalse(a.call("GET", "/api/v2/jobs")["items"][0].has("profile"))
