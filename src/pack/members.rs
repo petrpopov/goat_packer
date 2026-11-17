@@ -60,6 +60,8 @@ pub(super) fn member_candidates(
         let improved = improve::improve_candidates(ctx, &candidates, effort, cap);
         candidates.extend(improved);
     }
+    // Before the slack: the shortlist a regular layout competes for is ranked with its head start.
+    super::prefer_regular(&mut candidates, options.prefer_regular);
     robustness::annotate(ctx, &mut candidates, SHORTLIST_LEN);
     if members.contains(&Member::Improve) {
         let polished = improve::polish_candidates(ctx, &candidates);

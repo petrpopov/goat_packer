@@ -26,8 +26,8 @@ use crate::model::{ClassSummary, Modelled};
 use crate::plan::plan_of;
 use crate::tower::tower_spec;
 
-/// Predicts every rotation class and builds the plan.
-pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
+/// Predicts every rotation class of `rotations` and builds the plan.
+pub fn modelled_plate(job: &Job, rotations: &[f64]) -> AppResult<Modelled> {
     let config = ProjectConfig::load(&job.args.source_3mf)?;
     // Settings the model cannot read are a refusal like any unsupported one (`Auto` probes).
     let mut settings = SupportSettings::from_config(&config)
@@ -45,14 +45,12 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
         },
         None => job.flavour.margins(),
     };
-    let count = job.args.rotations.len();
+    let count = rotations.len();
     // The classes are independent (own stage A, memo and cache entry): in parallel, so one
     // class's sequential stretches (stage A, the last descents, drawing tails) fill the other's
     // idle threads. P1S at 8 threads: the two classes took 7.7 + 7.3 s one after the other.
     let started = std::time::Instant::now();
-    let classes: Vec<(ObjectPrint, ClassSummary)> = job
-        .args
-        .rotations
+    let classes: Vec<(ObjectPrint, ClassSummary)> = rotations
         .par_iter()
         .enumerate()
         .map(|(index, &rotation)| model_class(job, &settings, &builds, margins, rotation, index, count))

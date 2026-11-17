@@ -3,7 +3,7 @@
 //! is a statement about kinds (`keepout::matrix`), so a kind is the unit the packer masks,
 //! dilates and compares.
 
-use crate::geometry::{Point, Rect};
+use crate::geometry::{Point, Rect, rotate_loops};
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 
@@ -113,6 +113,54 @@ pub struct ObjectPrint {
 }
 
 impl ObjectPrint {
+    /// The print turned rigidly by `angle_deg` (counter-clockwise) about its frame origin,
+    /// part boxes rebuilt from the turned hulls (or the turned box corners when there is no
+    /// hull per box). Exact for a legacy footprint; for a modelled class only an estimate of
+    /// the class at `rotation_deg + angle_deg`, because tree supports are not
+    /// rotation-equivariant (roof line angle, bed-edge obstacle): the plate orientation search
+    /// screens turns with it and models only the turns it keeps.
+    pub fn turned(&self, angle_deg: f64) -> ObjectPrint {
+        if angle_deg == 0.0 {
+            return self.clone();
+        }
+        let turn = |loops: &Loops| rotate_loops(loops, angle_deg);
+        let bands = |bands: &[Loops]| bands.iter().map(turn).collect();
+        let part_hulls = turn(&self.part_hulls);
+        let part_boxes = if part_hulls.len() == self.part_boxes.len() {
+            part_hulls
+                .iter()
+                .map(|hull| Rect::of_points(hull.iter()))
+                .collect()
+        } else {
+            self.part_boxes
+                .iter()
+                .map(|b| {
+                    let corners = [
+                        Point { x: b.min_x, y: b.min_y },
+                        Point { x: b.max_x, y: b.min_y },
+                        Point { x: b.max_x, y: b.max_y },
+                        Point { x: b.min_x, y: b.max_y },
+                    ];
+                    let turned = rotate_loops(&[corners.to_vec()], angle_deg);
+                    Rect::of_points(turned.iter().flatten())
+                })
+                .collect()
+        };
+        ObjectPrint {
+            rotation_deg: self.rotation_deg + angle_deg,
+            part_boxes,
+            silhouette: turn(&self.silhouette),
+            part_hulls,
+            landing: turn(&self.landing),
+            brim: turn(&self.brim),
+            body: bands(&self.body),
+            support_base: turn(&self.support_base),
+            support: bands(&self.support),
+            interface: bands(&self.interface),
+            provenance: self.provenance.clone(),
+        }
+    }
+
     /// The loops of `kind`; `band` selects within the band kinds and is ignored otherwise.
     /// Empty for a band the print has no entry for, and for the plate-level tower kinds.
     pub fn loops_of(&self, kind: PrintKind, band: usize) -> &[Vec<Point>] {

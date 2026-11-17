@@ -3,8 +3,8 @@
 //! the same shapes at a translation, so nothing is rebuilt per placement.
 
 use super::region::{Region, moved_box};
-use crate::geometry::{Point, Rect, rotate_loops};
-use crate::object_print::{Loops, ObjectPrint, PrintKind};
+use crate::geometry::{Point, Rect};
+use crate::object_print::{ObjectPrint, PrintKind};
 use rayon::prelude::*;
 
 /// Kinds without bands, in the order `flat` stores them.
@@ -100,40 +100,9 @@ impl ClassShapes {
     }
 }
 
-/// A legacy footprint's print turned rigidly by `angle_deg` about its origin, part boxes
-/// rebuilt from the turned hulls (or the turned box corners when there is no hull per box).
+/// A legacy footprint's print turned rigidly by `angle_deg` about its origin.
 pub(super) fn rotated_print(print: &ObjectPrint, angle_deg: f64) -> ObjectPrint {
-    if angle_deg == 0.0 {
-        return print.clone();
-    }
-    let turn = |loops: &Loops| rotate_loops(loops, angle_deg);
-    let bands = |bands: &[Loops]| bands.iter().map(turn).collect();
-    let part_hulls = turn(&print.part_hulls);
-    let part_boxes = if part_hulls.len() == print.part_boxes.len() {
-        part_hulls
-            .iter()
-            .map(|hull| Rect::of_points(hull.iter()))
-            .collect()
-    } else {
-        let corners = |b: &Rect| vec![rect_ring(*b)];
-        let boxes = print.part_boxes.iter().map(|b| turn(&corners(b)));
-        boxes
-            .map(|ring| Rect::of_points(ring.iter().flatten()))
-            .collect()
-    };
-    ObjectPrint {
-        rotation_deg: print.rotation_deg + angle_deg,
-        part_boxes,
-        silhouette: turn(&print.silhouette),
-        part_hulls,
-        landing: turn(&print.landing),
-        brim: turn(&print.brim),
-        body: bands(&print.body),
-        support_base: turn(&print.support_base),
-        support: bands(&print.support),
-        interface: bands(&print.interface),
-        provenance: print.provenance.clone(),
-    }
+    print.turned(angle_deg)
 }
 
 pub(super) fn rect_ring(r: Rect) -> Vec<Point> {

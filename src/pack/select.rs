@@ -33,6 +33,16 @@ pub enum Member {
 }
 
 impl Member {
+    /// Whether the member's layouts are regular (rows or lattices, completed by the edge
+    /// fill) rather than placed copy by copy (`Sweep`, `Mixed`) or moved off a lattice
+    /// (`Improve`): what `PackOptions::prefer_regular` favours.
+    pub fn is_regular(self) -> bool {
+        matches!(
+            self,
+            Member::Rows | Member::Lattice | Member::DoubleLattice | Member::TwoBlock
+        )
+    }
+
     /// The members this package implements, in run order.
     pub const AVAILABLE: [Member; 7] = [
         Member::Sweep,
@@ -60,6 +70,9 @@ pub struct TieKey {
 /// winner first.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RankKey {
+    /// `count` plus the head start of a regular layout (`PackOptions::prefer_regular`; equal
+    /// to `count` without one), compared first.
+    pub preferred: usize,
     pub count: usize,
     /// Robustness δ* in quarter millimetres (higher wins). Placeholder: 0 for every layout
     /// until work package P6 computes it, so it never decides yet.
@@ -75,8 +88,9 @@ pub struct RankKey {
 impl Ord for RankKey {
     fn cmp(&self, other: &Self) -> Ordering {
         other
-            .count
-            .cmp(&self.count)
+            .preferred
+            .cmp(&self.preferred)
+            .then(other.count.cmp(&self.count))
             .then(other.robustness_quarter_mm.cmp(&self.robustness_quarter_mm))
             .then(other.canonical_clear.cmp(&self.canonical_clear))
             .then(self.bbox_area_px.cmp(&other.bbox_area_px))
@@ -210,6 +224,7 @@ mod tests {
 
     fn key(count: usize, area: u64, member: Member, detail: i64) -> RankKey {
         RankKey {
+            preferred: count,
             count,
             robustness_quarter_mm: 0,
             canonical_clear: true,

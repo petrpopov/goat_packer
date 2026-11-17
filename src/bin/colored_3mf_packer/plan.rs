@@ -15,6 +15,7 @@ use crate::args::Args;
 use crate::gaps::GapVariant;
 use crate::model::ClassSummary;
 use crate::order::Canonical;
+use crate::orientation::OrientationReport;
 
 /// The state file format. Version 1 held a slicer-learned `Footprint`; its plan, support rule
 /// and sample slice no longer exist.
@@ -80,6 +81,9 @@ pub struct PackSummary {
     pub class_bounds: Vec<Option<usize>>,
     #[serde(default)]
     pub levels: Vec<LevelReport>,
+    /// What `--orientation auto` screened and packed; `None` for a fixed turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<OrientationReport>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -132,6 +136,7 @@ impl PackPlan {
             support_overlap_mm: args.support_overlap_mm,
             foreign_gaps: self.foreign_gaps,
             plate_rules: Some(self.rules.clone()),
+            prefer_regular: args.prefer_regular,
         }
     }
 

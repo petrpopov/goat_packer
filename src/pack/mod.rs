@@ -240,6 +240,14 @@ fn pack_level(
     })
 }
 
+/// Gives every regular candidate its head start in the ranking (`PackOptions::prefer_regular`).
+pub(crate) fn prefer_regular(candidates: &mut [Candidate], head_start: usize) {
+    for candidate in candidates {
+        let regular = candidate.key.tie.member.is_regular();
+        candidate.key.preferred = candidate.key.count + if regular { head_start } else { 0 };
+    }
+}
+
 /// The object cap the members get: the caller's (0 = none) lowered to the bound.
 fn capped_objects(max_objects: usize, bound: Option<usize>) -> usize {
     match (max_objects, bound) {

@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::AppResult;
 use crate::args::SupportSource;
 use crate::gaps::{GapVariant, OwnGap, floor_warning};
+use crate::orientation::OrientationReport;
 use crate::job::Job;
 use crate::margins::{DELTA_BAND_MM, DELTA_FIRST_LAYER_MM};
 use crate::order::Canonical;
@@ -61,6 +62,9 @@ pub struct ColoredPackReport {
     pub class_bounds: Vec<Option<usize>>,
     /// The ladder's levels of the chosen layout, coarse first, with wall time each.
     pub levels: Vec<LevelReport>,
+    /// What `--orientation auto` screened and packed, and the turn it chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<OrientationReport>,
     /// Things the operator should know before trusting the layout (a lowered floor).
     pub warnings: Vec<String>,
     /// Copies per rotation class, in `--rotations` order.
@@ -207,6 +211,7 @@ impl ColoredPackReport {
             upper_bound: summary.upper_bound,
             class_bounds: summary.class_bounds.clone(),
             levels: summary.levels.clone(),
+            orientation: summary.orientation.clone(),
             warnings: crate::job::flavour_warning(args, &job.flavour)
                 .into_iter()
                 .chain(floor_warning(args.foreign_gap_floor))

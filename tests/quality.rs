@@ -34,6 +34,7 @@ fn p1s_search_meets_existing_seventeen_model_baseline() {
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
+        prefer_regular: 0,
     };
     let result = pack_footprint(&footprint, &options);
     validate_result(&footprint, &options, &result).unwrap();
@@ -68,6 +69,7 @@ fn u1_search_keeps_eighteen_models_with_edge_margin_and_purge_line() {
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
+        prefer_regular: 0,
     };
     let result = pack_footprint(&footprint, &options);
     validate_result(&footprint, &options, &result).unwrap();
@@ -105,6 +107,7 @@ fn fixture_options() -> PackOptions {
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
+        prefer_regular: 0,
     }
 }
 
