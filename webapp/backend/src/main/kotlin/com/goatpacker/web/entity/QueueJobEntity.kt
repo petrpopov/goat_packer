@@ -14,7 +14,7 @@ import java.time.LocalDate
 
 private const val EMPTY_JSON = "{}"
 
-/** Строка очереди задач; у проверки нарезкой есть [parentJobId], у её упаковки — [checkJobId]. */
+/** Строка очереди задач. */
 @Entity
 @Table(name = "queue_jobs")
 class QueueJobEntity(
@@ -54,8 +54,5 @@ class QueueJobEntity(
     var computeReservedSeconds: Long = 0,
     var budgetDay: LocalDate? = null,
     var runnerImage: String? = null,
-    /** Проверка нарезкой (V6): у дочерней строки — родитель (в списке она скрыта), у родителя — последняя проверка. */
-    var parentJobId: String? = null,
-    var checkJobId: String? = null,
     @Version var version: Long = 0,
 )

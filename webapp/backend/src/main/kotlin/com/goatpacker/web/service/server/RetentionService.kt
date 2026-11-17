@@ -25,9 +25,8 @@ class RetentionService(
     @Transactional
     fun expire() {
         config.lockForUpdate()
-        // Дети (проверки нарезкой) живут и умирают с родителем: свой срок у них не считается.
         for (id in retention.findExpiredJobIds(RetentionPolicy.BATCH_SIZE)) {
-            gc.scheduleArtifactsOfJobTree(id)
+            gc.scheduleArtifactsOfJob(id)
             queueJobs.deleteJob(id)
         }
         gc.scheduleExpiredUploadInputs()

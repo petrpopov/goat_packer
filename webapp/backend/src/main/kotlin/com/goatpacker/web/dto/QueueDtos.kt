@@ -39,24 +39,6 @@ data class UploadDto(
     val expiresAt: Instant?,
 )
 
-/** Проверка нарезкой внутри задачи: её собственный id в ответ не попадает. */
-data class QueueCheckDto(
-    val status: QueueStatus,
-    val queuePosition: Long?,
-    val estimatedWaitSeconds: Long?,
-    val estimatedWaitFromSeconds: Long?,
-    val estimatedWaitToSeconds: Long?,
-    val estimateReason: String,
-    val progressPercent: Int,
-    val phaseMessage: String?,
-    val error: String?,
-    val startedAt: Instant?,
-    val finishedAt: Instant?,
-    val stage: JobStageDto?,
-    val pack: JsonNode?,
-    val artifacts: List<QueueArtifactDto>,
-)
-
 /** Строка списка задач и общая часть статуса одной задачи. */
 data class QueueJobSummaryDto(
     val canManage: Boolean,
@@ -81,7 +63,6 @@ data class QueueJobSummaryDto(
     val schedule: JsonNode?,
     val calibration: JsonNode?,
     val stage: JobStageDto?,
-    val check: QueueCheckDto?,
 )
 
 /** Статус одной задачи: сводка плюс раскладка, профиль и настройки (в список они не входят — он должен быть лёгким). */

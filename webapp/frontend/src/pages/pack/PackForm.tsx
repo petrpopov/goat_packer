@@ -46,7 +46,7 @@ interface PackFormProps {
   repack: ReactNode;
 }
 
-/** Левая колонка упаковки: файл, принтер, раскладка, чистка, нарезка, окно печати, дополнительное. */
+/** Левая колонка упаковки: файл, принтер, раскладка, чистка, окно печати, дополнительное. */
 export default function PackForm(props: PackFormProps) {
   const { values, update, busy, viewing, selection, parts } = props;
   const nozzleCleanAvailable = selection.selectedProfile === null || selection.selectedProfile.supportsNozzleClean;
@@ -141,31 +141,17 @@ export default function PackForm(props: PackFormProps) {
           <label className="check">
             <input
               type="checkbox"
-              checked={values.sliceNow || values.windowOn}
-              onChange={(event) => update('sliceNow', event.target.checked)}
-              disabled={busy || values.windowOn}
-            />
-            <span className="check-text">
-              Сразу проверить нарезкой
-              <small className="field-hint">
-                {values.windowOn
-                  ? 'окно печати меряется нарезками — стол режется всегда'
-                  : 'дольше на несколько минут; можно и потом — кнопкой «Проверить нарезкой»'}
-              </small>
-            </span>
-          </label>
-        </div>
-        <div className="form-group">
-          <label className="check">
-            <input
-              type="checkbox"
               checked={values.windowOn}
               onChange={(event) => update('windowOn', event.target.checked)}
               disabled={busy}
             />
             <span className="check-text">
               Уложиться в окно печати
-              <small className="field-hint">без окна стол заполняется максимально</small>
+              <small className="field-hint">
+                {values.windowOn
+                  ? 'время печати меряется нарезкой стола на сервере — это дольше'
+                  : 'без окна стол заполняется максимально'}
+              </small>
             </span>
           </label>
           {values.windowOn && (

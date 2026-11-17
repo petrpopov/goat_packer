@@ -54,9 +54,7 @@ interface UploadRepository : JpaRepository<UploadEntity, String> {
 interface QueueJobRepository : JpaRepository<QueueJobEntity, String> {
     fun findByOwnerIdAndRequestKey(ownerId: String, requestKey: String): QueueJobEntity?
 
-    fun findAllByParentJobId(parentJobId: String): List<QueueJobEntity>
-
-    fun findAllByOwnerIdAndParentJobIdIsNull(ownerId: String, pageable: Pageable): Page<QueueJobEntity>
+    fun findAllByOwnerId(ownerId: String, pageable: Pageable): Page<QueueJobEntity>
 
     fun findAllByStatusOrderByCreatedAtAscIdAsc(status: QueueStatus): List<QueueJobEntity>
 

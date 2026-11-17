@@ -51,15 +51,6 @@ class QueueJobSqlRepository(private val jdbc: JdbcTemplate) {
         )
     }
 
-    /** Срок хранения проверки продлевает срок родителя, если у родителя он вообще есть. */
-    fun extendExpiry(jobId: String, expiresAt: Instant) {
-        jdbc.update(
-            "update queue_jobs set expires_at=greatest(expires_at,?) where id=? and expires_at is not null",
-            Timestamp.from(expiresAt),
-            jobId,
-        )
-    }
-
     fun deleteJob(id: String) {
         jdbc.update("delete from queue_jobs where id=?", id)
     }

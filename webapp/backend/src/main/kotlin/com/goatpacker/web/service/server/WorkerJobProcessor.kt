@@ -71,12 +71,8 @@ class WorkerJobProcessor(
         choosePlatformSlicer(record, job, profile, runtimeImages)
         Files.writeString(job.directory.resolve(JobArtifacts.PROFILE_FILE), mapper.writeValueAsString(profile))
         val request = mapper.readValue<JobRequest>(record.paramsJson)
-        // Доводка «Нарезать стол»: состояние упаковки родителя рядом со входом.
-        request.finishStateBlobId?.let { blobId ->
-            store.get(blobs.findById(blobId).orElseThrow().objectKey, job.directory.resolve(JobArtifacts.FINISH_STATE))
-        }
 
-        val cacheGroup = restoreProbeCache(record, job, request, isStl)
+        val cacheGroup = restoreProbeCache(record, job, isStl)
 
         job.onUpdate = WorkerProgressReporter(execution, record, mapper)::report
         if (!execution.extendLease(record.id, record.fence)) {
@@ -128,11 +124,11 @@ class WorkerJobProcessor(
     }
 
     /**
-     * Кэш проб только у упаковки (доводка по состоянию не зондирует). Возвращает группу модели или null, если кэша нет.
+     * Кэш проб только у упаковки. Возвращает группу модели или null, если кэша нет.
      * Сбой кэша не должен ронять джоб: без него пакер просто пробует заново.
      */
-    private fun restoreProbeCache(record: QueueJobEntity, job: Job, request: JobRequest, isStl: Boolean): String? {
-        if (!probeCache.enabled || record.kind != JobKind.PACK || request.finishStateBlobId != null) return null
+    private fun restoreProbeCache(record: QueueJobEntity, job: Job, isStl: Boolean): String? {
+        if (!probeCache.enabled || record.kind != JobKind.PACK) return null
         return runCatching {
             val group = probeCache.groupOf(job.directory.resolve(if (isStl) StlInputs.INPUT_STL else StlInputs.INPUT_3MF), isStl)
             val restored = probeCache.restore(record.ownerId, group, job.directory.resolve(ProbeCacheEntries.DIR))
@@ -170,8 +166,6 @@ class WorkerJobProcessor(
                     timeMarginPct = request.timeMarginPct,
                     supportOverlapMm = request.supportOverlapMm,
                     sourceCommand = sourceCommand,
-                    finalSlice = request.finalSlice,
-                    finishState = request.finishStateBlobId?.let { Path.of(JobArtifacts.FINISH_STATE) },
                     slicer = request.slicer,
                     cacheDir = ProbeCacheEntries.DIR.takeIf { useCache },
                 ),

@@ -52,24 +52,6 @@ export async function startPackJob(form: FormData): Promise<StartJobResponse> {
   return serverMode ? submitServer('PACK', form) : api.postForm<StartJobResponse>('/pack/jobs', form);
 }
 
-/**
- * «Проверить нарезкой»: полная нарезка стола, упакованного без неё, — внутри той же задачи (тот же
- * адрес и строка в «Моих задачах»; ответ — её же id). Ход и итог — в поле check статуса задачи.
- */
-export async function checkPackJob(jobId: string): Promise<StartJobResponse> {
-  const id = encodeURIComponent(jobId);
-  return serverMode
-    ? serverApi.postWithKey<StartJobResponse>(`/jobs/${id}/check`, randomId())
-    : api.postForm<StartJobResponse>(`/pack/jobs/${id}/finish`, new FormData());
-}
-
-/** Остановить проверку нарезкой; упакованный стол задачи остаётся. */
-export async function cancelPackCheck(jobId: string): Promise<void> {
-  const id = encodeURIComponent(jobId);
-  if (serverMode) await serverApi.post(`/jobs/${id}/check/cancel`);
-  else await api.postForm(`/pack/jobs/${id}/check/cancel`, new FormData());
-}
-
 export async function startScheduleJob(form: FormData): Promise<StartJobResponse> {
   return serverMode ? submitServer('SCHEDULE', form) : api.postForm<StartJobResponse>('/schedule/jobs', form);
 }
@@ -121,7 +103,7 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
       'supportOverlapMm',
     ].includes(name)
       ? Number(value)
-      : name === 'amsCorrection' || name === 'finalSlice'
+      : name === 'amsCorrection'
         ? value === 'true'
         : value;
   }

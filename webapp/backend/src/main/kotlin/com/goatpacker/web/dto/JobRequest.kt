@@ -40,10 +40,6 @@ data class JobRequest(
     val variant: String = ScheduleDefaults.CALIBRATION_VARIANT_NORMAL,
     /** «Моего принтера нет в списке» (только упаковка): вместо profileId; задача получает разовый профиль. */
     val customBed: CustomBed? = null,
-    /** false — упаковка без полной нарезки (по пробной нарезке нескольких объектов); полная — доводкой. */
-    val finalSlice: Boolean = true,
-    /** Доводка «Нарезать стол» (PACK с packJobId): блоб состояния родителя. Ставит только сервер. */
-    val finishStateBlobId: String? = null,
     /** Слайсер, в котором пользователь печатает STL (bambu|orca); null — умолчание профиля. Для 3MF не задаётся. */
     val slicer: String? = null,
 )

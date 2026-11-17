@@ -35,7 +35,7 @@ class AuthAndAdminIntegrationTest : ServerIntegrationTestBase() {
         assertTrue(client.raw("GET", "/api/v2/auth/me").getHeaders("Set-Cookie").none { it.startsWith("GP_SESSION=") })
         // Истёкшая — 401 с русским текстом в UTF-8 (без кодировки сервлет писал ISO-8859-1, браузер показывал «????»).
         jdbc.update("update auth_sessions set expires_at=now()-interval '1 minute' where owner_id=?", id)
-        val expired = client.raw("POST", "/api/v2/jobs/${newId()}/check")
+        val expired = client.raw("POST", "/api/v2/jobs")
         assertEquals(401, expired.status)
         assertEquals("UTF-8", expired.characterEncoding.uppercase())
         assertTrue(expired.getContentAsString(Charsets.UTF_8).contains("Сессия истекла"), expired.getContentAsString(Charsets.UTF_8))

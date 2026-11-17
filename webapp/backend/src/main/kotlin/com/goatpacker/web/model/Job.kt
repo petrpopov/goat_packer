@@ -43,23 +43,16 @@ class Job(
     @Volatile
     var packResult: PackJobResult? = null
 
-    /** Параметры pack-джоба (локальный режим): доводка «Нарезать стол» повторяет их. */
+    /** Параметры pack-джоба (локальный режим). */
     @Volatile
     var packParams: PackParams? = null
 
-    /** Имя загруженного файла и профиль для статуса pack-джоба (локальный режим); доводка копирует их у родителя. */
+    /** Имя загруженного файла и профиль для статуса pack-джоба (локальный режим). */
     @Volatile
     var originalName: String? = null
 
     @Volatile
     var profileDto: ProfileDto? = null
-
-    /** Проверка нарезкой (локальный режим): у упаковки — id её внутренней задачи, у внутренней — id упаковки. Наружу не отдаётся. */
-    @Volatile
-    var checkJobId: String? = null
-
-    @Volatile
-    var parentJobId: String? = null
 
     @Volatile
     var scheduleResult: ScheduleJobResult? = null

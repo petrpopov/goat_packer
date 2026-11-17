@@ -33,7 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
-/** API очереди задач серверного режима: постановка, статус, проверка нарезкой, доступ по ссылке и скачивание. */
+/** API очереди задач серверного режима: постановка, статус, доступ по ссылке и скачивание. */
 @RestController
 @Profile("server")
 @RequestMapping("/api/v2")
@@ -62,17 +62,6 @@ class QueueJobsController(
         @RequestHeader(IDEMPOTENCY_KEY) key: String,
         @AuthenticationPrincipal actor: Actor,
     ): CreatedJobDto = creation.create(actor.id, key, body)
-
-    /** «Проверить нарезкой» внутри этой же задачи; ответ — id самой задачи (id внутренней проверки наружу не уходит). */
-    @PostMapping("/jobs/{id}/check")
-    fun createCheck(
-        @PathVariable id: String,
-        @RequestHeader(IDEMPOTENCY_KEY) key: String,
-        @AuthenticationPrincipal actor: Actor,
-    ): CreatedJobDto = creation.createCheck(actor.id, key, id)
-
-    @PostMapping("/jobs/{id}/check/cancel")
-    fun cancelCheck(@PathVariable id: String, @AuthenticationPrincipal actor: Actor) = cancellation.cancelCheck(id, actor.id)
 
     @GetMapping("/jobs")
     fun list(@RequestParam(defaultValue = "0") page: Int, @AuthenticationPrincipal actor: Actor): QueueJobPageDto =

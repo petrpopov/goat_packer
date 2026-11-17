@@ -13,8 +13,7 @@ import com.goatpacker.web.exception.badRequest
  * slicers), умолчание — его slicer_kind: Bambu для принтеров Bambu Lab, Orca для остальных (у
  * Snapmaker — Snapmaker Orca, сервер режет ванильным Orca). Выбор записывается в снимок профиля
  * задачи: по slicer_kind воркер берёт runner-образ и локальный слайсер, по gui_flavour
- * source_project штампует проект для этого GUI; пакеру уходит `--slicer`. Проверка нарезкой
- * копирует снимок родителя, поэтому слайсер у неё тот же.
+ * source_project штампует проект для этого GUI; пакеру уходит `--slicer`.
  */
 object SlicerChoice {
     const val ONLY_FOR_STL = "Слайсер выбирается только для STL: проект 3MF режется тем слайсером, для которого сохранён"

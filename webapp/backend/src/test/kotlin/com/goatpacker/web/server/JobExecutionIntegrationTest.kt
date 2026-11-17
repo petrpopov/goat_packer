@@ -2,20 +2,17 @@ package com.goatpacker.web.server
 
 import com.goatpacker.web.FakeBins
 import com.goatpacker.web.descriptorProject3mf
-import com.goatpacker.web.entity.QueueStatus
 import com.goatpacker.web.entity.newId
 import com.goatpacker.web.service.CustomProfile
 import com.goatpacker.web.service.StlInputs
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
 
-/** Полный путь задачи через исполнителя на фейковых бинарниках: упаковка, STL, свой стол, проверка нарезкой, калибровка. */
+/** Полный путь задачи через исполнителя на фейковых бинарниках: упаковка, STL, свой стол, калибровка. */
 class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
-    private val activeStateNames = QueueStatus.ACTIVE.map { it.name }
 
     @Test fun `stl packs on any catalog printer or a custom bed, converted by source_project before the packer, and schedules from the packed project`() {
         val c = Client()
@@ -175,96 +172,20 @@ class JobExecutionIntegrationTest : ServerIntegrationTestBase() {
         }
     }
 
-    @Test fun `pack without the final slice keeps its state and the finish job slices it`() {
+    @Test fun `a pack job slices nothing and keeps no state for a slice check`() {
         val client = Client()
         client.guest()
         val file = client.upload()
-        // Блоб состояния ставит только сервер.
-        client.job(file, extra = mapOf("finishStateBlobId" to "x"), expected = 400)
-        val pack = client.job(file, extra = mapOf("finalSlice" to false))["jobId"].asText()
+        // Поля прежних клиентов (finalSlice, finishStateBlobId) просто игнорируются.
+        val pack = client.job(file, extra = mapOf("finalSlice" to true, "finishStateBlobId" to "x"))["jobId"].asText()
         withWorker { worker ->
             worker.runUntilSettled(pack)
             val packed = client.call("GET", "/api/v2/jobs/$pack?debug=true")
             assertEquals("SUCCEEDED", packed["status"].asText(), packed.toString())
-            assertEquals(false, packed["pack"]["finalSliced"].asBoolean(), packed.toString())
-            assertTrue(packed["artifacts"].any { it["name"].asText() == "pack_state.json" }, packed.toString())
-            // Проверка нарезкой — внутри той же задачи: ответ с id родителя, ребёнок скрыт; фейковый пакер падает, если состояния нет рядом.
-            val key = newId()
-            val answered = client.call("POST", "/api/v2/jobs/$pack/check", headers = mapOf("Idempotency-Key" to key))["jobId"].asText()
-            assertEquals(pack, answered)
-            // Повтор того же ключа не создаёт второго ребёнка.
-            assertEquals(pack, client.call("POST", "/api/v2/jobs/$pack/check", headers = mapOf("Idempotency-Key" to key))["jobId"].asText())
-            val child = jobs.findById(pack).orElseThrow().checkJobId!!
-            assertEquals(pack, jobs.findById(child).orElseThrow().parentJobId)
-            assertEquals(1, jdbc.queryForObject("select count(*) from queue_jobs where parent_job_id=?", Int::class.java, pack))
-            // Пока проверка не кончилась: в статусе родителя она в очереди/работе, второй запуск отклоняется.
-            assertTrue(client.call("GET", "/api/v2/jobs/$pack")["check"]["status"].asText() in activeStateNames)
-            client.call("POST", "/api/v2/jobs/$pack/check", expected = 400, headers = mapOf("Idempotency-Key" to newId()))
-            worker.runUntilSettled(child)
-            val finished = client.call("GET", "/api/v2/jobs/$pack?debug=true")
-            val check = finished["check"]
-            assertEquals("SUCCEEDED", check["status"].asText(), finished.toString())
-            assertEquals(true, check["pack"]["finalSliced"].asBoolean(), finished.toString())
-            assertFalse(finished.toString().contains(child), "id ребёнка не должен попадать в ответ")
-            // Родитель остаётся собой; артефакты проверки скачиваются по id родителя.
-            assertEquals(false, finished["pack"]["finalSliced"].asBoolean())
-            assertTrue(check["artifacts"].all { it["downloadUrl"].asText().startsWith("/api/v2/jobs/$pack/artifacts/") }, check.toString())
-            assertTrue(check["artifacts"].none { it["name"].asText() == "pack_state.json" }, check.toString())
-            val childArtifact = check["artifacts"].first { it["name"].asText().endsWith(".3mf") }
-            assertTrue(client.call("POST", childArtifact["downloadUrl"].asText(), emptyMap<String, String>())["url"].asText().isNotBlank())
-            assertTrue(client.bytes("/api/v2/jobs/$pack/artifacts/${childArtifact["id"].asText()}/file").isNotEmpty())
-            // Чужой задачей (другой упаковкой того же пользователя) этот артефакт не отдаётся.
-            val other = client.job(file, extra = mapOf("finalSlice" to false))["jobId"].asText()
-            client.call("POST", "/api/v2/jobs/$other/artifacts/${childArtifact["id"].asText()}/download", emptyMap<String, String>(), 404)
-            client.bytes("/api/v2/jobs/$other/artifacts/${childArtifact["id"].asText()}/file", 404)
-            // Ребёнок скрыт: в списке одна строка на упаковку, по его id статус недоступен.
-            val listed = client.call("GET", "/api/v2/jobs")
-            assertEquals(2, listed["total"].asInt(), listed.toString())
-            assertTrue(listed["items"].none { it["jobId"].asText() == child })
-            assertTrue(listed["items"].first { it["jobId"].asText() == pack }["check"]["status"].asText() == "SUCCEEDED")
-            client.call("GET", "/api/v2/jobs/$child", expected = 404)
-            // Суточный лимит гостя (4) проверка не тратит: посчитана упаковка (+ «other»).
-            val owner = jobs.findById(pack).orElseThrow().ownerId
-            assertEquals(2, jdbc.queryForObject("select used from request_limits where key=?", Int::class.java, "jobs:$owner"))
-            // Стол уже проверен нарезкой; через старый путь packJobId — то же самое.
-            client.call("POST", "/api/v2/jobs/$pack/check", expected = 400, headers = mapOf("Idempotency-Key" to newId()))
+            assertFalse(packed.has("check"), packed.toString())
+            assertTrue(packed["artifacts"].none { it["name"].asText() == "pack_state.json" }, packed.toString())
+            // Прежняя доводка «Нарезать стол» по packJobId отклоняется: упаковка — только по файлу.
             client.call("POST", "/api/v2/jobs", mapOf("kind" to "PACK", "packJobId" to pack), 400, mapOf("Idempotency-Key" to newId()))
-            // Удаление упаковки уносит ребёнка, а его артефакты уходят в GC.
-            val keys = jdbc.queryForList("select object_key from artifacts where job_id=?", String::class.java, child)
-            assertTrue(keys.isNotEmpty())
-            client.call("DELETE", "/api/v2/jobs/$pack")
-            assertEquals(0, jdbc.queryForObject("select count(*) from queue_jobs where id=?", Int::class.java, child))
-            keys.forEach { key ->
-                assertEquals(1, jdbc.queryForObject("select count(*) from object_gc where object_key=?", Int::class.java, key), key)
-            }
-        }
-    }
-
-    @Test fun `a failed check may be re-run and old clients still get the parent id`() {
-        val client = Client()
-        client.guest()
-        val file = client.upload()
-        val pack = client.job(file, extra = mapOf("finalSlice" to false))["jobId"].asText()
-        withWorker { worker ->
-            worker.runUntilSettled(pack)
-            // Чужая задача проверять не может.
-            val stranger = Client()
-            stranger.guest()
-            stranger.call("POST", "/api/v2/jobs/$pack/check", expected = 404, headers = mapOf("Idempotency-Key" to newId()))
-            // Старый путь: POST /jobs с packJobId отвечает id родителя.
-            val legacy = client.call("POST", "/api/v2/jobs", mapOf("kind" to "PACK", "packJobId" to pack), headers = mapOf("Idempotency-Key" to newId()))
-            assertEquals(pack, legacy["jobId"].asText())
-            val first = jobs.findById(pack).orElseThrow().checkJobId!!
-            // Отмена очереди: проверка CANCELLED, её можно запустить снова — ссылка заменяется.
-            client.call("POST", "/api/v2/jobs/$pack/check/cancel")
-            assertEquals("CANCELLED", client.call("GET", "/api/v2/jobs/$pack")["check"]["status"].asText())
-            client.call("POST", "/api/v2/jobs/$pack/check", headers = mapOf("Idempotency-Key" to newId()))
-            val second = jobs.findById(pack).orElseThrow().checkJobId!!
-            assertNotEquals(first, second)
-            assertEquals("QUEUED", client.call("GET", "/api/v2/jobs/$pack")["check"]["status"].asText())
-            // Ожидающий в очереди ребёнок отменяется и уходит каскадом вместе с упаковкой.
-            client.call("DELETE", "/api/v2/jobs/$pack")
-            assertEquals(0, jdbc.queryForObject("select count(*) from queue_jobs where id in (?,?,?)", Int::class.java, pack, first, second))
         }
     }
 

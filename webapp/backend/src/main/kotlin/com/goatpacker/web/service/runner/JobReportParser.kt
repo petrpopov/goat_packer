@@ -36,8 +36,6 @@ class JobReportParser(private val mapper: ObjectMapper) {
             time = report?.get("time")?.let(::parsePackTime),
             supportsDetected = report?.get("supports_detected")?.takeIf { it.isBoolean }?.asBoolean(),
             supportOverlapMm = report?.get("support_overlap_mm")?.takeIf { it.isNumber }?.asDouble(),
-            // Старый пакер поля не пишет — он всегда резал стол целиком.
-            finalSliced = report?.get("final_sliced")?.takeIf { it.isBoolean }?.asBoolean() ?: true,
             tower = report?.get("tower")?.let(::parsePackTower),
             targetSlicer = report?.get("target_slicer")?.takeIf { it.isTextual }?.asText()?.takeIf { it.isNotBlank() },
             precision = report?.get("precision")?.takeIf { it.isTextual }?.asText(),

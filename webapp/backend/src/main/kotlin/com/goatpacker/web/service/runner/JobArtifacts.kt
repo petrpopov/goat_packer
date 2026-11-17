@@ -18,15 +18,6 @@ object JobArtifacts {
     /** Отчёт пакера: пишется рядом с `--output` как `packed.verification.json` (with_extension). */
     const val PACKED_REPORT = "packed.verification.json"
 
-    /** Состояние упаковки (пакер пишет его всегда; без `--verify` по нему идёт доводка), как его пишет пакер. */
-    const val PACKED_STATE = "packed.state.json"
-
-    /** Публичное имя состояния упаковки (`packed.state.json` пакера). */
-    const val PACK_STATE = "pack_state.json"
-
-    /** Вход доводки — состояние родителя под своим именем: не артефакт pack_state.json самой доводки. */
-    const val FINISH_STATE = "finish.state.json"
-
     const val SCHEDULE_CSV = "schedule.csv"
     const val SCHEDULE_XLSX = "schedule.xlsx"
     const val PLATES_3MF = "plates.3mf"
@@ -61,8 +52,6 @@ object JobArtifacts {
             // Отчёт пакера наружу идёт под каноничным именем verification.json.
             artifact("verification.json", "verification.json", PACKED_REPORT),
             artifact("placements.json", "$PACK_WORK_DIR/placements.json", "placements.json"),
-            // Состояние упаковки без полной нарезки: вход доводки «Нарезать стол».
-            artifact(PACK_STATE, PACKED_STATE),
             artifact(LOG_FILE, LOG_FILE),
         )
 

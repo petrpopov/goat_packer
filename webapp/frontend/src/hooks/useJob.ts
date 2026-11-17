@@ -5,10 +5,7 @@ import type { JobStatusResponse } from '@/api/types';
 import { JOB_POLL_MS } from '@/config';
 import { isActiveStatus, isJobGone } from '@/utils/jobs';
 
-/**
- * Поллинг статуса задачи: GET /api/jobs/{id} раз в JOB_POLL_MS, пока идёт она сама или её проверка
- * нарезкой (check — внутри той же задачи); на терминальном статусе обеих опрос останавливается.
- */
+/** Поллинг статуса задачи: GET /api/jobs/{id} раз в JOB_POLL_MS, пока она идёт; на терминальном статусе опрос останавливается. */
 export function useJob(jobId: string | null) {
   return useQuery<JobStatusResponse>({
     queryKey: ['job', jobId],
@@ -23,7 +20,7 @@ export function useJob(jobId: string | null) {
     refetchInterval: (query) => {
       if (isJobGone(query.state.error)) return false;
       const job = query.state.data;
-      return !job || isActiveStatus(job.status) || isActiveStatus(job.check?.status) ? JOB_POLL_MS : false;
+      return !job || isActiveStatus(job.status) ? JOB_POLL_MS : false;
     },
   });
 }

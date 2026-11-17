@@ -5,12 +5,15 @@ import { formatDuration } from './format';
 
 /** Канонический порядок этапов; необязательные — те, в которые пакер заходит не всегда. */
 const ORDER: { id: PackStageId; label: string; optional: boolean }[] = [
+  // Обязательность — только для старых задач без плана пакера (у них были пробы и нарезка стола). Сейчас
+  // пакер присылает план: пробная нарезка — запасной путь, когда модель поддержек не умеет проект (рафт,
+  // обычные поддержки), нарезка стола и проверка поддержек — только у окна печати.
   { id: 'probe_slice', label: 'Пробная нарезка 1 объекта', optional: false },
   { id: 'modelling', label: 'Модель поддержек', optional: true },
   { id: 'packing', label: 'Раскладка', optional: false },
   { id: 'sample_slice', label: 'Пробная нарезка нескольких объектов', optional: true },
   { id: 'assembling', label: 'Сборка проекта', optional: false },
-  { id: 'final_slice', label: 'Нарезка итоговой пластины', optional: false },
+  { id: 'final_slice', label: 'Нарезка стола', optional: false },
   { id: 'gcode_check', label: 'Проверка поддержек по слоям', optional: true },
   { id: 'repacking', label: 'Перепаковка', optional: true },
   { id: 'window_slice', label: 'Подбор под окно времени', optional: true },
@@ -101,8 +104,8 @@ function stagePlan(stage: JobStage) {
   // Повторный заход: после перепаковки пакер снова собирает, режет и проверяет.
   const repeat = (currentIndex >= 0 && furthest > currentIndex) || stage.attempt > 1;
   const from = Math.max(currentIndex, furthest);
-  // План пакера точен (итоговая нарезка — только если задача проверяет нарезкой); без плана (старый
-  // пакер) — обязательные этапы канонического порядка.
+  // План пакера точен (нарезка стола — только у окна печати); без плана (старый пакер) — обязательные
+  // этапы канонического порядка.
   const planned = stage.planned?.length ? new Set(stage.planned) : null;
   const remaining = ORDER.filter(
     (step, index) =>

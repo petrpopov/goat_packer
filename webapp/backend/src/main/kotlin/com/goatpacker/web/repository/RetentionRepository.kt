@@ -10,12 +10,9 @@ import org.springframework.stereotype.Repository
 @Repository
 @Profile("server")
 class RetentionRepository(private val jdbc: JdbcTemplate) {
-    /** Завершённые задачи (без активных проверок) с истёкшим сроком хранения; проверки живут и умирают с родителем. */
+    /** Завершённые задачи с истёкшим сроком хранения. */
     fun findExpiredJobIds(limit: Int): List<String> = jdbc.query(
-        """select id from queue_jobs where parent_job_id is null and expires_at<now()
-           and status not in ${QueueStatus.ACTIVE.sqlList()}
-           and not exists(select 1 from queue_jobs c where c.parent_job_id=queue_jobs.id and c.status in ${QueueStatus.ACTIVE.sqlList()})
-           limit $limit""",
+        """select id from queue_jobs where expires_at<now() and status not in ${QueueStatus.ACTIVE.sqlList()} limit $limit""",
     ) { rs, _ -> rs.getString(1) }
 
     fun deleteExpiredUploads() {
