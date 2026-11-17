@@ -89,8 +89,6 @@ class PackService(
             clearance = form.clearance ?: PackDefaults.CLEARANCE_MM,
             resolution = form.resolution ?: PackDefaults.RESOLUTION_MM,
             attempts = form.attempts ?: PackDefaults.ATTEMPTS,
-            candidates = form.candidates ?: PackDefaults.CANDIDATES,
-            seed = form.seed ?: PackDefaults.SEED,
             edgeMargin = form.edgeMargin,
             towerWidth = form.towerWidth,
             layout = form.layout ?: PackDefaults.LAYOUT,

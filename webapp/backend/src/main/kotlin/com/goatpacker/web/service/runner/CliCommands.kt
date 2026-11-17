@@ -22,12 +22,11 @@ object CliCommands {
         // Заданное пользователем разрешение передаётся как есть.
         if (params.resolution != PackDefaults.RESOLUTION_MM) addOption("--resolution", params.resolution)
         addOption("--attempts", params.attempts)
-        addOption("--candidates", params.candidates)
-        addOption("--seed", params.seed)
         params.edgeMargin?.let { addOption("--edge-margin", it) }
         // Пусто = дефолт пакера (20 мм): передаём только заданное.
         params.towerWidth?.let { addOption("--tower-width", it) }
-        addOption("--layout", params.layout)
+        // dense — все методы, grid — только ровные решётки; задачи до 2026-11-17 хранят search = dense.
+        addOption("--layout", PackDefaults.cliLayout(params.layout))
         // Дефолт пакера (precise) не передаём: команда старых задач остаётся прежней.
         if (params.precision != PackDefaults.PRECISION) addOption("--precision", params.precision)
         if (params.nozzleClean.isNotBlank() && !NozzleCleanSpec.isOff(params.nozzleClean)) {

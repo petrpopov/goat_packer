@@ -13,7 +13,7 @@ import com.goatpacker.web.service.NozzleCleanSpec
 
 /** Проверка тела `POST /api/v2/jobs` до обращения к БД: форма запроса и диапазоны настроек. */
 object JobRequestValidator {
-    private val LAYOUTS = setOf(PackDefaults.LAYOUT, "grid")
+    private val LAYOUTS = setOf(PackDefaults.LAYOUT, PackDefaults.LAYOUT_GRID, PackDefaults.LAYOUT_LEGACY_SEARCH)
     private val PRECISIONS = setOf(PackDefaults.PRECISION, PackDefaults.PRECISION_FAST)
     private val BENCH_MODES = setOf(ScheduleDefaults.BENCH_MODE_ADAPTIVE, ScheduleDefaults.BENCH_MODE_FULL)
     private val CALIBRATION_VARIANTS = setOf(ScheduleDefaults.CALIBRATION_VARIANT_NORMAL, ScheduleDefaults.CALIBRATION_VARIANT_PERFECTIONIST)
