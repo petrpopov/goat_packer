@@ -9,7 +9,9 @@ use i_overlay::core::{
     solver::{Precision, Solver, Strategy},
 };
 
-use super::query::{IntBox, bbox};
+use std::panic::AssertUnwindSafe;
+
+use super::query::{IntBox, bbox, ring_doubled_area};
 use super::{Island, Ring, Rings, flatten};
 
 /// No parallel sorting inside i_overlay: one support-model member runs on one thread and
@@ -123,7 +125,40 @@ fn overlay(subject: &[Ring], clip: &[Ring], rule: OverlayRule, fill: FillRule) -
     overlay_with(subject, clip, rule, fill, SOLVER)
 }
 
+/// i_overlay 4.5 panics (`bind/solver.rs`: a hole whose anchor finds no enclosing contour,
+/// index `usize::MAX`) on some piles of degenerate sliver rings: triangles a tenth of a
+/// millimetre long and under a nanometre wide, which `union_many` meets in the drawn
+/// supports (first seen on a U1 goat at 30 degrees: 47 of a leaf's 68 rings were such
+/// slivers; 12 of them alone reproduce it under every strategy; i_overlay 9 does not
+/// panic). Inputs that do not panic keep their exact result (no filtering up front, so
+/// cached unions stay byte-identical); a panicking one is retried once without the
+/// slivers, which hold no area, and the retry is reported on stderr.
 fn overlay_with(subject: &[Ring], clip: &[Ring], rule: OverlayRule, fill: FillRule, solver: Solver) -> Vec<Island> {
+    let run = |subject: &[Ring], clip: &[Ring]| {
+        std::panic::catch_unwind(AssertUnwindSafe(|| run_overlay(subject, clip, rule, fill, solver)))
+    };
+    match run(subject, clip) {
+        Ok(islands) => islands,
+        Err(payload) => {
+            let subject_kept = without_slivers(subject);
+            let clip_kept = without_slivers(clip);
+            let dropped = subject.len() + clip.len() - subject_kept.len() - clip_kept.len();
+            eprintln!(
+                "polygon overlay: i_overlay panicked; retrying without {dropped} degenerate \
+                 sliver ring(s) narrower than {SLIVER_WIDTH_UNITS} grid unit"
+            );
+            if dropped == 0 {
+                std::panic::resume_unwind(payload);
+            }
+            match run(&subject_kept, &clip_kept) {
+                Ok(islands) => islands,
+                Err(_) => std::panic::resume_unwind(payload),
+            }
+        }
+    }
+}
+
+fn run_overlay(subject: &[Ring], clip: &[Ring], rule: OverlayRule, fill: FillRule, solver: Solver) -> Vec<Island> {
     let edges: usize = subject.iter().chain(clip).map(Vec::len).sum();
     if edges == 0 {
         return Vec::new();
@@ -136,6 +171,27 @@ fn overlay_with(subject: &[Ring], clip: &[Ring], rule: OverlayRule, fill: FillRu
         overlay.add_contour(ring, ShapeType::Clip);
     }
     overlay.overlay(rule, fill)
+}
+
+/// A ring narrower than this on average (twice its area over its perimeter, in grid units)
+/// is a sliver: one unit is 1 nm (Orca) or 10 nm (Bambu).
+const SLIVER_WIDTH_UNITS: f64 = 1.0;
+
+/// `rings` without the slivers (and without rings of fewer than three points).
+fn without_slivers(rings: &[Ring]) -> Vec<Ring> {
+    rings
+        .iter()
+        .filter(|ring| ring.len() >= 3)
+        .filter(|ring| {
+            let perimeter: f64 = ring
+                .iter()
+                .zip(ring.iter().cycle().skip(1))
+                .map(|(a, b)| (f64::from(b.x) - f64::from(a.x)).hypot(f64::from(b.y) - f64::from(a.y)))
+                .sum();
+            (ring_doubled_area(ring) as f64).abs() >= SLIVER_WIDTH_UNITS * perimeter
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -180,5 +236,60 @@ mod tests {
         assert_eq!(found.len(), 2);
         let with_hole = found.iter().find(|island| island.len() == 2).unwrap();
         assert_eq!(area(with_hole), 64.0);
+    }
+
+    /// The 12 rings a ring-by-ring minimisation kept from the `union_many` leaf that made
+    /// i_overlay 4.5 panic (U1 goat, `--rotations 30`, Nanometre grid): ten slivers under a
+    /// nanometre wide and two thin triangles that hold all the area.
+    const PANICKING_RINGS: [&[(i32, i32)]; 12] = [
+        &[(-15626051, -9501468), (-15650796, -9486160), (-15621531, -9504265)],
+        &[(-15411554, -9634164), (-15289963, -9686971), (-15493881, -9555247)],
+        &[(-15621531, -9504265), (-15505079, -9576306), (-15411554, -9634164)],
+        &[(-9724065, -7208837), (-9708249, -7193021), (-10312967, -5296385)],
+        &[(-14756686, -6947407), (-14722609, -6780039), (-14712240, -6729111)],
+        &[(-10119432, -5248963), (-10113325, -5277839), (-10089022, -5392740)],
+        &[(-9701675, -7290857), (-9712525, -7238168), (-9704243, -7278387)],
+        &[(-9707441, -7196844), (-9677732, -7337308), (-9671624, -7366184)],
+        &[(-9686547, -7364323), (-9701675, -7290857), (-9692500, -7335415)],
+        &[(10621481, 6035950), (10633930, 5955261), (10570636, 6137176)],
+        &[(10164538, 7771200), (10153912, 7798021), (10182042, 7727014)],
+        &[(-9704244, -7278386), (-9686547, -7364322), (-9692500, -7335414), (-9721457, -7194793)],
+    ];
+
+    fn panicking_rings() -> Rings {
+        PANICKING_RINGS
+            .iter()
+            .map(|ring| ring.iter().map(|&(x, y)| IntPoint::new(x, y)).collect())
+            .collect()
+    }
+
+    #[test]
+    fn the_raw_overlay_still_panics_on_the_recorded_slivers() {
+        // Guards the regression test below: if an i_overlay upgrade stops panicking here,
+        // the retry path is no longer exercised (and may be dropped).
+        let rings = panicking_rings();
+        let raw = std::panic::catch_unwind(|| {
+            run_overlay(&rings, &[], OverlayRule::Subject, FillRule::NonZero, UNION_SOLVER)
+        });
+        assert!(raw.is_err());
+    }
+
+    #[test]
+    fn a_union_of_panicking_slivers_keeps_the_area_of_the_rest() {
+        let rings = panicking_rings();
+        let kept = without_slivers(&rings);
+        assert_eq!(kept.len(), 3, "the two thin triangles and the 2.6e-3 mm² one stay");
+        let expected = area(&resolve(&kept, FillRule::NonZero));
+        assert!(expected > 0.0);
+        assert_eq!(area(&union_many(&rings)), expected);
+        assert_eq!(area(&resolve(&rings, FillRule::NonZero)), expected);
+    }
+
+    #[test]
+    fn slivers_are_rings_narrower_than_one_unit() {
+        let sliver = vec![IntPoint::new(0, 0), IntPoint::new(1_000_000, 0), IntPoint::new(0, 1)];
+        let thin = vec![IntPoint::new(0, 0), IntPoint::new(1_000_000, 0), IntPoint::new(0, 4)];
+        assert!(without_slivers(&[sliver]).is_empty());
+        assert_eq!(without_slivers(&[thin]).len(), 1);
     }
 }
