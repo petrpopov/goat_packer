@@ -33,7 +33,7 @@ const SAME_GAP_MM: f64 = 5e-4;
 /// (the search is not monotone in the rule), the best count wins and ties keep the larger gaps.
 /// On the owner's plates the upper rungs never won (coarse U1 55/55/55/53, P1S 45/45/44/44,
 /// A2L 79/77/75/74; refined: the floor's count or fewer) and cost three extra packs, ~60 s at
-/// the server job's two cores, so they are opt-in. Going below the floor needs
+/// two threads, so they are opt-in. Going below the floor needs
 /// `--foreign-gap-floor` and is reported as a warning.
 pub const DEFAULT_FOREIGN_GAPS: &str = "0:0.5";
 

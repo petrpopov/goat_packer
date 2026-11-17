@@ -39,8 +39,8 @@ platform:
   worker-enabled: ${WORKER_ENABLED:false}
   worker-id: ${WORKER_ID:local-worker}
   worker-memory-mib: ${WORKER_MEMORY_MIB:1536}
-  worker-cpus: ${WORKER_CPUS:2}
-  execution-cpu-budget: ${EXECUTION_CPU_BUDGET:2}
+  worker-cpus: ${WORKER_CPUS:4}
+  execution-cpu-budget: ${EXECUTION_CPU_BUDGET:4}
   execution-memory-mib: ${EXECUTION_MEMORY_MIB:1536}
   max-parallel: ${MAX_PARALLEL:1}
   storage-limit-bytes: ${STORAGE_LIMIT_BYTES:10737418240}

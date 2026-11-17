@@ -87,9 +87,9 @@ services:
       ADMIN_PASSWORD: ''
       WORKER_ID: ${WORKER_ID:-node-1}
       WORKER_ENABLED: 'true'
-      EXECUTION_CPU_BUDGET: ${EXECUTION_CPU_BUDGET:-2}
+      EXECUTION_CPU_BUDGET: ${EXECUTION_CPU_BUDGET:-4}
       EXECUTION_MEMORY_MIB: ${EXECUTION_MEMORY_MIB:-8192}
-      WORKER_CPUS: ${WORKER_CPUS:-2}
+      WORKER_CPUS: ${WORKER_CPUS:-4}
       # WORKER_MEMORY_MIB — из app-env (api проверяет по нему запас под tmpfs задачи).
       # Runner той же версии, что и приложение: в нём бинарники упаковщика этого релиза.
       RUNNER_BAMBU_IMAGE: goat-packer-runner-bambu:${GOAT_VERSION}

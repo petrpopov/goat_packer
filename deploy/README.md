@@ -57,7 +57,7 @@ SeaweedFS — по digest в `compose.yml`.
   `GOAT_PUBLIC_SCHEME=https`, `ADMISSION_LIMITS=false` (сайт закрыт SSO Pangolin — лимитов частоты,
   активных задач, бюджета и личной квоты нет; общий потолок хранилища остаётся),
   `S3_PUBLIC_ENDPOINT=https://goat.ezheg.xyz`, `WEB_PORT=18088`, `WORKER_ID=main-1`,
-  `SCRATCH_ROOT=/srv/goat-packer/scratch`, ресурсы (1 слот: 2 CPU, 8 GiB).
+  `SCRATCH_ROOT=/srv/goat-packer/scratch`, ресурсы (1 слот: 4 CPU — весь хост, `WORKER_CPUS=4`, `EXECUTION_CPU_BUDGET=4` с 2026-11-06).
 - **Доступ**: Pangolin `goat.ezheg.xyz` (SSO) → newt на `main` → `127.0.0.1:18088`. Файлы идут по `/goat/` того же имени.
 - **Релиз** = деплой: тег `v*` → образы → `deploy/dokploy-deploy.sh` (ключ Dokploy в
   `/var/lib/ci/goat_packer/secrets/dokploy.env` на `main`, root 600; API через туннель CI `127.0.0.1:13000`)
@@ -92,9 +92,9 @@ sandbox-контейнеров через сокет хоста.
 
 ## Ресурсы и исполнение
 
-По умолчанию одна native-задача: 2 CPU, 8 GiB RAM (полная нарезка 49-козьего стола в Orca — 5.1 GiB + ~0.5 GiB файлов в tmpfs), жёсткий tmpfs scratch 2 GiB, 256 процессов,
+По умолчанию одна native-задача: 4 CPU, 8 GiB RAM (полная нарезка 49-козьего стола в Orca — 5.1 GiB + ~0.5 GiB файлов в tmpfs), жёсткий tmpfs scratch 2 GiB, 256 процессов,
 30 мин максимум, 50 MiB совокупных выходных файлов (включая диагностику). Export helper ограничен
-128 MiB / 0.5 CPU; запас control plane учтён в расчёте. Пакер ограничивает Rayon двумя потоками.
+128 MiB / 0.5 CPU; запас control plane учтён в расчёте. Пакер получает `RAYON_NUM_THREADS` = `WORKER_CPUS`.
 Авторасчёт использует CPU/RAM **Docker-хоста**, не предполагает фиксированную машину 4 GiB.
 На shared-host явно укажите выделенный бюджет. Нулевое безопасное число слотов допустимо:
 система не начинает задачи вместо рискованного принудительного N=1.

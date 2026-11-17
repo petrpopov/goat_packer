@@ -24,9 +24,9 @@ const DEFAULT_CLEARANCE_MM: f64 = 0.7;
 /// The resolution ladder (`pack::ladder`): the coarse run, then finer ones. Research
 /// 2026-11-03: 0.2 / 0.15 mm gained U1 +1 and A2L +3..4 copies, P1S stayed; the whole ladder
 /// costs 3 / 3 / 10 s per foreign-gap rung on U1 / P1S / A2L (14 cores). Measured again
-/// 2026-11-04 on the full pipeline (rotations 0/180, two rayon threads like a server job):
+/// 2026-11-04 on the full pipeline (rotations 0/180, two rayon threads):
 /// U1 55/56/56, P1S 45/46/46, A2L 79/77/78 at 0.25/0.2/0.15: the 0.15 mm level never added a
-/// copy and was the slowest level (P1S 39 of 85 s of packing on the server's two cores), so
+/// copy and was the slowest level (P1S 39 of 85 s of packing at two threads), so
 /// it is opt-in (`--resolutions 0.25,0.2,0.15`).
 const DEFAULT_RESOLUTIONS_MM: [f64; 2] = [0.25, 0.2];
 /// The ladder of `--precision fast`: the coarse level alone. 2026-11-13, fast drawing, fresh
