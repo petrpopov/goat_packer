@@ -98,7 +98,6 @@ pub(crate) fn pack_legacy(
         angle_step_deg: options.angle_step_deg,
         attempts,
         attempts_run,
-        seed: options.seed,
     }
 }
 
@@ -214,7 +213,6 @@ fn select_layout(
             angle_step_deg: options.angle_step_deg,
             attempts: options.attempts,
             attempts_run: 0,
-            seed: options.seed,
         };
         validate_geometry(footprint, options, &result)
     };

@@ -56,11 +56,8 @@ fn options() -> PackOptions {
         clearance: CLEARANCE,
         angle_step_deg: 90.0,
         attempts: 16,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: true,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -83,7 +80,6 @@ fn layout(xs: &[f64]) -> PackResult {
         angle_step_deg: 90.0,
         attempts: 1,
         attempts_run: 1,
-        seed: 1,
     }
 }
 

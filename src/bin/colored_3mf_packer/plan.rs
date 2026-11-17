@@ -4,7 +4,7 @@
 use goat_packer::{
     ForeignGaps, PackOptions, PlateRules, Point, PrintPlacement,
     object_print::ObjectPrint,
-    pack::{LevelReport, PackOutcome, TowerSpec, pack, refine},
+    pack::{LevelReport, PackOutcome, TowerSpec, pack_members, refine_members},
     print_time::TimeSample,
     keepout::clip::check_first_copies, validate_vector, LayoutRules,
 };
@@ -128,13 +128,11 @@ impl PackPlan {
             resolution: args.resolution,
             resolutions: args.resolutions.clone(),
             clearance: args.clearance,
-            angle_step_deg: args.angle_step,
+            // The legacy search's angle family; fixed rotation classes never read it.
+            angle_step_deg: 0.0,
             attempts: args.attempts,
-            candidates_per_step: args.candidates,
-            stall_attempts: args.stall,
             max_objects: args.max_objects,
             lock_orientation: false,
-            seed: args.seed,
             support_overlap_mm: args.support_overlap_mm,
             foreign_gaps: self.foreign_gaps,
             plate_rules: Some(self.rules.clone()),
@@ -142,10 +140,13 @@ impl PackPlan {
         }
     }
 
-    /// One packing pass of the portfolio over every class.
+    /// One packing pass of the `--layout`'s methods over every class.
     pub fn pack(&self, args: &Args) -> AppResult<PackOutcome> {
         let options = self.options(args);
-        self.cached(args, || pack(&self.prints, &self.rules, self.tower.as_ref(), &options))
+        let members = args.layout.members();
+        self.cached(args, || {
+            pack_members(&self.prints, &self.rules, self.tower.as_ref(), &options, members)
+        })
     }
 
     /// The first level of the resolution ladder only: the pass over every foreign-gap rung.
@@ -160,7 +161,10 @@ impl PackPlan {
     /// Climbs the rest of the ladder from a `pack_coarse` outcome of this plan.
     pub fn refine(&self, args: &Args, coarse: PackOutcome) -> AppResult<PackOutcome> {
         let options = self.options(args);
-        self.cached(args, || refine(&self.prints, &self.rules, self.tower.as_ref(), &options, coarse))
+        let members = args.layout.members();
+        self.cached(args, || {
+            refine_members(&self.prints, &self.rules, self.tower.as_ref(), &options, members, coarse)
+        })
     }
 
     /// `run` through the packing cache of `args`. The key reads the levels the run climbs
@@ -175,7 +179,13 @@ impl PackPlan {
             resolutions: ladder(args),
             ..self.options(args)
         };
-        Ok(pack_cache::cached(args.cache_dir.as_deref(), self, &options, run)?)
+        Ok(pack_cache::cached(
+            args.cache_dir.as_deref(),
+            self,
+            &options,
+            args.layout.members(),
+            run,
+        )?)
     }
 
     /// The exact check of a layout, the gate every plate passes before it is written: the

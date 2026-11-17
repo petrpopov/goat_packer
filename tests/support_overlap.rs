@@ -52,11 +52,8 @@ fn options(support_overlap_mm: Option<f64>) -> PackOptions {
         clearance: CLEARANCE,
         angle_step_deg: 90.0,
         attempts: 16,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: true,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -128,7 +125,6 @@ fn layout(placements: &[(f64, f64)], options: &PackOptions) -> PackResult {
         angle_step_deg: options.angle_step_deg,
         attempts: 1,
         attempts_run: 1,
-        seed: options.seed,
     }
 }
 

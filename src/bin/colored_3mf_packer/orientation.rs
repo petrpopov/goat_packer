@@ -29,7 +29,7 @@ use crate::from_model::modelled_plate_at;
 use crate::gaps::GapVariant;
 use crate::job::Job;
 use crate::model::{Modelled, model_plate};
-use crate::pack_cache::cached_members;
+use crate::pack_cache::cached;
 use crate::plan::PackPlan;
 use crate::prepare::pack_variants;
 
@@ -181,7 +181,7 @@ fn screen(job: &Job, turns: &[f64]) -> AppResult<Vec<TurnCount>> {
                 ..plan.options(&job.args)
             };
             // Cached like a full pack: a rerun over the same model screens in seconds.
-            let count = cached_members(job.args.cache_dir.as_deref(), &plan, &options, &SCREEN_MEMBERS, || {
+            let count = cached(job.args.cache_dir.as_deref(), &plan, &options, &SCREEN_MEMBERS, || {
                 pack_members(&plan.prints, &plan.rules, plan.tower.as_ref(), &options, &SCREEN_MEMBERS)
             })
             .map_or(0, |outcome| outcome.placements.len());

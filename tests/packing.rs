@@ -55,11 +55,8 @@ fn packer_places_four_squares_without_overlap() {
         clearance: 0.5,
         angle_step_deg: 90.0,
         attempts: 24,
-        candidates_per_step: 250,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 7,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -83,11 +80,8 @@ fn packer_never_uses_exclusion_area() {
         clearance: 0.5,
         angle_step_deg: 90.0,
         attempts: 8,
-        candidates_per_step: 100,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 9,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -123,11 +117,8 @@ fn bed_bounds_measure_bed_loops_not_the_silhouette_alone() {
         clearance: 0.5,
         angle_step_deg: 90.0,
         attempts: 24,
-        candidates_per_step: 250,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 7,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -146,7 +137,6 @@ fn bed_bounds_measure_bed_loops_not_the_silhouette_alone() {
         angle_step_deg: options.angle_step_deg,
         attempts: options.attempts,
         attempts_run: options.attempts,
-        seed: options.seed,
     };
     assert!(
         validate_result(&fp, &options, &silhouette_only_fit).is_err(),
@@ -164,7 +154,6 @@ fn bed_bounds_measure_bed_loops_not_the_silhouette_alone() {
         angle_step_deg: options.angle_step_deg,
         attempts: options.attempts,
         attempts_run: options.attempts,
-        seed: options.seed,
     };
     validate_result(&fp, &options, &spike_fits).unwrap();
 }
@@ -184,11 +173,8 @@ fn grid_tiles_the_bed_and_validate_result_accepts_it() {
         clearance: 1.0,
         angle_step_deg: 90.0,
         attempts: 1,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -228,11 +214,8 @@ fn grid_skips_cells_that_touch_an_exclusion() {
         clearance: 0.0,
         angle_step_deg: 90.0,
         attempts: 1,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -265,11 +248,8 @@ fn layouts_exceed_the_old_128_cap_and_honor_an_explicit_one() {
         clearance: 0.0,
         angle_step_deg: 90.0,
         attempts: 1,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -324,11 +304,8 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         clearance: 0.0,
         angle_step_deg: 90.0,
         attempts: 1,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -345,7 +322,6 @@ fn two_zone_rule_allows_support_overlap_but_rejects_body_contact() {
         angle_step_deg: 90.0,
         attempts: 1,
         attempts_run: 1,
-        seed: 1,
     };
     validate_result(&footprint, &options, &slabs_overlap)
         .expect("support-on-support overlap is allowed");
@@ -373,11 +349,8 @@ fn grid_picks_the_orientation_that_fits_more_cells() {
         clearance: 0.2,
         angle_step_deg: 90.0,
         attempts: 1,
-        candidates_per_step: 10,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -408,11 +381,8 @@ fn stable_options() -> PackOptions {
         clearance: 0.5,
         angle_step_deg: 15.,
         attempts: 96,
-        candidates_per_step: 128,
         max_objects: 0,
         lock_orientation: false,
-        stall_attempts: 0,
-        seed: 1,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
@@ -441,9 +411,7 @@ fn rotations_translations_winding_seed_and_thread_count_do_not_change_count() {
             .unwrap();
         for angle in [0., 13., 45., 90., 137., 179., 271.] {
             let moved = support::transform(&fp, angle, 123.456, -54.321, true);
-            let mut opts = options.clone();
-            opts.seed = threads as u64 * 17;
-            opts.stall_attempts = 1;
+            let opts = options.clone();
             let result = pool.install(|| pack_footprint(&moved, &opts));
             assert_eq!(
                 baseline.placements.len(),
@@ -619,11 +587,8 @@ fn grid_nests_shaped_rows_by_shifting_every_other_row() {
         clearance: 0.5,
         angle_step_deg: 90.0,
         attempts: 1,
-        candidates_per_step: 1,
         max_objects: 0,
         lock_orientation: true,
-        stall_attempts: 0,
-        seed: 7,
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,

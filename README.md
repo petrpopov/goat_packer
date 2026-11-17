@@ -23,7 +23,7 @@ Tests are self-contained: real regression contours/STL and small synthetic 3MFs 
 needed for the Rust test suite. With dependencies cached, use `cargo test --offline --release --all`.
 
 The packer canonicalizes XY rotation/translation and searches deterministic no-fit maps,
-including mixed orientations. Thread count and seed do not change the result. Geometry is
+including mixed orientations. The thread count does not change the result. Geometry is
 rasterized at `--resolution`; this remains a heuristic, not a proof of globally optimal packing.
 Probe footprints with orientation-dependent supports stay locked to their original orientation.
 See [algorithm, limitations and reproducible benchmarks](docs/packing-search.md).
@@ -46,14 +46,14 @@ configured in the printer profile for probing/final slicing.
 | `--cache-dir` | off | keeps the support probes between runs (key: meshes, paint, project settings, slicer binary, rotation); a hit runs no slicer |
 | `--verify` | off | slice the assembled plate and check it (support contacts, GUI rules, bed, tower); learns once and repacks, leftovers are fatal. A time window and `--finish-state` imply it |
 | `--finish-state` | — | verify the plate of a saved `<output>.state.json` without packing again |
-| `--no-final-slice` | — | accepted, does nothing (the default job slices no plate) |
 | `--clearance` | `0.7` | gap between objects, mm |
-| `--resolution` | `0.25` | raster cell size, mm |
-| `--angle-step` | `2.0` | rotation step, degrees |
+| `--resolutions` | `0.25,0.2` (`fast`: `0.25`) | raster ladder, mm: packed coarse, then finer; a finer level wins only with more copies. `--resolution X` = just `X` |
 | `--attempts` | `16000` | deterministic search effort; stops when the finite strategy portfolio is exhausted |
-| `--candidates` | `2400` | compatibility flag; free positions are now scanned exhaustively |
-| `--stall` | `0` | compatibility flag; no scheduling-dependent early stopping |
-| `--seed` | `20270831` | compatibility/report field; results no longer depend on randomness |
+| `--layout` | `dense` | `dense`: every packing method, the most copies (edges filled off the lattice where that fits more); `grid`: regular rows and lattices only, faster |
+| `--prefer-regular` | `0` | a regular layout ranks as N copies more than an irregular one |
+| `--orientation` | `0` | turn every rotation class by N degrees; `auto` screens every 5° with the fast support model and packs the best turn beside 0° (slow on a cold cache) |
+| `--precision` | `precise` | `fast`: the support union drawn on a raster and one resolution level |
+| `--support-margins` | slicer's calibrated | `FIRST_LAYER:BAND` growth of the predicted supports, mm |
 | `--support-overlap-mm` | unlimited | how far printed supports (patch past the body) of different objects may overlap, mm; `0` = supports may touch but not overlap. Bodies still keep `--clearance` from anything foreign; no-op without detected supports |
 | `--nozzle-clean` | off | inject periodic nozzle wipes into Layer Change G-code: `global,every=10` (whole print) or `from-z=6.6,every=1` (only from a height) |
 | `--time-window-hours` | off | keep only as many objects as finish within N hours (corrected time, see below) |

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use goat_packer::{
     PackOptions,
-    pack::{DEFAULT_MEMBERS, LevelReport, Member, PACK_VERSION, PackOutcome},
+    pack::{LevelReport, Member, PACK_VERSION, PackOutcome},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,19 +34,10 @@ struct PackEntry {
     levels: Vec<LevelReport>,
 }
 
-/// The outcome of `pack` for `plan` under `options` (`resolutions` = the levels it runs):
-/// from `dir` when an entry is there, else packed and stored. A failed pack is not stored.
+/// The outcome of a pack by `members` of `plan` under `options` (`resolutions` = the levels it
+/// runs): from `dir` when an entry is there, else packed and stored. A failed pack is not
+/// stored.
 pub fn cached(
-    dir: Option<&Path>,
-    plan: &PackPlan,
-    options: &PackOptions,
-    pack: impl FnOnce() -> Result<PackOutcome, String>,
-) -> Result<PackOutcome, String> {
-    cached_members(dir, plan, options, &DEFAULT_MEMBERS, pack)
-}
-
-/// `cached` for a pack by `members` only (the orientation screen's lattice family).
-pub fn cached_members(
     dir: Option<&Path>,
     plan: &PackPlan,
     options: &PackOptions,
@@ -117,7 +108,9 @@ fn store(dir: &Path, key: &str, outcome: &PackOutcome) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args::Layout;
     use crate::pack_steps::ladder;
+    use goat_packer::pack::DEFAULT_MEMBERS;
     use crate::test_support::{test_job, test_plan};
 
     fn refuse() -> Result<PackOutcome, String> {
@@ -135,7 +128,7 @@ mod tests {
             resolutions: ladder(&job.args),
             ..plan.options(&job.args)
         };
-        let second = cached(job.args.cache_dir.as_deref(), &plan, &options, refuse).unwrap();
+        let second = cached(job.args.cache_dir.as_deref(), &plan, &options, &DEFAULT_MEMBERS, refuse).unwrap();
         assert!(!first.placements.is_empty());
         assert_eq!(serde_json::to_value(&first).unwrap(), serde_json::to_value(&second).unwrap());
         assert_eq!(first.levels, second.levels);
@@ -153,13 +146,15 @@ mod tests {
             ..plan.options(&job.args)
         };
         let cache = job.args.cache_dir.as_deref();
-        assert!(cached(cache, &plan, &options, refuse).is_ok());
+        assert!(cached(cache, &plan, &options, &DEFAULT_MEMBERS, refuse).is_ok());
+        // The grid layout runs other methods: its own entry.
+        assert!(cached(cache, &plan, &options, Layout::Grid.members(), refuse).is_err());
         let wider = PackOptions {
             clearance: options.clearance + 0.1,
             ..options.clone()
         };
-        assert!(cached(cache, &plan, &wider, refuse).is_err());
-        assert!(cached(cache, &test_plan(&job, 1), &options, refuse).is_err());
+        assert!(cached(cache, &plan, &wider, &DEFAULT_MEMBERS, refuse).is_err());
+        assert!(cached(cache, &test_plan(&job, 1), &options, &DEFAULT_MEMBERS, refuse).is_err());
     }
 
     #[test]

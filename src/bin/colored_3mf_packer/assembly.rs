@@ -113,10 +113,9 @@ fn write_placements(job: &Job, plan: &PackPlan, placements: &[PrintPlacement]) -
             .collect(),
         resolution_mm: args.resolution,
         requested_clearance_mm: args.clearance,
-        angle_step_deg: args.angle_step,
+        angle_step_deg: 0.0,
         attempts: args.attempts,
         attempts_run: 1,
-        seed: args.seed,
     };
     fs::write(args.work_dir.join("placements.json"), serde_json::to_vec_pretty(&result)?)?;
     Ok(())

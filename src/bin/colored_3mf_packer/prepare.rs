@@ -221,8 +221,8 @@ fn pack_coarse_pairs(
             progress::stage_step(
                 Stage::Packing,
                 &format!(
-                    "packing (foreign gaps base {} band {}; {} attempts, seed {})...",
-                    foreign.base_mm, foreign.band_mm, job.args.attempts, job.args.seed
+                    "packing (foreign gaps base {} band {}; {} attempts)...",
+                    foreign.base_mm, foreign.band_mm, job.args.attempts
                 ),
                 None,
                 &steps.coarse(rung, job.args.resolution, foreign),
@@ -268,7 +268,7 @@ pub fn arrange(job: &Job, state: &mut PackState) -> AppResult<()> {
     let args = &job.args;
     progress::stage(
         Stage::Packing,
-        &format!("packing ({} attempts, seed {})...", args.attempts, args.seed),
+        &format!("packing ({} attempts)...", args.attempts),
         None,
         None,
     );
@@ -385,6 +385,7 @@ pub fn show_layout(state: &PackState, source: LayoutSource) {
 mod tests {
     use super::*;
     use crate::test_support::{test_job, test_plan, test_state};
+    use crate::args::Layout;
     use goat_packer::ForeignGaps;
 
     #[test]
@@ -467,6 +468,18 @@ mod tests {
         assert_eq!(state.plan.foreign_gaps, ForeignGaps { base_mm: 0.25, band_mm: 0.75 });
         // The layout was packed under those gaps and passes the exact check under them.
         state.plan.validate(&job.args, &state.placements, state.tower_anchor).unwrap();
+    }
+
+    #[test]
+    fn a_grid_layout_publishes_a_regular_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut job = test_job(dir.path());
+        job.args.layout = Layout::Grid;
+        let mut state = test_state(supported_plan(&job));
+        arrange(&job, &mut state).unwrap();
+        let regular = ["Rows", "Lattice", "DoubleLattice", "TwoBlock"];
+        assert!(regular.contains(&state.summary.member.as_str()), "{}", state.summary.member);
+        assert!(state.summary.member_counts.iter().all(|m| regular.contains(&m.member.as_str())));
     }
 
     #[test]

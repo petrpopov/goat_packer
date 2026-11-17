@@ -13,7 +13,7 @@ use goat_packer::{
     support_model::flavour::{Flavour, FlavourSource, ResolvedFlavour},
 };
 
-use crate::args::{Args, TimeOptions};
+use crate::args::{Args, Layout, TimeOptions};
 use crate::gaps::OwnGap;
 use crate::job::Job;
 use crate::plan::{PackPlan, PackState, PackSummary, STATE_VERSION};
@@ -52,12 +52,9 @@ pub fn test_args(work_dir: &Path) -> Args {
         clearance: 0.5,
         resolution: 0.5,
         resolutions: Vec::new(),
-        angle_step: 90.0,
         attempts: 8,
-        candidates: 100,
-        stall: 0,
         max_objects: 0,
-        seed: 1,
+        layout: Layout::Dense,
         edge_margin: None,
         nozzle_clean: None,
         time: TimeOptions::default(),

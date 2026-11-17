@@ -1,5 +1,4 @@
-//! Packing benchmark: how many objects, how fast, and how stable across input rotations and
-//! seeds. The same physical model rotated before export must pack to the same count — the
+//! Packing benchmark: how many objects, how fast, and how stable across input rotations. The same physical model rotated before export must pack to the same count — the
 //! packer sees only its silhouette — so any spread across `--rotations` is instability, not
 //! geometry.
 //!
@@ -7,7 +6,7 @@
 //! ```text
 //! cargo run --release --example pack_bench -- \
 //!   --stl tests/fixtures/goat4_v2.stl --profile <printer profile json> --overshoot 1.7 \
-//!   --tower 225.85,200.10,246.15,252.15 --rotations 0,13,45,90,137 --seeds 3
+//!   --tower 225.85,200.10,246.15,252.15 --rotations 0,13,45,90,137
 //! ```
 //! `--footprint-json <path>` loads a `Footprint` serialized as JSON instead of an STL (the
 //! test fixtures in `tests/fixtures/`), `--dump-footprint <path>` writes the loaded one.
@@ -38,14 +37,10 @@ fn run() -> Result<(), String> {
     let mut tower: Option<Rect> = None;
     let mut overshoot = 0.0f64;
     let mut rotations: Vec<f64> = vec![0.0];
-    let mut seeds = 1u64;
-    let mut first_seed = 20_270_831u64;
     let mut clearance = 0.7f64;
     let mut resolution = 0.25f64;
     let mut angle_step = 2.0f64;
     let mut attempts = 1_000usize;
-    let mut candidates = 1_000usize;
-    let mut stall = 0usize;
     let mut threads: Option<usize> = None;
     let mut digest = false;
     let mut args = std::env::args().skip(1);
@@ -75,15 +70,11 @@ fn run() -> Result<(), String> {
             "--rotations" => {
                 rotations = value.split(',').map(number).collect::<Result<_, _>>()?;
             }
-            "--seeds" => seeds = value.parse().map_err(|e| format!("{option}: {e}"))?,
-            "--first-seed" => first_seed = value.parse().map_err(|e| format!("{option}: {e}"))?,
             "--clearance" => clearance = number(&value)?,
             "--resolution" => resolution = number(&value)?,
             "--angle-step" => angle_step = number(&value)?,
             "--attempts" => attempts = value.parse().map_err(|e| format!("{option}: {e}"))?,
-            "--candidates" => candidates = value.parse().map_err(|e| format!("{option}: {e}"))?,
             "--threads" => threads = Some(value.parse().map_err(|e| format!("{option}: {e}"))?),
-            "--stall" => stall = value.parse().map_err(|e| format!("{option}: {e}"))?,
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -96,10 +87,9 @@ fn run() -> Result<(), String> {
             .build_global()
             .map_err(|e| e.to_string())?;
     }
-    if seeds == 0 || rotations.is_empty() {
-        return Err("at least one rotation and seed are required".to_owned());
+    if rotations.is_empty() {
+        return Err("at least one rotation is required".to_owned());
     }
-    let last_seed = first_seed.checked_add(seeds).ok_or("seed range overflow")?;
     let footprint = match (stl, footprint_json) {
         (Some(path), None) => extract_footprint(&path).map_err(|e| e.to_string())?,
         (None, Some(path)) => {
@@ -129,7 +119,7 @@ fn run() -> Result<(), String> {
     let mut counts = Vec::new();
     for &rotation in &rotations {
         let rotated = rotate_input(&footprint, rotation);
-        for seed in first_seed..last_seed {
+        {
             let options = PackOptions {
                 body_bed: None,
                 body_exclusions: Vec::new(),
@@ -140,11 +130,8 @@ fn run() -> Result<(), String> {
                 clearance,
                 angle_step_deg: angle_step,
                 attempts,
-                candidates_per_step: candidates,
-                stall_attempts: stall,
                 max_objects: 0,
                 lock_orientation: false,
-                seed,
                 support_overlap_mm: None,
                 foreign_gaps: Default::default(),
                 plate_rules: None,
@@ -161,7 +148,7 @@ fn run() -> Result<(), String> {
             let elapsed = started.elapsed().as_secs_f64();
             validate_result(&rotated, &options, &best)?;
             println!(
-                "rotation {rotation:>7.2}° seed {seed}: {} objects in {elapsed:.2} s",
+                "rotation {rotation:>7.2}°: {} objects in {elapsed:.2} s",
                 best.placements.len()
             );
             if digest {
