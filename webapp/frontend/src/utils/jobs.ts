@@ -45,7 +45,7 @@ export function errorMessage(error: unknown, fallback: string): string {
 }
 
 /** Подсказка к предварительному числу объектов: раскладка готова, но пакер ещё может её изменить. */
-export const PRELIMINARY_HINT = 'Предварительно: по последней раскладке, после нарезок число может измениться';
+export const PRELIMINARY_HINT = 'Предварительно: по последней раскладке, число ещё может измениться';
 
 /**
  * Bambu Studio и Snapmaker Orca при открытии проекта сами переставляют башню очистки (GUI зажимает её

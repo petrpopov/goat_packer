@@ -5,7 +5,7 @@ import type { JobArtifact } from '../api/types';
 import { pushToast } from '../store/useToastStore';
 import { errorMessage } from './jobs';
 
-/** Служебные файлы: состояние упаковки нужно только проверке нарезкой, не пользователю. */
+/** Служебные файлы старых задач: состояние упаковки было входом прежней проверки нарезкой. */
 const HIDDEN = new Set(['pack_state.json']);
 
 export const PACK_LOG = 'log.txt';
@@ -15,7 +15,7 @@ export const isPlateFile = (artifact: JobArtifact) => artifact.name.endsWith('.3
 export function describeArtifact(name: string): { label: string; order: number } {
   if (name.endsWith('.3mf')) return { label: `${name} — стол для слайсера`, order: 0 };
   if (name === PACK_LOG) return { label: 'Журнал упаковки', order: 1 };
-  if (name.endsWith('verification.json')) return { label: 'Отчёт проверки (JSON)', order: 2 };
+  if (name.endsWith('verification.json')) return { label: 'Отчёт пакера (JSON)', order: 2 };
   if (name === 'placements.json') return { label: 'Координаты объектов (JSON)', order: 3 };
   return { label: name, order: 4 };
 }

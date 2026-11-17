@@ -2,7 +2,6 @@ package com.goatpacker.web.service.local
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.goatpacker.web.dto.ArtifactDto
-import com.goatpacker.web.dto.CheckStatusDto
 import com.goatpacker.web.dto.JobStageDto
 import com.goatpacker.web.dto.JobStatusDto
 import com.goatpacker.web.dto.PackInfoDto
@@ -33,8 +32,8 @@ class LocalDownload(val path: Path, val filename: String, val mediaType: MediaTy
 class JobService(private val store: JobStore) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    /** Артефакты в статусе; [owner] — id в ссылке, [prefix] — путь скачивания (у проверки: `check/artifacts`, id ребёнка не раскрывается). */
-    private fun artifactDtos(job: Job, owner: String, prefix: String): List<ArtifactDto> {
+    /** Артефакты в статусе со ссылками скачивания. */
+    private fun artifactDtos(job: Job): List<ArtifactDto> {
         val files = when (job.current.status) {
             JobStatus.SUCCEEDED -> JobArtifacts.listExisting(job.kind, job.directory)
             JobStatus.FAILED -> JobArtifacts.resolve(job.kind, job.directory, JobArtifacts.LOG_FILE)
@@ -42,7 +41,7 @@ class JobService(private val store: JobStore) {
                 .orEmpty()
             else -> emptyList()
         }
-        return files.map { (name, path) -> ArtifactDto(name, sizeOf(path), "/api/jobs/$owner/$prefix/$name") }
+        return files.map { (name, path) -> ArtifactDto(name, sizeOf(path), "/api/jobs/${job.id}/artifacts/$name") }
     }
 
     private fun sizeOf(path: Path): Long = try {
@@ -52,26 +51,6 @@ class JobService(private val store: JobStore) {
     }
 
     private fun packInfo(job: Job): PackInfoDto? = job.packResult?.toDto()
-
-    /** Проверка нарезкой упаковки (внутренняя задача); её id наружу не уходит. */
-    private fun checkOf(parent: Job): Job? = parent.checkJobId?.let { store.get(it) }?.takeIf { it.parentJobId == parent.id }
-
-    private fun checkDto(parent: Job): CheckStatusDto? = checkOf(parent)?.let { child ->
-        val snap = child.current
-        CheckStatusDto(
-            status = snap.status.name,
-            queuePosition = null,
-            progressPercent = snap.progressPercent,
-            phaseMessage = snap.phaseMessage,
-            error = snap.error,
-            // Своего времени старта у локальной задачи нет: она стартует сразу, как свободен единственный поток.
-            startedAt = child.createdAt.takeIf { snap.status != JobStatus.QUEUED },
-            finishedAt = snap.finishedAt,
-            stage = snap.stage?.let { JobStageDto.of(it) },
-            pack = packInfo(child),
-            artifacts = artifactDtos(child, parent.id, "check/artifacts"),
-        )
-    }
 
     fun status(id: String): JobStatusDto {
         val job = requireJob(id)
@@ -88,16 +67,14 @@ class JobService(private val store: JobStore) {
             // Упаковке этап отдаётся в любом статусе: фронт показывает пройденные этапы с длительностями и после завершения.
             stage = snap.stage?.takeIf { isPack || snap.status == JobStatus.RUNNING }?.let { JobStageDto.of(it) },
             // Не только в RUNNING (в отличие от stage): итоговой сцене стола раскладка нужна после успеха.
-            // Раскладка проверки (полная нарезка могла сдвинуть объекты) важнее раскладки упаковки, как только она есть.
-            layout = (checkOf(job)?.current?.layout ?: snap.layout)?.let { runCatching { LAYOUT_MAPPER.readTree(it) }.getOrNull() },
+            layout = snap.layout?.let { runCatching { LAYOUT_MAPPER.readTree(it) }.getOrNull() },
             error = snap.error,
             originalName = job.originalName.takeIf { isPack },
             profile = job.profileDto.takeIf { isPack },
             params = job.packParams?.takeIf { isPack }?.toDto(),
             createdAt = job.createdAt,
             finishedAt = snap.finishedAt,
-            artifacts = artifactDtos(job, job.id, "artifacts"),
-            check = if (isPack) checkDto(job) else null,
+            artifacts = artifactDtos(job),
             pack = packInfo(job),
             schedule = job.scheduleResult?.toDto(),
             calibration = job.calibrationResult?.toDto(),
@@ -105,10 +82,6 @@ class JobService(private val store: JobStore) {
     }
 
     fun artifact(id: String, name: String): LocalDownload = artifactOf(requireJob(id), id, name)
-
-    /** Артефакт проверки нарезкой — по id упаковки. */
-    fun checkArtifact(id: String, name: String): LocalDownload =
-        artifactOf(checkOf(requireJob(id)) ?: throw ResourceNotFoundException("Проверка нарезкой у джобы $id не найдена"), id, name)
 
     private fun artifactOf(job: Job, id: String, name: String): LocalDownload {
         if (name != JobArtifacts.LOG_FILE && job.current.status != JobStatus.SUCCEEDED) {
@@ -132,14 +105,9 @@ class JobService(private val store: JobStore) {
         return LocalDownload(path, job.originalName ?: path.fileName.toString(), MediaType.APPLICATION_OCTET_STREAM)
     }
 
-    /** Отмена и удаление: процесс убивается, каталог стирается; проверка нарезкой живёт и умирает с упаковкой. */
+    /** Отмена и удаление: процесс убивается, каталог стирается. */
     fun delete(id: String) {
-        val job = store.get(id)?.takeIf { it.parentJobId == null }?.also { store.remove(id) }
-            ?: throw ResourceNotFoundException("Джоба $id не найдена")
-        job.checkJobId?.let { store.remove(it) }?.let { child ->
-            child.cancel()?.takeIf { it.isAlive }?.let(ProcessKiller::kill)
-            child.directory.toFile().deleteRecursively()
-        }
+        val job = store.remove(id) ?: throw ResourceNotFoundException("Джоба $id не найдена")
 
         job.cancel()?.takeIf { it.isAlive }?.let { process ->
             log.info("Джоба {} ещё выполняется — убиваю процесс", id)
@@ -154,7 +122,7 @@ class JobService(private val store: JobStore) {
     }
 
     private fun requireJob(id: String): Job =
-        store.get(id)?.takeIf { it.parentJobId == null } ?: throw ResourceNotFoundException("Джоба $id не найдена")
+        store.get(id) ?: throw ResourceNotFoundException("Джоба $id не найдена")
 
     private companion object {
         val LAYOUT_MAPPER = ObjectMapper()

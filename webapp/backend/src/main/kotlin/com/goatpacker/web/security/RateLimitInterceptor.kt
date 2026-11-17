@@ -62,7 +62,7 @@ class RateLimitInterceptor(private val limiter: RateLimiter) : HandlerIntercepto
             ThrottledRoute(POST, Regex("/api/v2/auth/reset"), listOf(Throttle("reset", RateRule(5), perClient = true))),
             ThrottledRoute(
                 POST,
-                Regex("/api/v2/jobs(/[^/]+/check)?"),
+                Regex("/api/v2/jobs"),
                 listOf(Throttle("jobs-ip", RateRule(30, SECONDS_PER_HOUR), perClient = true)),
             ),
             ThrottledRoute(

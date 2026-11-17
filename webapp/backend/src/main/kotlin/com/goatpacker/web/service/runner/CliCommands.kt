@@ -41,9 +41,7 @@ object CliCommands {
         params.timeMarginPct?.let { addOption("--time-margin-pct", it) }
         // Пусто = без ограничений (поведение до флага), поэтому передаём только заданное.
         params.supportOverlapMm?.let { addOption("--support-overlap-mm", it) }
-        // Пакер по умолчанию стол не режет; --verify — нарезка и проверки (доводка по состоянию тоже).
-        if (params.finalSlice) add("--verify")
-        params.finishState?.let { addOption("--finish-state", it.toString()) }
+        // Стол не режется: проверка нарезкой убрана из webapp (2026-11-17). Окно печати пакер режет сам.
         // Слайсер STL-задачи: пакер переключает профиль на него и берёт его GUI целевым.
         params.slicer?.let { addOption("--slicer", it) }
         // Пробы одного класса поворота — самая долгая часть холодного запуска; кэш держит воркер, не раннер.

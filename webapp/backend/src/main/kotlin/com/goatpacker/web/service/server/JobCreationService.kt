@@ -46,7 +46,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.nio.file.Files
 import java.time.Instant
 
-/** Постановка задач в очередь: упаковка, расписание и калибровка из загруженного файла, а также проверка нарезкой. */
+/** Постановка задач в очередь: упаковка, расписание и калибровка из загруженного файла. */
 @Service
 @Profile("server")
 class JobCreationService(
@@ -76,9 +76,6 @@ class JobCreationService(
     fun create(ownerId: String, key: String, request: JobRequest): CreatedJobDto {
         requireIdempotencyKey(key)
         val kind = JobRequestValidator.validate(request)
-        // Старые клиенты: PACK по packJobId = проверка нарезкой внутри исходной задачи, ответ — id родителя.
-        if (kind == JobKind.PACK && request.packJobId != null) return createCheck(ownerId, key, request.packJobId)
-
         val owner = lockOwner(ownerId)
         val hash = Secrets.hash(mapper.writeValueAsString(request))
         findIdempotent(ownerId, key, hash)?.let { return CreatedJobDto(it.id) }
@@ -111,57 +108,6 @@ class JobCreationService(
         return CreatedJobDto(job.id, token)
     }
 
-    /**
-     * «Проверить нарезкой»: полная нарезка стола, собранного без неё, внутри той же задачи. Это внутренняя
-     * дочерняя строка очереди (воркер и пакер те же: PACK с входом, профилем и параметрами родителя,
-     * finalSlice=true и состоянием родителя), привязанная к родителю; наружу её id не отдаётся.
-     * Не считается новой задачей: в суточный лимит не идёт (вычислительный бюджет резервируется как обычно).
-     */
-    @Transactional
-    fun createCheck(ownerId: String, key: String, parentId: String): CreatedJobDto {
-        requireIdempotencyKey(key)
-        val owner = lockOwner(ownerId)
-        val hash = Secrets.hash("check:$parentId")
-        jobs.findByOwnerIdAndRequestKey(ownerId, key)?.let {
-            if (it.requestHash != hash || it.parentJobId != parentId) idempotencyConflict()
-            return CreatedJobDto(parentId)
-        }
-        val parent = jobAccess.findOwned(parentId, ownerId)
-        if (parent.parentJobId != null || parent.status != QueueStatus.SUCCEEDED || parent.kind != JobKind.PACK) {
-            badRequest("Нарезать можно только успешную упаковку")
-        }
-        parent.checkJobId?.let { jobs.findById(it).orElse(null) }?.let { previous ->
-            if (previous.status in QueueStatus.ACTIVE) badRequest("Проверка нарезкой уже идёт")
-            if (previous.status == QueueStatus.SUCCEEDED) badRequest("Стол уже проверен нарезкой")
-        }
-        val state = artifacts.findAllByJobId(parent.id).find { it.name == JobArtifacts.PACK_STATE }
-            ?: badRequest("Эта упаковка уже нарезана целиком")
-        val stateBlobId = promoteToBlob(state)
-        val budgetDay = admission.admit(owner)
-
-        val params = mapper.readValue(parent.paramsJson, JobRequest::class.java).copy(finalSlice = true, finishStateBlobId = stateBlobId)
-        val child = jobs.save(
-            QueueJobEntity(
-                ownerId = ownerId,
-                kind = JobKind.PACK,
-                inputBlobId = parent.inputBlobId,
-                originalName = parent.originalName,
-                profileId = parent.profileId,
-                profileJson = parent.profileJson,
-                paramsJson = mapper.writeValueAsString(params),
-                requestKey = key,
-                requestHash = hash,
-                readTokenHash = null,
-                reservedBytes = props.outputReservationBytes,
-                computeReservedSeconds = props.jobTimeoutSeconds,
-                budgetDay = budgetDay,
-                parentJobId = parent.id,
-            ),
-        )
-        parent.checkJobId = child.id
-        return CreatedJobDto(parent.id)
-    }
-
     private fun requireIdempotencyKey(key: String) {
         if (!IDEMPOTENCY_KEY.matches(key)) badRequest("Нужен Idempotency-Key длиной 8–100")
     }
@@ -183,7 +129,7 @@ class JobCreationService(
     private fun idempotencyConflict(): Nothing =
         throw ApiException(HttpStatus.CONFLICT, ErrorCode.CONFLICT, ErrorMessages.IDEMPOTENCY_KEY_CONFLICT)
 
-    /** Гостю и пользователю разное число новых задач в сутки; проверка нарезкой сюда не попадает. */
+    /** Гостю и пользователю разное число новых задач в сутки. */
     private fun limitJobsPerDay(owner: PrincipalEntity) {
         val perDay = props.jobsPerDay(owner.kind)
         val message = if (owner.kind == PrincipalKind.GUEST) {

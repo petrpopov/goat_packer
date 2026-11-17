@@ -62,8 +62,6 @@ data class PackJobForm(
     @field:DecimalMin(value = "0", message = "supportOverlapMm должен быть в диапазоне 0..20 мм")
     @field:DecimalMax(value = "20", message = "supportOverlapMm должен быть в диапазоне 0..20 мм")
     val supportOverlapMm: Double? = null,
-    /** Сразу нарезать весь стол; false/пусто в веб-форме — только по кнопке после упаковки. Пусто = true (API до флага). */
-    val finalSlice: Boolean? = null,
     /** Слайсер STL (bambu|orca); пусто — умолчание принтера. Для 3MF не задаётся. */
     @field:Pattern(regexp = """^(bambu|orca)$""", message = "slicer допустим bambu или orca")
     val slicer: String? = null,

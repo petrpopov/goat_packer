@@ -60,24 +60,6 @@ data class ArtifactDto(
     val downloadUrl: String,
 )
 
-/**
- * Проверка нарезкой внутри pack-джоба (локальный режим; в серверном та же форма — [QueueCheckDto]). Id внутренней
- * задачи наружу не уходит: [artifacts] скачиваются по id самой упаковки.
- */
-@JsonInclude(JsonInclude.Include.ALWAYS)
-data class CheckStatusDto(
-    val status: String,
-    val queuePosition: Long?,
-    val progressPercent: Int,
-    val phaseMessage: String?,
-    val error: String?,
-    val startedAt: OffsetDateTime?,
-    val finishedAt: OffsetDateTime?,
-    val stage: JobStageDto?,
-    val pack: PackInfoDto?,
-    val artifacts: List<ArtifactDto>,
-)
-
 /** Итог pack-джоба. */
 data class PackInfoDto(
     val objectCount: Int,
@@ -89,8 +71,6 @@ data class PackInfoDto(
     val supportsDetected: Boolean? = null,
     /** Допустимое перекрытие поддержек, мм; null — без ограничений. */
     val supportOverlapMm: Double? = null,
-    /** false — стол упакован по пробной нарезке, полная нарезка ещё не запускалась. */
-    val finalSliced: Boolean = true,
     /** Башня очистки, поставленная пакером; null — башни нет. */
     val tower: PackTowerDto? = null,
     /** Сборка слайсера, на которую рассчитан стол; null — пакер поле не прислал. */
@@ -221,7 +201,6 @@ data class PackParamsDto(
     val edgeMargin: Double?,
     /** Ширина черновой башни, мм; null — дефолт пакера. */
     val towerWidth: Double?,
-    val finalSlice: Boolean,
     val timeWindowHours: Double?,
     val timeMarginPct: Double?,
     val amsCorrection: Boolean,
@@ -258,8 +237,6 @@ data class JobStatusDto(
     val profile: ProfileDto? = null,
     /** Настройки упаковки как отправлены; только pack. */
     val params: PackParamsDto? = null,
-    /** Проверка нарезкой стола внутри этой упаковки; null — не запускалась. */
-    val check: CheckStatusDto? = null,
 )
 
 /** Ответ /api/profiles/detect: profileId = null, когда по файлу определить не удалось; printerModel — что за принтер записан в файле (для понятных сообщений). */

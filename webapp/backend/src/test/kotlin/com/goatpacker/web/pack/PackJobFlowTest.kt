@@ -5,7 +5,6 @@ import com.goatpacker.web.awaitJobCompletion
 import com.goatpacker.web.FakeBins
 import com.goatpacker.web.descriptorProject3mf
 import com.goatpacker.web.miniProject3mf
-import com.goatpacker.web.repository.JobStore
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,7 +30,6 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 @AutoConfigureMockMvc
 class PackJobFlowTest(
     @Autowired private val mockMvc: MockMvc,
-    @Autowired private val store: JobStore,
 ) {
     companion object {
         private val tmpRoot: Path = Files.createTempDirectory("goat-pack-flow")
@@ -110,7 +108,7 @@ class PackJobFlowTest(
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, data))
-                .param("profileId", "test_wide_bed").param("clearance", "1.2").param("finalSlice", "false"),
+                .param("profileId", "test_wide_bed").param("clearance", "1.2"),
         ).andExpect(status().isAccepted).andReturn()
         val jobId = json.readTree(create.response.contentAsString)["jobId"].asText()
         val body = mockMvc.awaitJobCompletion(jobId)
@@ -119,7 +117,7 @@ class PackJobFlowTest(
         val catalog = json.readTree(mockMvc.perform(get("/api/profiles")).andReturn().response.contentAsString)
         assertEquals(catalog.first { it["id"].asText() == "test_wide_bed" }, body["profile"])
         assertEquals(1.2, body["params"]["clearance"].asDouble(), 1e-9)
-        assertEquals(false, body["params"]["finalSlice"].asBoolean())
+        assertTrue(body["params"]["finalSlice"] == null, body["params"].toString())
         assertEquals("dense", body["params"]["layout"].asText())
         assertTrue(body["params"]["customBed"].isNull)
         val input = mockMvc.perform(get("/api/jobs/$jobId/input")).andExpect(status().isOk).andReturn().response
@@ -141,11 +139,8 @@ class PackJobFlowTest(
         assertEquals(30, body["pack"]["objectCount"].asInt())
         assertEquals("test_wide_bed", body["pack"]["profileId"].asText())
         assertEquals(0.7, body["pack"]["clearanceMm"].asDouble(), 1e-9)
-        // Без окна: время записанного стола есть, окна нет, флаги времени не передаются.
-        // null-поля Jackson не пишет (non_null): «нет окна» = поле отсутствует.
-        assertTrue(body["pack"]["time"].path("windowHours").let { it.isMissingNode || it.isNull }, body["pack"].toString())
-        assertEquals(79200.0, body["pack"]["time"]["correctedSeconds"].asDouble(), 1e-9)
-        assertEquals(30, body["pack"]["time"]["fullCount"].asInt())
+        // Без окна стол не режется: времени нет (его меряют только нарезки окна), флаги времени не передаются.
+        assertTrue(!body["pack"].hasNonNull("time"), body["pack"].toString())
         // Раскладка пакера (layout-событие) видна и после успеха: по ней рисуется итоговый стол.
         assertEquals(2, body["layout"]["placements"].size(), "раскладка видна и после успеха")
         assertEquals("pack", body["layout"]["source"].asText())
@@ -268,58 +263,25 @@ class PackJobFlowTest(
     }
 
     @Test
-    fun `упаковка без полной нарезки и доводка «Нарезать стол»`() {
+    fun `упаковка не режет стол, не отдаёт состояние, проверки нарезкой нет`() {
         val create = mockMvc.perform(
             multipart("/api/pack/jobs")
                 .file(MockMultipartFile("file", "goat.3mf", MediaType.APPLICATION_OCTET_STREAM_VALUE, miniProject3mf("Test Wide Bed")))
-                .param("profileId", "test_wide_bed")
-                .param("finalSlice", "false"),
+                .param("profileId", "test_wide_bed"),
         )
             .andExpect(status().isAccepted)
             .andReturn()
         val packId = json.readTree(create.response.contentAsString)["jobId"].asText()
         val packed = mockMvc.awaitJobCompletion(packId)
-        assertTrue("--verify" !in packerArgs(packId))
-        assertEquals(false, packed["pack"]["finalSliced"].asBoolean())
+        val args = packerArgs(packId)
+        assertTrue("--verify" !in args && "--finish-state" !in args, args.toString())
+        assertTrue(packed["check"] == null, packed.toString())
         // Башня из отчёта (tower.anchor/size): по ней фронт просит вернуть башню в угол после открытия в GUI.
         val tower = packed["pack"]["tower"]
         assertEquals(10.0, tower["anchorXMm"].asDouble(), 1e-9)
         assertEquals(10.0, tower["anchorYMm"].asDouble(), 1e-9)
         assertEquals(20.0, tower["widthMm"].asDouble(), 1e-9)
-        assertTrue(packed["artifacts"].any { it["name"].asText() == "pack_state.json" }, packed["artifacts"].toString())
-
-        // Проверка нарезкой остаётся внутри упаковки: id тот же, внутренняя задача наружу не светится.
-        val finish = mockMvc.perform(post("/api/pack/jobs/$packId/finish"))
-            .andExpect(status().isAccepted)
-            .andReturn()
-        assertEquals(packId, json.readTree(finish.response.contentAsString)["jobId"].asText())
-        val checkId = store.get(packId)!!.checkJobId!!
-        assertTrue(checkId != packId)
-        val deadline = System.currentTimeMillis() + 30_000
-        var withCheck = json.readTree(mockMvc.perform(get("/api/jobs/$packId")).andReturn().response.contentAsString)
-        while (withCheck["check"].isNull || withCheck["check"]["status"].asText() !in setOf("SUCCEEDED", "FAILED")) {
-            assertTrue(System.currentTimeMillis() < deadline, withCheck.toString())
-            Thread.sleep(50)
-            withCheck = json.readTree(mockMvc.perform(get("/api/jobs/$packId")).andReturn().response.contentAsString)
-        }
-        val check = withCheck["check"]
-        assertEquals("SUCCEEDED", check["status"].asText(), withCheck.toString())
-        assertEquals(true, check["pack"]["finalSliced"].asBoolean())
-        assertTrue(!withCheck.toString().contains(checkId), "id внутренней задачи не должен попадать в ответ")
-        assertTrue(check["artifacts"].all { it["downloadUrl"].asText().startsWith("/api/jobs/$packId/check/artifacts/") }, check.toString())
-        val args = packerArgs(checkId)
-        assertEquals("finish.state.json", args[args.indexOf("--finish-state") + 1])
-        assertTrue("--verify" in args, args.toString())
-        // Артефакт проверки скачивается по id упаковки; внутренняя задача по своему id не видна.
-        mockMvc.perform(get(check["artifacts"][0]["downloadUrl"].asText())).andExpect(status().isOk)
-        mockMvc.perform(get("/api/jobs/$checkId")).andExpect(status().isNotFound)
-        // Стол уже проверен: повторно нельзя; отмены у завершённой проверки нет — она остаётся.
-        mockMvc.perform(post("/api/pack/jobs/$packId/finish")).andExpect(status().isBadRequest)
-        mockMvc.perform(post("/api/pack/jobs/$packId/check/cancel")).andExpect(status().isNoContent)
-        assertEquals("SUCCEEDED", json.readTree(mockMvc.perform(get("/api/jobs/$packId")).andReturn().response.contentAsString)["check"]["status"].asText())
-        // Удаление упаковки уносит и проверку.
-        mockMvc.perform(delete("/api/jobs/$packId")).andExpect(status().isNoContent)
-        assertEquals(null, store.get(checkId))
+        assertTrue(packed["artifacts"].none { it["name"].asText() == "pack_state.json" }, packed["artifacts"].toString())
     }
 
     @Test

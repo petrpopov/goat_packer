@@ -39,14 +39,12 @@ class ObjectGcRepository(private val jdbc: JdbcTemplate) {
         jdbc.update("insert into object_gc(object_key,size_bytes,not_before) values (?,?,now()) on conflict do nothing", key, sizeBytes)
     }
 
-    /** Артефакты задачи и её проверок уходят в GC (если их не держит блоб). */
-    fun scheduleArtifactsOfJobTree(jobId: String) {
+    /** Артефакты задачи уходят в GC (если их не держит блоб). */
+    fun scheduleArtifactsOfJob(jobId: String) {
         jdbc.update(
             """insert into object_gc(object_key,size_bytes,not_before)
                select a.object_key,a.size_bytes,now() from artifacts a
-               where (a.job_id=? or a.job_id in (select c.id from queue_jobs c where c.parent_job_id=?))
-               and not exists(select 1 from blobs b where b.object_key=a.object_key) on conflict do nothing""",
-            jobId,
+               where a.job_id=? and not exists(select 1 from blobs b where b.object_key=a.object_key) on conflict do nothing""",
             jobId,
         )
     }

@@ -73,7 +73,7 @@ class PlatformProperties {
     var maxLogBytes = 10L * 1024 * 1024
     var uploadTimeoutSeconds = 300L
 
-    /** Новых задач в сутки на владельца (проверка нарезкой не считается). */
+    /** Новых задач в сутки на владельца. */
     var guestJobsPerDay = 4
     var userJobsPerDay = 10
 

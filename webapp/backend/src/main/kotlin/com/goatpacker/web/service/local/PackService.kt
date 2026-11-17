@@ -99,7 +99,6 @@ class PackService(
             timeMarginPct = form.timeMarginPct,
             supportOverlapMm = form.supportOverlapMm,
             sourceCommand = sourceCommand,
-            finalSlice = form.finalSlice ?: true,
             customBed = customBed,
             slicer = slicer,
             cacheDir = properties.probeCacheDir.takeIf { it.isNotBlank() },

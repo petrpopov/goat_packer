@@ -28,8 +28,6 @@ export interface PackFormValues {
   edgeMargin: string;
   /** Ширина черновой башни; пусто — дефолт пакера ([DEFAULT_TOWER_WIDTH_MM]). */
   towerWidth: string;
-  /** Сразу нарезать весь стол; иначе — по кнопке «Проверить нарезкой» после упаковки (минуты ожидания). */
-  sliceNow: boolean;
   windowOn: boolean;
   windowHours: string;
   marginPct: string;
@@ -56,7 +54,6 @@ export const DEFAULT_PACK_FORM: PackFormValues = {
   fromZEvery: '1',
   edgeMargin: '',
   towerWidth: '',
-  sliceNow: false,
   windowOn: false,
   windowHours: '12',
   marginPct: '10',
@@ -82,7 +79,6 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
     fromZEvery: clean.mode === 'from-z' ? clean.every : current.fromZEvery,
     edgeMargin: text(params.edgeMargin),
     towerWidth: text(params.towerWidth ?? null),
-    sliceNow: params.finalSlice,
     windowOn: params.timeWindowHours != null,
     windowHours: params.timeWindowHours != null ? String(params.timeWindowHours) : current.windowHours,
     marginPct: params.timeMarginPct != null ? String(params.timeMarginPct) : current.marginPct,
@@ -204,8 +200,6 @@ export function packFormData(
   for (const [name, value] of parts.timeFields) form.append(name, value);
   // Пустое перекрытие = без ограничений: поле не шлётся, флаг CLI не передаётся.
   for (const [name, value] of parts.supportFields) form.append(name, value);
-  // Окно печати меряется нарезками — с ним стол режется всегда.
-  form.append('finalSlice', String(values.sliceNow || values.windowOn));
   if (slicer) form.append('slicer', slicer);
   return form;
 }

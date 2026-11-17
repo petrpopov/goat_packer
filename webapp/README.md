@@ -91,14 +91,15 @@ bun run dev
   шлёт шагами (`detail` stage-события: прогоны пробы по поворотам, варианты зазора и уровни сетки раскладки): подряд
   идущие события одного этапа — один заход (у нарезок окна — отдельные попытки), `label` — живая подпись шага
   («поворот 180° · прогон 3 (до 8)», «вариант зазора 2 из 4 · сетка 0,25 мм»), процент идёт по шагам, у заходов
-  `history[].note` — итог («0°: 5 прогонов · 180°: из кэша»). `planned` — этапы из `plan`-события пакера: итоговая
-  нарезка в нём только у проверки нарезкой, поэтому «этап N из M» её не обещает.
+  `history[].note` — итог («0°: 5 прогонов · 180°: из кэша»). `planned` — этапы из `plan`-события пакера: нарезка
+  стола в нём только у окна печати, поэтому «этап N из M» её не обещает. Проверки стола нарезкой в webapp нет
+  (убрана 2026-11-17: серверная нарезка не доказывает нарезку в GUI пользователя), стол режется только под окно печати.
 - `GET /api/jobs/{id}/artifacts/{name}` — скачивание артефакта.
 - Только у PACK-джобов (у остальных `null`) статус несёт данные для открытия по URL `/pack/<id>`: `originalName` (имя
   загруженного файла), `profile` (тот же объект, что элемент `/profiles`; для своего стола — разовый профиль с id `custom`
   и столом проекта; `null`, если профиль пропал из каталога) и `params` (настройки как отправлены: `clearance`,
-  `layout`, `nozzleClean`, `edgeMargin`, `finalSlice`, `timeWindowHours`, `timeMarginPct`, `amsCorrection`,
-  `changeSeconds`, `supportOverlapMm`, `customBed` `{width,depth,height,margin}`|null, `slicer` (STL; null — 3MF); у доводки — настройки родителя).
+  `layout`, `nozzleClean`, `edgeMargin`, `timeWindowHours`, `timeMarginPct`, `amsCorrection`,
+  `changeSeconds`, `supportOverlapMm`, `customBed` `{width,depth,height,margin}`|null, `slicer` (STL; null — 3MF)).
   Серверный режим: те же поля в `GET /api/v2/jobs/{id}`; в списке `/api/v2/jobs` `profile`/`params` нет.
 - `GET /api/jobs/{id}/input` — загруженный файл pack-джоба (`Content-Disposition: attachment; filename=<originalName>`).
   Серверный режим: `POST /api/v2/jobs/{id}/input/download` → `{url, filename}` (доступ и подписанная ссылка как у

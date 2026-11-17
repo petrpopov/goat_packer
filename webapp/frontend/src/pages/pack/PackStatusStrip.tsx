@@ -288,7 +288,7 @@ function useJobStripContent({ jobId, pack, now, infoOpen, onOpenInfo, onRepack, 
   }
 
   if (status === 'SUCCEEDED' && pack.result) {
-    return succeededContent(pack, pack.result, now);
+    return succeededContent(pack, pack.result);
   }
 
   // FAILED / CANCELLED / EXPIRED
@@ -326,86 +326,28 @@ function useJobStripContent({ jobId, pack, now, infoOpen, onOpenInfo, onRepack, 
   } satisfies StripContent;
 }
 
-/** Текст только дополняется: «Готово: N» → «проверяю нарезкой» → «проверено нарезкой · печать ≈…». */
-function succeededContent(pack: PackJob, result: PackJobInfo, now: number): StripContent {
-  const job = pack.job!;
-  const { check, checkActive, checkRunning, plateFile } = pack;
-  const sliced = pack.checkDone || result.finalSliced !== false;
-  const parts: ReactNode[] = [
-    sliced || checkActive ? (
-      <>Готово: {objectsText(result.objectCount)}</>
-    ) : (
-      <>Готово: {objectsText(result.objectCount)} на столе</>
-    ),
-  ];
+/** «Готово: N на столе», на что рассчитан стол и, если стол резался под окно печати, время печати. */
+function succeededContent(pack: PackJob, result: PackJobInfo): StripContent {
+  const { plateFile } = pack;
+  const parts: ReactNode[] = [<>Готово: {objectsText(result.objectCount)} на столе</>];
   if (result.targetSlicer) parts.push(<>рассчитано на {result.targetSlicer}</>);
   if (result.precision === 'fast') parts.push(<>быстрый расчёт</>);
-  if (checkActive && check) {
-    parts.push(
-      checkRunning && check.stage ? (
-        <>проверяю нарезкой · {stageClock(check.stage, job.receivedAtMs, now)}</>
-      ) : (
+  if (result.time) {
+    parts.push(<>печать ≈{formatHoursMinutes(result.time.correctedSeconds)}</>);
+    if (result.time.windowHours != null)
+      parts.push(
         <>
-          проверка нарезкой в очереди · <QueueText job={job} position={check.queuePosition} />
+          окно <Num>{result.time.windowHours}</Num> ч: <Num>{result.time.chosenCount}</Num> из{' '}
+          <Num>{result.time.fullCount}</Num>
         </>
-      )
-    );
-  } else if (sliced) {
-    parts.push(<span className="ok">проверено нарезкой</span>);
-    if (result.time) {
-      parts.push(<>печать ≈{formatHoursMinutes(result.time.correctedSeconds)}</>);
-      if (result.time.windowHours != null)
-        parts.push(
-          <>
-            окно <Num>{result.time.windowHours}</Num> ч: <Num>{result.time.chosenCount}</Num> из{' '}
-            <Num>{result.time.fullCount}</Num>
-          </>
-        );
-    }
-  } else if (check?.status === 'FAILED') {
-    parts.push(<span className="err">проверка нарезкой не удалась</span>);
-  } else {
-    parts.push('нарезкой не проверено');
+      );
   }
-
-  const line: StripLine =
-    checkRunning && check
-      ? { kind: 'progress', percent: check.progressPercent }
-      : checkActive
-        ? { kind: 'waiting' }
-        : { kind: 'ok' };
-  const manageable = job.canManage !== false;
-  const checkButton = checkActive ? (
-    <button
-      type="button"
-      className="btn btn-lg btn-cancel"
-      disabled={pack.cancelCheck.isPending || !manageable}
-      onClick={() => pack.cancelCheck.mutate(job.jobId)}
-      data-tip="Остановить проверку нарезкой; упакованный стол останется"
-      data-tip-align="end"
-    >
-      <Icon name="stop" />
-      Остановить
-    </button>
-  ) : !sliced ? (
-    <button
-      type="button"
-      className="btn btn-lg"
-      disabled={pack.startCheck.isPending || !manageable}
-      onClick={() => pack.startCheck.mutate(job.jobId)}
-      data-tip="Нарежет весь стол как слайсер: поддержки соседей, края стола, башня, точное время печати. Несколько минут"
-      data-tip-align="end"
-    >
-      {pack.startCheck.isPending ? <Spinner /> : <Icon name="layers" />}
-      Проверить нарезкой
-    </button>
-  ) : null;
+  const line: StripLine = { kind: 'ok' };
   return {
     detail: joinParts(parts),
     line,
     actions: (
       <>
-        {checkButton}
         <button
           type="button"
           className="btn btn-primary btn-lg btn-main"

@@ -6,7 +6,6 @@ import com.goatpacker.web.entity.QueueJobEntity
 import com.goatpacker.web.entity.QueueStatus
 import com.goatpacker.web.repository.JobAttemptRepository
 import com.goatpacker.web.repository.PrincipalRepository
-import com.goatpacker.web.repository.QueueJobSqlRepository
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Service
 import java.time.Instant
@@ -21,7 +20,6 @@ class JobTransitions(
     private val owners: PrincipalRepository,
     private val attempts: JobAttemptRepository,
     private val budget: ComputeBudgetService,
-    private val queueSql: QueueJobSqlRepository,
     private val props: PlatformProperties,
 ) {
     /** Просит остановить активную задачу: ожидающая снимается сразу, идущая — когда исполнитель увидит флаг. */
@@ -45,10 +43,6 @@ class JobTransitions(
         job.reservedBytes = 0
         val isGuest = owners.findById(job.ownerId).orElseThrow().kind == PrincipalKind.GUEST
         job.expiresAt = if (isGuest) Instant.now().plusSeconds(RetentionPolicy.GUEST_CONTENT_TTL_SECONDS) else null
-        // Результат проверки живёт внутри родителя: срок хранения гостя считается и от её конца, иначе её файлы ушли бы раньше, чем появились.
-        val parentId = job.parentJobId
-        val expiresAt = job.expiresAt
-        if (parentId != null && expiresAt != null) queueSql.extendExpiry(parentId, expiresAt)
     }
 
     /**

@@ -137,7 +137,7 @@ export default function PackPage() {
   const repackDisabled = external && !pack.inputFile;
 
   const busy = pack.active || startMutation.isPending;
-  const now = useNow(pack.running || pack.checkRunning);
+  const now = useNow(pack.running);
   const closeInfo = useCallback(() => setInfoOpen(false), []);
   /** Принтер сцены: у открытой по ссылке задачи — её собственный (свой стол — тоже). */
   const sceneProfile = external ? (job?.profile ?? null) : selection.selectedProfile;

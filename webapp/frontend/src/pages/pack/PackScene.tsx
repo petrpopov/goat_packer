@@ -39,20 +39,14 @@ export default function PackScene({
   failedText,
   overlay,
 }: PackSceneProps) {
-  const { job, running, check, checkRunning } = pack;
+  const { job, running } = pack;
   // Ссылка на layout стабильна между опросами (structural sharing react-query) — сцена не перестраивается зря.
   const jobLayout = job?.layout;
   const placed = useMemo(() => sceneLayout(jobLayout), [jobLayout]);
-  // Проверка нарезкой идёт внутри готовой задачи: стол на это время — в режиме нарезки (срез слоя).
-  const mode = running || checkRunning ? 'running' : job?.status === 'SUCCEEDED' ? 'done' : 'idle';
+  const mode = running ? 'running' : job?.status === 'SUCCEEDED' ? 'done' : 'idle';
   /** Идёт перебор раскладок, позиций ещё нет: на столе мелькают проекции модели. */
   const searching = running && job?.stage?.id === 'packing' && placed.placements.length === 0;
-  const clip =
-    running && job?.stage
-      ? sceneClip(job.stage.id, job.progressPercent)
-      : checkRunning && check?.stage
-        ? sceneClip(check.stage.id, check.progressPercent)
-        : 1;
+  const clip = running && job?.stage ? sceneClip(job.stage.id, job.progressPercent) : 1;
   // Слишком большой файл — без предпросмотра (без тоста: упаковать его всё равно можно).
   const caption = modelTooLarge
     ? 'Модель слишком большая для предпросмотра'

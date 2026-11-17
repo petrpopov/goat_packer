@@ -87,16 +87,16 @@ describe('stripStage', () => {
     const s = stripStage(
       stage({ id: 'final_slice', visited: ['probe_slice', 'packing', 'sample_slice', 'assembling', 'final_slice'] })
     );
-    expect(s).toEqual({ label: 'Нарезка итоговой пластины', step: 5, steps: 6 });
+    expect(s).toEqual({ label: 'Нарезка стола', step: 5, steps: 6 });
   });
   test('re-slice after a repack is one more step with its own label', () => {
     const visited = ['probe_slice', 'packing', 'assembling', 'final_slice', 'gcode_check', 'repacking'];
     const s = stripStage(stage({ id: 'final_slice', visited, attempt: 2 }));
     expect(s).toEqual({ label: 'Повторная нарезка', step: 7, steps: 8 });
   });
-  test('a finish job counts from its own first stage', () => {
+  test('a job that starts at a later stage counts from it', () => {
     expect(stripStage(stage({ id: 'final_slice', visited: ['final_slice'] }))).toEqual({
-      label: 'Нарезка итоговой пластины',
+      label: 'Нарезка стола',
       step: 1,
       steps: 2,
     });
@@ -112,7 +112,7 @@ describe('stageItems', () => {
       ['Пробная нарезка 1 объекта', 'done'],
       ['Раскладка', 'done'],
       ['Сборка проекта', 'done'],
-      ['Нарезка итоговой пластины', 'current'],
+      ['Нарезка стола', 'current'],
       ['Запись результата', 'pending'],
     ]);
   });
@@ -203,7 +203,7 @@ describe('stepped stages (probe runs, gap variants, grid levels)', () => {
     );
     expect(items.filter((i) => i.state === 'pending').map((i) => i.label)).toEqual([
       'Сборка проекта',
-      'Нарезка итоговой пластины',
+      'Нарезка стола',
       'Проверка поддержек по слоям',
       'Запись результата',
     ]);

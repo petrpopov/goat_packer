@@ -24,9 +24,8 @@ object JobRequestValidator {
         if (kind == null || (r.fileId == null) == (r.packJobId == null)) {
             badRequest("Укажите один источник и тип ${JobKind.entries.joinToString("/")}")
         }
-        if (r.finishStateBlobId != null) badRequest("finishStateBlobId задаёт сервер")
-        // PACK по packJobId — доводка «Нарезать стол»: всё берётся из родителя.
-        if (kind == JobKind.PACK && r.packJobId != null) return kind
+        // Упаковка — только по загруженному файлу: прежняя доводка «Нарезать стол» по packJobId убрана.
+        if (kind == JobKind.PACK && r.packJobId != null) badRequest("Для упаковки нужен загруженный файл")
         if (kind == JobKind.CALIBRATION && r.packJobId != null) badRequest("Для калибровки нужен загруженный проект")
 
         validateBed(r, kind)

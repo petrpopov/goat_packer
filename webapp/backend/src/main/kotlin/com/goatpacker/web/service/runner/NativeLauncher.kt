@@ -163,18 +163,16 @@ class NativeLauncher(
         "--env", "GOAT_LOG_FORMAT=json", image, "/usr/bin/sleep", "infinity",
     )
 
-    /** Вход, профиль и (для доводки) состояние упаковки едут в контейнер по stdin: на хост ничего не монтируется. */
+    /** Вход и профиль едут в контейнер по stdin: на хост ничего не монтируется. */
     private fun copyInputs(job: Job, container: String) {
         // STL-вход едет как input.stl: input.3mf из него соберёт source_project внутри контейнера.
         val input = if (isRegularFile(job.directory.resolve(INPUT_STL))) INPUT_STL else INPUT_3MF
-        // Доводка «Нарезать стол» везёт ещё и состояние упаковки родителя.
-        val finishState = JobArtifacts.FINISH_STATE.takeIf { isRegularFile(job.directory.resolve(it)) }
         // Кэш проб владельца (его кладёт воркер до запуска): имена из белого списка, в команду идут без экранирования.
         val cache = job.directory.resolve(ProbeCacheEntries.DIR).takeIf { Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) }
             ?.let { dir -> Files.list(dir).use { stream -> stream.toList() } }.orEmpty()
             .filter { ProbeCacheEntries.isEntryName(it.fileName.toString()) && isRegularFile(it) }
             .map { "${ProbeCacheEntries.DIR}/${it.fileName}" }
-        for (file in listOfNotNull(input, JobArtifacts.PROFILE_FILE, finishState) + cache) {
+        for (file in listOf(input, JobArtifacts.PROFILE_FILE) + cache) {
             val source = job.directory.resolve(file)
             check(isRegularFile(source))
             val transfer = ProcessBuilder("docker", "exec", "-i", container, "/bin/sh", "-c", "mkdir -p $WORK_DIR/${file.substringBeforeLast('/', ".")} && cat > $WORK_DIR/$file")
@@ -289,7 +287,6 @@ class NativeLauncher(
         val EXPORTED_FILES = listOf(
             JobArtifacts.PACKED_3MF,
             JobArtifacts.PACKED_REPORT,
-            JobArtifacts.PACKED_STATE,
             "${JobArtifacts.PACK_WORK_DIR}/placements.json",
             JobArtifacts.SCHEDULE_CSV,
             JobArtifacts.PLATES_3MF,

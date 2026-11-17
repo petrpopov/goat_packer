@@ -7,7 +7,6 @@ import com.goatpacker.web.dto.JobRequest
 import com.goatpacker.web.dto.JobStageDto
 import com.goatpacker.web.dto.ProfileDto
 import com.goatpacker.web.dto.QueueArtifactDto
-import com.goatpacker.web.dto.QueueCheckDto
 import com.goatpacker.web.dto.QueueJobDetailDto
 import com.goatpacker.web.dto.QueueJobPageDto
 import com.goatpacker.web.dto.QueueJobSummaryDto
@@ -31,7 +30,7 @@ import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 
-/** Очередь для статуса: место, оценка ожидания (с) и её причина — одинаково для задачи и её проверки. */
+/** Очередь для статуса: место, оценка ожидания (с) и её причина — для статуса задачи. */
 private data class WaitEstimate(val position: Long?, val seconds: Long?, val reason: String) {
     /** Нижняя граница диапазона для пользователя. */
     val fromSeconds: Long? get() = seconds?.div(RANGE_LOWER_DIVISOR)
@@ -46,7 +45,7 @@ private data class WaitEstimate(val position: Long?, val seconds: Long?, val rea
     }
 }
 
-/** Статусы задач для API: список, статус одной задачи, проверка нарезкой внутри неё и оценка ожидания. */
+/** Статусы задач для API: список, статус одной задачи и оценка ожидания. */
 @Service
 @Profile("server")
 class JobViewService(
@@ -62,8 +61,8 @@ class JobViewService(
     fun list(viewerId: String, page: Int): QueueJobPageDto {
         Paging.requirePage(page)
         val pageable = PageRequest.of(page, JOBS_PAGE_SIZE, Sort.by("createdAt").descending())
-        val rows = jobs.findAllByOwnerIdAndParentJobIdIsNull(viewerId, pageable)
-        return QueueJobPageDto(rows.content.map { summary(it, viewerId, debug = false, withStage = false) }, rows.totalElements)
+        val rows = jobs.findAllByOwnerId(viewerId, pageable)
+        return QueueJobPageDto(rows.content.map { summary(it, viewerId, debug = false) }, rows.totalElements)
     }
 
     /**
@@ -74,17 +73,15 @@ class JobViewService(
         val job = access.findReadable(jobId, viewerId, token)
         // Профиль и настройки — только в статусе одной задачи: список лёгкий.
         val request = if (job.kind == JobKind.PACK) runCatching { mapper.readValue(job.paramsJson, JobRequest::class.java) }.getOrNull() else null
-        // Раскладка проверки (полная нарезка могла сдвинуть объекты) важнее раскладки упаковки, как только она есть.
-        val layout = (if (job.kind == JobKind.PACK) access.checkOf(job)?.layoutJson else null) ?: job.layoutJson
         return QueueJobDetailDto(
-            summary = summary(job, viewerId, debug, withStage = true),
-            layout = layout?.let { runCatching { mapper.readTree(it) }.getOrNull() },
+            summary = summary(job, viewerId, debug),
+            layout = job.layoutJson?.let { runCatching { mapper.readTree(it) }.getOrNull() },
             profile = request?.let { profileOf(job, it) },
             params = request?.toPackParamsDto(),
         )
     }
 
-    private fun summary(job: QueueJobEntity, viewerId: String, debug: Boolean, withStage: Boolean): QueueJobSummaryDto {
+    private fun summary(job: QueueJobEntity, viewerId: String, debug: Boolean): QueueJobSummaryDto {
         val wait = waitEstimate(job)
         val result = job.resultJson?.let { mapper.readTree(it) }
         if (job.kind == JobKind.SCHEDULE) addScheduleClocks(result)
@@ -106,35 +103,11 @@ class JobViewService(
             estimatedWaitFromSeconds = wait.fromSeconds,
             estimatedWaitToSeconds = wait.toSeconds,
             estimateReason = wait.reason,
-            artifacts = artifactsOf(job, ownerId = job.id, debug = debug),
+            artifacts = artifactsOf(job, debug),
             pack = result.takeIf { job.kind == JobKind.PACK },
             schedule = result.takeIf { job.kind == JobKind.SCHEDULE },
             calibration = result.takeIf { job.kind == JobKind.CALIBRATION },
             stage = stageOf(job),
-            // Проверка нарезкой — часть этой задачи (у списка без стадии: она там не нужна).
-            check = if (job.kind == JobKind.PACK) checkOf(job, debug, withStage) else null,
-        )
-    }
-
-    /** Проверка нарезкой внутри задачи (null — не запускалась). Её собственный id в ответ не попадает. */
-    private fun checkOf(parent: QueueJobEntity, debug: Boolean, withStage: Boolean): QueueCheckDto? {
-        val check = access.checkOf(parent) ?: return null
-        val wait = waitEstimate(check)
-        return QueueCheckDto(
-            status = check.status,
-            queuePosition = wait.position,
-            estimatedWaitSeconds = wait.seconds,
-            estimatedWaitFromSeconds = wait.fromSeconds,
-            estimatedWaitToSeconds = wait.toSeconds,
-            estimateReason = wait.reason,
-            progressPercent = check.progress,
-            phaseMessage = check.message,
-            error = errorOf(check, debug),
-            startedAt = check.startedAt,
-            finishedAt = check.finishedAt,
-            stage = if (withStage) stageOf(check) else null,
-            pack = check.resultJson?.let { mapper.readTree(it) },
-            artifacts = artifactsOf(check, ownerId = parent.id, debug = debug),
         )
     }
 
@@ -163,14 +136,11 @@ class JobViewService(
     private fun errorOf(job: QueueJobEntity, debug: Boolean): String? =
         if (debug) job.error else job.error?.substringBefore(CliErrorTranslator.DETAILS_SEPARATOR)?.take(MAX_PUBLIC_ERROR_LENGTH)
 
-    /**
-     * Артефакты в статусе; [ownerId] — id, под которым они скачиваются (у проверки — id родителя:
-     * id ребёнка наружу не уходит).
-     */
-    private fun artifactsOf(job: QueueJobEntity, ownerId: String, debug: Boolean): List<QueueArtifactDto> =
+    /** Артефакты в статусе со ссылками скачивания. */
+    private fun artifactsOf(job: QueueJobEntity, debug: Boolean): List<QueueArtifactDto> =
         artifacts.findAllByJobId(job.id)
             .filter { debug || !it.debug }
-            .map { QueueArtifactDto(it.id, it.downloadName, it.sizeBytes, "/api/v2/jobs/$ownerId/artifacts/${it.id}/download") }
+            .map { QueueArtifactDto(it.id, it.downloadName, it.sizeBytes, "/api/v2/jobs/${job.id}/artifacts/${it.id}/download") }
 
     /** Этап пакера для статуса: прошедшее время считается сейчас (по часам API, startedAtMs — исполнителя). */
     private fun stageOf(job: QueueJobEntity): JobStageDto? {

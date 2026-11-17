@@ -1,18 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/http';
-import { cancelPackCheck, checkPackJob, deleteJob, downloadJobInput } from '@/api/services';
+import { deleteJob, downloadJobInput } from '@/api/services';
 import type { JobArtifact, PackJobInfo } from '@/api/types';
 import { useJobView } from '@/hooks/useJob';
 import { pushToast } from '@/store/useToastStore';
 import { useUiStore } from '@/store/useUiStore';
 import { isPlateFile, visibleArtifacts } from '@/utils/artifacts';
-import { apiErrorMessage, isActiveStatus, isRunningStatus } from '@/utils/jobs';
+import { isRunningStatus } from '@/utils/jobs';
 
-/**
- * Открытая задача упаковки (адрес /pack/<id>): статус, проверка нарезкой внутри неё, вход задачи,
- * открытой по ссылке, и действия (проверить, остановить проверку, отменить).
- */
+/** Открытая задача упаковки (адрес /pack/<id>): статус, вход задачи, открытой по ссылке, и отмена. */
 export function usePackJob(jobId: string | null) {
   const navigate = useUiStore((state) => state.navigate);
   const { query, job, gone, active } = useJobView(jobId);
@@ -34,35 +31,18 @@ export function usePackJob(jobId: string | null) {
   });
   const inputFile = external ? (input.data ?? null) : null;
 
-  const check = job?.check ?? null;
-  const checkActive = isActiveStatus(check?.status);
-  const checkRunning = isRunningStatus(check?.status);
-  const checkDone = check?.status === 'SUCCEEDED';
-  /** Итог для скачивания: после проверки нарезкой — её стол (она могла сдвинуть объекты). */
-  const result: PackJobInfo | null = checkDone && check?.pack ? check.pack : (job?.pack ?? null);
-  const deliverables: JobArtifact[] = checkDone && check ? check.artifacts : (job?.artifacts ?? []);
+  const result: PackJobInfo | null = job?.pack ?? null;
+  const deliverables: JobArtifact[] = job?.artifacts ?? [];
   /** Сколько объектов получилось; null — итога ещё нет. */
   const resultCount = job?.status === 'SUCCEEDED' && result ? result.objectCount : null;
   /**
    * Сколько объектов на столе — итог, а пока его нет, число последней раскладки пакера (layout-событие):
-   * раскладка готова за минуты, а сборка и нарезки после неё идут долго. preliminary — число ещё может
-   * измениться (перепаковка после выборочной нарезки или проверки).
+   * раскладка видна раньше, чем стол собран. preliminary — число ещё может измениться (следующий уровень
+   * растра пакера, а у окна печати — его нарезки).
    */
   const objectCount = resultCount ?? job?.layout?.objects ?? null;
   const countPreliminary = resultCount == null && objectCount != null;
 
-  const refetch = () => void query.refetch();
-  // Проверка нарезкой идёт внутри той же задачи: адрес не меняется, опрос подхватывает её ход.
-  const checkMutation = useMutation({
-    mutationFn: checkPackJob,
-    onSuccess: refetch,
-    onError: (error) => pushToast(apiErrorMessage(error, 'Не удалось запустить проверку'), 'error'),
-  });
-  const cancelCheckMutation = useMutation({
-    mutationFn: cancelPackCheck,
-    onSuccess: refetch,
-    onError: (error) => pushToast(apiErrorMessage(error, 'Не удалось остановить проверку'), 'error'),
-  });
   const cancelMutation = useMutation({
     mutationFn: (id: string) => deleteJob(id),
     onSuccess: () => navigate('/pack'),
@@ -83,18 +63,12 @@ export function usePackJob(jobId: string | null) {
     input,
     inputFile,
     running: isRunningStatus(job?.status),
-    check,
-    checkActive,
-    checkRunning,
-    checkDone,
     result,
     resultCount,
     objectCount,
     countPreliminary,
     deliverables,
     plateFile: visibleArtifacts(deliverables).find(isPlateFile),
-    startCheck: checkMutation,
-    cancelCheck: cancelCheckMutation,
     cancelJob: cancelMutation,
   };
 }

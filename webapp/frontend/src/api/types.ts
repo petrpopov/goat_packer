@@ -144,8 +144,6 @@ export interface PackJobInfo {
   supportsDetected?: boolean | null;
   /** Допустимое перекрытие поддержек, мм; null — без ограничений. */
   supportOverlapMm?: number | null;
-  /** false — стол упакован по пробной нарезке, полная нарезка ещё не запускалась; нет поля — нарезан. */
-  finalSliced?: boolean;
   /** Башня очистки, которую поставил пакер; null/нет поля — башни нет (или старый бэкенд). */
   tower?: PackTowerInfo | null;
   /** Сборка слайсера, на которую рассчитан стол («Bambu Studio 02.09.01.70»); нет поля — старый пакер. */
@@ -233,7 +231,6 @@ export interface PackParamsView {
   edgeMargin: number | null;
   /** Ширина черновой башни, мм; null/нет — дефолт пакера или старый бэкенд. */
   towerWidth?: number | null;
-  finalSlice: boolean;
   timeWindowHours: number | null;
   timeMarginPct: number | null;
   amsCorrection: boolean;
@@ -270,28 +267,10 @@ export interface JobStatusResponse {
   schedule: ScheduleInfo | null;
   calibration?: CalibrationInfo | null;
   stage?: JobStage | null;
-  /** Последняя раскладка пакера (после проверки нарезкой — её); остаётся и после успеха. */
+  /** Последняя раскладка пакера; остаётся и после успеха. */
   layout?: PackLayout | null;
-  /** Проверка нарезкой этой упаковки; null — не запускалась. */
-  check?: PackCheck | null;
   /** Когда клиент получил этот ответ (Date.now()); проставляет useJob для локального отсчёта времени. */
   receivedAtMs?: number;
-}
-
-/** Проверка нарезкой внутри задачи упаковки (полная нарезка стола, упакованного без неё). */
-export interface PackCheck {
-  status: JobStatus;
-  queuePosition?: number | null;
-  progressPercent: number;
-  phaseMessage: string | null;
-  error: string | null;
-  startedAt?: string | null;
-  finishedAt: string | null;
-  stage?: JobStage | null;
-  /** Итог проверки (стол мог поменяться: сдвиг или перепаковка); null — проверка не завершилась. */
-  pack: PackJobInfo | null;
-  /** Файлы проверки; ссылки — через id задачи. */
-  artifacts: JobArtifact[];
 }
 
 export interface StartJobResponse {

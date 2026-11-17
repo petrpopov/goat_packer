@@ -14,8 +14,6 @@ data class PackJobResult(
     val supportsDetected: Boolean? = null,
     /** `support_overlap_mm` отчёта: допустимое перекрытие поддержек, мм; null — без ограничений. */
     val supportOverlapMm: Double? = null,
-    /** `final_sliced` отчёта: false — полная нарезка стола ещё не запускалась («Нарезать стол»). */
-    val finalSliced: Boolean = true,
     /** `tower` отчёта: башня очистки, которую пакер поставил на стол; null — башни нет (или старый пакер). */
     val tower: PackTowerResult? = null,
     /** `target_slicer` отчёта: сборка слайсера, на которую рассчитан стол («Bambu Studio 02.09.01.70»); null — старый пакер. */

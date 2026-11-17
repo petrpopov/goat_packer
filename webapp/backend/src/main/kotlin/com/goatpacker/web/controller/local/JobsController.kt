@@ -25,11 +25,6 @@ class JobsController(private val jobService: JobService) {
     fun artifact(@PathVariable id: String, @PathVariable name: String): ResponseEntity<FileSystemResource> =
         attachment(jobService.artifact(id, name))
 
-    /** Артефакт проверки нарезкой — по id самой упаковки (id внутренней задачи не раскрывается). */
-    @GetMapping("/{id}/check/artifacts/{name}")
-    fun checkArtifact(@PathVariable id: String, @PathVariable name: String): ResponseEntity<FileSystemResource> =
-        attachment(jobService.checkArtifact(id, name))
-
     /** Вход pack-джоба (загруженный файл) для скачивания. */
     @GetMapping("/{id}/input")
     fun input(@PathVariable id: String): ResponseEntity<FileSystemResource> = attachment(jobService.input(id))

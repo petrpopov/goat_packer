@@ -25,13 +25,13 @@ class JobAccessService(
     private val grants: ReadGrantRepository,
     private val platform: PlatformRepository,
 ) {
-    /** Задача владельца [ownerId]; чужая или внутренняя проверка — «не найдено». */
+    /** Задача владельца [ownerId]; чужая — «не найдено». */
     fun findOwned(id: String, ownerId: String): QueueJobEntity =
         jobs.findById(id).orElse(null)?.takeIf { it.ownerId == ownerId }?.also(::requireNotExpired) ?: notFound()
 
-    /** Задача, доступная читателю [viewerId]: своя, по выданному доступу или по токену ссылки. Проверки скрыты. */
+    /** Задача, доступная читателю [viewerId]: своя, по выданному доступу или по токену ссылки. */
     fun findReadable(id: String, viewerId: String, token: String?): QueueJobEntity {
-        val job = jobs.findById(id).orElse(null)?.takeIf { it.parentJobId == null } ?: notFound()
+        val job = jobs.findById(id).orElse(null) ?: notFound()
         val granted = grants.hasActive(viewerId, id)
         if (job.ownerId != viewerId && !granted && !matchesReadToken(job, token)) notFound()
         if (owners.findById(job.ownerId).orElse(null)?.blocked != false) notFound()
@@ -58,13 +58,9 @@ class JobAccessService(
         return token
     }
 
-    /** Дочерняя проверка родителя (null — проверки нет); доступ уже проверен по родителю. */
-    fun checkOf(parent: QueueJobEntity): QueueJobEntity? =
-        parent.checkJobId?.let { jobs.findById(it).orElse(null) }?.takeIf { it.parentJobId == parent.id }
-
-    /** Артефакт, который можно отдать по id родителя: его собственный или последней проверки. */
-    fun findArtifact(parent: QueueJobEntity, artifactId: String): ArtifactEntity? =
-        artifacts.findById(artifactId).orElse(null)?.takeIf { it.jobId == parent.id || it.jobId == checkOf(parent)?.id }
+    /** Артефакт задачи [job]. */
+    fun findArtifact(job: QueueJobEntity, artifactId: String): ArtifactEntity? =
+        artifacts.findById(artifactId).orElse(null)?.takeIf { it.jobId == job.id }
 
     private fun matchesReadToken(job: QueueJobEntity, token: String?): Boolean =
         token != null && token.length <= MAX_TOKEN_LENGTH && job.readTokenHash == Secrets.hash(token)
