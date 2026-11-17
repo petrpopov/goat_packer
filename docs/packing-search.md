@@ -81,7 +81,7 @@ angle-step 2°, attempts/candidates 1000/1000. Время включает по�
 cargo run --offline --release --example pack_bench -- \
   --footprint-json tests/fixtures/goat3.json --profile profiles/p1s.json \
   --overshoot 1.7 --tower 225.85,200.10,246.15,252.15 \
-  --rotations 0,13,45,90,137 --seeds 3 --attempts 1000 --candidates 1000
+  --rotations 0,13,45,90,137 --attempts 1000
 ```
 
 `--threads 1` позволяет повторить эксперимент с одним потоком. Для другого контура

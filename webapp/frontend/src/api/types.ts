@@ -224,8 +224,8 @@ export interface PackLayout {
 /** Параметры упаковки задачи, как их отправили (бэкенд: PackParamsDto); у доводки — родителя. */
 export interface PackParamsView {
   clearance: number;
-  resolution: number;
-  layout: 'search' | 'grid';
+  /** dense — все методы, grid — ровные решётки; search — так записаны задачи до 2026-11-17 (= dense). */
+  layout: 'dense' | 'grid' | 'search';
   /** Расчёт поддержек; нет поля — старый бэкенд (точный). */
   precision?: PackPrecision;
   /** Спецификация чистки сопла пакера; '' — выключена. */

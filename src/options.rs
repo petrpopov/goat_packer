@@ -36,10 +36,6 @@ pub struct PackOptions {
     /// Deterministic search effort. All orientation pairs get a baseline pass; higher values
     /// explore additional sweep directions and starting orientations, up to the finite portfolio.
     pub attempts: usize,
-    /// Compatibility field for older clients; free centers are now searched exhaustively.
-    pub candidates_per_step: usize,
-    /// Compatibility field. The finite deterministic portfolio does not use racy stall stopping.
-    pub stall_attempts: usize,
     /// Hard cap on objects per layout (0 = unlimited). The search itself stops when the bed
     /// is full; a cap is only for deliberately sparse plates or bounded slicing time.
     pub max_objects: usize,
@@ -47,8 +43,6 @@ pub struct PackOptions {
     /// so a footprint measured at one orientation silently stops matching the printed patch
     /// once the model rotates; a locked orientation keeps every clone identical to the probe.
     pub lock_orientation: bool,
-    /// Retained in reports for compatibility; geometry, not a random seed, determines layouts.
-    pub seed: u64,
     /// Supports (full patch minus body) of different objects may overlap by at most this many
     /// mm of printed material ("supports may overlap each other, never the model"). `0` =
     /// supports may touch but not overlap; `None` = unlimited (the plain two-zone rule).
@@ -122,7 +116,6 @@ pub struct PackResult {
     pub attempts: usize,
     /// Number of deterministic sweep layouts evaluated (including the mandatory angle pass).
     pub attempts_run: usize,
-    pub seed: u64,
 }
 
 pub(crate) fn check_pack_input(footprint: &Footprint, options: &PackOptions) -> Result<(), String> {

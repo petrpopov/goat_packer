@@ -13,7 +13,6 @@ import com.goatpacker.web.model.CalibrationParams
 import com.goatpacker.web.model.Job
 import com.goatpacker.web.model.JobKind
 import com.goatpacker.web.model.JobStatus
-import com.goatpacker.web.model.PackDefaults
 import com.goatpacker.web.model.PackParams
 import com.goatpacker.web.model.ScheduleParams
 import com.goatpacker.web.model.ScheduleSource
@@ -159,10 +158,7 @@ class WorkerJobProcessor(
                     profileId = record.profileId,
                     profilePath = profilePath,
                     clearance = request.clearance,
-                    resolution = request.resolution,
                     attempts = request.attempts,
-                    candidates = PackDefaults.CANDIDATES,
-                    seed = PackDefaults.SEED,
                     edgeMargin = request.edgeMargin,
                     towerWidth = request.towerWidth,
                     layout = request.layout,

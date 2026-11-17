@@ -103,14 +103,13 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
   // Свой стол: в локальном API — поля custom*, в серверном — объект customBed.
   const customBed: Record<string, number> = {};
   for (const [name, value] of form.entries()) {
-    if (name === 'file' || name === 'seed' || name === 'candidates') continue;
+    if (name === 'file') continue;
     if (name.startsWith('custom')) {
       customBed[name.slice('custom'.length).toLowerCase()] = Number(value);
       continue;
     }
     body[name] = [
       'clearance',
-      'resolution',
       'attempts',
       'edgeMargin',
       'towerWidth',

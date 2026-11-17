@@ -63,7 +63,7 @@ bun run dev
   превращается в проект бинарником `source_project` (этап «Готовлю проект из STL…»): каталожный принтер —
   его пресет машины (`vendor` + `orca_machine` профиля), свой стол — общий станок Orca с этими размерами.
   Для 3MF каталожный `profileId` должен совпасть с принтером файла; неизвестный принтер — только свой стол. Остальное: `clearance`,
-  `resolution`, `attempts` (необязательно, дефолт 16000 как у CLI; фронт не шлёт), `candidates`, `seed`, `nozzleClean`, необязательные `timeWindowHours`
+  `attempts` (необязательно, дефолт 16000 как у CLI; фронт не шлёт), `layout` (`dense` — все методы, `grid` — только ровные решётки; старое `search` = `dense`), `nozzleClean`, необязательные `timeWindowHours`
   (0.5–240 ч), `amsCorrection`, `changeSeconds` (0–600 с, только с `amsCorrection`), `timeMarginPct`
   (0–50 %, дефолт CLI 10), `supportOverlapMm` (0–20 мм; пусто — без ограничений, флаг
   `--support-overlap-mm` не передаётся), `slicer` (`bambu`|`orca`, только STL; пусто — умолчание принтера,
@@ -97,7 +97,7 @@ bun run dev
 - Только у PACK-джобов (у остальных `null`) статус несёт данные для открытия по URL `/pack/<id>`: `originalName` (имя
   загруженного файла), `profile` (тот же объект, что элемент `/profiles`; для своего стола — разовый профиль с id `custom`
   и столом проекта; `null`, если профиль пропал из каталога) и `params` (настройки как отправлены: `clearance`,
-  `resolution`, `layout`, `nozzleClean`, `edgeMargin`, `finalSlice`, `timeWindowHours`, `timeMarginPct`, `amsCorrection`,
+  `layout`, `nozzleClean`, `edgeMargin`, `finalSlice`, `timeWindowHours`, `timeMarginPct`, `amsCorrection`,
   `changeSeconds`, `supportOverlapMm`, `customBed` `{width,depth,height,margin}`|null, `slicer` (STL; null — 3MF); у доводки — настройки родителя).
   Серверный режим: те же поля в `GET /api/v2/jobs/{id}`; в списке `/api/v2/jobs` `profile`/`params` нет.
 - `GET /api/jobs/{id}/input` — загруженный файл pack-джоба (`Content-Disposition: attachment; filename=<originalName>`).

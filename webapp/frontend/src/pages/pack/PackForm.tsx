@@ -78,13 +78,17 @@ export default function PackForm(props: PackFormProps) {
         ) : null}
         <Field
           label="Раскладка"
-          hint={values.layout === 'grid' ? 'быстро и равномерно, без поворотов' : 'подбор с поворотами и нависаниями'}
+          hint={
+            values.layout === 'grid'
+              ? 'ровные ряды, быстрее; может уместить меньше'
+              : 'максимум моделей, раскладка может быть неровной'
+          }
         >
           <div className="seg" role="group" aria-label="Раскладка">
             <button
               type="button"
-              aria-pressed={values.layout === 'search'}
-              onClick={() => update('layout', 'search')}
+              aria-pressed={values.layout === 'dense'}
+              onClick={() => update('layout', 'dense')}
               disabled={busy}
             >
               Плотная
@@ -429,17 +433,6 @@ function AdvancedFields({
           min={LIMITS.clearanceMm.min}
           value={values.clearance}
           onChange={(value) => update('clearance', value)}
-          disabled={disabled}
-        />
-      </Field>
-      <Field
-        label="Растр, мм"
-        hint="шаг сетки поиска раскладки; меньше — точнее и дольше, на плотность обычно не влияет"
-      >
-        <NumberInput
-          min={LIMITS.resolutionMm.min}
-          value={values.resolution}
-          onChange={(value) => update('resolution', value)}
           disabled={disabled}
         />
       </Field>

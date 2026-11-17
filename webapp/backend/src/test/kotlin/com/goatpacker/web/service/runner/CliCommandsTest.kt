@@ -11,14 +11,30 @@ class CliCommandsTest {
         profileId = "test",
         profilePath = Path.of("profile.json"),
         clearance = 0.7,
-        resolution = 0.25,
         attempts = 1,
-        candidates = 1,
-        seed = 1,
         edgeMargin = null,
-        layout = "search",
+        layout = "dense",
         nozzleClean = "",
     )
+
+    @Test
+    fun `раскладка передаётся как dense или grid, прежнее search — это dense`() {
+        val layout = { params: PackParams ->
+            val args = CliCommands.pack("packer", params)
+            args[args.indexOf("--layout") + 1]
+        }
+        assertEquals("dense", layout(base))
+        assertEquals("grid", layout(base.copy(layout = "grid")))
+        assertEquals("dense", layout(base.copy(layout = "search")))
+    }
+
+    @Test
+    fun `флаги совместимости, ни на что не влиявшие, пакеру не передаются`() {
+        val args = CliCommands.pack("packer", base)
+        for (gone in listOf("--candidates", "--seed", "--stall", "--angle-step", "--no-final-slice")) {
+            assertFalse(gone in args, gone)
+        }
+    }
 
     @Test
     fun `ширина башни передаётся пакеру только заданной`() {
@@ -29,10 +45,8 @@ class CliCommandsTest {
     }
 
     @Test
-    fun `разрешение по умолчанию оставляет пакеру лестницу, заданное передаётся`() {
+    fun `растр не передаётся - пакер идёт своей лестницей`() {
         assertFalse("--resolution" in CliCommands.pack("packer", base))
-        val args = CliCommands.pack("packer", base.copy(resolution = 0.2))
-        assertEquals("0.2", args[args.indexOf("--resolution") + 1])
     }
 
     @Test

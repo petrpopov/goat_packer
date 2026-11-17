@@ -13,7 +13,7 @@ import com.goatpacker.web.service.NozzleCleanSpec
 
 /** Проверка тела `POST /api/v2/jobs` до обращения к БД: форма запроса и диапазоны настроек. */
 object JobRequestValidator {
-    private val LAYOUTS = setOf(PackDefaults.LAYOUT, "grid")
+    private val LAYOUTS = setOf(PackDefaults.LAYOUT, PackDefaults.LAYOUT_GRID, PackDefaults.LAYOUT_LEGACY_SEARCH)
     private val PRECISIONS = setOf(PackDefaults.PRECISION, PackDefaults.PRECISION_FAST)
     private val BENCH_MODES = setOf(ScheduleDefaults.BENCH_MODE_ADAPTIVE, ScheduleDefaults.BENCH_MODE_FULL)
     private val CALIBRATION_VARIANTS = setOf(ScheduleDefaults.CALIBRATION_VARIANT_NORMAL, ScheduleDefaults.CALIBRATION_VARIANT_PERFECTIONIST)
@@ -32,9 +32,7 @@ object JobRequestValidator {
         validateBed(r, kind)
         if (r.variant !in CALIBRATION_VARIANTS) badRequest("Вариант калибровки: ${CALIBRATION_VARIANTS.joinToString(" или ")}")
         if (r.supportOverlapMm.isOutOf(JobLimits.SUPPORT_OVERLAP_MM)) badRequest("Перекрытие поддержек должно быть 0–20 мм")
-        if (r.clearance.isOutOf(JobLimits.CLEARANCE_MM) || r.resolution.isOutOf(JobLimits.RESOLUTION_MM)) {
-            badRequest("Некорректные зазор/разрешение")
-        }
+        if (r.clearance.isOutOf(JobLimits.CLEARANCE_MM)) badRequest("Некорректный зазор")
         if (r.attempts !in JobLimits.ATTEMPTS || r.layout !in LAYOUTS || r.benchMode !in BENCH_MODES) badRequest("Некорректный режим поиска")
         if (r.edgeMargin.isOutOf(JobLimits.EDGE_MARGIN_MM)) badRequest("Некорректный отступ")
         if (r.precision !in PRECISIONS) badRequest("Расчёт поддержек: ${PRECISIONS.joinToString(" или ")}")

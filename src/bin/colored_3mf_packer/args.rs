@@ -6,6 +6,7 @@ use goat_packer::{
     ForeignGaps,
     colored_packer::{PrinterProfile, SLICER_KINDS},
     nozzle_clean::NozzleCleanSpec,
+    pack::{DEFAULT_MEMBERS, Member},
     print_time::TimeCorrection,
     support_model::{flavour::Flavour, merge::MergeOrder, precision::Precision},
     tower_model::DEFAULT_TOWER_WIDTH_MM,
@@ -32,10 +33,7 @@ const DEFAULT_RESOLUTIONS_MM: [f64; 2] = [0.25, 0.2];
 /// cache, two threads: P1S / U1 / A2L packed 43 / 49 / 72 at 0.25 mm and the same at 0.2 mm,
 /// whose level was 10 of 17 s of packing.
 const FAST_RESOLUTIONS_MM: [f64; 1] = [0.25];
-const DEFAULT_ANGLE_STEP_DEG: f64 = 2.0;
 const DEFAULT_ATTEMPTS: usize = 16_000;
-const DEFAULT_CANDIDATES: usize = 2_400;
-const DEFAULT_SEED: u64 = 20_270_831;
 /// `--tower-width` bounds, mm: the owner printed 12-20 mm towers; much narrower leaves no
 /// purge row inside the walls, much wider only costs plate room.
 const TOWER_WIDTH_RANGE_MM: (f64, f64) = (5.0, 60.0);
@@ -72,6 +70,31 @@ impl SupportSource {
     }
 }
 
+/// Which packing methods a run uses (`--layout`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    /// Every method: the most copies, the edges filled off the lattice where that fits more
+    /// (`Improve`, the sweeps).
+    #[default]
+    Dense,
+    /// Regular layouts only (rows and lattices with their edge fill): what a person checks by
+    /// eye and arranges by hand, and faster (`Improve` was a third of a U1 pack). U1 goat at
+    /// 0.5 mm margins: 49 as a lattice against 51 dense.
+    Grid,
+}
+
+impl Layout {
+    pub fn members(self) -> &'static [Member] {
+        match self {
+            Layout::Dense => &DEFAULT_MEMBERS,
+            Layout::Grid => &GRID_MEMBERS,
+        }
+    }
+}
+
+/// The regular members, in the portfolio's run order.
+const GRID_MEMBERS: [Member; 4] = [Member::Rows, Member::Lattice, Member::DoubleLattice, Member::TwoBlock];
+
 /// The turn of the whole plate (`--orientation`): every rotation class turned alike.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Orientation {
@@ -95,12 +118,10 @@ pub struct Args {
     /// `--resolutions` (`--resolution X` = just `X`): the raster resolutions the packer climbs,
     /// coarse to fine, mm.
     pub resolutions: Vec<f64>,
-    pub angle_step: f64,
     pub attempts: usize,
-    pub candidates: usize,
-    pub stall: usize,
     pub max_objects: usize,
-    pub seed: u64,
+    /// `--layout dense|grid`: which packing methods run (`Layout::members`).
+    pub layout: Layout,
     /// Overrides the profile's edge margin (Snapmaker Orca's spiral lifting warns unless the
     /// gap is strictly above 3.5 mm, which a 3.5 margin hits exactly).
     pub edge_margin: Option<f64>,
@@ -279,10 +300,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut work_dir = None;
     let mut clearance = DEFAULT_CLEARANCE_MM;
     let mut resolutions: Option<Vec<f64>> = None;
-    let mut angle_step = DEFAULT_ANGLE_STEP_DEG;
     let mut attempts = DEFAULT_ATTEMPTS;
-    let mut candidates = DEFAULT_CANDIDATES;
-    let mut stall = None;
+    let mut layout = Layout::default();
     let mut max_objects = 0usize;
     let mut edge_margin: Option<f64> = None;
     let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
@@ -295,7 +314,6 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut slicer_flavour = None;
     let mut support_margins = None;
     let mut verify = false;
-    let mut seed = DEFAULT_SEED;
     let mut nozzle_clean = None;
     let mut time = TimeOptions::default();
     let mut support_overlap_mm = None;
@@ -323,11 +341,6 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             verify = true;
             continue;
         }
-        // The default job no longer slices the plate, so the old switch has nothing to turn
-        // off; the webapp and old scripts may still pass it.
-        if option == "--no-final-slice" {
-            continue;
-        }
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for {option}"))?;
@@ -339,18 +352,18 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
             "--clearance" => clearance = value.parse()?,
             "--resolution" => resolutions = Some(vec![value.parse()?]),
             "--resolutions" => resolutions = Some(parse_resolutions(&value)?),
-            "--angle-step" => angle_step = value.parse()?,
             "--attempts" => attempts = value.parse()?,
-            "--candidates" => candidates = value.parse()?,
-            "--stall" => stall = Some(value.parse()?),
             "--max-objects" => max_objects = value.parse()?,
             "--edge-margin" => edge_margin = Some(value.parse()?),
             "--tower-width" => tower_width = parse_tower_width(&value)?,
-            // Compatibility: the portfolio always runs every member.
-            "--layout" => match value.as_str() {
-                "search" | "grid" => {}
-                other => return Err(format!("unknown layout mode: {other}").into()),
-            },
+            "--layout" => {
+                layout = match value.as_str() {
+                    // `search`: the name before 2026-11-17, still in saved webapp jobs.
+                    "dense" | "search" => Layout::Dense,
+                    "grid" => Layout::Grid,
+                    other => return Err(format!("--layout must be dense or grid; got {other}").into()),
+                }
+            }
             "--rotations" => rotations = parse_rotations(&value)?,
             "--orientation" => orientation = parse_orientation(&value)?,
             "--prefer-regular" => {
@@ -379,7 +392,6 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
                     other => return Err(format!("unknown support source: {other}").into()),
                 }
             }
-            "--seed" => seed = value.parse()?,
             "--nozzle-clean" => {
                 nozzle_clean = Some(NozzleCleanSpec::parse(&value)?);
             }
@@ -422,8 +434,6 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let output = output.ok_or("--output is required")?;
     let work_dir = work_dir.unwrap_or_else(|| output.with_extension("work"));
     let attempts = attempts.max(1);
-    // Compatibility option: the deterministic finite portfolio does not stop on random stalls.
-    let stall = stall.unwrap_or(0);
     if let Orientation::Turn(turn) = orientation {
         rotations = turned_rotations(&rotations, turn)?;
     }
@@ -439,12 +449,9 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         clearance,
         resolution: resolutions[0],
         resolutions,
-        angle_step,
         attempts,
-        candidates,
-        stall,
         max_objects,
-        seed,
+        layout,
         edge_margin,
         nozzle_clean,
         time,
@@ -570,7 +577,7 @@ mod tests {
     #[test]
     fn keep_own_gap_is_a_valueless_switch_off_by_default() {
         assert!(!parse(&REQUIRED).unwrap().keep_own_gap);
-        assert!(parse_with(&["--keep-own-gap", "--seed", "3"]).unwrap().keep_own_gap);
+        assert!(parse_with(&["--keep-own-gap", "--attempts", "3"]).unwrap().keep_own_gap);
     }
 
     #[test]
@@ -679,8 +686,10 @@ mod tests {
         assert_eq!(defaults.rotations, vec![0.0, 180.0]);
         assert_eq!(defaults.cache_dir, None);
         assert!(parse_with(&["--verify"]).unwrap().verify);
-        // The old switch is accepted and changes nothing.
-        assert!(!parse_with(&["--no-final-slice"]).unwrap().verify);
+        // The switches that did nothing are gone.
+        for gone in [&["--no-final-slice"][..], &["--seed", "1"], &["--candidates", "1"], &["--stall", "0"], &["--angle-step", "2"]] {
+            assert!(parse_with(gone).is_err(), "{gone:?}");
+        }
         assert_eq!(
             parse_with(&["--finish-state", "out.state.json"]).unwrap().finish_state,
             Some(PathBuf::from("out.state.json"))
@@ -694,6 +703,17 @@ mod tests {
             assert!(parse_with(&["--rotations", bad]).is_err(), "{bad:?}");
         }
         assert!(parse_with(&["--sample-objects", "3"]).is_err());
+    }
+
+    #[test]
+    fn the_layout_picks_every_method_or_the_regular_ones() {
+        assert_eq!(parse(&REQUIRED).unwrap().layout, Layout::Dense);
+        assert_eq!(parse_with(&["--layout", "search"]).unwrap().layout, Layout::Dense);
+        let grid = parse_with(&["--layout", "grid"]).unwrap().layout;
+        assert_eq!(grid, Layout::Grid);
+        assert!(grid.members().iter().all(|m| m.is_regular()));
+        assert!(Layout::Dense.members().contains(&Member::Improve));
+        assert!(parse_with(&["--layout", "x"]).is_err());
     }
 
     #[test]

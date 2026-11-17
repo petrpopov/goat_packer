@@ -120,7 +120,7 @@ class PackJobFlowTest(
         assertEquals(catalog.first { it["id"].asText() == "test_wide_bed" }, body["profile"])
         assertEquals(1.2, body["params"]["clearance"].asDouble(), 1e-9)
         assertEquals(false, body["params"]["finalSlice"].asBoolean())
-        assertEquals("search", body["params"]["layout"].asText())
+        assertEquals("dense", body["params"]["layout"].asText())
         assertTrue(body["params"]["customBed"].isNull)
         val input = mockMvc.perform(get("/api/jobs/$jobId/input")).andExpect(status().isOk).andReturn().response
         assertTrue(input.contentAsByteArray.contentEquals(data))
