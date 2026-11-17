@@ -48,8 +48,13 @@ use crate::validation::{
 use members::member_candidates;
 use rayon::prelude::*;
 use select::{Candidate, choose, failure_summary};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
+
+/// Bumped on any change that can make `pack` or `refine` return another outcome for the same
+/// prints, rules, tower and options (a member, the ranking, the checks, the ladder): cached
+/// packing results (`colored_3mf_packer`'s `pack-<key>.json`) then miss.
+pub const PACK_VERSION: u32 = 1;
 
 /// The members `pack` runs on fixed rotation classes. `Mixed` needs a footprint that may
 /// turn freely, so only the legacy search runs it.
@@ -63,7 +68,7 @@ pub const DEFAULT_MEMBERS: [Member; 6] = [
 ];
 
 /// The published layout of a run and how it was found.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PackOutcome {
     /// Every copy: its rotation class (index into the prints) and where that print's frame
     /// origin goes on the plate, mm.
@@ -93,7 +98,7 @@ pub struct PackOutcome {
     pub timings: StageTimes,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct MemberCount {
     pub member: Member,
     pub count: usize,

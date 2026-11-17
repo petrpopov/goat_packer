@@ -24,6 +24,7 @@ mod loops_ops;
 mod margins;
 mod model;
 mod own_gap;
+mod pack_cache;
 mod pack_steps;
 mod order;
 mod orientation;

@@ -15,7 +15,8 @@ class ProbeCacheEntriesTest {
         assertTrue(ProbeCacheEntries.isEntryName("probe-$key.json"))
         assertTrue(ProbeCacheEntries.isEntryName("support-$key.json"))
         assertTrue(ProbeCacheEntries.isEntryName("envelope-$key.json"))
-        for (name in listOf("probe-$key.json.part", "../probe-$key.json", "probe-${key.uppercase()}.json", "probe-abc.json", "probe-$key.json; rm", "x/probe-$key.json", "input.3mf")) {
+        assertTrue(ProbeCacheEntries.isEntryName("pack-$key.json"))
+        for (name in listOf("probe-$key.json.part", "../probe-$key.json", "probe-${key.uppercase()}.json", "probe-abc.json", "probe-$key.json; rm", "x/probe-$key.json", "input.3mf", "pack-$key.json.part")) {
             assertFalse(ProbeCacheEntries.isEntryName(name), name)
         }
     }
@@ -45,5 +46,14 @@ class ProbeCacheEntriesTest {
         assertFalse(valid(name, """{"key":"${"cd".repeat(32)}","envelope":{}}"""))
         assertFalse(valid(name, """{"key":"$key","envelope":[]}"""))
         assertFalse(valid(name, """{"envelope":{}}"""))
+    }
+
+    @Test fun `a packing result must carry its own key, the placements and the ladder levels`() {
+        val name = "pack-$key.json"
+        assertTrue(valid(name, """{"key":"$key","outcome":{"placements":[{"print":0,"x_mm":1.0,"y_mm":2.0}]},"levels":[]}"""))
+        assertFalse(valid(name, """{"key":"${"cd".repeat(32)}","outcome":{"placements":[]},"levels":[]}"""))
+        assertFalse(valid(name, """{"key":"$key","outcome":{"placements":{}},"levels":[]}"""))
+        assertFalse(valid(name, """{"key":"$key","outcome":{"placements":[]}}"""))
+        assertFalse(valid(name, """{"key":"$key","levels":[]}"""))
     }
 }
