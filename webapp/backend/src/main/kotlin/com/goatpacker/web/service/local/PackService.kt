@@ -87,7 +87,6 @@ class PackService(
             profileId = profile.dto.id,
             profilePath = profile.file,
             clearance = form.clearance ?: PackDefaults.CLEARANCE_MM,
-            resolution = form.resolution ?: PackDefaults.RESOLUTION_MM,
             attempts = form.attempts ?: PackDefaults.ATTEMPTS,
             edgeMargin = form.edgeMargin,
             towerWidth = form.towerWidth,

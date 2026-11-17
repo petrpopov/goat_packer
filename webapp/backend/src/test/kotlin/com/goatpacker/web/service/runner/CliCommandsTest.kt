@@ -11,7 +11,6 @@ class CliCommandsTest {
         profileId = "test",
         profilePath = Path.of("profile.json"),
         clearance = 0.7,
-        resolution = 0.25,
         attempts = 1,
         edgeMargin = null,
         layout = "dense",
@@ -46,10 +45,8 @@ class CliCommandsTest {
     }
 
     @Test
-    fun `разрешение по умолчанию оставляет пакеру лестницу, заданное передаётся`() {
+    fun `растр не передаётся - пакер идёт своей лестницей`() {
         assertFalse("--resolution" in CliCommands.pack("packer", base))
-        val args = CliCommands.pack("packer", base.copy(resolution = 0.2))
-        assertEquals("0.2", args[args.indexOf("--resolution") + 1])
     }
 
     @Test

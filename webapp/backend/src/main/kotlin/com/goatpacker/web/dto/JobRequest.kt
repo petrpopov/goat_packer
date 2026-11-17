@@ -14,7 +14,6 @@ data class JobRequest(
     val packJobId: String? = null,
     val profileId: String = "",
     val clearance: Double = PackDefaults.CLEARANCE_MM,
-    val resolution: Double = PackDefaults.RESOLUTION_MM,
     val attempts: Long = PackDefaults.ATTEMPTS,
     val edgeMargin: Double? = null,
     /** Ширина черновой башни, мм (упаковка) → --tower-width; null = дефолт пакера (20). */

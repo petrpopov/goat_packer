@@ -158,7 +158,6 @@ class WorkerJobProcessor(
                     profileId = record.profileId,
                     profilePath = profilePath,
                     clearance = request.clearance,
-                    resolution = request.resolution,
                     attempts = request.attempts,
                     edgeMargin = request.edgeMargin,
                     towerWidth = request.towerWidth,

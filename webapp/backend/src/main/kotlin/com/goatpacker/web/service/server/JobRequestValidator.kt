@@ -32,9 +32,7 @@ object JobRequestValidator {
         validateBed(r, kind)
         if (r.variant !in CALIBRATION_VARIANTS) badRequest("Вариант калибровки: ${CALIBRATION_VARIANTS.joinToString(" или ")}")
         if (r.supportOverlapMm.isOutOf(JobLimits.SUPPORT_OVERLAP_MM)) badRequest("Перекрытие поддержек должно быть 0–20 мм")
-        if (r.clearance.isOutOf(JobLimits.CLEARANCE_MM) || r.resolution.isOutOf(JobLimits.RESOLUTION_MM)) {
-            badRequest("Некорректные зазор/разрешение")
-        }
+        if (r.clearance.isOutOf(JobLimits.CLEARANCE_MM)) badRequest("Некорректный зазор")
         if (r.attempts !in JobLimits.ATTEMPTS || r.layout !in LAYOUTS || r.benchMode !in BENCH_MODES) badRequest("Некорректный режим поиска")
         if (r.edgeMargin.isOutOf(JobLimits.EDGE_MARGIN_MM)) badRequest("Некорректный отступ")
         if (r.precision !in PRECISIONS) badRequest("Расчёт поддержек: ${PRECISIONS.joinToString(" или ")}")

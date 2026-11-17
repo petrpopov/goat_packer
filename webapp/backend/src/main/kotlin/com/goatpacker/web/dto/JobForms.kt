@@ -23,9 +23,6 @@ data class PackJobForm(
     @field:DecimalMin(value = "0.05", message = "clearance должен быть в диапазоне 0.05..10 мм")
     @field:DecimalMax(value = "10", message = "clearance должен быть в диапазоне 0.05..10 мм")
     val clearance: Double? = null,
-    @field:DecimalMin(value = "0.05", message = "resolution должен быть в диапазоне 0.05..1.0 мм")
-    @field:DecimalMax(value = "1.0", message = "resolution должен быть в диапазоне 0.05..1.0 мм")
-    val resolution: Double? = null,
     @field:Min(value = 1, message = "attempts должен быть в диапазоне 1..1000000")
     @field:Max(value = 1000000, message = "attempts должен быть в диапазоне 1..1000000")
     val attempts: Long? = null,

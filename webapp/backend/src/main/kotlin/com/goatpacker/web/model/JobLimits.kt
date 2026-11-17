@@ -3,7 +3,6 @@ package com.goatpacker.web.model
 /** Допустимые диапазоны настроек задач (мм, часы, секунды, проценты — как в API и в документации). */
 object JobLimits {
     val CLEARANCE_MM = 0.05..10.0
-    val RESOLUTION_MM = 0.05..1.0
     val ATTEMPTS = 1L..1_000_000L
     val EDGE_MARGIN_MM = 0.0..20.0
     val TOWER_WIDTH_MM = 5.0..60.0

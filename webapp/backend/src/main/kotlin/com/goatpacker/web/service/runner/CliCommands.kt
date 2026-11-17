@@ -17,10 +17,9 @@ object CliCommands {
         addOption("--output", JobArtifacts.PACKED_3MF)
         addOption("--work-dir", JobArtifacts.PACK_WORK_DIR)
         addOption("--clearance", params.clearance)
-        // Дефолт формы = лестница пакера (0.25, затем 0.2 мм): `--resolution X` оставляет один
-        // уровень X, и веб-задачи P1S теряли копию, которую даёт уровень 0.2 мм (42 вместо 43).
-        // Заданное пользователем разрешение передаётся как есть.
-        if (params.resolution != PackDefaults.RESOLUTION_MM) addOption("--resolution", params.resolution)
+        // Растр не передаётся: лестница пакера (0.25, затем 0.2 мм; «Быстро» — одна 0.25) лучше
+        // любого одного шага. `--resolution X` оставлял один уровень X, и веб-задачи P1S теряли
+        // копию, которую даёт уровень 0.2 мм (42 вместо 43).
         addOption("--attempts", params.attempts)
         params.edgeMargin?.let { addOption("--edge-margin", it) }
         // Пусто = дефолт пакера (20 мм): передаём только заданное.

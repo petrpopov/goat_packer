@@ -436,17 +436,6 @@ function AdvancedFields({
           disabled={disabled}
         />
       </Field>
-      <Field
-        label="Растр, мм"
-        hint="шаг сетки поиска раскладки; меньше — точнее и дольше, на плотность обычно не влияет"
-      >
-        <NumberInput
-          min={LIMITS.resolutionMm.min}
-          value={values.resolution}
-          onChange={(value) => update('resolution', value)}
-          disabled={disabled}
-        />
-      </Field>
       {/* Свой стол несёт отступ в своих полях. */}
       {custom ? null : (
         <Field

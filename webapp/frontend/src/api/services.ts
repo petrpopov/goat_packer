@@ -110,7 +110,6 @@ async function submitServer(kind: 'PACK' | 'SCHEDULE' | 'CALIBRATION', form: For
     }
     body[name] = [
       'clearance',
-      'resolution',
       'attempts',
       'edgeMargin',
       'towerWidth',

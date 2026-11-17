@@ -74,7 +74,6 @@ fun PlateRecord.toDto() = PlateDto(label, objectCount)
 /** Настройки pack-джоба для режима «только чтение» (локальный режим). */
 fun PackParams.toDto() = PackParamsDto(
     clearance = clearance,
-    resolution = resolution,
     layout = layout,
     precision = precision,
     nozzleClean = nozzleClean,
@@ -93,7 +92,6 @@ fun PackParams.toDto() = PackParamsDto(
 /** Настройки pack-джоба для режима «только чтение» (серверный режим). */
 fun JobRequest.toPackParamsDto() = PackParamsDto(
     clearance = clearance,
-    resolution = resolution,
     layout = layout,
     precision = precision,
     nozzleClean = nozzleClean,

@@ -18,7 +18,6 @@ export type PackLayoutMode = 'dense' | 'grid';
 /** Поля формы упаковки строками — как их ввёл пользователь. */
 export interface PackFormValues {
   clearance: string;
-  resolution: string;
   layout: PackLayoutMode;
   precision: PackPrecision;
   cleanMode: NozzleCleanMode;
@@ -49,7 +48,6 @@ export const EMPTY_BED: CustomBedInput = { width: '', depth: '', height: '', mar
 
 export const DEFAULT_PACK_FORM: PackFormValues = {
   clearance: '0.7',
-  resolution: '0.25',
   layout: 'dense',
   precision: 'precise',
   cleanMode: 'off',
@@ -75,7 +73,6 @@ export function valuesFromParams(params: PackParamsView, current: PackFormValues
   return {
     ...current,
     clearance: String(params.clearance),
-    resolution: String(params.resolution),
     // Прежнее search (задачи до 2026-11-17) — это dense.
     layout: params.layout === 'grid' ? 'grid' : 'dense',
     precision: params.precision === 'fast' ? 'fast' : 'precise',
@@ -156,7 +153,6 @@ export function packRequestParts(values: PackFormValues, context: PackRequestCon
   const support = attempt<Fields>(() => buildSupportOverlap(values.supportOverlap), []);
   const numbersValid =
     inRange(values.clearance, LIMITS.clearanceMm) &&
-    inRange(values.resolution, LIMITS.resolutionMm) &&
     (values.edgeMargin.trim() === '' || inRange(values.edgeMargin, LIMITS.edgeMarginMm)) &&
     towerWidthValid(values.towerWidth);
   return {
@@ -194,7 +190,6 @@ export function packFormData(
     form.append('profileId', target.profileId);
   }
   form.append('clearance', values.clearance);
-  form.append('resolution', values.resolution);
   // attempts не шлём: действует дефолт бэкенда (= CLI). Ползунок усилия убран — с поддержками
   // поиск всегда перебирает фиксированные 64 варианта, число попыток ни на что не влияло.
   form.append('nozzleClean', parts.nozzleSpec);

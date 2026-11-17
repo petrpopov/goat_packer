@@ -214,7 +214,6 @@ data class JobStageDto(
 @JsonInclude(JsonInclude.Include.ALWAYS)
 data class PackParamsDto(
     val clearance: Double,
-    val resolution: Double,
     val layout: String,
     /** Расчёт поддержек: precise|fast. */
     val precision: String,
