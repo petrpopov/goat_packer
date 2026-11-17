@@ -47,7 +47,7 @@ impl Member {
 
 /// What decides between two equal layouts that no geometry tells apart: the member, the
 /// tower anchor, then the member's own canonical tuple (variant, shift, HNF entries, ...).
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct TieKey {
     pub member: Member,
     /// Index of the tower anchor in the run's candidate list (0 = the source anchor, and 0
@@ -58,7 +58,7 @@ pub struct TieKey {
 
 /// The ranking key of a layout, compared lexicographically (design §9.4). `Ord` sorts the
 /// winner first.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RankKey {
     pub count: usize,
     /// Robustness δ* in quarter millimetres (higher wins). Placeholder: 0 for every layout
@@ -100,7 +100,7 @@ pub(crate) struct Candidate {
 }
 
 /// A shortlisted candidate that failed a check.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CheckFailure {
     /// Position in the shortlist (0 = best key).
     pub rank: usize,
@@ -110,7 +110,7 @@ pub struct CheckFailure {
 }
 
 /// How the winner was validated.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ValidationReport {
     pub shortlisted: usize,
     pub raster_passed: usize,
