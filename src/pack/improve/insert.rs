@@ -14,8 +14,11 @@ const MAX_COST: u32 = 300;
 const BUCKET: i32 = 64;
 
 /// Every sampled free origin with its cost, cheapest first (ties: lower row, column, class).
+/// Origins are kept by cost (a cost never exceeds `MAX_COST`) and a cost's origins are
+/// ordered only when `spots` reaches them: sorting every origin of the plate was 7 % of a
+/// U1 job's CPU (2026-11-17) for the few cheapest spots it reads.
 pub(super) struct CostMap {
-    cells: Vec<(u32, PixelPlacement)>,
+    by_cost: Vec<Vec<PixelPlacement>>,
 }
 
 impl CostMap {
@@ -27,7 +30,7 @@ impl CostMap {
         area: Window,
         step: usize,
     ) -> CostMap {
-        let mut cells: Vec<(u32, PixelPlacement)> = Vec::new();
+        let mut by_cost: Vec<Vec<PixelPlacement>> = vec![Vec::new(); MAX_COST as usize + 1];
         // The neighbours of each bucket of the window, found on first use (shared by the
         // classes).
         let (bx0, by0) = (area.x0.div_euclid(BUCKET), area.y0.div_euclid(BUCKET));
@@ -47,13 +50,12 @@ impl CostMap {
                         field.neighbours(items, centre.0, centre.1, BUCKET / 2, None)
                     });
                     if let Some(cost) = field.overlap_at_most(items, near, class, x, y, MAX_COST) {
-                        cells.push((cost, PixelPlacement { class, x, y }));
+                        by_cost[cost as usize].push(PixelPlacement { class, x, y });
                     }
                 }
             }
         }
-        cells.sort_unstable_by_key(|&(cost, p)| (cost, p.y, p.x, p.class));
-        CostMap { cells }
+        CostMap { by_cost }
     }
 
     /// The cheapest origins, at most `limit`, spread apart.
@@ -62,14 +64,18 @@ impl CostMap {
         if limit == 0 {
             return picked;
         }
-        for &(cost, p) in &self.cells {
-            let apart = picked
-                .iter()
-                .all(|(_, q)| (q.x - p.x).abs().max((q.y - p.y).abs()) >= SPREAD);
-            if apart {
-                picked.push((cost, p));
-                if picked.len() == limit {
-                    break;
+        for (cost, origins) in self.by_cost.iter().enumerate() {
+            let mut origins = origins.clone();
+            origins.sort_unstable_by_key(|p| (p.y, p.x, p.class));
+            for p in origins {
+                let apart = picked
+                    .iter()
+                    .all(|(_, q)| (q.x - p.x).abs().max((q.y - p.y).abs()) >= SPREAD);
+                if apart {
+                    picked.push((cost as u32, p));
+                    if picked.len() == limit {
+                        return picked;
+                    }
                 }
             }
         }

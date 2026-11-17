@@ -36,11 +36,23 @@ impl Field<'_> {
         slack: i32,
         skip: Option<usize>,
     ) -> Vec<usize> {
+        self.near(items, x, y, slack, skip).collect()
+    }
+
+    /// `neighbours` in index order, without collecting them: the search asks for them at
+    /// every step and a fresh `Vec` per call was a visible share of `separate`.
+    fn near<'i>(
+        &self,
+        items: &'i [PixelPlacement],
+        x: i32,
+        y: i32,
+        slack: i32,
+        skip: Option<usize>,
+    ) -> impl Iterator<Item = usize> + 'i {
         let reach = self.depth.reach() + slack;
         (0..items.len())
-            .filter(|&j| Some(j) != skip)
-            .filter(|&j| (items[j].x - x).abs() <= reach && (items[j].y - y).abs() <= reach)
-            .collect()
+            .filter(move |&j| Some(j) != skip)
+            .filter(move |&j| (items[j].x - x).abs() <= reach && (items[j].y - y).abs() <= reach)
     }
 
     /// Sum of depths of a copy of `class` at `(x, y)` against `near`.
@@ -166,26 +178,30 @@ pub(super) fn separate(
     let mut weights = Weights::new(items.len());
     // Total overlap (each pair counted from both sides) of the best iteration so far.
     let (mut best_total, mut best_iteration) = (u32::MAX, 0);
+    // Scratch buffers reused by every iteration.
+    let (mut colliding, mut near): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
     for iteration in 0..max_iters {
-        let overlaps: Vec<(usize, u32)> = mobile
-            .iter()
-            .map(|&i| (i, overlap_of(field, items, i)))
-            .filter(|&(_, o)| o > 0)
-            .collect();
-        if overlaps.is_empty() {
+        colliding.clear();
+        let mut total = 0u32;
+        for &i in mobile {
+            let overlap = overlap_of(field, items, i);
+            if overlap > 0 {
+                colliding.push(i);
+                total += overlap;
+            }
+        }
+        if colliding.is_empty() {
             return true;
         }
-        let total: u32 = overlaps.iter().map(|&(_, o)| o).sum();
         if total < best_total {
             (best_total, best_iteration) = (total, iteration);
         } else if iteration - best_iteration > STALL_ITERATIONS {
             return false;
         }
-        let colliding: Vec<usize> = overlaps.iter().map(|&(i, _)| i).collect();
         let mut improved = false;
         for k in 0..colliding.len() {
             let i = colliding[(k + iteration) % colliding.len()];
-            improved |= move_item(field, items, &weights, i);
+            improved |= move_item(field, items, &weights, i, &mut near);
         }
         if !improved {
             grow_weights(field, items, mobile, &mut weights);
@@ -195,16 +211,30 @@ pub(super) fn separate(
 }
 
 fn overlap_of(field: &Field, items: &[PixelPlacement], i: usize) -> u32 {
-    let near = field.neighbours(items, items[i].x, items[i].y, 0, Some(i));
-    field.overlap(items, &near, items[i].class, items[i].x, items[i].y)
+    let at = items[i];
+    field
+        .near(items, at.x, at.y, 0, Some(i))
+        .map(|j| {
+            let o = items[j];
+            field.depth.at(o.class, at.class, at.x - o.x, at.y - o.y)
+        })
+        .sum()
 }
 
 /// Coordinate descent step of copy `i`: the best position on the x line through it (every
-/// class), then on the y line. True when the copy moved.
-fn move_item(field: &Field, items: &mut [PixelPlacement], weights: &Weights, i: usize) -> bool {
+/// class), then on the y line. True when the copy moved. `near` is a scratch buffer.
+fn move_item(
+    field: &Field,
+    items: &mut [PixelPlacement],
+    weights: &Weights,
+    i: usize,
+    near: &mut Vec<usize>,
+) -> bool {
     let start = items[i];
-    let near = field.neighbours(items, start.x, start.y, 2 * MOVE_RADIUS, Some(i));
-    let mut best = (field.weighted(items, weights, i, &near, start), start);
+    near.clear();
+    near.extend(field.near(items, start.x, start.y, 2 * MOVE_RADIUS, Some(i)));
+    let near = near.as_slice();
+    let mut best = (field.weighted(items, weights, i, near, start), start);
     for axis in 0..2 {
         let at = best.1;
         let line = (-MOVE_RADIUS..=MOVE_RADIUS).flat_map(|d| {
@@ -248,8 +278,7 @@ fn consider(
 fn grow_weights(field: &Field, items: &[PixelPlacement], mobile: &[usize], weights: &mut Weights) {
     let mut pairs = Vec::new();
     for &i in mobile {
-        let near = field.neighbours(items, items[i].x, items[i].y, 0, Some(i));
-        for j in near {
+        for j in field.near(items, items[i].x, items[i].y, 0, Some(i)) {
             let both_mobile = mobile.contains(&j);
             if both_mobile && j < i {
                 continue;

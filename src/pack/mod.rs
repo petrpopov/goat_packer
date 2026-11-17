@@ -401,8 +401,20 @@ impl<'a> Checks<'a> {
         choose(candidates, raster, vector).map_err(|(_, report)| report)
     }
 
-    /// One raster verdict per candidate, in shortlist order.
+    /// One raster verdict per candidate, in shortlist order. One validator serves every
+    /// anchor: the kind shapes, masks and plate-zone tests do not depend on the tower (they
+    /// were rebuilt per anchor and were most of the check, U1 2026-11-17), so each anchor
+    /// only adds the tests of its tower zones, which follow the plate's in the zone list.
     fn raster_verdicts(&self, shortlist: &[Candidate]) -> Vec<Result<(), String>> {
+        let layouts: Vec<Vec<PrintPlacement>> = shortlist
+            .iter()
+            .map(|c| print_placements(c, &self.grid))
+            .collect();
+        let mut validator = match RasterValidator::new(self.prints, &self.base, self.grid) {
+            Ok(validator) => validator,
+            Err(error) => return vec![Err(error); shortlist.len()],
+        };
+        validator.prime(&layouts);
         let mut anchors: Vec<Option<usize>> = shortlist.iter().map(|c| c.anchor).collect();
         anchors.sort_unstable();
         anchors.dedup();
@@ -412,18 +424,13 @@ impl<'a> Checks<'a> {
                 let mine: Vec<usize> = (0..shortlist.len())
                     .filter(|&i| shortlist[i].anchor == anchor)
                     .collect();
-                match RasterValidator::new(self.prints, &self.rules(anchor), self.grid) {
-                    Ok(mut validator) => mine
-                        .into_iter()
-                        .map(|i| {
-                            (
-                                i,
-                                validator.check(&print_placements(&shortlist[i], &self.grid)),
-                            )
-                        })
-                        .collect(),
-                    Err(error) => mine.into_iter().map(|i| (i, Err(error.clone()))).collect(),
-                }
+                let tower: &[PlateZone] = anchor.map_or(&[], |slot| &self.towers[slot]);
+                let mine_layouts: Vec<&[PrintPlacement]> =
+                    mine.iter().map(|&i| layouts[i].as_slice()).collect();
+                let extra = validator.extra_zones(tower, &mine_layouts);
+                mine.into_iter()
+                    .map(|i| (i, validator.check_primed(&layouts[i], &extra)))
+                    .collect()
             })
             .collect();
         let mut verdicts: Vec<Option<Result<(), String>>> = vec![None; shortlist.len()];
