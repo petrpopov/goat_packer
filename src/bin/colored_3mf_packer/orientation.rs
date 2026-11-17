@@ -5,28 +5,31 @@
 //! 49 as a lattice at classes 0/180, 52 at 5/185, 51 at 325/145, and the count jumps between
 //! neighbouring 5-degree turns (49..53 over the sweep), so the turn is searched, not derived.
 //!
-//! Modelling the supports of a turn costs as much as the whole default run, so turns are
-//! screened first with the modelled classes turned rigidly (`ObjectPrint::turned`) and packed
-//! by the lattice family at the coarse resolution only. Tree supports are not
-//! rotation-equivariant (the roof line angle stays in the bed frame), so a screened count is
-//! an estimate: the best screened turns are modelled at their own angle and packed by the
-//! whole pipeline, beside the unturned plate, and the best of those real packs wins. The
-//! unturned plate is always one of them, so the search never returns fewer copies than a
-//! fixed turn of 0 would.
+//! Every turn is screened with its own supports, modelled at `Precision::Fast`, packed by the
+//! lattice family at the coarse resolution with a small lattice budget. The classes turned
+//! rigidly (`ObjectPrint::turned`) would cost no model, but tree supports are not
+//! rotation-equivariant (the roof lines stay in the bed frame; the U1 support base at 5
+//! degrees differs from the turned 0-degree one by up to 0.65 mm) and the lattice count
+//! swings with that: the rigid screen gave 5° 47 copies where its own model packs 52. The
+//! best screened turn is then modelled at the job's precision and packed by the whole
+//! pipeline beside the unturned plate, and the better real pack wins: the unturned plate is
+//! always packed, so the search never returns fewer copies than a fixed turn of 0 would.
 
 use goat_packer::{
     PackOptions,
-    object_print::ObjectPrint,
     pack::{Member, PackOutcome, pack_members},
     progress::{self, Stage, StageDetail},
+    support_model::precision::Precision,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
-use crate::args::turned_rotations;
+use crate::args::{SupportSource, turned_rotations};
+use crate::from_model::modelled_plate_at;
 use crate::gaps::GapVariant;
 use crate::job::Job;
 use crate::model::{Modelled, model_plate};
+use crate::pack_cache::cached_members;
 use crate::plan::PackPlan;
 use crate::prepare::pack_variants;
 
@@ -41,6 +44,9 @@ const FINALISTS: usize = 1;
 /// The members a turn is screened with: the regular ones. They decide how the lattice meets
 /// the edges; `Improve` and the sweeps cost most of a pack and follow the lattices' count.
 const SCREEN_MEMBERS: [Member; 3] = [Member::Lattice, Member::DoubleLattice, Member::TwoBlock];
+
+/// The lattice budget of a screen (`Budget::for_effort`; the full budget is 64).
+const SCREEN_EFFORT: usize = 64;
 
 /// One screened or packed turn.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -73,9 +79,14 @@ pub struct Found {
 /// turns in full, and keeps the best pack.
 pub fn search(job: &Job) -> AppResult<Found> {
     let base = model_plate(job, &job.args.rotations)?;
+    if base.source != SupportSource::Model {
+        return Err("--orientation auto screens every turn with the support model, and the \
+                    model does not cover this project: pack with a fixed --orientation"
+            .into());
+    }
     let started = std::time::Instant::now();
     let turns = screen_turns(&job.args.rotations);
-    let screened = screen(job, &base.plan, &turns)?;
+    let screened = screen(job, &turns)?;
     let screen_seconds = started.elapsed().as_secs_f64();
     let finalists = finalists(&screened);
     eprintln!(
@@ -150,12 +161,8 @@ fn same_set(rotations: &[f64], turn: f64) -> bool {
         .all(|&r| rotations.iter().any(|&q| close(r + turn, q)))
 }
 
-/// The lattice count of every turn, the classes of `plan` turned rigidly.
-fn screen(job: &Job, plan: &PackPlan, turns: &[f64]) -> AppResult<Vec<TurnCount>> {
-    let options = PackOptions {
-        resolutions: vec![job.args.resolution],
-        ..plan.options(&job.args)
-    };
+/// The lattice count of every turn, its classes modelled at `Precision::Fast`.
+fn screen(job: &Job, turns: &[f64]) -> AppResult<Vec<TurnCount>> {
     turns
         .iter()
         .enumerate()
@@ -166,15 +173,17 @@ fn screen(job: &Job, plan: &PackPlan, turns: &[f64]) -> AppResult<Vec<TurnCount>
                 None,
                 &StageDetail::new(index, turns.len()).with("turn_deg", turn),
             );
-            let prints: Vec<ObjectPrint> =
-                plan.prints.iter().map(|print| print.turned(turn)).collect();
-            let count = pack_members(
-                &prints,
-                &plan.rules,
-                plan.tower.as_ref(),
-                &options,
-                &SCREEN_MEMBERS,
-            )
+            let rotations = turned_rotations(&job.args.rotations, turn)?;
+            let plan: PackPlan = modelled_plate_at(job, &rotations, Precision::Fast)?.plan;
+            let options = PackOptions {
+                resolutions: vec![job.args.resolution],
+                attempts: SCREEN_EFFORT,
+                ..plan.options(&job.args)
+            };
+            // Cached like a full pack: a rerun over the same model screens in seconds.
+            let count = cached_members(job.args.cache_dir.as_deref(), &plan, &options, &SCREEN_MEMBERS, || {
+                pack_members(&plan.prints, &plan.rules, plan.tower.as_ref(), &options, &SCREEN_MEMBERS)
+            })
             .map_or(0, |outcome| outcome.placements.len());
             Ok(TurnCount {
                 turn_deg: turn,

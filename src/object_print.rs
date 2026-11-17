@@ -230,7 +230,33 @@ pub fn layer_bands(z_bottom: f64, z_top: f64) -> RangeInclusive<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::layer_bands;
+    use super::{ObjectPrint, layer_bands};
+    use crate::geometry::{Point, Rect};
+
+    #[test]
+    fn a_quarter_turn_turns_every_kind_and_rebuilds_the_part_boxes() {
+        let p = |x, y| Point { x, y };
+        let strip = vec![vec![p(0.0, 0.0), p(4.0, 0.0), p(4.0, 1.0), p(0.0, 1.0), p(0.0, 0.0)]];
+        let print = ObjectPrint {
+            rotation_deg: 180.0,
+            silhouette: strip.clone(),
+            part_hulls: strip.clone(),
+            part_boxes: vec![Rect::new(0.0, 0.0, 4.0, 1.0)],
+            support_base: strip.clone(),
+            support: vec![strip.clone()],
+            ..ObjectPrint::default()
+        };
+        let turned = print.turned(90.0);
+        assert_eq!(turned.rotation_deg, 270.0);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let corner = turned.support[0][0][2];
+        assert!(close(corner.x, -1.0) && close(corner.y, 4.0), "{corner:?}");
+        let b = turned.part_boxes[0];
+        assert!(close(b.min_x, -1.0) && close(b.max_x, 0.0) && close(b.min_y, 0.0) && close(b.max_y, 4.0));
+        let back = turned.turned(-90.0);
+        assert!(close(back.silhouette[0][1].x, 4.0) && close(back.silhouette[0][1].y, 0.0));
+        assert_eq!(print.turned(0.0).support_base, print.support_base);
+    }
 
     #[test]
     fn a_layer_belongs_to_every_band_it_overlaps_with_positive_length() {

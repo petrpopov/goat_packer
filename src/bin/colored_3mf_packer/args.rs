@@ -697,6 +697,23 @@ mod tests {
     }
 
     #[test]
+    fn a_plate_turn_turns_every_class_and_auto_keeps_them() {
+        let defaults = parse(&REQUIRED).unwrap();
+        assert_eq!(defaults.orientation, Orientation::Turn(0.0));
+        assert_eq!(defaults.prefer_regular, 0);
+        let turned = parse_with(&["--orientation", "-5"]).unwrap();
+        assert_eq!(turned.rotations, vec![355.0, 175.0]);
+        let auto = parse_with(&["--orientation", "auto", "--rotations", "10,190"]).unwrap();
+        assert_eq!(auto.orientation, Orientation::Auto);
+        assert_eq!(auto.rotations, vec![10.0, 190.0]);
+        assert_eq!(parse_with(&["--prefer-regular", "2"]).unwrap().prefer_regular, 2);
+        for bad in ["", "x", "inf"] {
+            assert!(parse_with(&["--orientation", bad]).is_err(), "{bad:?}");
+        }
+        assert!(parse_with(&["--prefer-regular", "-1"]).is_err());
+    }
+
+    #[test]
     fn centre_out_only_with_a_window_and_without_no_centre() {
         assert!(!parse(&REQUIRED).unwrap().time.centre_out());
         assert!(!parse_with(&["--no-centre"]).unwrap().time.centre_out());

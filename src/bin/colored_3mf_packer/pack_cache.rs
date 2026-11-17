@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use goat_packer::{
     PackOptions,
-    pack::{DEFAULT_MEMBERS, LevelReport, PACK_VERSION, PackOutcome},
+    pack::{DEFAULT_MEMBERS, LevelReport, Member, PACK_VERSION, PackOutcome},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -42,11 +42,22 @@ pub fn cached(
     options: &PackOptions,
     pack: impl FnOnce() -> Result<PackOutcome, String>,
 ) -> Result<PackOutcome, String> {
+    cached_members(dir, plan, options, &DEFAULT_MEMBERS, pack)
+}
+
+/// `cached` for a pack by `members` only (the orientation screen's lattice family).
+pub fn cached_members(
+    dir: Option<&Path>,
+    plan: &PackPlan,
+    options: &PackOptions,
+    members: &[Member],
+    pack: impl FnOnce() -> Result<PackOutcome, String>,
+) -> Result<PackOutcome, String> {
     let Some(dir) = dir else {
         PACKED.store(true, Ordering::Relaxed);
         return pack();
     };
-    let key = cache_key(plan, options);
+    let key = cache_key(plan, options, members);
     if let Some(outcome) = load(dir, &key) {
         return Ok(outcome);
     }
@@ -61,10 +72,10 @@ pub fn cached(
 
 /// SHA-256 hex of everything a pack depends on: the algorithm's version, the members, the
 /// plan (prints, plate rules, tower, foreign gaps) and every packing option.
-pub fn cache_key(plan: &PackPlan, options: &PackOptions) -> String {
+pub fn cache_key(plan: &PackPlan, options: &PackOptions, members: &[Member]) -> String {
     let mut hash = Sha256::new();
     hash.update(PACK_VERSION.to_le_bytes());
-    hash_bytes(&mut hash, format!("{DEFAULT_MEMBERS:?}").as_bytes());
+    hash_bytes(&mut hash, format!("{members:?}").as_bytes());
     hash_bytes(&mut hash, &serde_json::to_vec(plan).unwrap_or_default());
     hash_bytes(&mut hash, &serde_json::to_vec(options).unwrap_or_default());
     format!("{:x}", hash.finalize())
