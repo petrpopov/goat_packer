@@ -48,8 +48,13 @@ use crate::validation::{
 use members::member_candidates;
 use rayon::prelude::*;
 use select::{Candidate, choose, failure_summary};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
+
+/// Bumped on any change that can make `pack` or `refine` return another outcome for the same
+/// prints, rules, tower and options (a member, the ranking, the checks, the ladder): cached
+/// packing results (`colored_3mf_packer`'s `pack-<key>.json`) then miss.
+pub const PACK_VERSION: u32 = 1;
 
 /// The members `pack` runs on fixed rotation classes. `Mixed` needs a footprint that may
 /// turn freely, so only the legacy search runs it.
@@ -63,7 +68,7 @@ pub const DEFAULT_MEMBERS: [Member; 6] = [
 ];
 
 /// The published layout of a run and how it was found.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PackOutcome {
     /// Every copy: its rotation class (index into the prints) and where that print's frame
     /// origin goes on the plate, mm.
@@ -93,7 +98,7 @@ pub struct PackOutcome {
     pub timings: StageTimes,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct MemberCount {
     pub member: Member,
     pub count: usize,
@@ -238,6 +243,14 @@ fn pack_level(
             select_s,
         },
     })
+}
+
+/// Gives every regular candidate its head start in the ranking (`PackOptions::prefer_regular`).
+pub(crate) fn prefer_regular(candidates: &mut [Candidate], head_start: usize) {
+    for candidate in candidates {
+        let regular = candidate.key.tie.member.is_regular();
+        candidate.key.preferred = candidate.key.count + if regular { head_start } else { 0 };
+    }
 }
 
 /// The object cap the members get: the caller's (0 = none) lowered to the bound.
@@ -388,8 +401,20 @@ impl<'a> Checks<'a> {
         choose(candidates, raster, vector).map_err(|(_, report)| report)
     }
 
-    /// One raster verdict per candidate, in shortlist order.
+    /// One raster verdict per candidate, in shortlist order. One validator serves every
+    /// anchor: the kind shapes, masks and plate-zone tests do not depend on the tower (they
+    /// were rebuilt per anchor and were most of the check, U1 2026-11-17), so each anchor
+    /// only adds the tests of its tower zones, which follow the plate's in the zone list.
     fn raster_verdicts(&self, shortlist: &[Candidate]) -> Vec<Result<(), String>> {
+        let layouts: Vec<Vec<PrintPlacement>> = shortlist
+            .iter()
+            .map(|c| print_placements(c, &self.grid))
+            .collect();
+        let mut validator = match RasterValidator::new(self.prints, &self.base, self.grid) {
+            Ok(validator) => validator,
+            Err(error) => return vec![Err(error); shortlist.len()],
+        };
+        validator.prime(&layouts);
         let mut anchors: Vec<Option<usize>> = shortlist.iter().map(|c| c.anchor).collect();
         anchors.sort_unstable();
         anchors.dedup();
@@ -399,18 +424,13 @@ impl<'a> Checks<'a> {
                 let mine: Vec<usize> = (0..shortlist.len())
                     .filter(|&i| shortlist[i].anchor == anchor)
                     .collect();
-                match RasterValidator::new(self.prints, &self.rules(anchor), self.grid) {
-                    Ok(mut validator) => mine
-                        .into_iter()
-                        .map(|i| {
-                            (
-                                i,
-                                validator.check(&print_placements(&shortlist[i], &self.grid)),
-                            )
-                        })
-                        .collect(),
-                    Err(error) => mine.into_iter().map(|i| (i, Err(error.clone()))).collect(),
-                }
+                let tower: &[PlateZone] = anchor.map_or(&[], |slot| &self.towers[slot]);
+                let mine_layouts: Vec<&[PrintPlacement]> =
+                    mine.iter().map(|&i| layouts[i].as_slice()).collect();
+                let extra = validator.extra_zones(tower, &mine_layouts);
+                mine.into_iter()
+                    .map(|i| (i, validator.check_primed(&layouts[i], &extra)))
+                    .collect()
             })
             .collect();
         let mut verdicts: Vec<Option<Result<(), String>>> = vec![None; shortlist.len()];

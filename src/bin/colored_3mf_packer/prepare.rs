@@ -14,7 +14,9 @@ use crate::assembly::tower_rect;
 use crate::gaps::{GapVariant, choose, floor_warning, refine_rungs};
 use crate::pack_steps::{PackSteps, ladder, refine_by_level};
 use crate::job::Job;
+use crate::args::Orientation;
 use crate::model::{Modelled, model_plate};
+use crate::orientation::search;
 use crate::order::{BAMBU_OBSTACLE_MM, barriers, canonical_first, centre_out};
 use crate::plan::{MemberResult, PackPlan, PackState, PackSummary, STATE_VERSION};
 use crate::probe::time_probe;
@@ -28,7 +30,22 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
         Some(window_s) => Some(time_probe(job, window_s)?),
         None => None,
     };
-    let (modelled, outcome, variants) = pack_variants(job)?;
+    if let Some(warning) = floor_warning(job.args.foreign_gap_floor) {
+        // A plain line, not a packing stage event: it comes before the probes, and a packing
+        // event there would open the packing stage twice in the webapp's stage list.
+        eprintln!("warning: {warning}");
+    }
+    let (modelled, outcome, variants, orientation) = match job.args.orientation {
+        Orientation::Turn(_) => {
+            let model = model_plate(job, &job.args.rotations)?;
+            let (modelled, outcome, variants) = pack_variants(job, model)?;
+            (modelled, outcome, variants, None)
+        }
+        Orientation::Auto => {
+            let found = search(job)?;
+            (found.modelled, found.outcome, found.variants, Some(found.report))
+        }
+    };
     // Centre-out time-window plate: the kept objects gather around the smallest heat zone's
     // centre (any prefix of a valid layout is valid, so the order is all it takes).
     let centre = if job.args.time.centre_out() {
@@ -52,20 +69,18 @@ pub fn prepare_plate(job: &Job) -> AppResult<PackState> {
         },
     };
     state.summary.gap_variants = variants;
+    state.summary.orientation = orientation;
     place(job, &mut state, outcome)?;
     Ok(state)
 }
 
-/// Probes the classes once, then packs the plan once per foreign-gap pair (the prints are
-/// shared, only the masks change). Returns the winning plan with its outcome and every
-/// variant packed, for the report.
-fn pack_variants(job: &Job) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>)> {
-    if let Some(warning) = floor_warning(job.args.foreign_gap_floor) {
-        // A plain line, not a packing stage event: it comes before the probes, and a packing
-        // event there would open the packing stage twice in the webapp's stage list.
-        eprintln!("warning: {warning}");
-    }
-    let mut model = model_plate(job)?;
+/// Packs the modelled plan once per foreign-gap pair (the prints are shared, only the masks
+/// change). Returns the winning plan with its outcome and every variant packed, for the
+/// report.
+pub fn pack_variants(
+    job: &Job,
+    mut model: Modelled,
+) -> AppResult<(Modelled, PackOutcome, Vec<GapVariant>)> {
     // Supports may cross the bed edge only where the layout has a first copy that the
     // slicer's clip is taken at (`keepout::clip`): pack once with supports inside, then once
     // per open edge, and keep the layout with the most copies (supports inside on ties).

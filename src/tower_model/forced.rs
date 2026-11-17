@@ -18,7 +18,7 @@
 use serde_json::Value;
 
 use crate::first_layer::SlicerBuild;
-use crate::project_settings_edit::format_setting_mm;
+use crate::project_settings_edit::{PresetSlot, format_setting_mm, mark_changed_from_system};
 
 /// `--tower-width` default: the owner's narrowest tower that prints well and saves room.
 pub const DEFAULT_TOWER_WIDTH_MM: f64 = 20.0;
@@ -26,22 +26,24 @@ pub const DEFAULT_TOWER_WIDTH_MM: f64 = 20.0;
 /// Rewrites the tower settings of `settings` (the project's `project_settings.config`) to a
 /// rectangle `width_mm` wide; `true` when anything changed.
 pub fn force_tower_shape(settings: &mut Value, build: SlicerBuild, width_mm: f64) -> bool {
-    let Some(map) = settings.as_object_mut() else {
+    if !settings.is_object() {
         return false;
-    };
-    let mut changed = set(map, "prime_tower_width", Value::String(format_setting_mm(width_mm)));
+    }
+    let mut forced = vec![("prime_tower_width", format_setting_mm(width_mm))];
     if build == SlicerBuild::BambuStudio {
-        changed |= set(map, "prime_tower_rib_wall", Value::String("0".to_owned()));
+        forced.push(("prime_tower_rib_wall", "0".to_owned()));
+    }
+    let mut changed = false;
+    for (key, value) in forced {
+        let value = Value::String(value);
+        if settings.get(key) != Some(&value) {
+            settings[key] = value;
+            // Unlisted, the GUI would load the system preset's value instead.
+            mark_changed_from_system(settings, PresetSlot::Print, key);
+            changed = true;
+        }
     }
     changed
-}
-
-fn set(map: &mut serde_json::Map<String, Value>, key: &str, value: Value) -> bool {
-    if map.get(key) == Some(&value) {
-        return false;
-    }
-    map.insert(key.to_owned(), value);
-    true
 }
 
 #[cfg(test)]
@@ -61,6 +63,11 @@ mod tests {
         assert_eq!(settings["prime_tower_rib_wall"], "0");
         assert_eq!(settings["prime_volume_mode"], "Saving");
         assert_eq!(settings["filament_prime_volume"], json!(["45", "45", "30"]));
+        // Listed as the user's, or the GUI reloads the system preset's rib wall on open.
+        assert_eq!(
+            settings["different_settings_to_system"][0],
+            "prime_tower_rib_wall;prime_tower_width"
+        );
         assert!(!force_tower_shape(&mut settings, SlicerBuild::BambuStudio, 20.0));
     }
 

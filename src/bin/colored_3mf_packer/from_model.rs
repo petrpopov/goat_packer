@@ -11,6 +11,7 @@ use goat_packer::{
         cache::{EnvelopePart, envelope_key, load_envelope, store_envelope},
         envelope::{envelope, envelope_banded},
         flavour::Flavour,
+        precision::Precision,
         predict::{PredictInput, Prediction, predict},
         settings::{ProjectConfig, SupportSettings},
         SupportError,
@@ -26,8 +27,18 @@ use crate::model::{ClassSummary, Modelled};
 use crate::plan::plan_of;
 use crate::tower::tower_spec;
 
-/// Predicts every rotation class and builds the plan.
-pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
+/// Predicts every rotation class of `rotations` and builds the plan.
+pub fn modelled_plate(job: &Job, rotations: &[f64]) -> AppResult<Modelled> {
+    modelled_plate_at(job, rotations, job.args.precision)
+}
+
+/// `modelled_plate` drawn at `precision` whatever the job asks for: the plate orientation
+/// search screens its turns with the fast model (`orientation`).
+pub fn modelled_plate_at(
+    job: &Job,
+    rotations: &[f64],
+    precision: Precision,
+) -> AppResult<Modelled> {
     let config = ProjectConfig::load(&job.args.source_3mf)?;
     // Settings the model cannot read are a refusal like any unsupported one (`Auto` probes).
     let mut settings = SupportSettings::from_config(&config)
@@ -45,17 +56,18 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
         },
         None => job.flavour.margins(),
     };
-    let count = job.args.rotations.len();
+    let count = rotations.len();
     // The classes are independent (own stage A, memo and cache entry): in parallel, so one
     // class's sequential stretches (stage A, the last descents, drawing tails) fill the other's
     // idle threads. P1S at 8 threads: the two classes took 7.7 + 7.3 s one after the other.
     let started = std::time::Instant::now();
-    let classes: Vec<(ObjectPrint, ClassSummary)> = job
-        .args
-        .rotations
+    let classes: Vec<(ObjectPrint, ClassSummary)> = rotations
         .par_iter()
         .enumerate()
-        .map(|(index, &rotation)| model_class(job, &settings, &builds, margins, rotation, index, count))
+        .map(|(index, &rotation)| {
+            let class = Class { rotation, index, count, precision };
+            model_class(job, &settings, &builds, margins, class)
+        })
         .collect::<AppResult<_>>()?;
     // Wall time: the classes overlap, their own seconds would count it twice.
     let seconds = started.elapsed().as_secs_f64();
@@ -70,16 +82,24 @@ pub fn modelled_plate(job: &Job) -> AppResult<Modelled> {
     })
 }
 
+/// Which class `model_class` predicts: its rotation, its place among `count` classes and the
+/// precision it is drawn at.
+struct Class {
+    rotation: f64,
+    index: usize,
+    count: usize,
+    precision: Precision,
+}
+
 /// One rotation class: every build's prediction, the class print and its summary.
 fn model_class(
     job: &Job,
     settings: &SupportSettings,
     builds: &[Flavour],
     margins: Margins,
-    rotation: f64,
-    index: usize,
-    count: usize,
+    class: Class,
 ) -> AppResult<(ObjectPrint, ClassSummary)> {
+    let Class { rotation, index, count, precision } = class;
     progress::stage_step(
         Stage::Modelling,
         &format!("predicting supports (rotation {rotation}°)..."),
@@ -103,7 +123,7 @@ fn model_class(
             rotation_deg: rotation,
             cache_dir: job.args.cache_dir.as_deref(),
             orders: &orders,
-            precision: job.args.precision,
+            precision,
         })?;
         if !settings.enable_support {
             println!("supports are off in the project: none predicted (rotation {rotation}°)");

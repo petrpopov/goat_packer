@@ -72,6 +72,16 @@ impl SupportSource {
     }
 }
 
+/// The turn of the whole plate (`--orientation`): every rotation class turned alike.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Orientation {
+    /// `--orientation DEG`: the classes of `--rotations`, each turned by this many degrees
+    /// (already applied to `Args::rotations` by the parser).
+    Turn(f64),
+    /// `--orientation auto`: the packer searches the turn (`orientation`).
+    Auto,
+}
+
 #[derive(Clone, Debug)]
 pub struct Args {
     pub source_3mf: PathBuf,
@@ -99,6 +109,13 @@ pub struct Args {
     /// `--rotations`: the rotation classes (degrees about the frame centre, in `[0, 360)`) the
     /// layout may use; the first is class 0. Supports are predicted per class.
     pub rotations: Vec<f64>,
+    /// `--orientation auto|DEG` (default 0): the turn of the whole plate. How a lattice meets
+    /// the bed edges decides its count: U1 goat at 0.5 mm margins, classes 0/180 pack 49 as a
+    /// lattice, 5/185 pack 52 (2026-11-17).
+    pub orientation: Orientation,
+    /// `--prefer-regular N` (default 0): a regular layout ranks as N copies more than it has
+    /// (`PackOptions::prefer_regular`).
+    pub prefer_regular: usize,
     /// `--support-source`: the support model with a probe fallback (default), probes or the
     /// model alone.
     pub support_source: SupportSource,
@@ -269,6 +286,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let mut max_objects = 0usize;
     let mut edge_margin: Option<f64> = None;
     let mut rotations = parse_rotations(DEFAULT_ROTATIONS)?;
+    let mut orientation = Orientation::Turn(0.0);
+    let mut prefer_regular = 0usize;
     let mut cache_dir = None;
     let mut support_source = SupportSource::default();
     let mut support_orders = None;
@@ -333,6 +352,12 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
                 other => return Err(format!("unknown layout mode: {other}").into()),
             },
             "--rotations" => rotations = parse_rotations(&value)?,
+            "--orientation" => orientation = parse_orientation(&value)?,
+            "--prefer-regular" => {
+                prefer_regular = value
+                    .parse()
+                    .map_err(|error| format!("--prefer-regular {value:?}: {error}"))?;
+            }
             "--cache-dir" => cache_dir = Some(PathBuf::from(value)),
             "--support-orders" => support_orders = Some(parse_orders(&value)?),
             "--precision" => {
@@ -399,6 +424,9 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
     let attempts = attempts.max(1);
     // Compatibility option: the deterministic finite portfolio does not stop on random stalls.
     let stall = stall.unwrap_or(0);
+    if let Orientation::Turn(turn) = orientation {
+        rotations = turned_rotations(&rotations, turn)?;
+    }
     let resolutions = resolutions.unwrap_or_else(|| match precision {
         Precision::Precise => DEFAULT_RESOLUTIONS_MM.to_vec(),
         Precision::Fast => FAST_RESOLUTIONS_MM.to_vec(),
@@ -421,6 +449,8 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         nozzle_clean,
         time,
         rotations,
+        orientation,
+        prefer_regular,
         cache_dir,
         support_source,
         support_orders,
@@ -436,6 +466,31 @@ pub fn parse_args_from(mut args: impl Iterator<Item = String>) -> AppResult<Args
         finish_state,
         slicer,
     })
+}
+
+/// `auto` or a turn in degrees.
+fn parse_orientation(text: &str) -> AppResult<Orientation> {
+    if text == "auto" {
+        return Ok(Orientation::Auto);
+    }
+    let turn: f64 = text
+        .parse()
+        .map_err(|error| format!("--orientation expects auto or degrees; got {text:?}: {error}"))?;
+    if !turn.is_finite() {
+        return Err(format!("--orientation must be finite; got {text:?}").into());
+    }
+    Ok(Orientation::Turn(turn))
+}
+
+/// `rotations` each turned by `turn` degrees, in `[0, 360)`.
+pub fn turned_rotations(rotations: &[f64], turn: f64) -> AppResult<Vec<f64>> {
+    parse_rotations(
+        &rotations
+            .iter()
+            .map(|r| (r + turn).to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
 /// `keep`, or a width in mm the owner's towers print at (they printed 12-20 mm).
@@ -639,6 +694,23 @@ mod tests {
             assert!(parse_with(&["--rotations", bad]).is_err(), "{bad:?}");
         }
         assert!(parse_with(&["--sample-objects", "3"]).is_err());
+    }
+
+    #[test]
+    fn a_plate_turn_turns_every_class_and_auto_keeps_them() {
+        let defaults = parse(&REQUIRED).unwrap();
+        assert_eq!(defaults.orientation, Orientation::Turn(0.0));
+        assert_eq!(defaults.prefer_regular, 0);
+        let turned = parse_with(&["--orientation", "-5"]).unwrap();
+        assert_eq!(turned.rotations, vec![355.0, 175.0]);
+        let auto = parse_with(&["--orientation", "auto", "--rotations", "10,190"]).unwrap();
+        assert_eq!(auto.orientation, Orientation::Auto);
+        assert_eq!(auto.rotations, vec![10.0, 190.0]);
+        assert_eq!(parse_with(&["--prefer-regular", "2"]).unwrap().prefer_regular, 2);
+        for bad in ["", "x", "inf"] {
+            assert!(parse_with(&["--orientation", bad]).is_err(), "{bad:?}");
+        }
+        assert!(parse_with(&["--prefer-regular", "-1"]).is_err());
     }
 
     #[test]

@@ -168,6 +168,7 @@ impl<'a> Ctx<'a> {
         layout: &[PixelPlacement],
     ) -> Candidate {
         let key = RankKey {
+            preferred: layout.len(),
             count: layout.len(),
             robustness_quarter_mm: 0,
             canonical_clear: true,

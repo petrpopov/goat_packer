@@ -15,9 +15,11 @@ use serde::Serialize;
 use crate::AppResult;
 use crate::args::SupportSource;
 use crate::gaps::{GapVariant, OwnGap, floor_warning};
+use crate::orientation::OrientationReport;
 use crate::job::Job;
 use crate::margins::{DELTA_BAND_MM, DELTA_FIRST_LAYER_MM};
 use crate::order::Canonical;
+use crate::pack_cache;
 use crate::plan::{MemberResult, PackState};
 use crate::model::ClassSummary;
 use crate::source::paint_attribute_count;
@@ -59,8 +61,14 @@ pub struct ColoredPackReport {
     /// any mix of classes, then each class alone. A ceiling, not a target.
     pub upper_bound: Option<usize>,
     pub class_bounds: Vec<Option<usize>>,
-    /// The ladder's levels of the chosen layout, coarse first, with wall time each.
+    /// The ladder's levels of the chosen layout, coarse first, with wall time each (on a
+    /// cached layout, the times of the run that packed it).
     pub levels: Vec<LevelReport>,
+    /// What `--orientation auto` screened and packed, and the turn it chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<OrientationReport>,
+    /// Every layout of this run came from `--cache-dir` (`pack-<key>.json`): nothing was packed.
+    pub pack_cached: bool,
     /// Things the operator should know before trusting the layout (a lowered floor).
     pub warnings: Vec<String>,
     /// Copies per rotation class, in `--rotations` order.
@@ -207,6 +215,8 @@ impl ColoredPackReport {
             upper_bound: summary.upper_bound,
             class_bounds: summary.class_bounds.clone(),
             levels: summary.levels.clone(),
+            orientation: summary.orientation.clone(),
+            pack_cached: args.cache_dir.is_some() && pack_cache::all_cached(),
             warnings: crate::job::flavour_warning(args, &job.flavour)
                 .into_iter()
                 .chain(floor_warning(args.foreign_gap_floor))

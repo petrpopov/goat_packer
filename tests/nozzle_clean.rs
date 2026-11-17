@@ -168,6 +168,9 @@ fn injects_and_preserves_other_entries() {
     assert!(gcode.ends_with("M73 L{layer_num+1}"));
     // Unrelated settings survive the serde_json round-trip.
     assert_eq!(settings["printer_model"].as_str().unwrap(), "Bambu Lab P1S");
+    // Listed in the printer slot: unlisted, a GUI reloads the preset's layer change G-code.
+    let slots = settings["different_settings_to_system"].as_array().unwrap();
+    assert!(slots.last().unwrap().as_str().unwrap().split(';').any(|k| k == "layer_change_gcode"));
     // Non-settings entries pass through byte-for-byte.
     assert_eq!(
         read_entry(&output, "3D/3dmodel.model"),

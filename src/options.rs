@@ -63,6 +63,14 @@ pub struct PackOptions {
     /// Support-to-neighbour-body gaps (`ForeignGaps`); the defaults are the former constants.
     #[serde(default)]
     pub foreign_gaps: ForeignGaps,
+    /// Copies of head start a regular layout (a lattice-family member: `Rows`, `Lattice`,
+    /// `DoubleLattice`, `TwoBlock`) gets in the ranking over an irregular one (`Sweep`,
+    /// `Improve`): with 2 a lattice of 49 beats an `Improve` layout of 51. A regular plate is
+    /// what the owner checks by eye in the slicer and arranges by hand; `Improve` fills the
+    /// edges by moving copies off the lattice (U1 goat, 0.5 mm margins: lattice 49, Improve
+    /// 51). 0 = count first, the former ranking.
+    #[serde(default)]
+    pub prefer_regular: usize,
 }
 
 impl PackOptions {

@@ -39,20 +39,21 @@ pub struct Modelled {
     pub model_seconds: f64,
 }
 
-/// Builds the plan with the supports the job asks for: the support model (no slicer call), or
-/// probes of every rotation class in turn (one live slicer at a time). `Auto` probes only
-/// when the model refuses the project; any other model error stays an error.
-pub fn model_plate(job: &Job) -> AppResult<Modelled> {
+/// Builds the plan of the rotation classes `rotations` with the supports the job asks for:
+/// the support model (no slicer call), or probes of every class in turn (one live slicer at a
+/// time). `Auto` probes only when the model refuses the project; any other model error stays
+/// an error.
+pub fn model_plate(job: &Job, rotations: &[f64]) -> AppResult<Modelled> {
     match job.args.support_source {
-        SupportSource::Model => modelled_plate(job),
-        SupportSource::Probe => probed_plate(job),
-        SupportSource::Auto => match modelled_plate(job) {
+        SupportSource::Model => modelled_plate(job, rotations),
+        SupportSource::Probe => probed_plate(job, rotations),
+        SupportSource::Auto => match modelled_plate(job, rotations) {
             Err(error) if refused(&*error) => {
                 // A plain line like the gap-floor warning; the report repeats it (`warnings`).
                 eprintln!(
                     "warning: the support model does not cover this project ({error}); probing with the slicer"
                 );
-                probed_plate(job)
+                probed_plate(job, rotations)
             }
             other => other,
         },
@@ -67,12 +68,12 @@ fn refused(error: &(dyn std::error::Error + 'static)) -> bool {
     )
 }
 
-fn probed_plate(job: &Job) -> AppResult<Modelled> {
+fn probed_plate(job: &Job, rotations: &[f64]) -> AppResult<Modelled> {
     let mut probes = Vec::new();
     let mut prints = Vec::new();
     let mut summaries = Vec::new();
-    let count = job.args.rotations.len();
-    for (index, &rotation) in job.args.rotations.iter().enumerate() {
+    let count = rotations.len();
+    for (index, &rotation) in rotations.iter().enumerate() {
         let probe = probe_class(job, rotation, ClassStep { index, count })?;
         let (print, check) = class_print(job, &probe, &probe.cache_key)?;
         summaries.push(ClassSummary {

@@ -73,12 +73,13 @@ fn members_for(finer: bool, members: &[Member]) -> Vec<Member> {
 }
 
 /// True when `a` ranks strictly above `b` (a finer level replaces a coarser winner only then):
-/// more copies, then the rank key's slack and canonical flags, then the smaller box in mm²
+/// more copies (a regular layout's head start included), then the rank key's slack and canonical flags, then the smaller box in mm²
 /// (the key's own box is in pixels of its level).
 fn outranks(a: &PackOutcome, b: &PackOutcome) -> bool {
     let area = |o: &PackOutcome| o.key.bbox_area_px as f64 * o.resolution_mm * o.resolution_mm;
     let rank = |o: &PackOutcome| {
         (
+            o.key.preferred,
             o.key.count,
             o.key.robustness_quarter_mm,
             o.key.canonical_clear,

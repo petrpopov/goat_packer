@@ -62,6 +62,8 @@ pub fn test_args(work_dir: &Path) -> Args {
         nozzle_clean: None,
         time: TimeOptions::default(),
         rotations: vec![0.0, 180.0],
+        orientation: crate::args::Orientation::Turn(0.0),
+        prefer_regular: 0,
         cache_dir: None,
         support_source: Default::default(),
         support_orders: None,

@@ -60,6 +60,7 @@ fn options(support_overlap_mm: Option<f64>) -> PackOptions {
         support_overlap_mm,
         foreign_gaps: Default::default(),
         plate_rules: None,
+        prefer_regular: 0,
     }
 }
 

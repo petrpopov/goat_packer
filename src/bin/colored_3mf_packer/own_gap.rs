@@ -8,7 +8,9 @@
 
 use std::path::Path;
 
-use goat_packer::project_settings_edit::{edit_project_settings_in_3mf, format_setting_mm};
+use goat_packer::project_settings_edit::{
+    PresetSlot, edit_project_settings_in_3mf, format_setting_mm, mark_changed_from_system,
+};
 
 use crate::AppResult;
 use crate::gaps::{FIRST_LAYER_KEY, GapSource, OwnGap};
@@ -87,6 +89,8 @@ pub fn apply_own_gap(project: &Path, gap: OwnGap) -> AppResult<()> {
     }
     edit_project_settings_in_3mf(project, |settings| {
         settings[FIRST_LAYER_KEY] = format_setting_mm(gap.first_layer_mm).into();
+        // Forced only when unlisted: listing it keeps the GUI from reloading the preset's gap.
+        mark_changed_from_system(settings, PresetSlot::Print, FIRST_LAYER_KEY);
         Ok(())
     })?;
     Ok(())

@@ -78,6 +78,7 @@ pub(crate) fn options(rules: &PlateRules) -> PackOptions {
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
+        prefer_regular: 0,
     }
 }
 

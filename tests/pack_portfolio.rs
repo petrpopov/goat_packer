@@ -104,6 +104,7 @@ fn options(attempts: usize) -> PackOptions {
         support_overlap_mm: None,
         foreign_gaps: Default::default(),
         plate_rules: None,
+        prefer_regular: 0,
     }
 }
 
@@ -182,4 +183,34 @@ fn more_effort_never_loses_copies() {
         );
         previous = count;
     }
+}
+
+#[test]
+fn a_regular_head_start_publishes_the_best_lattice_over_more_irregular_copies() {
+    let members = [Member::Sweep, Member::Lattice, Member::Improve];
+    let prints = [lopsided(0), lopsided(1)];
+    let free = run(&prints, None, 64, &members);
+    let preferring = pack_members(
+        &prints,
+        &rules(),
+        None,
+        &PackOptions {
+            prefer_regular: 1_000,
+            ..options(64)
+        },
+        &members,
+    )
+    .expect("a valid layout");
+    let lattice = free
+        .member_counts
+        .iter()
+        .find(|m| m.member == Member::Lattice)
+        .map(|m| m.count)
+        .unwrap();
+    assert!(preferring.member.is_regular(), "{:?}", preferring.member);
+    assert_eq!(preferring.placements.len(), lattice);
+    assert_eq!(preferring.key.preferred, lattice + 1_000);
+    // Without a head start the count decides, so nothing is lost by default.
+    assert!(free.placements.len() >= preferring.placements.len());
+    assert_eq!(free.key.preferred, free.key.count);
 }

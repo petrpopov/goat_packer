@@ -11,6 +11,7 @@
 //! evidence behind each move.
 
 use crate::colored_packer::PrinterProfile;
+use crate::project_settings_edit::{PresetSlot, mark_changed_from_system};
 use std::{fs, io::Read, io::Write, path::Path};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -194,6 +195,8 @@ pub fn inject_nozzle_clean(
                 .to_owned();
             let composed = compose_layer_change_gcode(&existing, spec, body);
             settings[LAYER_CHANGE_KEY] = serde_json::Value::String(composed);
+            // A printer setting: unlisted, the GUI reloads the preset's layer change G-code.
+            mark_changed_from_system(&mut settings, PresetSlot::Printer, LAYER_CHANGE_KEY);
             bytes = serde_json::to_vec(&settings).map_err(|error| {
                 format!(
                     "cannot re-serialize {PROJECT_SETTINGS_ENTRY} for {}: {error}",

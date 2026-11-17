@@ -131,6 +131,7 @@ fn options(foreign_gaps: ForeignGaps) -> PackOptions {
         support_overlap_mm: None,
         foreign_gaps,
         plate_rules: None,
+        prefer_regular: 0,
     }
 }
 

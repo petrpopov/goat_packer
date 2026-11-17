@@ -148,6 +148,7 @@ fn run() -> Result<(), String> {
                 support_overlap_mm: None,
                 foreign_gaps: Default::default(),
                 plate_rules: None,
+                prefer_regular: 0,
             };
             let started = Instant::now();
             let grid = grid_layout(&rotated, &options);

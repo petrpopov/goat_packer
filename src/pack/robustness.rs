@@ -48,16 +48,16 @@ pub(crate) fn quarter_mm(slack_px: i32, resolution: f64) -> u8 {
     (f64::from(slack_px.max(0)) * resolution / QUARTER_MM).floor() as u8
 }
 
-/// Sets the robustness of the candidates that can reach the shortlist: those whose count is
-/// at least the `keep`-th best.
+/// Sets the robustness of the candidates that can reach the shortlist: those whose count
+/// (with a regular layout's head start) is at least the `keep`-th best.
 pub(crate) fn annotate(ctx: &Ctx, candidates: &mut [Candidate], keep: usize) {
-    let mut counts: Vec<usize> = candidates.iter().map(|c| c.key.count).collect();
+    let mut counts: Vec<usize> = candidates.iter().map(|c| c.key.preferred).collect();
     counts.sort_unstable_by(|a, b| b.cmp(a));
     let Some(&floor) = counts.get(keep.saturating_sub(1)).or(counts.last()) else {
         return;
     };
     let resolution = ctx.grid().resolution;
-    for c in candidates.iter_mut().filter(|c| c.key.count >= floor) {
+    for c in candidates.iter_mut().filter(|c| c.key.preferred >= floor) {
         let slack = layout_slack(ctx, c.anchor, &c.placements);
         c.key.robustness_quarter_mm = quarter_mm(slack, resolution);
     }

@@ -13,8 +13,11 @@ use serde::{Deserialize, Serialize};
 use crate::AppResult;
 use crate::args::Args;
 use crate::gaps::GapVariant;
+use crate::pack_cache;
+use crate::pack_steps::ladder;
 use crate::model::ClassSummary;
 use crate::order::Canonical;
+use crate::orientation::OrientationReport;
 
 /// The state file format. Version 1 held a slicer-learned `Footprint`; its plan, support rule
 /// and sample slice no longer exist.
@@ -80,6 +83,9 @@ pub struct PackSummary {
     pub class_bounds: Vec<Option<usize>>,
     #[serde(default)]
     pub levels: Vec<LevelReport>,
+    /// What `--orientation auto` screened and packed; `None` for a fixed turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<OrientationReport>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -132,12 +138,14 @@ impl PackPlan {
             support_overlap_mm: args.support_overlap_mm,
             foreign_gaps: self.foreign_gaps,
             plate_rules: Some(self.rules.clone()),
+            prefer_regular: args.prefer_regular,
         }
     }
 
     /// One packing pass of the portfolio over every class.
     pub fn pack(&self, args: &Args) -> AppResult<PackOutcome> {
-        Ok(pack(&self.prints, &self.rules, self.tower.as_ref(), &self.options(args))?)
+        let options = self.options(args);
+        self.cached(args, || pack(&self.prints, &self.rules, self.tower.as_ref(), &options))
     }
 
     /// The first level of the resolution ladder only: the pass over every foreign-gap rung.
@@ -151,7 +159,23 @@ impl PackPlan {
 
     /// Climbs the rest of the ladder from a `pack_coarse` outcome of this plan.
     pub fn refine(&self, args: &Args, coarse: PackOutcome) -> AppResult<PackOutcome> {
-        Ok(refine(&self.prints, &self.rules, self.tower.as_ref(), &self.options(args), coarse)?)
+        let options = self.options(args);
+        self.cached(args, || refine(&self.prints, &self.rules, self.tower.as_ref(), &options, coarse))
+    }
+
+    /// `run` through the packing cache of `args`. The key reads the levels the run climbs
+    /// (`ladder`), so a coarse pack refined up to a level shares the entry of one pack over
+    /// the same levels, which `pack::refine` makes the same outcome.
+    fn cached(
+        &self,
+        args: &Args,
+        run: impl FnOnce() -> Result<PackOutcome, String>,
+    ) -> AppResult<PackOutcome> {
+        let options = PackOptions {
+            resolutions: ladder(args),
+            ..self.options(args)
+        };
+        Ok(pack_cache::cached(args.cache_dir.as_deref(), self, &options, run)?)
     }
 
     /// The exact check of a layout, the gate every plate passes before it is written: the
