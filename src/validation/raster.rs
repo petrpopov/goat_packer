@@ -63,6 +63,20 @@ struct Cached<'a> {
     bounds: Option<Rect>,
 }
 
+/// Zone tests a shared validator adds for one caller (one tower anchor), by cache slot.
+pub(crate) struct ExtraZones<'z> {
+    checkers: Vec<(usize, ZoneChecker<'z>)>,
+}
+
+impl ExtraZones<'_> {
+    fn checker(&self, slot: usize) -> Option<&ZoneChecker<'_>> {
+        self.checkers
+            .binary_search_by_key(&slot, |(s, _)| *s)
+            .ok()
+            .map(|i| &self.checkers[i].1)
+    }
+}
+
 /// The raster check of layouts of fixed prints and zones. Kind shapes are grown once and
 /// masks are cached across `check` calls, so checking a shortlist of candidates costs one
 /// rasterization per distinct (class, phase).
@@ -128,17 +142,85 @@ impl<'a> RasterValidator<'a> {
         let (centers, keys): (Vec<(i32, i32)>, Vec<Phase>) =
             placements.iter().map(|p| self.pixel(p)).unzip();
         let slots = self.cached(&keys);
+        self.verdict(&centers, &slots, None)
+    }
+
+    /// Rasterizes every (class, phase) of `layouts` up front, so that `extra_zones` and
+    /// `check_primed` can then run on one shared validator. A layout `check` refuses outright
+    /// (an unknown class) is skipped: `check_primed` refuses it the same way.
+    pub(crate) fn prime(&mut self, layouts: &[Vec<PrintPlacement>]) {
+        let classes = self.source.classes();
+        let keys: Vec<Phase> = layouts
+            .iter()
+            .filter(|layout| check_print_placements(layout, classes).is_ok())
+            .flat_map(|layout| layout.iter().map(|p| self.pixel(p).1))
+            .collect();
+        self.cached(&keys);
+    }
+
+    /// The tests of `zones` (zones beyond the validator's own, e.g. one tower anchor's) for
+    /// every primed phase of `layouts`. The masks and the tests of the validator's own zones
+    /// serve every caller; only these are built per caller.
+    pub(crate) fn extra_zones<'z>(
+        &self,
+        zones: &'z [PlateZone],
+        layouts: &[&[PrintPlacement]],
+    ) -> ExtraZones<'z> {
+        let mut slots: Vec<usize> = layouts
+            .iter()
+            .flat_map(|layout| layout.iter())
+            .filter_map(|p| self.slot(&self.pixel(p).1))
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        let checkers = slots
+            .par_iter()
+            .map(|&slot| (slot, ZoneChecker::new(&self.cache[slot].masks, zones, &self.grid)))
+            .collect();
+        ExtraZones { checkers }
+    }
+
+    /// `check` of a primed layout against the validator's zones followed by `extra`'s: the
+    /// verdict of a validator built on the concatenated zone list, whose tests run zone by
+    /// zone in list order.
+    pub(crate) fn check_primed(
+        &self,
+        placements: &[PrintPlacement],
+        extra: &ExtraZones<'_>,
+    ) -> Result<(), String> {
+        check_print_placements(placements, self.source.classes())?;
+        let (centers, slots): (Vec<(i32, i32)>, Vec<usize>) = placements
+            .iter()
+            .map(|p| {
+                let (center, key) = self.pixel(p);
+                (center, self.slot(&key).expect("primed layout"))
+            })
+            .unzip();
+        self.verdict(&centers, &slots, Some(extra))
+    }
+
+    /// The first broken rule of placements at pixel `centers` with cached masks `slots`.
+    fn verdict(
+        &self,
+        centers: &[(i32, i32)],
+        slots: &[usize],
+        extra: Option<&ExtraZones<'_>>,
+    ) -> Result<(), String> {
         let zone_failure = slots
             .par_iter()
             .enumerate()
             .find_map_first(|(index, &slot)| {
                 let (x, y) = centers[index];
-                let conflict = self.cache[slot].zones.conflict(x, y)?;
+                let conflict = self.cache[slot].zones.conflict(x, y).or_else(|| {
+                    extra
+                        .and_then(|extra| extra.checker(slot))
+                        .and_then(|checker| checker.conflict(x, y))
+                })?;
                 Some((index, format!("placement {index}: {conflict}")))
             });
         let boxes: Vec<Rect> = slots
             .iter()
-            .zip(&centers)
+            .zip(centers)
             .map(|(&slot, &(x, y))| {
                 let empty = Rect::of_points(std::iter::empty());
                 let moved = |b: Rect| b.translated(f64::from(x), f64::from(y));
@@ -204,14 +286,14 @@ impl<'a> RasterValidator<'a> {
             .collect();
         self.cache.extend(built);
         keys.iter()
-            .map(|key| {
-                let key = bits(key);
-                self.cache
-                    .iter()
-                    .position(|c| c.key == key)
-                    .expect("cached above")
-            })
+            .map(|key| self.slot(key).expect("cached above"))
             .collect()
+    }
+
+    /// The cache slot of a (class, phase), if rasterized.
+    fn slot(&self, &(class, offset): &Phase) -> Option<usize> {
+        let key = (class, offset.x.to_bits(), offset.y.to_bits());
+        self.cache.iter().position(|c| c.key == key)
     }
 
     /// Two placements (index, masks, pixel origin) break a pair rule or the support overlap.
